@@ -331,6 +331,7 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		// Nested, and unselectable-through in the designer, with no
 		// error anywhere. Requiring the STATED reason means the field
 		// is only true where something enforces it.
+		ParsedBy:  d.ParsedBy,
 		Pseudo:    d.Proto == nil && (d.Opaque != "" || d.ParsedBy != ""),
 		NonVisual: nonVisual,
 		Focusable: focusable,

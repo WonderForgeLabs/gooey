@@ -88,6 +88,27 @@ belong to* — and each was a way of answering it wrongly:
   unread and silently dropped, with the whole suite green and
   `<MenuItem Text="Open" Margin="3"/>` building with `err == nil`. The
   silent-drop defect again, one set of names over.
+
+  That document no longer reproduces it, and the reason is a different
+  fix: [#461](https://github.com/WonderForgeLabs/gooey/issues/461) made a
+  universal attribute on a pseudo-element a load error outright, so
+  `<MenuItem Margin="3"/>` is now refused with *"`<Menu>` reads
+  `<MenuItem>` as data, so it builds no component for Margin to apply
+  to"* whether or not the declaration exists. The reproduction above is
+  historical; the check this section describes is still the one that
+  stops the DECLARATION.
+
+  **And "universal" was not the whole set.** Review of #486 measured the
+  same gate one spelling over: `<Tab Name="Zonk">` was refused while
+  `<Tab Grid.Row="1">` loaded, was dropped and reported nothing. An
+  attached property is an instruction to the element's *container* about
+  a component, and a pseudo-element has none to instruct — so it is
+  refusable by the argument this section already makes, without knowing
+  the element's own surface. That last clause is what makes it sayable
+  of a `<Tab>`, whose `Opaque` annotation means the ordinary
+  unknown-attribute gate cannot fire; for `<Menu>` and `<MenuItem>` that
+  gate already covered both cases, which is why the fix is the attached
+  rule alone rather than a widening to `spec.Attrs`.
 - **The helper idiom is a read.** `scan` recognises `Bound(e, ctx, "Text")`
   and `optDuration(e, "Tick")`; the child walk saw only `x.Attrs["…"]`. That
   gap is loud in the wrong direction — the declaration is real and the read is
@@ -335,6 +356,11 @@ test go red.
 | the child walk ignores the `generic` deny-list | `TestTheDenyListAppliesToTheChildWalk` |
 | `Pseudo` derived from a nil `Proto` alone | `TestAHostElementWithNoProtoIsNotPseudo` |
 | the `universal` skip applied to a pseudo-element | `TestAPseudoElementGetsNoUniversalPass` (and `Margin` on `<MenuItem>` in the real vocabulary) |
+| an attached property accepted and dropped on a pseudo-element | `TestAPseudoElementRefusesAnAttachedProperty` |
+| an unknown attribute reaching a declared surface but not an opaque one | `TestAnUnknownAttributeReachesAKnownPseudoSurfaceAndNotAnOpaqueOne` |
+| the `ParsedBy` clause in the refusal's reader name | `TestTheParsedByFallbackNamesAHostRegisteredReader` |
+| the reader named from the document's parent, not the alphabet | `TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst` |
+| the content remedy withheld from an attached property | `TestARefusalPrescribesOnlyAPlaceThatExists` (its attached arm) |
 | the helper idiom not counted as a read | `TestTheHelperIdiomIsAChildRead` |
 | a pseudo-element's own `Build` not scanned | `TestAPseudoElementsOwnBuildIsScanned` |
 | `specOf` rebuilds the catalog | `TestAttrRowsDoesNotRebuildTheCatalog` |

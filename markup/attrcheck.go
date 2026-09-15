@@ -36,6 +36,63 @@ import (
 // beside checkProps, which does the same job for property elements.
 func checkAttrs(e Element, ctx *Context) error {
 	spec, ok := ctx.spec(e.Name)
+
+	// THE UNIVERSAL SET IS NOT PART OF ANY ELEMENT'S OWN VOCABULARY, so
+	// this runs BEFORE the two gates below rather than inside either.
+	//
+	// It began inside the !AttrsKnown early return, where <Tab> was the
+	// only pseudo-element that could reach it — <Menu> and <MenuItem>
+	// are AttrsKnown and fell through to the exhaustive check, which
+	// refuses a universal with "no such attribute; this element takes
+	// Title". refuseComponentAttr's own comment calls that wording a lie,
+	// and it was being told by two of the three elements the argument
+	// was written for. Raised in review of #486; the three now share
+	// one sentence, and TestEveryPseudoElementRefusesAUniversalTheSameWay
+	// is what keeps them sharing it.
+	//
+	// A MISPLACED ELEMENT IS SOMEBODY ELSE'S ERROR TO REPORT. checkAttrs
+	// runs before the element's own Build, so on
+	// `<VStack><Tab Name="Z">…` this refusal preempted defTab.Build's
+	// "<Tab> is only valid directly inside <Tabs>" and told the author
+	// to move an attribute — a remedy that leaves the document just as
+	// broken, while the diagnosis that would fix it never printed. The
+	// placement fault is the larger one and is answerable from the
+	// catalog, so it is deferred to rather than raced. See
+	// acceptedByParent, whose comment records why it cannot ask
+	// spec.Nested for the answer.
+	if ok && spec.Pseudo {
+		if !acceptedByParent(e, ctx) {
+			// THE DEFERRAL COVERS THE EXHAUSTIVE CHECK TOO, and it
+			// reached only <Tab> when it did not. <Menu> and <MenuItem>
+			// are AttrsKnown, so standing down from the universal
+			// refusal alone dropped them into the gate below, which
+			// answered `<VStack><Menu Name="Zonk">` with "no such
+			// attribute; this element takes Title" — the wording
+			// refuseComponentAttr's comment calls a lie, about the smaller
+			// of two faults, while defMenu.Build's "<Menu> is only
+			// valid directly inside <MenuBar>" never printed.
+			//
+			// Measured, not reasoned about: all three misplaced forms
+			// were probed through Build before and after. Raised in
+			// review of #486 round 2, which is round 1's finding 1 one
+			// gate over.
+			return nil
+		}
+		if err := refuseComponentAttr(e, spec, ctx); err != nil {
+			return err
+		}
+		// THE PROPERTY-ELEMENT SPELLING OF THE SAME THING, which was
+		// silently accepted while the attribute spelling was refused.
+		// checkProps runs from build() alone, and a pseudo-element never
+		// reaches build() — its parent's builder consumes it as data — so
+		// <Tab.Name>, <Tab.Margin>, <Menu.Name> and <MenuItem.Name> all
+		// loaded, were dropped and reported nothing. Measured through
+		// Build before the fix, all four. Raised in review of #486.
+		if err := refusePropElement(e, spec, ctx); err != nil {
+			return err
+		}
+	}
+
 	if !ok || !spec.AttrsKnown {
 		// A registered Go builder interprets attributes however it
 		// likes, and an opaque element's vocabulary was never
@@ -75,6 +132,608 @@ func checkAttrs(e Element, ctx *Context) error {
 			e.Name, name, e.Attrs[name], suggest(name, allowed, attached))
 	}
 	return nil
+}
+
+// refuseComponentAttr rejects a universal attribute on a pseudo-element,
+// and it exists because that is the one judgement an UNENUMERABLE
+// element still supports (issue #461).
+//
+// checkAttrs declines to judge an element whose Attrs are not
+// exhaustive, and that is right: the element's own vocabulary is
+// genuinely unknown, so any refusal from it would be invented. The
+// universal set is a different claim. Name is applied by named(), the
+// layout rows by applyLayout() and Tooltip by
+// applyTooltipShorthand() — all three beside the element switch, none
+// of them by the element — so whether they apply is answered by the
+// catalog's structure, not by the element's attribute list.
+//
+// Pseudo is that answer, and it is safe BECAUSE IT IS AFFIRMATIVE: it
+// is derived from a nil Proto *and* a stated reason (elementdef.go), so
+// it means "this builds no component of its own", not "we could not
+// tell". A pseudo-element's parent reads it as data — buildTabs reads a
+// <Tab>'s Header and content itself — so nothing ever reaches named()
+// or applyLayout() with it.
+//
+// !TakesLayout is NOT interchangeable here, and reaching for it would
+// break working apps. It is absent-by-default, and the construct that
+// shows the difference is a HOST'S Context.Elements ElementDef with a
+// real Build and no Proto: ctx.spec resolves it, AttrsKnown is false,
+// TakesLayout is false — and Pseudo is false, because no reason is
+// stated. build() runs applyLayout on the component it returns, so its
+// universals are honoured, and refusing them off the absence would
+// break it.
+//
+// NOT Context.Components, which this comment used to cite. ctx.spec
+// returns ok=false for one of those, so both gates short-circuit alike
+// and such an element never reaches this function at all — a reader
+// checking the claim would find it does not hold and could conclude
+// the gate is over-cautious. The fixture in
+// TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals is the
+// discriminating shape, and it is a Context.Elements def for exactly
+// this reason; the first attempt at that test used Components and could
+// not tell the two gates apart. Corrected in review of #486.
+//
+// Grant.AttrsFor already implements the same rule on the other side —
+// it withholds the layout rows on !TakesLayout and the identity row on
+// Pseudo, so a property grid offers a pseudo-element no universal row
+// at all. Before this the two gates disagreed in OPPOSITE directions
+// for <Tab>, the one pseudo-element with AttrsKnown false: the designer
+// dropped the Name row and the loader accepted it. A Name typed into a
+// <Tab> in $EDITOR was accepted, dropped, and had no surface anywhere
+// that would reveal it — strictly less discoverable than the state
+// #454 improved.
+//
+// UNIVERSALS WERE NEVER THE WHOLE SET, and stopping there left the high
+// half of the same defect open. The argument above is that a
+// pseudo-element builds no component, so an attribute meant for a
+// component cannot apply — and that is true of far more than
+// universalAttrs. Measured on this branch before the widening:
+//
+//	<Tab Name="Zonk">     → refused
+//	<Tab Grid.Row="1">    → LOADED, dropped, silent
+//	<Tab Frobnicate="1">  → LOADED, dropped, silent
+//
+// So the gate asks two questions, in the order of what it can know.
+//
+// THE NAME IS THE OLDER HALF AND WAS RENAMED WITH THE SET. This was
+// refuseUniversal while universalAttrs was the whole of what it refused;
+// cannotApplyTo is the authority on the set now, and the name says
+// "component attribute" because that is the single question both arms
+// ask. Raised in review of #486.
+//
+// AN ATTACHED PROPERTY IS REFUSED WHATEVER THE CATALOG KNOWS. Grid.Row
+// is an instruction to the element's CONTAINER about a component, and a
+// pseudo-element has none to instruct — that holds without knowing the
+// element's own surface, which is the whole reason it can be asked of
+// <Tab>, whose AttrsKnown is false and whose Attrs are empty.
+//
+// AND NOTHING ELSE, which was measured rather than assumed. The obvious
+// widening — "on a spec with AttrsKnown, refuse anything outside
+// spec.Attrs" — changes no ACCEPTANCE: <Menu Frobnicate="1"> and
+// <MenuItem Grid.Row="1"> are both already refused by the ordinary
+// unknown-attribute gate, which can fire precisely because those
+// surfaces are declared. All it would do is replace "no such attribute;
+// this element takes Title" with this function's sentence, and for a
+// name that exists nowhere the first is the better answer — "no such
+// attribute" is only a lie for an attribute that exists elsewhere, which
+// is the case this function is for.
+//
+// So the hole is the OPAQUE pseudo-element alone. <Tab> carries Opaque,
+// its AttrsKnown is false and its Attrs are empty because buildTabs
+// reads "Header" off its children without declaring it, so the ordinary
+// gate cannot fire and an unknown name cannot be told from the one the
+// builder really reads. <Tab Frobnicate="1"> therefore stays accepted
+// and that is stated rather than papered over; #461 is where making the
+// surface enumerable is tracked. An attached property is the part that
+// needs no surface to adjudicate, which is why it is the whole of this
+// change. Raised in review of #486.
+func refuseComponentAttr(e Element, spec ElementSpec, ctx *Context) error {
+	names := make([]string, 0, len(e.Attrs))
+	for name := range e.Attrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !cannotApplyTo(name) {
+			continue
+		}
+		// The message names the MECHANISM, not just the fault. "no
+		// such attribute" would be a lie — the attribute exists
+		// everywhere else — and the author's real question is where
+		// to put it instead.
+		return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
+			e.Name, name, e.Attrs[name],
+			readsAsData(e, spec, ctx), name, pseudoRemedy(spec, ctx, name))
+	}
+	return nil
+}
+
+// cannotApplyTo reports that this attribute names something only a
+// COMPONENT could have, on an element that builds none. See
+// refuseComponentAttr for the three cases and why they are ordered so.
+// A DOT AND NOTHING ELSE. The first spelling of this excluded an xmlns
+// prefix as "the other dotted name an element carries", which is simply
+// wrong — a prefixed declaration is xmlns:h, with a COLON — so the
+// exclusion could never fire and was guarding against nothing. Measured:
+// removing it changes no result anywhere in the package. The arm in
+// TestAPseudoElementRefusesAnAttachedProperty stays, because "a
+// namespace declaration may sit on any element" is a real rule worth a
+// regression pin even though this predicate is not what upholds it.
+func cannotApplyTo(name string) bool {
+	return isUniversalAttr(name) || strings.Contains(name, ".")
+}
+
+// refusePropElement rejects ANY property element on a pseudo-element,
+// and "any" is not an over-reach — it is the same sentence
+// refuseComponentAttr makes, read through the other spelling.
+//
+// A property element is consumed by the builder of the element that
+// carries it, and a pseudo-element HAS no builder: <Tabs> reads a
+// <Tab>'s Header and content itself, <MenuBar> reads <Menu> and
+// <MenuItem> as data. So there is nothing on this element for a
+// <Tab.Anything> to reach, whatever it is named.
+//
+// THAT INCLUDES Behaviors AND Resources, which checkProps exempts
+// universally and which would therefore have been the one pair left
+// silent if this had simply called checkProps. The exemption there is
+// earned — buildChildren consumes <X.Behaviors> and pushResources
+// consumes <X.Resources>, both from build() — and build() is exactly
+// what a pseudo-element does not go through. An exemption that is true
+// of every element that builds is not true of one that does not.
+//
+// It shares readsAsData with refuseComponentAttr so the author gets one
+// sentence rather than two dialects of it, and
+// TestEveryPseudoElementRefusesAPropertyElement is what keeps them
+// sharing it. The REMEDY is not shared verbatim: see propRemedy, which
+// is pseudoRemedy plus the one thing that differs between an attribute
+// and a property element, which is how you write it where it is going.
+func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
+	if len(e.Props) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(e.Props))
+	for name := range e.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	name := names[0]
+	return fmt.Errorf("markup: <%s.%s>: %sso it builds no component for %s to apply to%s",
+		e.Name, name, readsAsData(e, spec, ctx), name, propRemedy(spec, ctx, name))
+}
+
+// readsAsData is the reason clause of the message above: who consumes
+// this element, when the catalog knows.
+//
+// IT NO LONGER SPLICES spec.Opaque, and that is finding 5 of #486's
+// round 1. Opaque is a CATALOG-GENERATOR annotation — <Tab>'s reads "a
+// pseudo-element: <Tabs> parses a <Tab>'s Header and content itself, so
+// this definition exists only to reject one used anywhere else" —
+// written to explain to a tool why an element could not be enumerated.
+// Dropped into a load error it restated the clause beside it, trailed
+// off into registry bookkeeping that means nothing to somebody editing
+// a page, and coupled the error's wording to prose with nothing pinning
+// it as error copy.
+//
+// THE CONTAINER, NOT THE PARSER, and the two are not always the same
+// element. This asked ParsedBy first, which is the field that names the
+// BUILDER — "<MenuBar> reads <Menu> as data" — and for <MenuItem> that
+// made one element name two different containers across the two load
+// errors an author can hit on it:
+//
+//	<MenuBar><Menu><MenuItem Margin="2"/>  → <MenuBar> reads <MenuItem> as data…
+//	<VStack><MenuItem Margin="2"/>         → <MenuItem> is only valid directly inside <Menu>
+//
+// Both sentences are true and they answer different questions, which is
+// exactly why they may not disagree: an author who hits the first and
+// moves the element to a <MenuBar> hits the second. The placement error
+// has no choice about which container it names — <Menu> is the only true
+// answer to "where does this go" — so this clause is the half that
+// moves. Raised in review of #486.
+//
+// ParsedBy stays what it is and is not edited to agree: it names the
+// element whose Build consumes this one, catalogen resolves the
+// attribute-drift check through it, and buildMenuBar genuinely walks
+// both levels. It is the fallback here for a pseudo-element no container
+// names, which is a declaration nothing can reach today (markNested) and
+// a shape a host may still register.
+//
+// namingParent answers for <Tab>, the element this branch exists for and
+// the one ParsedBy cannot carry: defTab declares nothing (Known: false)
+// and buildTabs reads "Header" off its children, so a ParsedBy on it
+// would make catalogen's checkPseudoPool report <Tabs> reading an
+// attribute no <Tabs>-parsed element declares. Opaque is <Tab>'s
+// annotation precisely because its surface is not enumerable. Raised in
+// review of #486 round 2.
+func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
+	// THE DOCUMENT'S OWN PARENT FIRST, and it is not one source among
+	// several — it is the only one that answers the question asked.
+	//
+	// Both callers run after acceptedByParent (attrcheck.go:64) has
+	// established that e.parent is a ModeRestricted container naming
+	// e.Name. That IS the reader. namingParent discards it and searches
+	// the catalog for the FIRST element naming this one, and
+	// definedElements sorts by name — so "first" means alphabetically
+	// first, not the container this element is inside. One more builtin
+	// restricted to <MenuItem> sorting before <Menu> (a <ContextMenu>,
+	// say) and the refusal would say "<ContextMenu> reads <MenuItem> as
+	// data" while defMenuItem.Build goes on saying "only valid directly
+	// inside <Menu>" — the two-containers-in-two-errors divergence round
+	// 2's finding 6 was filed to remove, reintroduced by the search.
+	// Reading e.parent also drops a whole catalog assembly per refusal.
+	// Raised in review of #486.
+	if p, ok := ctx.spec(e.parent); ok && namesChild(p, spec.Name) {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", p.Name, spec.Name)
+	}
+	// EVERYTHING BELOW IS UNREACHABLE FROM A PARSED DOCUMENT, and that
+	// is a property to state rather than a gap to leave implied.
+	//
+	// Both callers run inside `if ok && spec.Pseudo { if
+	// !acceptedByParent(e, ctx) { return nil } … }`, and acceptedByParent
+	// IS the branch above: ctx.spec(e.parent) resolving and
+	// namesChild(parent, …). markup.go stamps parent on every element the
+	// parser produces, and the parser is the only thing in this package
+	// that constructs one. So for any document a user can write, the
+	// branch above answers and none of these run.
+	//
+	// They are kept, not deleted, because readsAsData takes an Element by
+	// value and nothing stops a future caller — or a test — handing it
+	// one built by hand, which is the one shape with no parent. What the
+	// fallbacks must NOT be is mistaken for the live path: this was
+	// round 3's "ParsedBy has no live reader" finding, reopened when
+	// round 4 put the parent branch in front, and the arm that keeps the
+	// ParsedBy clause green calls this function directly with a
+	// parentless Element. TestTheParserStampsAParentOnEveryElement pins
+	// the reachability claim itself, so "dead on the live path" is
+	// measured rather than asserted here.
+	//
+	// A Name-LESS host registration used to reach them for real, because
+	// the branch above tests namesChild(p, spec.Name) and spec.Name was
+	// empty; ctx.spec now defaults it to the registry key, which closed
+	// that route. Raised in review of #486.
+	if p := namingParent(spec.Name, ctx); p != "" {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
+	}
+	if spec.ParsedBy != "" {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", spec.ParsedBy, spec.Name)
+	}
+	return fmt.Sprintf("<%s>'s parent reads it as data, ", spec.Name)
+}
+
+// namingParent is the catalog element that lists name among the children
+// it accepts, or "" when none does.
+//
+// It answers the question ParsedBy answers, from the other side: a
+// pseudo-element is reachable only where some ModeRestricted container
+// names it, so that container IS the reader. Over the CATALOG rather
+// than over ctx.spec, because the question is about every element in
+// scope and not about one whose name is already in hand.
+//
+// WITHOUT THE INCLUDES, which is the one source that cannot answer.
+// includeElements globs, reads and parses every *.gooey under
+// ctx.Includes and never sets Children.Mode, so an include spec can
+// never satisfy namesChild — this was spending file I/O on an error path
+// to build a string, over entries that structurally cannot match. Raised
+// in review of #486.
+func namingParent(name string, ctx *Context) string {
+	for _, p := range ctx.catalog(false) {
+		if namesChild(p, name) {
+			return p.Name
+		}
+	}
+	return ""
+}
+
+// pseudoRemedy is the "put it somewhere else" tail, and it is offered
+// only when there IS a somewhere else.
+//
+// <Tab> holds arbitrary content, so naming it is a real instruction.
+// <MenuItem> is ModeLeaf and holds none; prescribing a move to nowhere
+// is the same shape as finding 1 of #486's round 1, where a remedy was
+// printed for a document whose actual defect was elsewhere.
+//
+// AND "HOLDS CONTENT" WAS THE WRONG QUESTION FOR <Menu>. Its content is
+// ModeRestricted to <MenuItem>, which is itself a pseudo-element that
+// refuses the identical attribute — so an author who followed the
+// remedy landed on a second load error. Measured:
+//
+//	<MenuBar><Menu Name="Zonk">…      → …; put it on the content inside
+//	<MenuBar><Menu><MenuItem Name=…>  → …no component for Name to apply to
+//
+// The predicate is therefore "would the content inside ACCEPT this",
+// not "is there content inside". Derived over Children.Only rather than
+// spelled per element, so a fourth pseudo-element is covered by the
+// rule instead of by somebody remembering it. Raised in review of #486
+// round 2.
+//
+// THE DEFAULT ARM IS <Tab>'S LIVE PATH, and it was the one arm with no
+// sentence on it. ModeUnknown accompanies an opaque element, and <Tab>
+// is the only one in the catalog: its content is arbitrary markup that
+// <Tabs> builds as a page, so "put it on the content inside" is a real
+// destination and the remedy is right. It reads as a fallthrough and is
+// a decision — an opaque element's content is unknown, not absent, and
+// withholding advice on "unknown" would leave the one pseudo-element
+// with a genuine destination the only one not told about it. ModeOne,
+// ModeMany and ModeAttachments land here too and want the same answer
+// for the same reason; no pseudo-element carries one today.
+//
+// These three declarations each had their own paragraph and no blank
+// comment line between them, so godoc rendered one block on
+// contentRemedy and left this function and reservedOnContent
+// undocumented — the same thing that happened to splitPasteMarker's
+// neighbours in #445. Raised in review of #486.
+func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
+	if why, ok := reservedOnContent[spec.Name][name]; ok {
+		return why
+	}
+	// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL — or for the two
+	// property elements every element accepts, which is the exemption
+	// this guard was missing.
+	//
+	// Behaviors and Resources are not attributes at all and are not in
+	// universalAttrs, so the guard below refused them along with the
+	// attached properties it was written for, and <Tab.Behaviors> lost
+	// a remedy that was CORRECT: <Text.Behaviors> inside the <Tab>
+	// loads. It also left propRemedy's `case name == "Behaviors" ||
+	// name == "Resources": return r` able to return only "", against a
+	// comment saying the spelling carries over unchanged, and made
+	// TestEveryPseudoElementRefusesAPropertyElement's propOnContent
+	// branch unreachable — all three silently, with the suite green.
+	// Raised in review of #486.
+	//
+	// It did not need one until the attribute gate widened: cannotApplyTo
+	// admitted only universalAttrs, and every universal a component
+	// carries is one any other component carries too, so "put it on the
+	// content inside" landed somewhere that accepts it. An ATTACHED
+	// property is the opposite shape — it is an instruction to a
+	// particular PARENT, and the content of a pseudo-element has the
+	// pseudo-element for a parent, which contributes nothing. Measured,
+	// following the advice:
+	//
+	//	<Tab Grid.Row="1"><Text>x</Text></Tab>
+	//	  -> ... builds no component for Grid.Row to apply to; put it on
+	//	     the content inside instead
+	//	<Tab><Text Grid.Row="1">x</Text></Tab>
+	//	  -> Grid.Row is contributed by a <Grid> parent, but this
+	//	     element's parent is <Tab>; it would be ignored here
+	//
+	// A remedy that walks the author into a second load error is worse
+	// than none, and there is no destination to name instead — so the
+	// refusal says what is wrong and stops. Raised in review of #486.
+	if !isUniversalAttr(name) && name != "Behaviors" && name != "Resources" {
+		return ""
+	}
+	switch spec.Children.Mode {
+	case ModeLeaf, ModeNone:
+		return ""
+	case ModeRestricted:
+		for _, n := range spec.Children.Only {
+			// An unresolvable name is treated as accepting: the remedy
+			// is advice, and withholding it on a catalog gap is the
+			// worse failure of the two.
+			if s, ok := ctx.spec(n); !ok || !s.Pseudo {
+				return contentRemedy
+			}
+		}
+		return ""
+	}
+	return contentRemedy
+}
+
+// contentRemedy is the prescription itself, named so the guard over it
+// can recognise it rather than re-spelling it. A test grepping the
+// sentence would also match reservedOnContent's answer, which says the
+// content CANNOT take the attribute and shares most of its words.
+const contentRemedy = "; put it on the content inside instead"
+
+// reservedOnContent names the universals a pseudo-element's PARENT owns
+// ON THE CONTENT INSIDE, with the sentence to say instead of the move.
+//
+// The remedy is a BEHAVIOURAL claim and Children.Mode is a STRUCTURAL
+// fact, and for one attribute they disagree. A <Tab>'s content is an
+// ordinary element that takes every universal — except Visibility,
+// which buildTabs refuses on a page root because the <Tabs> binds it to
+// "selected == me". So `<Tab Visibility="Hidden">` was refused with "put
+// it on the content inside instead" and doing that hit a second load
+// error: the author walked from one refusal to another, by advice.
+// Nothing in the catalog says a container reserves an attribute on its
+// children, so this cannot be derived — but it can be GUARDED, and
+// TestTheContentRemedyIsAPlaceThatAccepts runs every universal through
+// both positions and fails on a row that is stale as well as on a
+// reservation with no row. Raised in review of #486.
+var reservedOnContent = map[string]map[string]string{
+	"Tab": {
+		"Visibility": "; the <Tabs> binds every page's Visibility to the selection, " +
+			"so it cannot go on the content inside either — set Tabs' Selected to choose the page",
+	},
+}
+
+// propRemedy is pseudoRemedy's answer respelled for the PROPERTY-ELEMENT
+// case, and the respelling is the whole of it.
+//
+// pseudoRemedy answers for an attribute, where "put it on the content
+// inside" means writing `<Text Name="x">`. A property element is a
+// different syntax with a different rule: checkProps accepts <X.Foo>
+// only where propElements[X] lists Foo, and the two it accepts on
+// EVERYTHING are Behaviors and Resources. So for the other seven
+// universals the move is real and the spelling is not — an author who
+// copied <Tab.Name> onto the content and wrote <Text.Name> hit
+// checkProps' refusal instead, which is the same walked-from-one-error-
+// to-another this file's whole remedy discipline exists to stop.
+// Raised in review of #486.
+//
+// AND THE DESTINATION IS ONLY DERIVABLE FOR A UNIVERSAL.
+// refusePropElement refuses ANY property element on a pseudo-element —
+// deliberately, and wider than refuseComponentAttr — so this is reached for
+// names the catalog answers nothing about, and it prescribed the content
+// move for every one of them. Measured before the guard below:
+//
+//	<Tab.Frobnicate>       → …put it on the content inside instead…
+//	<Text Frobnicate="z">  → no such attribute; this element takes Bold, …
+//
+// <Tab.Header> was sharper still: Header is the one attribute a <Tab>
+// genuinely takes and it is REQUIRED, and the remedy sent it to the
+// content. Both are the walk-from-one-error-to-another this function
+// exists to stop, reintroduced by the scope difference between the two
+// refusals. A universal is accepted by every element with a Layout, so
+// for those the destination is known; for anything else nothing here can
+// say the move lands, and saying nothing is the honest answer. Raised in
+// review of #486.
+func propRemedy(spec ElementSpec, ctx *Context, name string) string {
+	r := pseudoRemedy(spec, ctx, name)
+	switch {
+	case name == "Behaviors" || name == "Resources":
+		// The two property elements every element accepts: the spelling
+		// carries over to the destination unchanged.
+		return r
+	case r == contentRemedy:
+		// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL, where
+		// acceptance at the destination is derivable without a schema.
+		// For anything else it is advice nothing checked — and
+		// <Text Frobnicate="…"> is itself a load error — so the
+		// attribute form, which asserts no destination, stands in.
+		if isUniversalAttr(name) {
+			return r + ", written as an attribute: a property element names a property " +
+				"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
+				"form that moves"
+		}
+		if !sayableHere(name) {
+			return ""
+		}
+		return attributeHere(spec, name)
+	case r != "":
+		return r // a reservation has its own sentence
+	}
+	if !sayableHere(name) {
+		return ""
+	}
+	return attributeHere(spec, name)
+}
+
+// sayableHere reports whether attributeHere's advice survives being
+// followed.
+//
+// attributeHere's doc argues that prescribing the attribute spelling is
+// safe because "if the element does not take the name, the attribute
+// gate answers with its own list, which is a better error". That is true
+// for a name the vocabulary gate sees — <Tab.Frobnicate> reaches
+// suggest() — and FALSE for anything cannotApplyTo covers, because
+// refuseComponentAttr intercepts those before the vocabulary gate runs
+// and answers with no advice at all. Measured:
+//
+//	<Menu.Name>x</Menu.Name>
+//	  -> ... builds no component for Name to apply to; write it as an
+//	     attribute on this element instead, <Menu Name="…">, …
+//	<Menu Name="x">            ← exactly what that advised
+//	  -> ... builds no component for Name to apply to
+//
+// Walking an author from one refusal into another is the class this
+// whole function exists to close, reintroduced through the one gate
+// attributeHere's argument did not account for. Raised in review of
+// #486.
+func sayableHere(name string) bool { return !cannotApplyTo(name) }
+
+// attributeHere is what can be said when no DESTINATION can be named:
+// write it as an attribute on this same element.
+//
+// SILENCE WAS THE ALTERNATIVE, and <Tab.Header> is why that was wrong
+// twice over. Header is the one attribute a <Tab> genuinely takes and it
+// is REQUIRED, and the property-element spelling of it was refused with
+// "<Tabs> reads <Tab> as data, so it builds no component for Header to
+// apply to" and no advice at all — a sentence that reads as "there is
+// nowhere for this to go" about the one name with an obvious home. The
+// same silence covered <Menu.Frobnicate> and <MenuItem.Frobnicate>,
+// where pseudoRemedy names no content because a <Menu> holds only
+// pseudo-elements. Raised in review of #486.
+//
+// IT PROMISES NOTHING ABOUT ACCEPTANCE, which is what makes it sayable
+// where the content move is not. The content remedy asserts a
+// destination takes the attribute, and outside universalAttrs nothing
+// here can derive that. This asserts only that the attribute spelling on
+// THIS element is the only form that could work — and if the element
+// does not take the name, the attribute gate answers with its own list,
+// which is a better error than this one rather than a second blank
+// refusal to walk to.
+func attributeHere(spec ElementSpec, name string) string {
+	return "; write it as an attribute on this element instead, <" +
+		spec.Name + " " + name + "=\"…\">, if <" + spec.Name +
+		"> takes one — a property element names a property of the " +
+		"element carrying it, and this element builds none"
+}
+
+// isUniversalAttr reports whether name is one of the attributes every
+// element with a Layout accepts, which is the only set whose acceptance
+// at a destination this package can derive without a schema.
+func isUniversalAttr(name string) bool {
+	for _, a := range universalAttrs {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// acceptedByParent reports that this element sits in a container that
+// names it, which is the precondition for its ATTRIBUTES being the
+// interesting fault. Where it is false the element's own Build is about
+// to say something more useful — "<Tab> is only valid directly inside
+// <Tabs>" — and checkAttrs, which runs first, must not talk over it.
+//
+// ASKED OF THE PARENT, NOT OF spec.Nested, and that distinction is the
+// whole reason this function is not two lines shorter. Nested says
+// exactly what is wanted here — "builds nothing AND some container
+// names it" — but it is DERIVED BY markNested OVER THE ASSEMBLED
+// CATALOG, and ctx.spec returns a per-def spec that markNested has
+// never touched. So ctx.spec("Tab").Nested is false for the one element
+// the field was added for, while ctx.Catalog()'s entry for the same
+// name is true.
+//
+// The first version of this check read spec.Nested and was therefore
+// dead: it returned false for every element, the refusal fired
+// regardless of placement, and the finding it was written for was
+// unfixed with every test green. Measured, not reasoned about. If a
+// later reader wants the field here, the fix is to make ctx.spec derive
+// it — not to assume it is set.
+func acceptedByParent(e Element, ctx *Context) bool {
+	parent, ok := ctx.spec(e.parent)
+	return ok && namesChild(parent, e.Name)
+}
+
+// namesChild is the relation every pseudo-element rule is phrased in
+// terms of: a ModeRestricted container listing name among the children
+// it accepts. A pseudo-element is reachable only where some container
+// names it, so this predicate is what "legal here" and "who reads this"
+// both reduce to.
+//
+// THREE CALLERS, NOT FIVE, and the difference is worth stating because a
+// review counted five copies of it. acceptedByParent asks it of ONE
+// named parent and namingParent asks it of the whole catalog — the same
+// predicate, two questions, which is why one reads ctx.spec and the
+// other reads Catalog(); that is not an inconsistent source.
+//
+// The other two are different relations wearing similar code.
+// markNested (catalog.go) inverts it — it collects every name any
+// container mentions, in one pass over the specs it is in the middle of
+// assembling, so it cannot ask Catalog() anything without recursing
+// into itself. acceptsAUniversal (pseudouniversal_test.go) asks whether
+// an element's OWN children are all pseudo-elements, which is a
+// question about the far side of the relation and gives a different
+// answer. legalParent, in the same test file, is namingParent restated,
+// and it is no longer anybody's independent answer — the reader
+// assertion reads the document's own tag (enclosingTag) since review of
+// #486 found a re-typed loop agreeing with the loop it copied, this
+// comment included. What legalParent still does is supply a parent for
+// the fixtures that need one to build a document at all. Raised in
+// review of #486.
+func namesChild(spec ElementSpec, name string) bool {
+	if spec.Children.Mode != ModeRestricted {
+		return false
+	}
+	for _, n := range spec.Children.Only {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 func describeParent(parent string) string {
@@ -251,7 +910,25 @@ func (ctx *Context) spec(name string) (ElementSpec, bool) {
 	// unknown attribute on a registered component used to be ignored
 	// forever, and the near-miss suggestion works here for free.
 	if d, ok := ctx.Elements[name]; ok {
-		return d.specAs(OriginRegistered), true
+		sp := d.specAs(OriginRegistered)
+		// THE REGISTRY KEY IS THE ELEMENT'S NAME WHEN THE DEF DOES NOT
+		// CARRY ONE, and checkElementNames explicitly permits that: its
+		// loop is `if d == nil || d.Name == "" || d.Name == name`, so a
+		// def registered as Elements["Leafy"] with no Name is legal and
+		// specAs copies the empty string straight through.
+		//
+		// Every refusal message in this file reads spec.Name, and the
+		// clause beside it reads e.Name, so the pair rendered "<Holder>
+		// reads <> as data" and "< Frob=…">, if <> takes one". The same
+		// empty key silently missed reservedOnContent[spec.Name] and
+		// namesChild(p, spec.Name). Defaulting HERE fixes the lookups
+		// and the messages together, where threading e.Name would have
+		// fixed only the sentences it was threaded into. Raised in
+		// review of #486.
+		if sp.Name == "" {
+			sp.Name = name
+		}
+		return sp, true
 	}
 	if _, custom := ctx.Components[name]; custom {
 		return ElementSpec{}, false

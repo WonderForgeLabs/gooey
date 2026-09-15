@@ -257,6 +257,20 @@ type ElementSpec struct {
 	// Opaque, when set, is the reason the generator could not enumerate
 	// this element — the text of its //gooey:catalog-opaque annotation.
 	Opaque string
+	// ParsedBy names the element whose Build consumes this one, for a
+	// pseudo-element that has no Build of its own worth speaking of —
+	// <Menu> and <MenuItem> are both read by <MenuBar>. Empty for a
+	// pseudo-element that says why through Opaque instead, and empty
+	// for everything that builds a component.
+	//
+	// It is carried onto the spec rather than consumed and dropped at
+	// ElementDef because a diagnostic wants to NAME the reader:
+	// "<MenuBar> reads <Menu> as data" tells an author where the
+	// attribute went, and "its parent reads it as data" does not.
+	// Raised in review of #486 — refuseComponentAttr's reason clause leaned
+	// on this field while the type it reads did not carry it, so the
+	// message it could actually produce was the generic one.
+	ParsedBy string
 	// Open reports that the attribute set is extensible at runtime, so
 	// entries may carry an Origin different from the element's.
 	Open  bool
@@ -571,6 +585,19 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // AttrsFor is the package-level AttrsFor with the parent already
 // resolved — the same join, reached without a registry lookup. See
 // AttachedAttrs above for why a Context consumer needs this form.
+//
+// THE AGREEMENT WITH THE LOADER IS ONE-DIRECTIONAL, and the sentence
+// below about the two gates having to agree states the half that holds.
+// Nothing this offers fails to load: the TakesLayout gate here and
+// Context.vocabulary's are the same predicate on the same spec. The
+// converse is not guarded and cannot be from here — TakesLayout reads
+// HasLayout, which ElementDef.axes derives from the PROTO, so a HOST's
+// def with a real Build and no Proto answers false while build() runs
+// applyLayout on the component that Build returns. With AttrsKnown
+// false, checkAttrs stands down and <Host Margin="2"> loads with the
+// margin honoured, and this offers no row for it. Measured both ways in
+// TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne, which is
+// also what will go red if somebody closes it. Raised in review of #486.
 func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	out := append([]AttrSpec(nil), e.Attrs...)
 	if TakesLayout(e) {
@@ -585,14 +612,31 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// these two must agree or the grid offers a row that fails to
 		// load.
 		//
-		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, which is the half a
-		// reader has to know: checkAttrs returns early on !AttrsKnown
-		// (attrcheck.go), so for an OPAQUE pseudo-element this gate drops
-		// the row and the loader does not refuse it. <Tab> is the one
-		// such element today, so <Tab Name="Zonk"> still loads clean and
-		// is still dropped — the same silent-drop class, one element
-		// over. Pre-existing, not fixed here, tracked in #461; if that
-		// issue is closed this paragraph is wrong and the code is right.
+		// THE AGREEMENT WAS ONCE CONDITIONED ON AttrsKnown, and is not
+		// any more (#461). checkAttrs returned early on !AttrsKnown, so
+		// for an OPAQUE pseudo-element this gate dropped the row while
+		// the loader accepted it: <Tab Name="Zonk"> loaded clean and was
+		// dropped, with no designer surface left to reveal it.
+		// checkAttrs now refuses every attribute only a COMPONENT could
+		// carry BEFORE either of its gates — the universal set and any
+		// attached property, which is what cannotApplyTo admits — because
+		// neither belongs to the element's own surface and so both
+		// survive not knowing it (refuseComponentAttr, attrcheck.go).
+		//
+		// TestNoPseudoElementAcceptsAUniversalAttribute and
+		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement assert the
+		// two halves over the catalog rather than over a list, so a
+		// fourth pseudo-element joins both without an edit.
+		//
+		// THAT IS TRUE OF THE GATES AND WAS NOT TRUE OF THE WIRING, and
+		// the distinction is worth keeping because the sentence above
+		// used to be written without it. Both of those tests call
+		// checkAttrs themselves, so neither can see a BUILDER that never
+		// calls it — which is the defect #461 actually was.
+		// TestEveryPseudoElementIsRefusedThroughAWholeLoad covers that,
+		// and its cases are hand-written markup with a derived
+		// completeness check, because a document cannot be generated
+		// from a spec. Raised in review of #486.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)
@@ -820,7 +864,13 @@ func markNested(specs []ElementSpec) {
 // AND NOTHING ELSE — Builder is an opaque func — so its entry carries
 // AttrsKnown false, which a consumer must distinguish from an element
 // that genuinely takes no attributes.
-func (ctx *Context) Catalog() []ElementSpec {
+func (ctx *Context) Catalog() []ElementSpec { return ctx.catalog(true) }
+
+// catalog is Catalog with the Includes source made optional, for the one
+// caller that asks a question no include can answer — see namingParent.
+// Everything else about the assembly, the collision order included, is
+// identical, so the two cannot disagree about which element wins a name.
+func (ctx *Context) catalog(withIncludes bool) []ElementSpec {
 	builtins := BuiltinElements()
 	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Elements)+len(ctx.Components))
 	seen := make(map[string]bool, len(builtins))
@@ -869,7 +919,9 @@ func (ctx *Context) Catalog() []ElementSpec {
 			Doc:        "Registered by the host app. Its attributes cannot be enumerated: a Builder is a func, not a schema.",
 		})
 	}
-	out = append(out, ctx.includeElements(seen)...)
+	if withIncludes {
+		out = append(out, ctx.includeElements(seen)...)
+	}
 	// After every source has contributed, so a host's restricted
 	// container marks its own pseudo-children too.
 	markNested(out)

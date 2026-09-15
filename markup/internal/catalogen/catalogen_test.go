@@ -163,6 +163,14 @@ func TestTheHelperIdiomIsAChildRead(t *testing.T) {
 // Verified in the real vocabulary before the fix: adding Margin to
 // defMenuItem left the suite green and
 // `<MenuItem Text="Open" Margin="3"/>` built with err == nil.
+//
+// THAT DOCUMENT NO LONGER REPRODUCES IT, and not because this check
+// changed. #461 made a universal on a pseudo-element a load error in
+// markup.checkAttrs, so the same markup is now refused whether or not
+// the declaration exists. The reproduction is the historical evidence
+// for why this check is here; it is not a live one, and a reader who
+// tries it will see a refusal from the other guard. Raised in review of
+// #486.
 func TestAPseudoElementGetsNoUniversalPass(t *testing.T) {
 	// "Width" is in the universal set and the fixture's host reads it
 	// nowhere.
