@@ -715,6 +715,15 @@ func (ed *editor) pasteMarkup(src string) {
 // pasted into a selected <Text> has no single answer for where its
 // elements go, and picking the first would drop the rest silently.
 //
+// THAT INCLUDES A DOCUMENT WITH <x:Property> DECLARATIONS, and the
+// asymmetry with openWorkspaceFile is deliberate rather than missed.
+// Opening one partitions the declarations off onto the envelope (#517),
+// because the file HAS an envelope to keep them on. A paste lands in a
+// document that already has its own, and a declaration silently merged
+// into it would change the target control's public surface without the
+// user asking; dropping it instead would lose it. Refusing the unwrap
+// says so, and leaves the pasted text where the user can see it.
+//
 // It takes and returns a NODE rather than re-serializing the child and
 // re-parsing it. Not because the round trip would corrupt a body — it
 // would not, and believing otherwise was wrong: markup.BodyText's

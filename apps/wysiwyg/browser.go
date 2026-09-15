@@ -50,6 +50,7 @@ import (
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -371,9 +372,35 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// the surface Canvas holds one child and that child is the user's
 	// root. Unwrapping here rather than in nodeOf keeps nodeOf usable for
 	// the seed strings, which have no envelope.
+	var decls []*node
 	if n.Elem == "Gooey" {
+		// DECLARATIONS FIRST, because they are not root elements and
+		// counting them as such refused a well-formed document. markup
+		// hands the whole <Gooey> to splitDeclarations
+		// (markup/property.go), which partitions its children and only
+		// then requires one visual kid; this editor counted n.Kids and
+		// told the author a file markup loads has "2 root elements" —
+		// advice whose only reading is to delete the declaration. #517.
+		var kids []*node
+		for _, k := range n.Kids {
+			if k.Space == markup.XNamespace {
+				decls = append(decls, k)
+				continue
+			}
+			kids = append(kids, k)
+		}
+		n.Kids = kids
 		if len(n.Kids) != 1 {
-			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + strconv.Itoa(len(n.Kids)))
+			// NAMING THE DECLARATIONS SEPARATELY, so the count the
+			// author is given is the one they can act on. "found 2" for
+			// a root and a declaration sent them looking for a second
+			// root that was never there.
+			msg := "✗ " + rel + ": a <Gooey> document needs exactly one root element, found " +
+				strconv.Itoa(len(n.Kids))
+			if len(decls) > 0 {
+				msg += " (its " + strconv.Itoa(len(decls)) + " <x:Property> declaration(s) are not root elements)"
+			}
+			ed.status.Set(msg)
 			return
 		}
 		// THE ENVELOPE'S NAMESPACE DECLARATIONS COME DOWN WITH IT, and
@@ -391,6 +418,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	}
 	ed.root.Kids = []*node{n}
 	ed.envAttrs = env
+	ed.envDecls = decls
 	ed.sel = n
 	ed.openPath.Set(rel)
 	// A NEW DOCUMENT STARTS WITH NO PAST. Without this the previous
@@ -420,7 +448,7 @@ func (ed *editor) saveOpenFile() error {
 	if ed.ws == nil || ed.ws.dir == "" || rel == "" {
 		return nil
 	}
-	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
 	full := filepath.Join(ed.ws.dir, filepath.FromSlash(rel))
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		ed.status.Set("✗ save " + rel + ": " + err.Error())
