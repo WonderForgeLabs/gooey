@@ -244,7 +244,22 @@ func RowText(b *Buffer, y int) string {
 // a region of a terminal, and a terminal has blanks where nothing was
 // drawn. TestSpanTextPadsWhereTheBufferIsNot pins it, so the contract
 // is chosen rather than inherited from Buffer.At.
+//
+// A NIL BUFFER IS PART OF THAT CONTRACT, and it was the one out-of-range
+// shape the paragraph above promised and did not deliver: Buffer.At
+// dereferences b.W, so a nil buffer panicked inside render with At on
+// the stack rather than the caller. Not a regression — RowText's old
+// body read b.W the same way — but this is the commit that writes the
+// contract down and points eleven more directories at the function, so
+// it is where the gap closes. TerminalColumns guards nil as its first
+// condition for the same reason. Raised in review of #520.
 func SpanText(b *Buffer, x, y, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if b == nil {
+		return strings.Repeat(" ", w)
+	}
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
 		sb.WriteString(b.At(x+i, y).Text())

@@ -266,10 +266,26 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 
 	rows := strings.Split(menuRows(f, bar.Bounds()), "\n")
 	var got string
+	var found bool
 	for _, r := range rows {
 		if strings.Contains(r, "Wrap") {
-			got = strings.TrimRight(r, " ")
+			got, found = strings.TrimRight(r, " "), true
 		}
+	}
+	// "NO ROW MATCHED" AND "THE ROW IS WRONG" ARE DIFFERENT FAULTS, and
+	// without this they arrive as one. got stays "" when nothing
+	// matches, the comparison below still fails, and its message reads
+	// `the wide label's row reads ""` — which points at the menu's width
+	// when the real answer is that the dropdown moved outside the fixed
+	// window menuRows reads. That is one step removed from the class
+	// SpanText's own doc calls out: a read that has drifted off the
+	// surface comes back as blanks rather than going short, so going
+	// short is not the signal either. Raised in review of #520.
+	if !found {
+		t.Fatalf("none of the %d rows menuRows read holds %q. The dropdown is "+
+			"outside the reader's window (a fixed 40 columns from bar.Bounds), "+
+			"which is a different fault from the row being mis-sized:\n%s",
+			len(rows), "Wrap", strings.Join(rows, "\n"))
 	}
 	if want := "│[x] Wrap 世界 │"; got != want {
 		t.Errorf("the wide label's row reads %q, want %q. A box narrower than "+
