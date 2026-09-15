@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -145,6 +146,26 @@ func declaresTool(body, name string) bool {
 // merely starts with it. UPPERCASE INCLUDED: it was a-z, 0-9 and
 // underscore, so `screen_sizeV2` would have read as an entry for
 // screen_size. Tool names are lower_snake today, which is what made the
+// inventoryLead is how the tutorial opens its enumeration. Written once
+// because the guard and its own counterfactual both need it.
+const inventoryLead = "The tool inventory:"
+
+// toolTableHeader is the #112 table's header row. A markdown table is a
+// blank-line-delimited block, so paragraphWith slices exactly this one.
+const toolTableHeader = "| MCP tool | args | RPC | notes |"
+
+// THE SAME NAME SHAPE isIdentByte USES, which is the point rather than
+// a coincidence: this PR widened that one to uppercase and digits on the
+// ground that "a rule that is correct only for the names that happen to
+// exist is the kind that stops being correct silently", and left this
+// copy of the same rule at [a-z_]. A tool named screen_size2 would
+// capture screen_size, hit a digit where the closing backtick was
+// demanded, and be dropped from the column — so the guard would report a
+// missing row for a table that has one. It fails red rather than green,
+// which makes it a false alarm rather than a hole, and it is still the
+// class the PR just closed one function over. Raised in review of #504.
+var tableToolRe = regexp.MustCompile("^\\|\\s*`([A-Za-z0-9_]+)`\\s*\\|")
+
 // gap invisible — and a rule that is correct only for the names that
 // happen to exist is the kind that stops being correct silently. Raised
 // in review of #504.

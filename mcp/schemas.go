@@ -1,5 +1,7 @@
 package mcp
 
+import "fmt"
+
 // Output schemas for the tools whose results are data. Publishing one
 // makes a result consumable as structuredContent by non-Go MCP clients
 // (the Python SDK validates structured results against these), so a
@@ -159,13 +161,53 @@ func validateMarkupSchema() map[string]any {
 // reading it computed coordinates its own pointer call would refuse. x/y
 // are what close the gap, so they are described as the conversion rather
 // than as decoration.
+// THE THREE PAIRS SHARE THEIR TAILS RATHER THAN REPEATING THEM. Each of
+// cols/rows, x/y and cellWidth/cellHeight differed in one leading noun
+// phrase and was then byte-identical for the rest — 60 to 370
+// characters of it, with nothing comparing the copies.
+// TestTheScreenSizeSchemaAndItsResultNameTheSameKeys compares KEYS, so
+// sharpening the double-conversion warning on x and leaving y behind
+// would ship a generated client two different rules for one axis pair,
+// and y is the axis the fixtures make non-zero. That is the same move
+// this branch spent five rounds making on its prose inventories
+// (islandGoneFmt and friends); the schema was the surface where the
+// copies were left standing. Raised in review of #504.
+const (
+	extentTail = " in cells. For a scoped session this is the island's %s, not the " +
+		"terminal's. 0 is a real answer, not an error: a scoped session whose island " +
+		"is collapsed or not yet arranged reports 0x0 and shows nothing."
+	originTail = " of the surface's %s edge — add it to a position within the surface " +
+		"to put the coordinate in the space send_mouse reads. 0 when unscoped. It " +
+		"fixes the coordinate space, not the outcome: whether a point is acted on " +
+		"still depends on what is under it. Applies to a position read off " +
+		"`screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
+		"ALREADY absolute and must not be converted twice."
+	cellTail = " of one cell in pixels, for sizing graphics. " + cellProbeRule
+)
+
+// cellProbeRule is the ONE statement of what a zero cell metric means,
+// and it is a const rather than two sentences because the two surfaces
+// that carry it had drifted in DIRECTION. This schema said "0 means the
+// host never probed"; the tool description said "cell metrics are 0 when
+// the host never probed", which reads as never-probed ⇒ 0 and is false —
+// App.caps substitutes term.DefaultCellW/H for a pixel-plane host, so a
+// graphics app with a pinned encoder and no probe reports 10x20. An
+// agent applying the wrong direction sizes a picture against an invented
+// measurement, which is the move screen_size exists to replace. Two
+// halves of one contract disagreeing is not a thing to assert about; it
+// is a thing to make unwritable. Raised in review of #504.
+const cellProbeRule = "0 MEANS the host never probed the terminal — branch on that " +
+	"rather than dividing by it. The converse does not hold: a graphics host with " +
+	"a pinned encoder substitutes a default, so non-zero means usable, not " +
+	"necessarily measured."
+
 func screenSizeSchema() map[string]any {
 	return object(map[string]any{
-		"cols":       prop_("integer", "Width of the visible surface in cells. For a scoped session this is the island's width, not the terminal's. 0 is a real answer, not an error: a scoped session whose island is collapsed or not yet arranged reports 0x0 and shows nothing."),
-		"rows":       prop_("integer", "Height of the visible surface in cells. For a scoped session this is the island's height, not the terminal's. 0 is a real answer, not an error: a scoped session whose island is collapsed or not yet arranged reports 0x0 and shows nothing."),
-		"x":          prop_("integer", "Absolute screen column of the surface's left edge — add it to a position within the surface to put the coordinate in the space send_mouse reads. 0 when unscoped. It fixes the coordinate space, not the outcome: whether a point is acted on still depends on what is under it. Applies to a position read off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are ALREADY absolute and must not be converted twice."),
-		"y":          prop_("integer", "Absolute screen row of the surface's top edge — add it to a position within the surface to put the coordinate in the space send_mouse reads. 0 when unscoped. It fixes the coordinate space, not the outcome: whether a point is acted on still depends on what is under it. Applies to a position read off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are ALREADY absolute and must not be converted twice."),
-		"cellWidth":  prop_("integer", "Width of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it. Non-zero means usable, not necessarily measured: it may be the host's substituted default."),
-		"cellHeight": prop_("integer", "Height of one cell in pixels, for sizing graphics. 0 means the host never probed the terminal — branch on that rather than dividing by it. Non-zero means usable, not necessarily measured: it may be the host's substituted default."),
+		"cols":       prop_("integer", "Width of the visible surface"+fmt.Sprintf(extentTail, "width")),
+		"rows":       prop_("integer", "Height of the visible surface"+fmt.Sprintf(extentTail, "height")),
+		"x":          prop_("integer", "Absolute screen column"+fmt.Sprintf(originTail, "left")),
+		"y":          prop_("integer", "Absolute screen row"+fmt.Sprintf(originTail, "top")),
+		"cellWidth":  prop_("integer", "Width"+cellTail),
+		"cellHeight": prop_("integer", "Height"+cellTail),
 	}, "cols", "rows", "x", "y", "cellWidth", "cellHeight")
 }
