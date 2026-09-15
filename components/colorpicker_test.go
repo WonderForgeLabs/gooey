@@ -18,12 +18,12 @@ func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Prop
 	return p, v, f
 }
 
+// rowText is w columns of row y as a terminal would show them. Through
+// render.SpanText for the reason #516 gives: a rune-per-cell read writes
+// the continuation marker into the row and makes a wide glyph
+// unassertable.
 func rowText(f *gooey.Frame, y, w int) string {
-	var sb strings.Builder
-	for x := 0; x < w; x++ {
-		sb.WriteRune(f.Cells.At(x, y).Rune)
-	}
-	return sb.String()
+	return render.SpanText(f.Cells, y, 0, w)
 }
 
 func TestColorPickerArrowsSelectChannelAndAdjustValue(t *testing.T) {

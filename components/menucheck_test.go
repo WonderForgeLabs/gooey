@@ -6,6 +6,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // Menu check items. The point of binding a handle rather than carrying a
@@ -25,12 +26,14 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 	}}}
 }
 
+// menuRows is the open dropdown as a terminal would show it. Through
+// render.SpanText — a rune-per-cell read puts the continuation marker in
+// the row, which is what kept a wide-glyph label out of this file's
+// fixtures. See #516.
 func menuRows(f *gooey.Frame, b gooey.Rect) string {
 	var sb strings.Builder
 	for y := b.Y; y < b.Y+14; y++ {
-		for x := 0; x < 40; x++ {
-			sb.WriteRune(f.Cells.At(x, y).Rune)
-		}
+		sb.WriteString(render.SpanText(f.Cells, y, 0, 40))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -169,9 +172,7 @@ func TestACheckedMenuIsWideEnoughForItsLabels(t *testing.T) {
 
 	var sb strings.Builder
 	for y := 0; y < 8; y++ {
-		for x := 0; x < 60; x++ {
-			sb.WriteRune(f.Cells.At(x, y).Rune)
-		}
+		sb.WriteString(render.SpanText(f.Cells, y, 0, 60))
 		sb.WriteByte('\n')
 	}
 	if got := sb.String(); !strings.Contains(got, "[x] Wrap long lines") {
@@ -224,4 +225,56 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	}
 	t.Fatalf("no intact \"[x] Wrap\" row; the underline overwrote the check box:\n%s",
 		strings.Join(rows, "\n"))
+}
+
+// TestACheckItemDrawsAWideLabelInItsOwnColumns is the fixture menuRows
+// could not hold before it read through render.SpanText, and it is the
+// half of #516 that matters: converting a reader proves nothing on its
+// own — the fixture it UNBLOCKS is what pins a claim.
+//
+// Measured, both readers, on the same frame:
+//
+//	SpanText  "│[x] Wrap 世界 │"
+//	Cell.Rune "│[x] Wrap 世�界� │"
+//
+// So an assertion written against the second failed for a reason that
+// was not the bug, and nobody wrote one — which is how every fixture in
+// this file came to be ASCII, and an ASCII fixture agrees with itself
+// under the rune rule and the column rule alike.
+//
+// THE BORDER IS THE ASSERTION, not the label. That the glyphs read back
+// is the reader working; that the right edge lands one column after them
+// is the DROPDOWN having sized itself in columns rather than runes. A
+// menu measuring "Wrap 世界" with len([]rune(...)) asks for a box two
+// columns narrower than its own text and clips the label, which is the
+// #357 failure this file's check column is otherwise full of ASCII
+// proof against.
+func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
+	bar := &MenuBar{Menus: []Menu{{
+		Title: "_View",
+		Items: []MenuItem{
+			{Text: "_Wrap 世界", Checked: prop.NewSource(true), Action: gooey.Command(func() {})},
+			{Text: "_Plain", Action: gooey.Command(func() {})},
+		},
+	}}}
+	c := gooey.NewComposer(bar, 40, 16)
+	t.Cleanup(c.Close)
+	c.Frame()
+	bar.Open(0, nil)
+	c.Frame()
+	f, _ := c.Frame()
+
+	rows := strings.Split(menuRows(f, bar.Bounds()), "\n")
+	var got string
+	for _, r := range rows {
+		if strings.Contains(r, "Wrap") {
+			got = strings.TrimRight(r, " ")
+		}
+	}
+	if want := "│[x] Wrap 世界 │"; got != want {
+		t.Errorf("the wide label's row reads %q, want %q. A box narrower than "+
+			"its own text is the menu measuring runes where it owes columns; a "+
+			"row holding U+FFFD is this test's reader doing it instead.\n%s",
+			got, want, strings.Join(rows, "\n"))
+	}
 }

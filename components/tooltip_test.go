@@ -7,6 +7,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // A page with an adornment layer: a tooltipped Text host over a filler
@@ -397,12 +398,13 @@ func TestTooltipWithoutALayerShowsNothing(t *testing.T) {
 	}
 }
 
+// screen is the composition as a terminal would show it. Through
+// render.SpanText, which omits the continuation markers a rune-per-cell
+// read would write into any row holding a wide glyph. See #516.
 func screen(c *gooey.Composer, w, h int) string {
 	var sb strings.Builder
 	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			sb.WriteRune(c.Cells().At(x, y).Rune)
-		}
+		sb.WriteString(render.SpanText(c.Cells(), y, 0, w))
 		sb.WriteByte('\n')
 	}
 	return sb.String()

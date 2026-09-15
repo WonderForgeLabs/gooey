@@ -204,3 +204,70 @@ func TestClipColsAlwaysFitsItsBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestSpanTextReadsAWideGlyphInTheMiddleOfASpan is the readback the
+// twelve packages of #516 each hand-rolled and each got wrong the same
+// way: writing Cell.Rune builds "世�界�" for a row a terminal
+// draws as "世界", so no fixture in those packages could hold a wide
+// glyph and be asserted on.
+//
+// THE FIXTURE IS THE POINT, not the helper. Converting a reader and
+// asserting on ASCII changes no claim — an ASCII row reads the same
+// under either rule. The row below is two glyphs of four COLUMNS and two
+// runes, which is the shape CLAUDE.md prescribes for pinning one of
+// these.
+func TestSpanTextReadsAWideGlyphInTheMiddleOfASpan(t *testing.T) {
+	b := NewBuffer(10, 1)
+	b.SetString(0, 0, "ab世界cd", Style{})
+
+	// THE OLD READER, spelled out here so the difference is measured
+	// rather than asserted about. This is the body every one of those
+	// helpers had.
+	var old []rune
+	for x := 0; x < 8; x++ {
+		old = append(old, b.At(x, 0).Rune)
+	}
+	if string(old) == "ab世界cd" {
+		t.Fatal("a rune-per-cell read already returns the row, so this test " +
+			"measures nothing — either SetString stopped laying continuation " +
+			"markers or Continuation stopped being a rune")
+	}
+
+	if got, want := SpanText(b, 0, 0, 8), "ab世界cd"; got != want {
+		t.Errorf("SpanText over the whole span = %q, want %q (the rune-per-cell "+
+			"read gives %q)", got, want, string(old))
+	}
+	if got, want := SpanText(b, 0, 2, 4), "世界"; got != want {
+		t.Errorf("SpanText over the two glyphs = %q, want %q", got, want)
+	}
+	if got, want := SpanText(b, 0, 0, 2), "ab"; got != want {
+		t.Errorf("SpanText over the ascii head = %q, want %q", got, want)
+	}
+}
+
+// TestSpanTextCutThroughAGlyphReadsShortOrLong pins the two edges
+// SpanText's doc names, because a caller that trusts w to be the width
+// of the result is wrong at both of them and the failure is a fixture
+// that never matches.
+func TestSpanTextCutThroughAGlyphReadsShortOrLong(t *testing.T) {
+	b := NewBuffer(10, 1)
+	b.SetString(0, 0, "a世b", Style{})
+
+	// Starting ON the continuation: the glyph's own cell is outside the
+	// span, and a continuation carries no text.
+	if got, want := SpanText(b, 0, 2, 2), "b"; got != want {
+		t.Errorf("a span starting on a continuation cell = %q, want %q — the "+
+			"glyph before it is outside the span and half a glyph is not "+
+			"drawable", got, want)
+	}
+	// Ending on the glyph's FIRST cell: that cell holds the whole glyph.
+	got := SpanText(b, 0, 0, 2)
+	if got != "a世" {
+		t.Errorf("a span ending on a glyph's first cell = %q, want %q", got, "a世")
+	}
+	if w := StringWidth(got); w != 3 {
+		t.Errorf("that span asked for 2 columns and reads %d wide (%q); a caller "+
+			"measuring the result must use StringWidth rather than assume w",
+			w, got)
+	}
+}

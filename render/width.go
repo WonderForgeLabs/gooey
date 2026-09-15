@@ -189,9 +189,40 @@ func ClipCols(s string, w int) string {
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
 func RowText(b *Buffer, y int) string {
+	return SpanText(b, y, 0, b.W)
+}
+
+// SpanText is RowText over w columns starting at x — what that part of
+// row y would read as on a terminal.
+//
+// THE SPAN FORM IS THE ONE THE TESTS ACTUALLY WANT, and its absence is
+// why RowText did not stop the copies it was written to stop. A test
+// asserting on a dock header, a menu row's check box or a status gutter
+// is asking about a REGION, so each package grew its own reader — and
+// each wrote Continuation as a literal rune, which is the defect
+// RowText exists to remove, re-introduced one directory over.
+// [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the
+// sweep; this is the function that makes each site a call rather than a
+// helper.
+//
+// TWO EDGES, BOTH FROM THE SPAN CUTTING A WIDE GLYPH, and both are the
+// honest answer rather than a rounding:
+//
+//   - starting ON a continuation cell reads one column SHORT. The
+//     glyph's own cell is outside the span, and its continuation carries
+//     no text — half a glyph is not drawable, which is the same reason
+//     ClipCols stops before one.
+//   - ending on a glyph's FIRST cell reads one column LONG: that cell
+//     holds the whole glyph, so the returned string is two columns wide
+//     where the span asked for one.
+//
+// A caller comparing against a fixture of known width should keep its
+// span off a glyph's middle; a caller measuring should use StringWidth
+// on the result rather than assuming w.
+func SpanText(b *Buffer, y, x, w int) string {
 	var sb strings.Builder
-	for x := 0; x < b.W; x++ {
-		sb.WriteString(b.At(x, y).Text())
+	for i := 0; i < w; i++ {
+		sb.WriteString(b.At(x+i, y).Text())
 	}
 	return sb.String()
 }
