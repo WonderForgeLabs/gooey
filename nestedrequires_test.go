@@ -259,13 +259,28 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			"it can claim to cover them:\n\t%s",
 			len(tagged), strings.Join(tagged, "\n\t"))
 	}
+	newestRev, _ := revisionOf(newest)
 	for _, g := range behind {
-		t.Errorf("%d requires name %s while the newest in the tree is %s — one "+
-			"repository, one push, so two revisions is skew rather than a choice. "+
-			"Behind:\n\t%s\nMove them up to %s. A module requiring an OLDER core "+
-			"than its siblings builds in this workspace and fails for anyone who "+
+		// THE REVISION IS THE REMEDY, NOT A VERSION STRING. skewFrom keys
+		// on the commit and keeps ONE representative spelling per
+		// revision, and in a partly-tagged tree that spelling belongs to
+		// whichever path won the tie-break: v0.1.1-0.<stamp>-<rev> sorts
+		// above v0.0.0-<stamp>-<rev>, so the tagged path's string can be
+		// printed at modules requiring an untagged one — a version that
+		// path has never had. The commit is the fact every spelling of
+		// it shares, and each require now carries its own string in the
+		// list above so the reader can see which is which. Raised in
+		// review of #497.
+		t.Errorf("%d requires name commit %s while the newest in the tree is %s "+
+			"(%s) — one repository, one push, so two revisions is skew rather "+
+			"than a choice. Behind:\n\t%s\nMove them up to commit %s, in each "+
+			"module's own spelling of it — a pseudo-version off a tag reads "+
+			"v0.1.1-0.<stamp>-%s and one off an untagged path reads "+
+			"v0.0.0-<stamp>-%s. A module requiring an OLDER core than its "+
+			"siblings builds in this workspace and fails for anyone who "+
 			"`go get`s it.",
-			len(g.at), g.version, newest, strings.Join(g.at, "\n\t"), newest)
+			len(g.at), g.rev, newestRev, newest, strings.Join(g.at, "\n\t"),
+			newestRev, newestRev, newestRev)
 	}
 }
 
@@ -290,6 +305,10 @@ type ownRequire struct{ dir, path, version string }
 
 // skewGroup is the requires naming one revision that is not the newest.
 type skewGroup struct {
+	// rev is the 12-character COMMIT the group's requires name, and it
+	// is what the remedy prints. version is one spelling of it, kept for
+	// ordering and for the "names %s" half of the message.
+	rev     string
 	version string
 	at      []string
 }
@@ -325,7 +344,7 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []st
 			tagged = append(tagged, r.dir+" → "+r.path+" "+r.version)
 			continue
 		}
-		byRev[rev] = append(byRev[rev], r.dir+" → "+r.path)
+		byRev[rev] = append(byRev[rev], r.dir+" → "+r.path+" "+r.version)
 		// The representative string for a revision. Ties are broken the
 		// same way the reference is, so the report is stable whichever
 		// module the walk met first.
@@ -357,7 +376,7 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []st
 	}
 	sort.Strings(revs) // a report that reorders itself run to run is hard to read
 	for _, rev := range revs {
-		behind = append(behind, skewGroup{version: version[rev], at: byRev[rev]})
+		behind = append(behind, skewGroup{rev: rev, version: version[rev], at: byRev[rev]})
 	}
 	return newest, behind, tagged
 }
@@ -547,6 +566,27 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			"spells its stamp as 0.<stamp>, and a reader that cannot see it "+
 			"compares strings, where the tag's major-minor wins regardless of "+
 			"date", newest, behind, newer)
+	}
+
+	// ONE GROUP, TWO SPELLINGS: the group carries the COMMIT and each
+	// require's own string. The representative `version` is whichever
+	// spelling sorted highest — taggedOld here, a string the untagged
+	// module has never had — so a remedy built from it tells `paint` to
+	// move to a version that does not exist for it. rev is the fact both
+	// spellings share, and `at` is where the reader sees which module
+	// holds which. Raised in review of #497.
+	if _, behind, _ := skewFrom([]ownRequire{
+		{"mcp", "github.com/WonderForgeLabs/gooey", newer},
+		{"paint", "github.com/WonderForgeLabs/gooey", old},
+		{"grpc", "github.com/WonderForgeLabs/gooey/paint", taggedOld},
+	}); len(behind) != 1 || behind[0].rev != "aaaaaaaaaaaa" {
+		t.Errorf("two spellings of the older commit report %v; want ONE group "+
+			"keyed on aaaaaaaaaaaa. A remedy naming a version string names one "+
+			"path's spelling for a group that holds several", behind)
+	} else if at := strings.Join(behind[0].at, " | "); !strings.Contains(at, old) ||
+		!strings.Contains(at, taggedOld) {
+		t.Errorf("the group lists %q; want each require to carry its own "+
+			"version string, so the reader can tell %s from %s", at, old, taggedOld)
 	}
 
 	// A PLAIN TAG IS REPORTED, NOT GROUPED. It names a commit only to
