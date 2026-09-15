@@ -23,7 +23,7 @@ func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Prop
 // the continuation marker into the row and makes a wide glyph
 // unassertable.
 func rowText(f *gooey.Frame, y, w int) string {
-	return render.SpanText(f.Cells, y, 0, w)
+	return render.SpanText(f.Cells, 0, y, w)
 }
 
 func TestColorPickerArrowsSelectChannelAndAdjustValue(t *testing.T) {

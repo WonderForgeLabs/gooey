@@ -38,12 +38,15 @@ func outsideWrites(t *testing.T, b *render.Buffer, r gooey.Rect) {
 	}
 }
 
+// rowString reads the half-open column range [x0, x1) of row y.
+//
+// It appended b.At(x, y).Rune, which is the rune-per-cell reader
+// render.SpanText exists to retire — and it survived #516's sweep
+// because that issue derives its site list from
+// `grep -rln 'WriteRune(.*\.Rune)'` and this spells the same defect
+// with append. The grep under-counts; the defect has two spellings.
 func rowString(b *render.Buffer, y, x0, x1 int) string {
-	out := []rune{}
-	for x := x0; x < x1; x++ {
-		out = append(out, b.At(x, y).Rune)
-	}
-	return string(out)
+	return render.SpanText(b, x0, y, x1-x0)
 }
 
 func TestDrawBoxRunesShape(t *testing.T) {

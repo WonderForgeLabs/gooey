@@ -404,7 +404,7 @@ func TestTooltipWithoutALayerShowsNothing(t *testing.T) {
 func screen(c *gooey.Composer, w, h int) string {
 	var sb strings.Builder
 	for y := 0; y < h; y++ {
-		sb.WriteString(render.SpanText(c.Cells(), y, 0, w))
+		sb.WriteString(render.SpanText(c.Cells(), 0, y, w))
 		sb.WriteByte('\n')
 	}
 	return sb.String()

@@ -237,7 +237,7 @@ func TestSpanTextReadsAWideGlyphInTheMiddleOfASpan(t *testing.T) {
 		t.Errorf("SpanText over the whole span = %q, want %q (the rune-per-cell "+
 			"read gives %q)", got, want, string(old))
 	}
-	if got, want := SpanText(b, 0, 2, 4), "世界"; got != want {
+	if got, want := SpanText(b, 2, 0, 4), "世界"; got != want {
 		t.Errorf("SpanText over the two glyphs = %q, want %q", got, want)
 	}
 	if got, want := SpanText(b, 0, 0, 2), "ab"; got != want {
@@ -255,7 +255,7 @@ func TestSpanTextCutThroughAGlyphReadsShortOrLong(t *testing.T) {
 
 	// Starting ON the continuation: the glyph's own cell is outside the
 	// span, and a continuation carries no text.
-	if got, want := SpanText(b, 0, 2, 2), "b"; got != want {
+	if got, want := SpanText(b, 2, 0, 2), "b"; got != want {
 		t.Errorf("a span starting on a continuation cell = %q, want %q — the "+
 			"glyph before it is outside the span and half a glyph is not "+
 			"drawable", got, want)
@@ -269,5 +269,63 @@ func TestSpanTextCutThroughAGlyphReadsShortOrLong(t *testing.T) {
 		t.Errorf("that span asked for 2 columns and reads %d wide (%q); a caller "+
 			"measuring the result must use StringWidth rather than assume w",
 			w, got)
+	}
+}
+
+// TestSpanTextTakesXBeforeY is the order pin, and it exists because the
+// signature is four ints: a transposed call compiles, and by the padding
+// rule below it returns spaces rather than panicking, so the only thing
+// that fails is a fixture somewhere else with a message blaming the
+// component it was reading.
+//
+// The fixture makes the two answers DIFFERENT strings rather than
+// asserting one: row 0 and row 1 hold different text, so reading
+// (x=1, y=0) and (x=0, y=1) cannot agree. Raised in review of #520.
+func TestSpanTextTakesXBeforeY(t *testing.T) {
+	b := NewBuffer(4, 2)
+	b.SetString(0, 0, "abcd", Style{})
+	b.SetString(0, 1, "efgh", Style{})
+
+	if got, want := SpanText(b, 1, 0, 2), "bc"; got != want {
+		t.Errorf("SpanText(b, 1, 0, 2) = %q, want %q. The arguments are (x, y, w), "+
+			"matching Buffer.At(x, y) and Buffer.SetString(x, y, …); reading %q "+
+			"means they were taken as (y, x, w).", got, want, "ef")
+	}
+	if got := RowText(b, 1); got != "efgh" {
+		t.Errorf("RowText(b, 1) = %q, want %q — RowText is the whole span of its "+
+			"row and must pass its y through in the same position", got, "efgh")
+	}
+}
+
+// TestSpanTextPadsWhereTheBufferIsNot pins the third edge, which the doc
+// used to leave to Buffer.At.
+//
+// It is not a curiosity: every reader #516 converts reads a FIXED extent
+// — 40 columns of a dropdown, the caller's cols × rows — so a surface
+// that moves, or a composer resized in a later edit, silently turns the
+// tail of one of those reads into blanks. An assertion shaped
+// `!strings.Contains(got, …)` passes on blank input, which is the class
+// CLAUDE.md calls a check that can quietly report the wrong answer. The
+// contract is padding; this is what says so.
+func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
+	if got, want := SpanText(b, 2, 0, 8), "        "; got != want {
+		t.Errorf("a span running %d columns past the buffer = %q, want %q", 6, got, want)
+	}
+	if got, want := SpanText(b, -2, 0, 4), "  ab"; got != want {
+		t.Errorf("a span starting left of column 0 = %q, want %q", got, want)
+	}
+	if got, want := SpanText(b, 0, 9, 4), "    "; got != want {
+		t.Errorf("a span on row 9 of a one-row buffer = %q, want %q", got, want)
+	}
+	// The sibling answering the same question the other way, asserted so
+	// the asymmetry is deliberate rather than noticed later: a per-cell
+	// map has no blank cell to report, so it reports nothing.
+	if got := TerminalColumns(b, 9); len(got) != 0 {
+		t.Errorf("TerminalColumns on row 9 of a one-row buffer = %v, want empty — "+
+			"the two functions answer an out-of-range row differently and that is "+
+			"the point", got)
 	}
 }

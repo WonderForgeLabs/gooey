@@ -33,7 +33,7 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 func menuRows(f *gooey.Frame, b gooey.Rect) string {
 	var sb strings.Builder
 	for y := b.Y; y < b.Y+14; y++ {
-		sb.WriteString(render.SpanText(f.Cells, y, 0, 40))
+		sb.WriteString(render.SpanText(f.Cells, 0, y, 40))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -172,7 +172,7 @@ func TestACheckedMenuIsWideEnoughForItsLabels(t *testing.T) {
 
 	var sb strings.Builder
 	for y := 0; y < 8; y++ {
-		sb.WriteString(render.SpanText(f.Cells, y, 0, 60))
+		sb.WriteString(render.SpanText(f.Cells, 0, y, 60))
 		sb.WriteByte('\n')
 	}
 	if got := sb.String(); !strings.Contains(got, "[x] Wrap long lines") {
