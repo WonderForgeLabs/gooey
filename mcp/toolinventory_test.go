@@ -142,10 +142,6 @@ func declaresTool(body, name string) bool {
 	return false
 }
 
-// isIdentByte is what separates `screen_size` from a longer name that
-// merely starts with it. UPPERCASE INCLUDED: it was a-z, 0-9 and
-// underscore, so `screen_sizeV2` would have read as an entry for
-// screen_size. Tool names are lower_snake today, which is what made the
 // inventoryLead is how the tutorial opens its enumeration. Written once
 // because the guard and its own counterfactual both need it.
 const inventoryLead = "The tool inventory:"
@@ -154,6 +150,8 @@ const inventoryLead = "The tool inventory:"
 // blank-line-delimited block, so paragraphWith slices exactly this one.
 const toolTableHeader = "| MCP tool | args | RPC | notes |"
 
+// tableToolRe reads the tool name out of a table row's first column.
+//
 // THE SAME NAME SHAPE isIdentByte USES, which is the point rather than
 // a coincidence: this PR widened that one to uppercase and digits on the
 // ground that "a rule that is correct only for the names that happen to
@@ -166,9 +164,25 @@ const toolTableHeader = "| MCP tool | args | RPC | notes |"
 // class the PR just closed one function over. Raised in review of #504.
 var tableToolRe = regexp.MustCompile("^\\|\\s*`([A-Za-z0-9_]+)`\\s*\\|")
 
+// isIdentByte is what separates `screen_size` from a longer name that
+// merely starts with it. UPPERCASE INCLUDED: it was a-z, 0-9 and
+// underscore, so `screen_sizeV2` would have read as an entry for
+// screen_size. Tool names are lower_snake today, which is what made the
 // gap invisible — and a rule that is correct only for the names that
 // happen to exist is the kind that stops being correct silently. Raised
 // in review of #504.
+//
+// ONE BLOCK, and the three declarations above are outside it. Moving
+// them here for discoverability spliced them into the MIDDLE of this
+// paragraph, so its first half documented inventoryLead, its sentence
+// ran into inventoryLead's own ("…which is what made the inventoryLead
+// is how the tutorial opens its enumeration"), and this function was
+// left with a fragment opening "gap invisible —". Godoc attaches a
+// comment group to the declaration that immediately follows it, which
+// is the same defect islandGoneFmt's own comment (control/snapshot.go)
+// records fixing on this very branch — cited by NAME rather than by
+// line, because a line number in prose is the other thing that rots
+// silently. Raised in review of #504.
 func isIdentByte(b byte) bool {
 	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
 		(b >= '0' && b <= '9')

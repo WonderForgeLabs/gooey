@@ -427,9 +427,20 @@ func cropped(buf *render.Buffer, r gooey.Rect) string {
 //
 // It copies into a fresh Buffer rather than teaching the encoder about
 // rectangles, because a sub-buffer IS the right model here: the guest's
-// screen is its island, so the stream it gets should be homed at 0,0 and
-// as wide as the island, not a set of absolute cursor moves that betray
-// where on the host's page the island sits.
+// screen is its island, so the stream it gets is homed at 0,0 and is as
+// wide as the island rather than being a set of absolute cursor moves
+// into somebody else's page.
+//
+// THE REASON IS THE COORDINATE SPACE, NOT CONFIDENTIALITY, and this
+// paragraph used to say the opposite — that homing here kept the guest
+// from learning where on the host's page its island sat. screen_size
+// hands a scoped guest that island's absolute x and y outright, so the
+// origin is told rather than withheld and the old reason was retired by
+// the same change that wrote it down (docs/specs/2026-08-14-island-grants.md,
+// "A guest is TOLD where it sits"). What survives is structural: a fresh
+// buffer of the island's size is a screen, and 0,0 is where a screen
+// starts — which is exactly why x and y are the conversion a client
+// applies to a position read off this stream. Raised in review of #504.
 func croppedStyled(buf *render.Buffer, r gooey.Rect, depth render.ColorDepth) (string, error) {
 	if r.W <= 0 || r.H <= 0 {
 		return "", nil

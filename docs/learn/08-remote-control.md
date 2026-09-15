@@ -139,9 +139,11 @@ unreachable. Unscoped, the origin is `(0,0)` and the conversion is a
 no-op.
 
 **Only one of your two coordinate sources needs it.** `screen_text` is
-homed at `(0,0)` on purpose — a guest's screen dump is not a set of
-absolute cursor moves that betray where on the host's page its island
-sits — so a position read off it is the thing `x`/`y` converts.
+homed at `(0,0)` because it is a *screen*: the host renders your island
+into a fresh buffer of exactly that size, and a screen starts at its own
+origin. That is the reason `x`/`y` are what you add to a position read
+off it — not confidentiality, which `screen_size` retires by telling you
+the origin outright.
 `tree_snapshot` emits each element's `bounds` from the live tree, which
 are **already absolute** even when the snapshot is rooted at your island.
 Adding the origin to those is the same off-by-`y0` this tool exists to
