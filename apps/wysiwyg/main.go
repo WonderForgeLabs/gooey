@@ -532,7 +532,22 @@ func encoderNamed(name string) (graphics.Encoder, error) {
 // gooey component: the editor manipulates a document, and the tree is
 // derived from it.
 type node struct {
-	Elem  string
+	Elem string
+	// Space is the element's resolved XML NAMESPACE, empty for the
+	// ordinary components this editor is mostly made of.
+	//
+	// It is kept because one partition depends on it and cannot be made
+	// from Elem: <x:Property> is a language declaration and <Property>
+	// is a component name somebody could register, and encoding/xml has
+	// already resolved the prefix by the time this model is built.
+	// markup's own splitDeclarations keys on the same thing (c.Space ==
+	// markup.XNamespace, markup/property.go), so the editor is asking
+	// the same question rather than a lookalike. Added for #517.
+	//
+	// It is NOT written back out by markup(): a declaration is emitted
+	// by the envelope, which re-derives the prefix from the xmlns the
+	// document declares. Nothing else in the tree carries a namespace.
+	Space string
 	Attrs map[string]string
 	// Body is the element's TEXT CONTENT — the "hello" in
 	// <Text>hello</Text> — and it is a field rather than an entry in
@@ -886,6 +901,48 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // way every other attribute in this document does and the two must agree
 // about quoting. They agreed on %q until review of #501, which is how
 // they came to agree about being wrong.
+// envelopeHead is the document's opening <Gooey …> tag together with
+// the declarations that belong to the envelope rather than to the tree.
+//
+// <x:Property> is a child of the ENVELOPE, not of the content root —
+// markup hands the whole <Gooey> element to splitDeclarations, which
+// partitions its children and only then requires one visual kid. The
+// editor's document is the content root, so a declaration has nowhere
+// in the tree to live and rides with envAttrs instead, written back
+// here. Added for #517.
+func envelopeHead(attrs map[string]string, decls []*node) string {
+	var b strings.Builder
+	b.WriteString(gooeyOpen(attrs))
+	prefix := declPrefix(attrs)
+	for _, d := range decls {
+		q := *d
+		q.Elem = prefix + ":" + d.Elem
+		b.WriteString(q.markup("  "))
+	}
+	return b.String()
+}
+
+// declPrefix is the prefix this document binds to markup.XNamespace, so
+// a declaration is written back with the spelling its author chose.
+//
+// "x" is the fallback rather than the answer: every example uses it, and
+// a document with declarations always carries the binding (the refusal
+// in markup's splitDeclarations is what an author gets without one), so
+// the fallback is reached only by a caller assembling an envelope from
+// nothing.
+//
+// Over sortedKeys, not a range: a document binding two prefixes to the
+// one namespace is legal and rare, and picking whichever the map handed
+// back first would rewrite the file differently on different runs.
+func declPrefix(attrs map[string]string) string {
+	for _, k := range sortedKeys(attrs) {
+		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
+			return strings.TrimPrefix(k, "xmlns:")
+		}
+	}
+	return "x"
+}
+
 func gooeyOpen(attrs map[string]string) string {
 	var b strings.Builder
 	b.WriteString("<Gooey")
@@ -1019,7 +1076,7 @@ func nodeOf(src string) (*node, error) {
 			if t.Name.Space != def {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
-			n := &node{Elem: t.Name.Local, Attrs: map[string]string{}}
+			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
 				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
 				// ATTRIBUTE, and that spelling is the whole fix for
@@ -1519,6 +1576,11 @@ type editor struct {
 	// and saving it silently took the demo's graphics mode away under a
 	// "✓ saved". Measured before the fix. Raised in review of #501.
 	envAttrs map[string]string
+	// envDecls are the <x:Property> declarations the opened file's
+	// <Gooey> carried. They travel with envAttrs and with ed.root.Kids —
+	// assigned at the one site that assigns those, for the reason
+	// TestEnvAttrsIsAssignedWhereTheDocumentIs exists. Added for #517.
+	envDecls []*node
 
 	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
 	// recorded from rebuild rather than from each mutator, so a mutation
@@ -2717,8 +2779,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
-	full := gooeyOpen(ed.envAttrs) + ed.root.markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := envelopeHead(ed.envAttrs, ed.envDecls) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below
