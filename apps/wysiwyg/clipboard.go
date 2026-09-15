@@ -706,7 +706,40 @@ func (ed *editor) pasteMarkup(src string) {
 		ed.status.Set("✗ pasted text is not markup: " + err.Error())
 		return
 	}
+	// AND THE DECLARATION CASE SAYS WHY IT IS REFUSED. unwrapGooey's
+	// comment explains the asymmetry with openWorkspaceFile at length
+	// and no user-facing string carried a word of it: the envelope fell
+	// through to insertSubtree, which reported "markup: unknown element
+	// <Gooey>" to somebody who had just copied a valid file. Raised in
+	// review of #522.
+	if n.Elem == "Gooey" {
+		if d := len(declarationsIn(n)); d > 0 {
+			noun := "declarations"
+			if d == 1 {
+				noun = "declaration"
+			}
+			ed.status.Set(fmt.Sprintf("✗ not pasted: this document declares %d property %s "+
+				"on its <Gooey>, and a paste lands inside a document that already has an "+
+				"envelope of its own — merging them would change this control's public "+
+				"surface. Open the file instead, or paste just the element you want.",
+				d, noun))
+			return
+		}
+	}
 	ed.insertSubtree(n, "pasted markup:")
+}
+
+// declarationsIn is the property declarations among an envelope's
+// children — the same partition markup's splitDeclarations makes, keyed
+// on Space for the reason node.Space records.
+func declarationsIn(n *node) []*node {
+	var out []*node
+	for _, k := range n.Kids {
+		if k.Space == markup.XNamespace {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // unwrapGooey strips a <Gooey> envelope with exactly one element in it.
@@ -714,6 +747,15 @@ func (ed *editor) pasteMarkup(src string) {
 // More than one and it is refused rather than guessed at: a whole page
 // pasted into a selected <Text> has no single answer for where its
 // elements go, and picking the first would drop the rest silently.
+//
+// THAT INCLUDES A DOCUMENT WITH <x:Property> DECLARATIONS, and the
+// asymmetry with openWorkspaceFile is deliberate rather than missed.
+// Opening one partitions the declarations off onto the envelope (#517),
+// because the file HAS an envelope to keep them on. A paste lands in a
+// document that already has its own, and a declaration silently merged
+// into it would change the target control's public surface without the
+// user asking; dropping it instead would lose it. Refusing the unwrap
+// says so, and leaves the pasted text where the user can see it.
 //
 // It takes and returns a NODE rather than re-serializing the child and
 // re-parsing it. Not because the round trip would corrupt a body — it
