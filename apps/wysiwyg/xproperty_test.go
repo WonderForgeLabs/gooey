@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
 )
 
@@ -228,5 +229,274 @@ func TestPastingADocumentThatDeclaresAPropertySaysWhy(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("the paste refusal reads %q and does not mention %q", got, want)
 		}
+	}
+}
+
+// TestTheRootCountRefusalSaysWhatItCounted covers the branch nothing
+// asserted.
+//
+// The refusal's prefix derivation, its count and its pluralisation were
+// all rewritten across two rounds of review with no test on any of them —
+// `grep "not root elements" *_test.go` matched a comment. What shipped
+// was "its 1 <p:Property> declaration is not root elements": the noun
+// carried the verb and the trailing literal stayed plural.
+//
+// Three arms, because there are three things the message derives: the
+// author's own prefix, the agreement of the whole tail, and the unbound
+// case where no prefix exists to name. Raised in review of #522.
+func TestTheRootCountRefusalSaysWhatItCounted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want []string
+		not  []string
+	}{
+		{
+			name: "one declaration, no content root, the author's own prefix",
+			doc: `<Gooey xmlns:p="` + markup.XNamespace + `">` + "\n" +
+				`  <p:Property Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`</Gooey>` + "\n",
+			want: []string{"found 0", "its 1 <p:Property> declaration is not a root element"},
+			not:  []string{"<x:Property>", "are not root elements"},
+		},
+		{
+			name: "two declarations and two content roots",
+			doc: `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+				`  <x:Property Name="A" Type="string" Default="a"/>` + "\n" +
+				`  <x:Property Name="B" Type="string" Default="b"/>` + "\n" +
+				`  <Canvas Name="One"/>` + "\n" +
+				`  <Canvas Name="Two"/>` + "\n" +
+				`</Gooey>` + "\n",
+			want: []string{"found 2", "its 2 <x:Property> declarations are not root elements"},
+			not:  []string{"declaration is"},
+		},
+		{
+			// THE DECLARATION NAMED BY THE DEFAULT xmlns, which binds no
+			// prefix at all. declBinding's fallback is "x", and writing
+			// it here names an element this file does not contain.
+			name: "no prefix bound",
+			doc: `<Gooey xmlns="` + markup.XNamespace + `">` + "\n" +
+				`  <Property Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`</Gooey>` + "\n",
+			want: []string{"its 1 <Property> declaration is not a root element"},
+			not:  []string{"<x:Property>"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workspaceFixture(t)
+			if err := os.WriteFile(filepath.Join(root, "r.gooey"), []byte(tc.doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("r.gooey")
+
+			got := ed.status.Get()
+			if !strings.HasPrefix(got, "✗") {
+				t.Fatalf("the document has no single content root and was accepted: %q", got)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("the refusal reads %q, want it to contain %q", got, w)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(got, n) {
+					t.Errorf("the refusal reads %q, which contains %q — that names "+
+						"something the author's file does not", got, n)
+				}
+			}
+		})
+	}
+}
+
+// TestPastingAWholeDocumentSaysWhy is the case unwrapGooey's own comment
+// is written about, and the one the first repair left reporting
+// "markup: unknown element <Gooey>".
+//
+// That string is what this branch calls a defect when a pasted envelope
+// carries declarations. A pasted envelope with two roots reached
+// insertSubtree and produced it verbatim, because the explanation lived
+// in pasteMarkup and tested only the declaration arm while unwrapGooey
+// refused on three. Raised in review of #522.
+func TestPastingAWholeDocumentSaysWhy(t *testing.T) {
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.pasteMarkup("<Gooey>\n  <Text Text=\"a\"/>\n  <Text Text=\"b\"/>\n</Gooey>\n")
+
+	got := ed.status.Get()
+	if strings.Contains(got, "unknown element <Gooey>") {
+		t.Fatalf("pasting a whole document reports %q — the loader's noun for a "+
+			"thing the editor knows perfectly well, handed to somebody who has "+
+			"just copied a valid file", got)
+	}
+	for _, w := range []string{"not pasted", "2 root elements"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("the refusal reads %q, want it to contain %q", got, w)
+		}
+	}
+}
+
+// xPropertyUsedDoc is the shape xPropertyDoc deliberately is not: a
+// control that BINDS the property it declares. Content="{{.Title}}" is
+// the whole of #7's surface — a declaration nothing references buys the
+// author nothing — and it is the shape the editor still refused after
+// #517 made the file open.
+const xPropertyUsedDoc = `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+	`  <x:Property Name="Title" Type="string" Default="hi"/>` + "\n" +
+	`  <x:Property Name="Who" Type="string" Required="true"/>` + "\n" +
+	`  <Canvas Name="Root">` + "\n" +
+	`    <Button Name="B" Content="{{.Title}}"/>` + "\n" +
+	`    <Button Name="W" Content="{{.Who}}"/>` + "\n" +
+	`  </Canvas>` + "\n" +
+	`</Gooey>` + "\n"
+
+// TestADocumentThatUsesWhatItDeclaresPreviews is the inverse of
+// TestADocumentDeclaringAPropertyOpens' control arm, and the inversion
+// is the point.
+//
+// There the loader took the document, so the refusal was the editor's.
+// Here the loader REFUSES it — there is no instantiation site, so
+// nothing fills Values and the control's own binding does not resolve —
+// and the editor has to do something the loader does not: seed the
+// declared defaults (seedDeclared). Asserting only "the editor opens
+// it" would pass just as well if markup.Build had quietly started
+// instantiating top-level declarations, which is a different fix in a
+// different package.
+//
+// The Default is read off the BUILT component, not off the status line.
+// "✓ builds" is satisfied by a handle holding the zero string, and a
+// preview that silently shows an empty button for a declared
+// Default="hi" is the failure this is really about. Raised in review of
+// #522.
+func TestADocumentThatUsesWhatItDeclaresPreviews(t *testing.T) {
+	if _, err := markup.Build([]byte(xPropertyUsedDoc), &markup.Context{}); err == nil {
+		t.Fatal("markup.Build now resolves a top-level declaration on its own; " +
+			"seedDeclared exists because it did not, so both it and this test need revisiting")
+	} else if !strings.Contains(err.Error(), `"Title" not found in context`) {
+		t.Fatalf("the premise is the unresolved binding, and the loader refused "+
+			"this document for another reason: %v", err)
+	}
+
+	root := workspaceFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "used.gooey"), []byte(xPropertyUsedDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("used.gooey")
+
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("a control that binds the property it declares reports %q, "+
+			"want a build", got)
+	}
+	btn := map[string]*components.Button{}
+	walkNode(ed.doc(), func(n *node) {
+		if b, ok := ed.compOf[n].(*components.Button); ok {
+			btn[n.Attrs["Name"]] = b
+		}
+	})
+	if btn["B"] == nil || btn["W"] == nil {
+		t.Fatalf("the document built but its buttons are not in compOf: %v", btn)
+	}
+	if got := btn["B"].Content.Get(); got != "hi" {
+		t.Errorf("the previewed button reads %q, want the declared Default %q — "+
+			"a zero handle builds too, and shows the author nothing", got, "hi")
+	}
+	// REQUIRED IS NOT A REFUSAL HERE, and the status check above is what
+	// pins it: Required means an instantiation site must pass the
+	// attribute, and a tool holding the definition alone is not one. The
+	// zero string is the stand-in, which is also what the site that
+	// forgot it would show.
+	if got := btn["W"].Content.Get(); got != "" {
+		t.Errorf("a Required property with no site previews as %q, want the "+
+			"type's zero", got)
+	}
+}
+
+// TestADeclaredNameDoesNotOutliveItsDocument pins the retirement half of
+// seedDeclared. docCtx.Values is the editor's ONE binding map, so a
+// name seeded for the file that was open a moment ago would otherwise
+// still resolve in the next one — and the next document would build
+// against a property it never declared, then break for whoever opened
+// it anywhere else.
+func TestADeclaredNameDoesNotOutliveItsDocument(t *testing.T) {
+	root := workspaceFixture(t)
+	for name, src := range map[string]string{
+		"used.gooey":  xPropertyUsedDoc,
+		"plain.gooey": "<Gooey>\n  <Canvas Name=\"Root\"/>\n</Gooey>\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+
+	ed.openWorkspaceFile("used.gooey")
+	if _, ok := ed.docCtx.Values["Title"]; !ok {
+		t.Fatal("the declaring document is open and Title is not bindable; " +
+			"the rest of this test would pass vacuously")
+	}
+	ed.openWorkspaceFile("plain.gooey")
+	if _, ok := ed.docCtx.Values["Title"]; ok {
+		t.Error("Title still resolves with a document open that never declared it")
+	}
+	// And the binding really is gone, not merely absent from the map:
+	// the previous document is the one thing that proves the name was
+	// ever live.
+	if _, err := markup.Build([]byte(xPropertyUsedDoc), ed.docCtx); err == nil {
+		t.Error("the previous document still builds against the editor's context, " +
+			"so its declaration outlived it")
+	}
+}
+
+// TestADeclarationDoesNotCaptureAnEditorBinding is the other half of
+// seedDeclared living in a SHARED map.
+//
+// menuValues registers the IDE shell's bindings under bare names —
+// Region, CodeView, Save — in the same ed.ctx.Values that docCtx holds
+// by reference, and a document is free to declare a property called any
+// of them. Seeding over one would point the menus at a string source,
+// and retiring it on the next open would then unbind them outright, in
+// a session whose user had only opened a file.
+func TestADeclarationDoesNotCaptureAnEditorBinding(t *testing.T) {
+	const shadows = `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <x:Property Name="Region" Type="string" Default="zzz"/>` + "\n" +
+		`  <Canvas Name="Root"/>` + "\n" +
+		`</Gooey>` + "\n"
+
+	root := workspaceFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "shadow.gooey"), []byte(shadows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plain.gooey"), []byte("<Gooey>\n  <Canvas Name=\"Root\"/>\n</Gooey>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+
+	// The premise: Region is one of the shell's own, and this fixture is
+	// only interesting while that is true.
+	if ed.docCtx.Values["Region"] != any(ed.region) {
+		t.Fatal("Region is no longer the editor's own binding; pick another " +
+			"name from menuValues or this test shadows nothing")
+	}
+	ed.openWorkspaceFile("shadow.gooey")
+	if got := ed.docCtx.Values["Region"]; got != any(ed.region) {
+		t.Errorf("opening a document that declares Region replaced the editor's "+
+			"binding with %T", got)
+	}
+	ed.openWorkspaceFile("plain.gooey")
+	if got := ed.docCtx.Values["Region"]; got != any(ed.region) {
+		t.Errorf("closing that document left Region as %v — a name the editor "+
+			"owns was retired with the document that shadowed it", got)
 	}
 }

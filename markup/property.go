@@ -258,6 +258,41 @@ func Declarations(src []byte) ([]Declaration, error) {
 	return doc.decls.list, nil
 }
 
+// NewValue is the handle this declaration resolves to where there is NO
+// instantiation site: a fresh per-call source carrying Default, which is
+// exactly what Declaration.resolve makes for an absent optional
+// attribute. Two calls return two handles, for the same reason two
+// <Card/> elements do not share one.
+//
+// It exists because a host can hold a control file with nothing above
+// it. declarations.instantiate runs from the page that writes
+// <Card Title="…"/> (usercontrol.go), so a tool building card.gooey
+// ITSELF has no site to read attributes from, the declared names never
+// reach Context.Values, and the control's own {{.Title}} fails to
+// resolve — which is the whole of the wysiwyg editor's #517. The
+// alternative was a fourth table keyed by the Type spellings, and
+// propKinds' own doc already names two that drift for exactly that
+// reason.
+//
+// A Required declaration has no Default and gets the type's ZERO handle
+// rather than an error. Required is a contract with an instantiation
+// site; a caller that has none is not in breach of it, and it is the
+// caller that knows whether a zero is a usable stand-in or something to
+// say out loud. Bind-only types land here too, by the same rule that
+// already gives them the zero handle when the attribute is absent.
+//
+// The zero Declaration is refused rather than dereferenced. Every field
+// that names the type is exported, so a caller can build one that was
+// never parsed, and such a value carries no row of the type table at
+// all — a nil-map read would panic inside this package with the caller
+// off the stack.
+func (d Declaration) NewValue() (any, error) {
+	if d.kind.source == nil {
+		return nil, fmt.Errorf("markup: dependency property %q — no type table row for Type %q: a Declaration carries one only when it came from Declarations or from a loaded document", d.Name, d.Type)
+	}
+	return d.kind.source(d.Default)
+}
+
 // DeclaredSurface is one control instance's markup-declared dependency
 // properties, as resolved for that instance: the declarations that make
 // up the control's public surface plus the live handles this instance
