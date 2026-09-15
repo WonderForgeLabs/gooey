@@ -83,6 +83,10 @@ func rowText(f *gooey.Frame, y, x, w int) string {
 // tell a reader that returns the blanks from one that eats them — the
 // difference only shows where the span is WIDER than what was drawn into
 // it, which is why this fixture is eight cells holding two.
+// wideLabel is two glyphs and FOUR columns — the discriminating shape,
+// since a rune count answers 2 and a column count answers 4.
+const wideLabel = "世界"
+
 func TestRowTextReturnsTheWholeSpan(t *testing.T) {
 	c := gooey.NewComposer(&components.Text{Content: components.Str("hi")}, 8, 1)
 	f, _ := c.Frame()
@@ -91,6 +95,25 @@ func TestRowTextReturnsTheWholeSpan(t *testing.T) {
 			"reader returns the span: trimming here decides part of every equality "+
 			"assertion made through it, at the one site that cannot see the decision",
 			got, "hi", want)
+	}
+
+	// AND A WIDE GLYPH, which is the OTHER half of this helper's contract
+	// and the half the ASCII fixture above cannot see. A continuation
+	// cell carries render.Continuation, so writing .Rune out puts a
+	// literal U+FFFD in the row — reverting both copies of this helper
+	// to WriteRune(….Rune) left the whole apps/wysiwyg tree GREEN,
+	// measured, because every fixture in it is ASCII and agrees with
+	// itself under either rule. CLAUDE.md's recipe exactly: a glyph
+	// whose column count and rune count differ, in a span wider than
+	// what was drawn into it, so the trim rule and the continuation rule
+	// are pinned by one read. Raised in review of #502.
+	c = gooey.NewComposer(&components.Text{Content: components.Str(wideLabel)}, 8, 1)
+	f, _ = c.Frame()
+	if got, want := rowText(f, 0, 0, 8), wideLabel+"    "; got != want {
+		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
+			"read this is %q — the continuation marker rendered as a literal "+
+			"rune, which is the defect this helper exists to avoid",
+			got, wideLabel, want, "世\uFFFD界\uFFFD  ")
 	}
 }
 

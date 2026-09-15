@@ -65,6 +65,32 @@ func rowText(c *gooey.Composer, y, x, w int) string {
 	return sb.String()
 }
 
+// TestRowTextReadsThroughAWideGlyph is this package's half of the pair
+// the helper's own doc says "are not allowed to differ" — and until
+// #502's review it was the unpinned half, free to drift into exactly
+// the state that paragraph forbids while its twin in apps/wysiwyg
+// carried the only test.
+//
+// Reverting BOTH copies to WriteRune(….Rune) left the whole tree green,
+// measured: every fixture in either package is ASCII, and an ASCII row
+// agrees with itself under a rune read and a cluster read alike. So the
+// fixture is CLAUDE.md's recipe — a glyph whose column count and rune
+// count differ, in a span wider than what was drawn into it, which pins
+// the continuation rule and the untrimmed-span rule with one read.
+func TestRowTextReadsThroughAWideGlyph(t *testing.T) {
+	const wide = "世界" // two runes, FOUR columns
+	c := gooey.NewComposer(&components.Text{Content: components.Str(wide)}, 8, 1)
+	t.Cleanup(c.Close)
+	c.Frame()
+
+	if got, want := rowText(c, 0, 0, 8), wide+"    "; got != want {
+		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
+			"read this is %q — the continuation marker written out as a literal "+
+			"rune — and a trimmed read drops the four blanks the span asked for",
+			got, wide, want, "世\uFFFD界\uFFFD  ")
+	}
+}
+
 // page puts a pane over a text line, so there is a neighbour whose repaint
 // can be provoked without touching the pane. enc nil is the cell tier.
 func page(enc graphics.Encoder) (*gooey.Composer, *Pane, *prop.Property[string]) {

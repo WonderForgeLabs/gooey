@@ -320,18 +320,19 @@ func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 // `/usr/bin/env -i`, an uninstalled name, a long path, and an
 // emacsclient invocation with a quoted alternate — every arm returned
 // the same booleans. Whoever removes this Setenv will find the tests
-// still passing, which is why the real reasons are written down:
+// still passing, which is why the real reason is written down:
 //
-//   - The diagnostics QUOTE the row, so an inherited $EDITOR makes a
-//     failure message differ per machine and a reader cannot compare it
-//     with anyone else's.
-//   - The label ALREADY interpolates the resolved program:
-//     editorItemText renders `$EDITOR (env)` today. The assertions
-//     match only the constant `$EDITOR` prefix, so what an inherited
-//     value changes is what a failure prints — which is the first
-//     bullet, arrived at from the other side. Present tense on purpose:
-//     the interpolation ships today, and #477 does not ask for a label
-//     change. Raised in review of #502.
+// THE DIAGNOSTICS QUOTE THE ROW, so an inherited $EDITOR makes a failure
+// message differ per machine and a reader cannot compare one with
+// anyone else's. The label is where it gets in: editorItemText renders
+// `$EDITOR (env)` today and the assertions match only the constant
+// `$EDITOR` prefix, so what an inherited value changes is exactly what
+// a failure PRINTS. That was written as a second bullet and conceded in
+// its own last clause that it was the first one from the other side —
+// two justifications where there is one, which is one more thing for
+// somebody to decide is redundant and remove. Present tense on purpose:
+// the interpolation ships today, and #477 does not ask for a label
+// change. Raised in review of #502, twice.
 //
 // resolveEditor reads only EDITOR (no VISUAL fallback), so the one
 // variable pins the label. `/usr/bin/env -i` is the value the sibling
@@ -431,27 +432,14 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // asked for it never runs, so the diagnostic the caller was building is
 // lost at exactly the moment it is wanted.
 //
-// RUNES, AND THE DIFFERENCE FROM CELLS IS WORTH NAMING. rowText yields
-// one entry per cell, and a cell contributes any number of runes: a
+// A CELL CONTRIBUTES ANY NUMBER OF RUNES, which is why this helper
+// indexes neither runes nor bytes. rowText yields one entry per cell: a
 // continuation contributes none, and a cell carrying a grapheme cluster
-// (render.Cell.Text returns Cluster when one is set) contributes as
-// many as the cluster holds — a base plus a combining mark is two runes
-// in one narrow column. So an index into the row is a rune index and
-// equals a cell index only for a row of ONE RUNE PER CELL, which this
-// ASCII menu is; "narrow glyphs" was the fence and does not close the
-// cluster case. ASSERTED BELOW, not merely stated: review of #502 noted
-// that the sibling hazard in dockcollapse_test.go is checked while this
-// one was described, and a documented assumption is the shape that goes
-// silently false. render.StringWidth counts COLUMNS and len([]rune)
-// counts runes; they agree only for one rune per narrow cell, which is
-// the precondition this helper's rune indexing needs. Raised in review
-// of #502.
-//
-// Byte slicing was what broke, and only the diagnostic: a box is ASCII
-// and an ASCII byte cannot be part of a multi-byte UTF-8 sequence, so a
-// four-byte window equal to "[x] " really was four ASCII cells — but a
-// label at an odd offset cut a box-drawing rune in half and %q printed
-// "\xe2\x94\x82 ".
+// (render.Cell.Text returns Cluster when one is set) contributes as many
+// as the cluster holds — a base plus a combining mark is two runes in
+// one narrow column. "Narrow glyphs" is not the fence that closes the
+// cluster case, and neither is any precondition over totals; the body
+// below says what replaced them and what was measured to get there.
 //
 // AND THE WITHIN-ROW HALF OF dropdownRow's GUARANTEE. That helper buys
 // "exactly one ROW contains want" and argues for why it matters;
@@ -521,16 +509,55 @@ func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
 // and deliberately fail that agreement — same column width, different
 // rune count.
 //
-// TWO ARMS, BEHIND AND IN FRONT, and the second is the one that
-// discriminates. A glyph behind the label cannot move any cell this
-// helper reads, so that arm only shows the helper does not refuse a CJK
-// menu label — which is not hypothetical in an editor that lays out
-// whatever markup it is handed. A glyph IN FRONT moves the four-cell
-// boundary away from the four-rune one, which is exactly what the
-// retired precondition could not see: it compared the prefix's totals,
-// and on "世abcé" (6 runes, 6 columns, guard PASSES) the rune slice
-// answered "bcé" where the four cells are "abcé". Raised in review of
-// #502.
+// TWO ARMS, NEITHER OF THEM THE DISCRIMINATING ONE, and saying so is the
+// point of this paragraph. A glyph behind the label cannot move any cell
+// the helper reads. A glyph in front of it but OUTSIDE the last four
+// columns does not move the boundary either — measured, and the inline
+// comment on that arm records the measurement. What both arms show is
+// that the helper does not refuse a CJK menu row, which is not
+// hypothetical in an editor that lays out whatever markup it is handed.
+// The arm that discriminates is
+// TestTheFourCellsInFrontAreNotTheFourRunes, below, whose row is not a
+// menu row at all.
+//
+// This paragraph claimed the in-front arm discriminated, and sat in a
+// block fused to the next test's — no blank line, so godoc read all of
+// it as that test's doc and left this one undocumented, while the
+// sentences landed on a test they are false about. render/width.go
+// records the identical defect being fixed in review of #425. Both
+// corrected in review of #502.
+func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rows  []string
+		label string
+	}{
+		{"behind the label", []string{"  [x] Wrap 世界", "  ( ) Other"}, "Wrap"},
+		// A wide glyph in front of the label but OUTSIDE the last four
+		// columns does not discriminate — measured: the rune slice and
+		// the column walk both answer "[x] " here, because the glyph is
+		// left of the boundary either rule puts the box at. Kept
+		// because it is the shape a real CJK menu row has, and dropped
+		// as the discriminating arm because it is not one.
+		{"in front of the label", []string{"  世 [x] Wrap", "  ( ) Other"}, "Wrap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			box, row := boxBefore(t, tc.rows, tc.label)
+			if cols, runes := render.StringWidth(row), len([]rune(row)); cols == runes {
+				t.Fatalf("the fixture row %q measures %d columns and %d runes — equal, "+
+					"so it cannot tell a column answer from a rune one and this arm "+
+					"guards nothing", row, cols, runes)
+			}
+			if want := "[x] "; box != want {
+				t.Errorf("boxBefore read %q in front of %q on %q, want %q — %q is "+
+					"%d columns and %d runes, so the two rules disagree about where "+
+					"the four cells start", box, tc.label, row, want, row,
+					render.StringWidth(row), len([]rune(row)))
+			}
+		})
+	}
+}
+
 // TestTheFourCellsInFrontAreNotTheFourRunes is the DISCRIMINATING arm,
 // and it is separate because its row is not a menu row at all.
 //
@@ -565,38 +592,6 @@ func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	if got := render.StringWidth(box); got != 4 {
 		t.Errorf("boxBefore returned %q, %d columns — the contract is the four CELLS "+
 			"in front of the label", box, got)
-	}
-}
-
-func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		rows  []string
-		label string
-	}{
-		{"behind the label", []string{"  [x] Wrap 世界", "  ( ) Other"}, "Wrap"},
-		// A wide glyph in front of the label but OUTSIDE the last four
-		// columns does not discriminate — measured: the rune slice and
-		// the column walk both answer "[x] " here, because the glyph is
-		// left of the boundary either rule puts the box at. Kept
-		// because it is the shape a real CJK menu row has, and dropped
-		// as the discriminating arm because it is not one.
-		{"in front of the label", []string{"  世 [x] Wrap", "  ( ) Other"}, "Wrap"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			box, row := boxBefore(t, tc.rows, tc.label)
-			if cols, runes := render.StringWidth(row), len([]rune(row)); cols == runes {
-				t.Fatalf("the fixture row %q measures %d columns and %d runes — equal, "+
-					"so it cannot tell a column answer from a rune one and this arm "+
-					"guards nothing", row, cols, runes)
-			}
-			if want := "[x] "; box != want {
-				t.Errorf("boxBefore read %q in front of %q on %q, want %q — %q is "+
-					"%d columns and %d runes, so the two rules disagree about where "+
-					"the four cells start", box, tc.label, row, want, row,
-					render.StringWidth(row), len([]rune(row)))
-			}
-		})
 	}
 }
 
