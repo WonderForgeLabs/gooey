@@ -3,6 +3,7 @@ package components
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
@@ -358,5 +359,220 @@ func TestTextBoxScrollsByColumnsOverWideGlyphs(t *testing.T) {
 		t.Errorf("home showed %q, want %q — the window pulled back to the start "+
 			"and holds exactly three glyphs, the caret sitting ON the first one "+
 			"rather than after the last", got, want)
+	}
+}
+
+// TestTheScrollWindowIsWalkedNotResummed is a COST assertion, which is
+// an unusual shape here and the only one that catches this defect: the
+// window scrollFor returns was right before this fix and is right after
+// it, so every assertion about the answer passes over the bug.
+//
+// The two conditions it replaced re-summed a shrinking tail on every
+// step — O(n²) — and they ran inside the TextBox's paint node, on the UI
+// goroutine. Measured on the branch under review: 1.36 s for a caret at
+// the end of 10,000 ASCII runes, 3.76 s over CJK, 19.6 s for a full
+// Compose of a 20,000-rune value. Not a slow frame; a hard freeze, on
+// End, on a click, on a paste, or on the first render of a prefilled
+// field.
+//
+// THE BUDGET IS DELIBERATELY ENORMOUS. Walking left from the caret costs
+// microseconds here, and the quadratic form costs about five seconds at
+// this size, so half a second sits two orders of magnitude above the fix
+// and an order of magnitude below the defect. A tighter bound would buy
+// nothing and start flaking on a loaded shared runner; this one cannot
+// pass against the shape it exists to reject.
+func TestTheScrollWindowIsWalkedNotResummed(t *testing.T) {
+	const n = 20000
+	runes := []rune(strings.Repeat("a", n))
+	start := time.Now()
+	got := scrollFor(runes, 0, n, 20)
+	took := time.Since(start)
+
+	// The answer first: a budget over a wrong window proves nothing.
+	if want := n - 19; got != want {
+		t.Fatalf("scrollFor put the window at %d, want %d — twenty columns "+
+			"hold nineteen runes and the caret's own column", got, want)
+	}
+	if took > 500*time.Millisecond {
+		t.Errorf("scrollFor took %v over %d runes, want well under 500ms; "+
+			"that is the re-summing shape #521's review measured at seconds "+
+			"on the paint path", took, n)
+	}
+}
+
+// TestDraggingPastTheLeftEdgeKeepsSelecting is the gesture
+// HandleMouseMove's doc comment promises — "dragging past the field's
+// edge keeps working" — and an intermediate version of #519 removed it.
+//
+// The mechanism is the subtle part. indexAt answering a column left of
+// the field with an index that is off the window is not a caret the user
+// cannot see: scrollFor's `if caret < cur { cur = caret }` pulls the
+// window onto it before the frame is drawn. Clamping to the first
+// VISIBLE rune instead pinned the caret at the window's left edge on
+// every drag, so a selection could never reach text that had scrolled
+// off — the measured selection was [21,24) where it should be [9,24).
+//
+// BOTH WIDTHS, because the walk is in columns: over CJK each drag of two
+// columns is ONE glyph, and a rune-counted walk would move two.
+func TestDraggingPastTheLeftEdgeKeepsSelecting(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		value    string
+		drags    int
+		wantLo   int
+		wantHi   int
+		wantLeft string
+	}{
+		{"ascii", "abcdefghijklmnopqrstuvwxyz", 6, 9, 24, "jklmno"},
+		// Eight glyphs are sixteen columns; the caret at the end puts the
+		// window on the last three. Two columns left is one glyph back.
+		{"wide", "東西南北東西南北", 2, 4, 7, "東西南"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := prop.NewSource(tc.value)
+			tb := &TextBox{Text: v}
+			tb.SetFocused(true)
+			tb.setCaret(len([]rune(tc.value)))
+			gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+
+			tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 3, Y: 0, Button: input.ButtonLeft})
+			var row string
+			for i := 0; i < tc.drags; i++ {
+				tb.HandleMouseMove(input.MouseEvent{X: -2, Y: 0, Button: input.ButtonLeft})
+				f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+				row = render.SpanText(f.Cells, 0, 0, 6)
+			}
+			lo, hi, on := tb.Selection()
+			if !on || lo != tc.wantLo || hi != tc.wantHi {
+				t.Errorf("after %d drags to column -2 the selection is [%d,%d) on=%v, "+
+					"want [%d,%d) — the caret is pinned at the window's left edge, "+
+					"so text that scrolled off cannot be selected",
+					tc.drags, lo, hi, on, tc.wantLo, tc.wantHi)
+			}
+			if row != tc.wantLeft {
+				t.Errorf("the window ended at %q, want %q — the off-window caret "+
+					"is what pulls it left on the next frame", row, tc.wantLeft)
+			}
+		})
+	}
+}
+
+// TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge pins the column the
+// caret reserves against the columns the renderer needs for it.
+//
+// A caret ON a rune is drawn by reversing that rune's glyph, and Render
+// stops on a glyph's FULL width — so a two-column glyph needs two
+// columns reserved. scrollFor reserved exactly one, the two disagreed,
+// and the glyph the caret was riding fell off the right edge: the user
+// typed at a position with no visible caret anywhere in the field.
+//
+// Reverse ON SOME CELL is the assertion rather than a row string,
+// because the row reads the same whether the caret is drawn or not.
+func TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge(t *testing.T) {
+	v := prop.NewSource("a東西b")
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	tb.setCaret(2) // on 西, reachable with Home then two rights
+	f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
+
+	found := -1
+	for x := 0; x < 4; x++ {
+		if f.Cells.At(x, 0).Style.Reverse {
+			found = x
+			break
+		}
+	}
+	if found < 0 {
+		t.Fatalf("row %q carries no reversed cell: the caret is on 西 and "+
+			"nothing on screen says so", render.SpanText(f.Cells, 0, 0, 4))
+	}
+	if got := f.Cells.At(found, 0).Rune; got != '西' {
+		t.Errorf("the reversed cell holds %q, want 西 — the caret sits ON the "+
+			"character it precedes", got)
+	}
+}
+
+// TestACombiningMarkSurvivesTheRuneItDecorates is #519's defect one
+// Unicode category over, reported against the fix for it.
+//
+// A combining mark is zero columns wide, so advancing the paint cursor
+// by the rune's width did not advance it at all and the NEXT rune
+// overwrote the cell the mark had just been written into: decomposed
+// "éx" painted as "ex". The accent was gone from the buffer, not
+// merely misplaced.
+//
+// THE TRAILING RUNE IS THE DISCRIMINATOR. "é" alone survived the
+// bug, because nothing came after it to do the overwriting — a fixture
+// without the "x" passes against the defect.
+func TestACombiningMarkSurvivesTheRuneItDecorates(t *testing.T) {
+	const decomposed = "éx" // "éx", written as e + U+0301
+	v := prop.NewSource(decomposed)
+	tb := &TextBox{Text: v}
+	f := gooey.Compose(tb, term.Caps{Cols: 8, Rows: 1}, nil)
+
+	if got, want := render.SpanText(f.Cells, 0, 0, 3), "éx "; got != want {
+		t.Errorf("rendered %q, want %q — the mark is written into its lead's "+
+			"cell, and the rune after it must not take that cell back",
+			got, want)
+	}
+	if got := f.Cells.At(0, 0).Cluster; got != "é" {
+		t.Errorf("cell 0 holds cluster %q, want %q — width and content have to "+
+			"come from the same thing", got, "é")
+	}
+
+	// A TRAILING MARK LEAVES NO STRAY. Folding alone is not enough: a mark
+	// that also went through the ordinary write landed in the column after
+	// its lead, and only the rune that followed it painted over the litter.
+	// With nothing following, the litter stays.
+	trailing := &TextBox{Text: prop.NewSource("é")}
+	f = gooey.Compose(trailing, term.Caps{Cols: 8, Rows: 1}, nil)
+	if got := f.Cells.At(1, 0); got.Rune != ' ' || got.Cluster != "" {
+		t.Errorf("cell 1 holds %q/%q, want a blank — the mark belongs in its "+
+			"lead's cell and nowhere else", got.Rune, got.Cluster)
+	}
+
+	// AND THE CARET ON THE MARK IS THE CLUSTER REVERSED. Folding the mark
+	// into its lead skips the write that carries the caret style, so
+	// without an arm of its own the caret vanishes for exactly one
+	// arrow-key press per combining mark in the value.
+	on := &TextBox{Text: prop.NewSource("éx")}
+	on.SetFocused(true)
+	on.setCaret(1) // the mark itself
+	f = gooey.Compose(on, term.Caps{Cols: 8, Rows: 1}, nil)
+	if !f.Cells.At(0, 0).Style.Reverse {
+		t.Error("the caret is on the combining mark and cell 0 is not reversed: " +
+			"nothing on screen says where the caret is")
+	}
+}
+
+// TestMovingTheScrollWindowRepaintsOnlyTheField is the damage-count pin
+// CLAUDE.md asks for whenever a change moves a repaint: "a damage-count
+// assertion is the only pin for a repaint claim". Scrolling the window
+// is a caret move, and a caret move is local — the field's own paint
+// node reads the caret property and nothing else does.
+//
+// gooey.Compose returns only the frame, so the sibling scroll tests
+// cannot make this assertion at all; a Composer is what carries the
+// count.
+func TestMovingTheScrollWindowRepaintsOnlyTheField(t *testing.T) {
+	v := prop.NewSource("東西南北")
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	tb.setCaret(4)
+	root := &VStack{Children: []gooey.Component{&Text{Content: Str("a")}, tb}}
+	comp := gooey.NewComposer(root, 6, 2)
+	if _, painted := comp.Frame(); painted != 3 {
+		t.Fatalf("first frame painted %d, want 3", painted)
+	}
+
+	tb.HandleKey(input.Named(input.KeyHome))
+	f, painted := comp.Frame()
+	if painted != 1 {
+		t.Errorf("moving the scroll window painted %d components, want exactly 1", painted)
+	}
+	// And it really did move, so the count above is over a frame that
+	// had work to do.
+	if got, want := render.SpanText(f.Cells, 0, 1, 6), "東西南"; got != want {
+		t.Errorf("after Home the window shows %q, want %q", got, want)
 	}
 }
