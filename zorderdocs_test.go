@@ -185,7 +185,7 @@ func scanFilesForRetiredRule(t testing.TB, files []string, states func(string) b
 
 // retiredRuleProblems is the per-file half, pure so it can run off the
 // test's goroutine: it returns what it found rather than reporting it.
-func retiredRuleProblems(f string, states func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) ([]string, error) {
+func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) ([]string, error) {
 	var problems []string
 	{
 		body, err := os.ReadFile(f)
@@ -282,6 +282,34 @@ func retiredRuleProblems(f string, states func(string) bool, prefilter []string,
 		// both #458's and #478's reviews independently — which is the
 		// argument for those fixtures rather than a remark about this
 		// line.
+		// THE PREFILTER AGAIN, PER LINE, and this is where the cost
+		// actually was.
+		//
+		// The file-level filter above only decides whether to enter this
+		// loop; once in, every line and every wrap-join paid the whole
+		// pattern list. Measured on this tree: the regex work is ~7.0s
+		// single-threaded for the input plane's list over every line the
+		// walk reaches, and ~1.3s with this gate — the fold into one
+		// alternation that was tried first bought nothing (~7.2s), which
+		// is RE2 doing the same total work either way. The saving is not
+		// running the patterns, not running them more cleverly.
+		//
+		// IT IS SAFE BECAUSE IT GATES THE EXACT TEXT the patterns are
+		// about to be asked about, with the list
+		// the prefilter contract in TestTheRetiredRuleGuardCanActuallyFire
+		// (and its input-plane twin) already holds against every sample
+		// each pattern is pinned with. The wrapped
+		// "end of" hazard the file-level filter has does not arise here
+		// for the same reason: a statement split across two lines is
+		// asked about as the JOIN, and the join contains the word
+		// exactly when the pattern that needs it can match. Raised in
+		// review of #458.
+		states := func(s string) bool {
+			if !containsAny(prefilterText(s), prefilter) {
+				return false
+			}
+			return statesIt(s)
+		}
 		reported := map[int]bool{}
 		for i, line := range lines {
 			// The line AND the line joined to its successor. A rule
@@ -1749,9 +1777,14 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 	// living in the test body. Corrected in review of #458.
 	for _, line := range samples {
 		if !containsAnyPrefilterWord(prefilterText(line)) {
-			t.Errorf("the prefilter would skip a file containing this line, so the "+
-				"pattern that catches it can never run:\n\t%s\n"+
-				"Either add a word to prefilterWords or keep the pattern inside it.", line)
+			t.Errorf("the prefilter would skip this LINE, and a file containing "+
+				"nothing else from the list, so the pattern that catches it can "+
+				"never run:\n\t%s\n"+
+				"Either add a word to prefilterWords or keep the pattern inside "+
+				"it. The line half of that is newer than the file half: the scan "+
+				"gates each line and each wrap-join on this same list, which is "+
+				"what took the pattern work from ~7.0s to ~1.3s. Raised in "+
+				"review of #458.", line)
 		}
 	}
 

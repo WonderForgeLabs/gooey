@@ -436,7 +436,7 @@ the click to the button. Under the retired "declare it last" rule the two
 planes agreed, which is why the divergence arrived with the ranks — the
 freedom is what made it reachable.
 
-`FocusManager.HitTest` (`mouse.go:192`) now returns the component that
+`FocusManager.HitTest` (`mouse.go:168`) now returns the component that
 PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
 BOUNDS — contain the cell, comparing candidates on exactly what
 `appendByRank` orders by, and it gets there by asking `overlayOf` — the
@@ -458,10 +458,15 @@ The ancestor half is not a detail: the walk prunes on bounds at every
 node, so a surface arranged outside its parent's rect paints and can
 never be hit. That is the point: not a second ordering, the same one.
 `TestARankOrdersHitTestingAsWellAsPaint` fails if they part again.
-Four caveats came out with the fix (`components/toast.go`,
-`docs/markup-reference.md`, `docs/architecture.md`, `mouse.go`), and so
-did `zorderdocs_test.go`'s hit-test exemption, whose whole premise was
-that this walk still answered by position.
+Every page that taught the old "paint only, never hit testing" caveat
+lost it with the fix, and so did `zorderdocs_test.go`'s hit-test
+exemption, whose whole premise was that this walk still answered by
+position. How many pages that is, is deliberately not written here —
+this sentence said four while the test beside it said six, inside one
+PR, which is the counts-in-prose failure the Verify section describes.
+`TestARankOrdersHitTestingAsWellAsPaint`'s failure message walks the
+tree and names every page that cites it, so a page joins the list by
+citing the test.
 
 What the walk gave up is the early exit on a hit — an earlier sibling
 can out-rank a later one, so every subtree whose bounds contain the
@@ -512,7 +517,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:915`).
-`DispatchMouse` (`mouse.go:552`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:560`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

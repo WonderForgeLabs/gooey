@@ -1148,9 +1148,14 @@ a later one, so every subtree whose bounds contain the point is visited.
 Bounds still prune at every node, which is where the work was.
 
 `DispatchMouse` runs three framework behaviors before the app sees
-anything — or, during a drag, one. A `MouseMove` with a captor held
-takes neither the hit test nor the hover update; the frozen retarget
-still applies, to the captor:
+anything — or, during a drag, none of them. A `MouseMove` with a captor
+held skips the hit test, and with no hit there is nothing to retarget,
+nothing to move focus to and nothing to hover: `frozenHostFor(nil)` is
+nil and `target(nil)` hands back the captor verbatim. What routes during
+a drag is whatever `m.captor` already holds — for an implicit capture
+that is the component the PRESS retargeted, and for an explicit
+`CaptureMouse(w)` it is `w` exactly as handed over, never retargeted at
+all:
 
 - **The frozen retarget**, once, at the top: a frozen subtree does not
   act, so for every routing purpose the effective hit is the frozen host
@@ -1180,8 +1185,14 @@ tracking is high-frequency — except to components that opt in via
 through hover.
 
 Focus-follows-click and hover tracking are both skipped while the
-pointer is **captured**. The frozen retarget is not — it decides what
-"the hit" even means, so it runs first, every time.
+pointer is **captured**, and so is the retarget: it decides what "the
+hit" means, and a captured move has no hit for it to decide about. The
+retarget's answer is nevertheless what usually routes, because the press
+that captured ran it — but only for an implicit capture. A component
+that took the pointer through `CaptureMouse` holds it verbatim, so a
+frozen descendant captured explicitly receives the events itself. This
+paragraph and the one above it each claimed the retarget still ran
+during a drag, one of them "every time"; corrected in review of #458.
 
 A press captures the component it landed on, and until the release every
 pointer event routes to that captor regardless of what the pointer is

@@ -141,32 +141,6 @@ type PointerFollower interface{ FollowsPointer() bool }
 // so the divergence cannot quietly become something else.
 // Raised in review of #478.
 //
-// "Paints last" is one sentence and it is deliberately the SAME sentence
-// the Composer's paint order is derived from, because the two used to be
-// different rules that happened to agree. Document order gives you
-// children over ancestors and later siblings over earlier ones, which is
-// what this walk used to say directly; the overlay layer (#437) and its
-// ranks (#439) then made paint answer something else, and #465 was the
-// two planes disagreeing:
-//
-//	over  := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
-//	under := &overlayStripe{stripe{ch: 'U'}}   // rank 0, declared later
-//
-// `over` painted over `under` and `under` took the click. Under the
-// retired "declare it last is z-order" rule that could not happen — the
-// thing on top was also the thing this walk found first — so the
-// divergence arrived with the freedom, not with the layer.
-//
-// The fix is not a second ordering; it is asking the ONE ordering.
-// overlayOf is the shared membership-and-rank rule (component.go),
-// orderPaint and gooey.Compose's collectPaint already call it, and a hit
-// candidate is now compared on exactly what appendByRank orders by:
-// the overlay layer above the ordinary one, then a higher rank within
-// it, and only then document order.
-// Nothing here consults the Composer, because it does not need to
-// — the rule is a function of the tree, which is the whole reason it was
-// extracted in #438.
-//
 // WHAT THIS COST. The walk no longer returns on the first hit: an
 // earlier sibling can out-rank a later one, so every subtree whose
 // bounds contain the point is visited. It is still pruned by bounds at
@@ -184,11 +158,13 @@ type PointerFollower interface{ FollowsPointer() bool }
 // the sibling count, and overlapping containers are exactly where it is
 // paid.
 //
-// Popup never depended on any of this: it holds pointer capture while
-// open (Popup.Open), so presses never reach the walk. That is Popup's
-// mechanism, not something the Overlay marker provides — an overlay that
-// takes no capture is now routed correctly instead of being documented
-// as an exception in four files.
+// HOW THE ORDER IS DERIVED and the #465 divergence that produced it are
+// on hitTest below, with the record in
+// docs/specs/2026-09-09-ranked-hit-testing.md. Moved off this doc in
+// review of #458: it is what go doc and pkg.go.dev render for a public
+// API, and it had grown a quoted block of unexported TEST types no
+// reader of the published doc can resolve, plus the review history the
+// spec already carries.
 func (m *FocusManager) HitTest(x, y int) Component {
 	// aborted is the bound on TOTAL WORK, and giving up the early return
 	// on a hit is what made it necessary. See hitTest.
@@ -283,6 +259,38 @@ func (h *hitCandidate) beatenBy(overlay bool, rank, order int) bool {
 	return order > h.order
 }
 
+// "Paints last" is one sentence and it is deliberately the SAME sentence
+// the Composer's paint order is derived from, because the two used to be
+// different rules that happened to agree. Document order gives you
+// children over ancestors and later siblings over earlier ones, which is
+// what this walk used to say directly; the overlay layer (#437) and its
+// ranks (#439) then made paint answer something else, and #465 was the
+// two planes disagreeing:
+//
+//	over  := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
+//	under := &overlayStripe{stripe{ch: 'U'}}   // rank 0, declared later
+//
+// `over` painted over `under` and `under` took the click. Under the
+// retired "declare it last is z-order" rule that could not happen — the
+// thing on top was also the thing this walk found first — so the
+// divergence arrived with the freedom, not with the layer.
+//
+// The fix is not a second ordering; it is asking the ONE ordering.
+// overlayOf is the shared membership-and-rank rule (component.go),
+// orderPaint and gooey.Compose's collectPaint already call it, and a hit
+// candidate is now compared on exactly what appendByRank orders by:
+// the overlay layer above the ordinary one, then a higher rank within
+// it, and only then document order.
+// Nothing here consults the Composer, because it does not need to
+// — the rule is a function of the tree, which is the whole reason it was
+// extracted in #438.
+//
+// Popup never depended on any of this: it holds pointer capture while
+// open (Popup.Open), so presses never reach the walk. That is Popup's
+// mechanism, not something the Overlay marker provides — an overlay that
+// takes no capture is now routed correctly instead of being documented
+// as an exception in four files.
+//
 // depth is threaded rather than counted in a package variable because
 // this walk returns from the middle of a loop on every miss — the
 // deferred-decrement trick MeasureChild uses would cost a defer per
