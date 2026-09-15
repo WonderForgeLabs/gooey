@@ -1534,3 +1534,193 @@ func TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst(t *testing.T) {
 			"is told about two containers for one element.", err)
 	}
 }
+
+// TestTheParserStampsAParentOnEveryElement is the reachability claim
+// readsAsData's comment makes, measured instead of asserted.
+//
+// That comment says everything after the parent branch is dead for any
+// document a user can write, and the argument is that acceptedByParent
+// has already established the parent branch's own condition. The load
+// bearing half is this: the parser stamps `parent` on every element it
+// produces except the root, and the parser is the only constructor of an
+// Element in this package. If a shape ever slipped through unstamped,
+// the refusal would take the catalog search instead — which sorts by
+// name, so it can name an element the document is not inside, which is
+// the divergence round 2 removed.
+//
+// A DOCUMENT, NOT A CONSTRUCTED TREE, for the same reason: a fixture
+// that builds Elements by hand would be asserting about its own
+// construction. Raised in review of #486.
+func TestTheParserStampsAParentOnEveryElement(t *testing.T) {
+	const doc = `<Gooey>
+	  <Stack>
+	    <Tabs><Tab Header="A"><Text>x</Text></Tab></Tabs>
+	    <MenuBar><Menu Title="F"><MenuItem Header="a"/></Menu></MenuBar>
+	    <Grid><Grid.Resources/><Text Grid.Row="0">y</Text></Grid>
+	  </Stack>
+	</Gooey>`
+	root, _, err := parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	var seen, unstamped int
+	var walk func(e *Element, depth int)
+	walk = func(e *Element, depth int) {
+		seen++
+		if depth > 0 && e.parent == "" {
+			unstamped++
+			t.Errorf("<%s> at depth %d carries no parent, so readsAsData would fall to "+
+				"the catalog search — which sorts by NAME and can therefore name an "+
+				"element this document is not inside", e.Name, depth)
+		}
+		for i := range e.Children {
+			walk(&e.Children[i], depth+1)
+		}
+		// PROPERTY ELEMENTS ARE DELIBERATELY NOT WALKED, and the reason
+		// is the one that makes this test about the right set.
+		//
+		// A Props entry carries NO parent — measured: adding it to this
+		// walk reports <Grid.Resources> unstamped at depth 3. It is also
+		// never what readsAsData is handed: refusePropElement
+		// (attrcheck.go:290) takes the OWNER's Element and passes that,
+		// naming the property only in the message. So an unstamped
+		// Props entry cannot reach the fallbacks, and asserting over it
+		// would fail this test for a shape the code under it never
+		// sees. Recorded rather than dropped silently, because "the
+		// parser stamps every element" is false as stated and true for
+		// the set that matters.
+	}
+	walk(&root, 0)
+	if seen < 10 {
+		t.Fatalf("the walk saw %d elements, which is fewer than the fixture declares — "+
+			"a walk that visits nothing reports no unstamped element either", seen)
+	}
+	t.Logf("%d elements, %d unstamped", seen, unstamped)
+}
+
+// TestNoRemedyPrescribesASpellingTheAttributeGateRefuses is the guard on
+// the walk-from-one-refusal-to-another class, closed at the one gate
+// attributeHere's own argument did not account for.
+//
+// attributeHere justifies prescribing `<X Name="…">` with "if the
+// element does not take the name, the attribute gate answers with its
+// own list, which is a better error". True for a name the VOCABULARY
+// gate sees — <Tab.Frobnicate> reaches suggest(). False for everything
+// cannotApplyTo covers, because refuseComponentAttr intercepts those
+// first and answers with no advice at all. Measured before the fix:
+//
+//	<Menu.Name>x</Menu.Name>  -> …; write it as an attribute on this
+//	                             element instead, <Menu Name="…">, …
+//	<Menu Name="x">           -> …builds no component for Name to apply to
+//
+// THE ASSERTION BUILDS THE PRESCRIBED DOCUMENT rather than reading the
+// sentence, because the claim is behavioural: a remedy is a promise that
+// following it gets somewhere. Raised in review of #486.
+func TestNoRemedyPrescribesASpellingTheAttributeGateRefuses(t *testing.T) {
+	ctx := &Context{}
+	var checked int
+	for _, sp := range ctx.Catalog() {
+		if !sp.Pseudo {
+			continue
+		}
+		names := []string{"Grid.Row", "Canvas.Left"}
+		for _, u := range universalAttrs {
+			names = append(names, u.Name)
+		}
+		for _, name := range names {
+			checked++
+			r := propRemedy(sp, ctx, name)
+			if !strings.Contains(r, "write it as an attribute on this element") {
+				continue
+			}
+			t.Errorf("<%s.%s> is refused with advice to write <%s %s=\"…\">, and %q is "+
+				"a name refuseComponentAttr refuses on any pseudo-element before the "+
+				"vocabulary gate runs — so the author follows the advice into a second "+
+				"refusal carrying no advice at all. Remedy: %q",
+				sp.Name, name, sp.Name, name, name, r)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no pseudo-element in the catalog was checked, so this guard ran over " +
+			"nothing — Catalog() or the Pseudo flag changed shape")
+	}
+	t.Logf("%d pseudo-element x refusable-name pairs checked", checked)
+}
+
+// TestAContentRemedySurvivesForThePropertyElements is finding 2 of round
+// 5, and the half a green suite could not show.
+//
+// dbcbc7e added `if !isUniversalAttr(name) { return "" }` to
+// pseudoRemedy to stop the content move being prescribed for ATTACHED
+// properties, which have no destination. Behaviors and Resources are
+// neither attributes nor universals, so the guard caught them too — and
+// their destination IS derivable, because every element accepts them.
+// <Tab.Behaviors> lost a remedy that was correct: the <Text.Behaviors>
+// it pointed at loads. propRemedy's `case name == "Behaviors" || name ==
+// "Resources": return r` could then return only "", against a comment
+// saying the spelling carries over unchanged.
+func TestAContentRemedySurvivesForThePropertyElements(t *testing.T) {
+	ctx := &Context{}
+	for _, name := range []string{"Behaviors", "Resources"} {
+		sp, ok := ctx.spec("Tab")
+		if !ok {
+			t.Fatal("<Tab> is not in the catalog")
+		}
+		if got := propRemedy(sp, ctx, name); got == "" {
+			t.Errorf("<Tab.%s> is refused with no remedy. Every element accepts %s, so "+
+				"the content inside a <Tab> is a destination this code can name — which "+
+				"is the whole condition the content move needs", name, name)
+		}
+		doc := fmt.Sprintf(`<Gooey><Tabs><Tab Header="a"><Tab.%s/></Tab></Tabs></Gooey>`, name)
+		_, err := Build([]byte(doc), ctx)
+		if err == nil {
+			t.Fatalf("%s is accepted, so there is no refusal to carry a remedy", doc)
+		}
+		if !strings.Contains(err.Error(), contentRemedy) {
+			t.Errorf("%s is refused as:\n\t%v\nwant the content remedy", doc, err)
+		}
+		// AND THE DESTINATION TAKES IT, in the same spelling — the
+		// property-element form, since that is what carries over
+		// unchanged.
+		dest := fmt.Sprintf(`<Gooey><Tabs><Tab Header="a"><Text><Text.%s/></Text></Tab></Tabs></Gooey>`, name)
+		if _, err := Build([]byte(dest), ctx); err != nil {
+			t.Errorf("the remedy for <Tab.%s> lands on <Text.%s>, and that is refused "+
+				"too:\n\t%v", name, name, err)
+		}
+	}
+}
+
+// TestANamelessHostRegistrationStillNamesItself. checkElementNames
+// explicitly permits a def with no Name — its loop reads `if d == nil ||
+// d.Name == "" || d.Name == name` — and specAs copied the empty string
+// through, so every message reading spec.Name rendered "<>" beside a
+// clause reading e.Name. It also silently missed
+// reservedOnContent[spec.Name] and namesChild(p, spec.Name), the second
+// of which was the ONLY live route into readsAsData's fallbacks.
+// Measured before the fix: "<Holder> reads <> as data" and
+// "< Frob=…">, if <> takes one". Raised in review of #486.
+func TestANamelessHostRegistrationStillNamesItself(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{
+		"Leafy":  {ParsedBy: "Holder", Known: true},
+		"Holder": {Name: "Holder", Known: true, Children: ChildSpec{Mode: ModeRestricted, Only: []string{"Leafy"}}},
+	}}
+	sp, ok := ctx.spec("Leafy")
+	if !ok {
+		t.Fatal("the Name-less registration does not resolve at all")
+	}
+	if sp.Name != "Leafy" {
+		t.Errorf("a def registered as Elements[%q] with no Name resolves to Name=%q; the "+
+			"registry key is the element's name and every message here prints it",
+			"Leafy", sp.Name)
+	}
+	if !sp.Pseudo {
+		t.Fatal("<Leafy> is not pseudo, so the refusals this guards are never reached")
+	}
+	got := readsAsData(Element{Name: "Leafy", parent: "Holder"}, sp, ctx)
+	if strings.Contains(got, "<>") {
+		t.Errorf("readsAsData renders %q, which names the element as <>", got)
+	}
+	if !strings.Contains(got, "<Leafy>") {
+		t.Errorf("readsAsData renders %q and does not name <Leafy>", got)
+	}
+}

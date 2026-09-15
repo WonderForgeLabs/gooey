@@ -364,9 +364,32 @@ func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
 	if p, ok := ctx.spec(e.parent); ok && namesChild(p, spec.Name) {
 		return fmt.Sprintf("<%s> reads <%s> as data, ", p.Name, spec.Name)
 	}
-	// The catalog search stays as the fallback for an element with no
-	// parent stamped on it — one constructed by hand rather than parsed,
-	// which is the only way past the branch above.
+	// EVERYTHING BELOW IS UNREACHABLE FROM A PARSED DOCUMENT, and that
+	// is a property to state rather than a gap to leave implied.
+	//
+	// Both callers run inside `if ok && spec.Pseudo { if
+	// !acceptedByParent(e, ctx) { return nil } … }`, and acceptedByParent
+	// IS the branch above: ctx.spec(e.parent) resolving and
+	// namesChild(parent, …). markup.go stamps parent on every element the
+	// parser produces, and the parser is the only thing in this package
+	// that constructs one. So for any document a user can write, the
+	// branch above answers and none of these run.
+	//
+	// They are kept, not deleted, because readsAsData takes an Element by
+	// value and nothing stops a future caller — or a test — handing it
+	// one built by hand, which is the one shape with no parent. What the
+	// fallbacks must NOT be is mistaken for the live path: this was
+	// round 3's "ParsedBy has no live reader" finding, reopened when
+	// round 4 put the parent branch in front, and the arm that keeps the
+	// ParsedBy clause green calls this function directly with a
+	// parentless Element. TestTheParserStampsAParentOnEveryElement pins
+	// the reachability claim itself, so "dead on the live path" is
+	// measured rather than asserted here.
+	//
+	// A Name-LESS host registration used to reach them for real, because
+	// the branch above tests namesChild(p, spec.Name) and spec.Name was
+	// empty; ctx.spec now defaults it to the registry key, which closed
+	// that route. Raised in review of #486.
 	if p := namingParent(spec.Name, ctx); p != "" {
 		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
 	}
@@ -442,8 +465,20 @@ func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 	if why, ok := reservedOnContent[spec.Name][name]; ok {
 		return why
 	}
-	// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL, the same guard
-	// propRemedy states below and the half this function was missing.
+	// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL — or for the two
+	// property elements every element accepts, which is the exemption
+	// this guard was missing.
+	//
+	// Behaviors and Resources are not attributes at all and are not in
+	// universalAttrs, so the guard below refused them along with the
+	// attached properties it was written for, and <Tab.Behaviors> lost
+	// a remedy that was CORRECT: <Text.Behaviors> inside the <Tab>
+	// loads. It also left propRemedy's `case name == "Behaviors" ||
+	// name == "Resources": return r` able to return only "", against a
+	// comment saying the spelling carries over unchanged, and made
+	// TestEveryPseudoElementRefusesAPropertyElement's propOnContent
+	// branch unreachable — all three silently, with the suite green.
+	// Raised in review of #486.
 	//
 	// It did not need one until the attribute gate widened: cannotApplyTo
 	// admitted only universalAttrs, and every universal a component
@@ -464,7 +499,7 @@ func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 	// A remedy that walks the author into a second load error is worse
 	// than none, and there is no destination to name instead — so the
 	// refusal says what is wrong and stops. Raised in review of #486.
-	if !isUniversalAttr(name) {
+	if !isUniversalAttr(name) && name != "Behaviors" && name != "Resources" {
 		return ""
 	}
 	switch spec.Children.Mode {
@@ -561,12 +596,41 @@ func propRemedy(spec ElementSpec, ctx *Context, name string) string {
 				"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
 				"form that moves"
 		}
+		if !sayableHere(name) {
+			return ""
+		}
 		return attributeHere(spec, name)
 	case r != "":
 		return r // a reservation has its own sentence
 	}
+	if !sayableHere(name) {
+		return ""
+	}
 	return attributeHere(spec, name)
 }
+
+// sayableHere reports whether attributeHere's advice survives being
+// followed.
+//
+// attributeHere's doc argues that prescribing the attribute spelling is
+// safe because "if the element does not take the name, the attribute
+// gate answers with its own list, which is a better error". That is true
+// for a name the vocabulary gate sees — <Tab.Frobnicate> reaches
+// suggest() — and FALSE for anything cannotApplyTo covers, because
+// refuseComponentAttr intercepts those before the vocabulary gate runs
+// and answers with no advice at all. Measured:
+//
+//	<Menu.Name>x</Menu.Name>
+//	  -> ... builds no component for Name to apply to; write it as an
+//	     attribute on this element instead, <Menu Name="…">, …
+//	<Menu Name="x">            ← exactly what that advised
+//	  -> ... builds no component for Name to apply to
+//
+// Walking an author from one refusal into another is the class this
+// whole function exists to close, reintroduced through the one gate
+// attributeHere's argument did not account for. Raised in review of
+// #486.
+func sayableHere(name string) bool { return !cannotApplyTo(name) }
 
 // attributeHere is what can be said when no DESTINATION can be named:
 // write it as an attribute on this same element.
@@ -846,7 +910,25 @@ func (ctx *Context) spec(name string) (ElementSpec, bool) {
 	// unknown attribute on a registered component used to be ignored
 	// forever, and the near-miss suggestion works here for free.
 	if d, ok := ctx.Elements[name]; ok {
-		return d.specAs(OriginRegistered), true
+		sp := d.specAs(OriginRegistered)
+		// THE REGISTRY KEY IS THE ELEMENT'S NAME WHEN THE DEF DOES NOT
+		// CARRY ONE, and checkElementNames explicitly permits that: its
+		// loop is `if d == nil || d.Name == "" || d.Name == name`, so a
+		// def registered as Elements["Leafy"] with no Name is legal and
+		// specAs copies the empty string straight through.
+		//
+		// Every refusal message in this file reads spec.Name, and the
+		// clause beside it reads e.Name, so the pair rendered "<Holder>
+		// reads <> as data" and "< Frob=…">, if <> takes one". The same
+		// empty key silently missed reservedOnContent[spec.Name] and
+		// namesChild(p, spec.Name). Defaulting HERE fixes the lookups
+		// and the messages together, where threading e.Name would have
+		// fixed only the sentences it was threaded into. Raised in
+		// review of #486.
+		if sp.Name == "" {
+			sp.Name = name
+		}
+		return sp, true
 	}
 	if _, custom := ctx.Components[name]; custom {
 		return ElementSpec{}, false
