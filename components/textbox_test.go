@@ -570,3 +570,155 @@ func TestMovingTheScrollWindowRepaintsOnlyTheField(t *testing.T) {
 		t.Errorf("after Home the window shows %q, want %q", got, want)
 	}
 }
+
+// TestAnEmojiPresentationSequenceKeepsItsColumns is the arm the first fix
+// for #519 needed and did not have.
+//
+// A variation selector is zero-width, so the rune walk folded it into the
+// cell in front — but the fold WIDENS the lead: StringWidth("⚠️") is 2
+// where StringWidth("⚠") is 1. The cursor had already advanced by 1, so
+// the fold's write laid a Continuation in the column the next rune was
+// about to take, healSeam blanked the orphaned lead, and "⚠️x" painted as
+// " x". #519's own symptom, in a different Unicode category, introduced
+// by the fix for it.
+//
+// U+0301 CANNOT SEE THIS, which is why the sibling test above does not:
+// an accent leaves its lead one column wide, so it is the one mark whose
+// fold does not change the answer. Found in the review of #521.
+func TestAnEmojiPresentationSequenceKeepsItsColumns(t *testing.T) {
+	const warn = "⚠️" // ⚠ + VS16: one rune of width 1, one cluster of width 2
+	if render.StringWidth(warn) == render.RuneWidth([]rune(warn)[0]) {
+		t.Fatalf("the fixture does not discriminate: %q measures %d columns and "+
+			"its lead rune measures %d. This test is about a fold that WIDENS "+
+			"its lead", warn, render.StringWidth(warn), render.RuneWidth([]rune(warn)[0]))
+	}
+	tb := &TextBox{Text: prop.NewSource(warn + "x")}
+	f := gooey.Compose(tb, term.Caps{Cols: 8, Rows: 1}, nil)
+
+	if got := f.Cells.At(0, 0); got.Cluster != warn {
+		t.Errorf("cell 0 holds rune %q cluster %q, want the whole cluster %q — "+
+			"the emoji was erased from a field showing its own value",
+			got.Rune, got.Cluster, warn)
+	}
+	if got, want := render.SpanText(f.Cells, 0, 0, 4), warn+"x "; got != want {
+		t.Errorf("rendered %q, want %q", got, want)
+	}
+}
+
+// TestAZWJFamilyOccupiesTheSameColumnsAsInAText is finding 5's own
+// measurement: the field and the label have to agree about one string.
+//
+// A rune walk cannot, because a cluster's width is not the sum of its
+// runes' widths. The family below is one 2-column cluster to SetString
+// and was three 2-column cells here — the same frame, four columns
+// apart, with render.Displaced blind to it because every cell was
+// individually self-consistent. Found in the review of #521.
+func TestAZWJFamilyOccupiesTheSameColumnsAsInAText(t *testing.T) {
+	const family = "\U0001F468‍\U0001F469‍\U0001F467" // 👨‍👩‍👧
+	want := render.StringWidth(family + "x")
+	if want >= len([]rune(family+"x"))*2 {
+		t.Fatalf("the fixture does not discriminate: %q measures %d columns, "+
+			"which a per-rune walk could also produce", family, want)
+	}
+	tb := &TextBox{Text: prop.NewSource(family + "x")}
+	f := gooey.Compose(tb, term.Caps{Cols: 12, Rows: 1}, nil)
+
+	// THE CELLS, NOT THE ROW STRING. RowText reassembles the row and
+	// StringWidth then re-segments it, so the family reads as one
+	// cluster whichever way it was painted — the two disagreements
+	// cancel and the measurement agrees with the bug. What differs is
+	// how many COLUMNS of the buffer the value occupies, which is what
+	// displaces everything to its right.
+	end := 0
+	for x := 0; x < 12; x++ {
+		if c := f.Cells.At(x, 0); c.Rune != ' ' || c.Cluster != "" {
+			end = x + c.Width()
+		}
+	}
+	if end != want {
+		t.Errorf("the field lays %q across %d buffer columns; a Text lays the "+
+			"same string across %d. One of them is wrong about the row, and a "+
+			"reader cannot tell which from the cells — each one is "+
+			"self-consistent, which is why render.Displaced cannot see it",
+			family+"x", end, want)
+	}
+}
+
+// TestTheCaretSurvivesAWindowThatOpensOnACombiningMark pins the arm
+// scrollFor's snap exists for.
+//
+// scrollFor's `if caret < cur { cur = caret }` could put the window's
+// first rune on a zero-width mark. Render then had no lead for it to
+// join, skipped it — and skipped the caret arm with it, so a focused
+// field showed no caret anywhere. Found in the review of #521.
+func TestTheCaretSurvivesAWindowThatOpensOnACombiningMark(t *testing.T) {
+	const value = "abcdefghij" + "é" + "xyz0123456789"
+	tb := &TextBox{Text: prop.NewSource(value)}
+	tb.SetFocused(true)
+	tb.setCaret(len([]rune(value)))
+	gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+	tb.setCaret(11) // the mark itself, with the window well to its right
+	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+
+	reversed := false
+	for x := 0; x < 6; x++ {
+		if f.Cells.At(x, 0).Style.Reverse {
+			reversed = true
+			break
+		}
+	}
+	if !reversed {
+		t.Errorf("no cell in the field is reversed with the caret at 11 of %q: "+
+			"the user is typing into a field whose caret is nowhere on screen. "+
+			"Row: %q", value, render.RowText(f.Cells, 0))
+	}
+}
+
+// TestAClickLandsOnAClusterBoundaryNotInsideOne is finding 4.
+//
+// The forward walk stopped the moment its column budget ran out and
+// never stepped past the zero-width runes belonging to the cluster it
+// had just passed, so a click on the column after a folded accent
+// answered with the MARK's index. Typing there put the typed rune
+// between "e" and its accent; backspace deleted the "e" and left an
+// orphan mark. Render folds those runes into one cell, so the click
+// model and the paint model disagreed about how many positions that cell
+// has. Found in the review of #521.
+func TestAClickLandsOnAClusterBoundaryNotInsideOne(t *testing.T) {
+	const decomposed = "éx"
+	tb := &TextBox{Text: prop.NewSource(decomposed)}
+	gooey.Compose(tb, term.Caps{Cols: 8, Rows: 1}, nil)
+
+	tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 1})
+	if got, want := tb.Caret(), 2; got != want {
+		t.Errorf("a click on column 1 of %q answers caret %d, want %d — %d is "+
+			"between the e and its accent, which is a position the screen does "+
+			"not have", decomposed, got, want, got)
+	}
+}
+
+// TestAClickAfterTheValueShrankDoesNotPanic is finding 2, and it is the
+// one that killed the process.
+//
+// t.scroll is derived state left over from the last paint, and indexAt
+// indexed the value with it unclamped. A bound value that shrinks
+// between a paint and a click — a viewmodel reset, a hot reload; the
+// scenario Caret()'s own doc names — then walked off the end from the UI
+// goroutine. Found in the review of #521.
+func TestAClickAfterTheValueShrankDoesNotPanic(t *testing.T) {
+	v := prop.NewSource(strings.Repeat("abcdefghijklm", 2))
+	tb := &TextBox{Text: v, Prompt: prop.NewSource("> ")}
+	tb.setCaret(len([]rune(v.Get())))
+	gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	if tb.scroll == 0 {
+		t.Fatalf("the fixture never scrolled, so a stale scroll cannot be stale " +
+			"here and this test measures nothing")
+	}
+
+	v.Set("ab") // no repaint: t.scroll still points past the new end
+	tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 0})
+
+	if got := tb.Caret(); got < 0 || got > 2 {
+		t.Errorf("caret %d is outside the new value", got)
+	}
+}
