@@ -347,9 +347,15 @@ func shortPath(p string, w int) string {
 		// gave `…/bbbb/cc` and `…bbbb/cc` at 8, and the second reads as
 		// "a character was cut out of bbbb" when what actually went was
 		// the whole leading `aa/`. Reserving two also makes this
-		// condition and elide's first branch the SAME predicate, so the
-		// segment this loop hands over always takes the `"…/" + s` arm
-		// rather than falling through to the cut. Found in review of #524.
+		// condition and elide's first branch the SAME predicate — but
+		// only from the SECOND iteration on, where `out` is the previous
+		// `next` and has already passed this test. On the first, `out` is
+		// the last segment straight out of Split with nothing having
+		// measured it, and at the return below it is the whole path; both
+		// reach elide's cut arm, which is what the wide half of
+		// TestShortPathStillKeepsTheTail exercises. The cut arm is the
+		// last segment's, not dead code. Found in review of #524,
+		// corrected in the round after.
 		if render.StringWidth(next)+2 > w {
 			return elide(out, w)
 		}
@@ -358,18 +364,29 @@ func shortPath(p string, w int) string {
 	return elide(out, w)
 }
 
-// elide answers in ONE OF TWO SHAPES, and which one is the difference
-// between "there is more path above this" and "this name itself was
-// cut":
+// elide answers in ONE OF THREE SHAPES, and which one is the difference
+// between "there is more path above this", "this name itself was cut",
+// and "nothing of it fits at all":
 //
 //	"…/" + s          when s fits in w-2 — the common path, and what
 //	                  every ordinary row in the explorer gets
 //	"…" + a tail of s when it does not, keeping the LAST w-1 columns
+//	"…" alone         when even the trailing CLUSTER is wider than w-1,
+//	                  so no tail fits beside the ellipsis — and, below
+//	                  w == 2, whatever ClipCols can lay of it
+//
+// The third is the one a caller is likeliest to be surprised by:
+// elide("世", 2) answers "…", discarding a string that fits the budget.
+// Reaching elide at all means leading segments were dropped, so the
+// ellipsis is the part that has to survive; a lone glyph where a path
+// was is a worse answer than a mark saying a path was cut. The reason
+// used to be written only inside the body, where this doc's reader does
+// not look.
 //
 // Clipping from the left would keep the leading characters of one long
 // name instead, which is the answer this whole function rejects for a
-// list of paths. The doc used to name only the second arm, though the
-// first is the one that carries the file list (#524's review).
+// list of paths. The doc named one arm, then two, while the fix for that
+// added a third in the same commit (#524's review, twice).
 func elide(s string, w int) string {
 	if render.StringWidth(s) <= w-2 {
 		return "…/" + s

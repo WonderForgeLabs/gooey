@@ -100,9 +100,13 @@ func TestAChipMeasuresItsAddressInColumns(t *testing.T) {
 // characters in it are not the app's to choose.
 func TestShortPathFitsTheColumnsItWasGiven(t *testing.T) {
 	p := "apps/" + strings.Repeat(wideWord, 3) + "/" + strings.Repeat(wideWord, 3) + ".gooey"
-	// Every width here is at least the path's RUNE count, so a rune count
-	// answers "it fits" on all three and the loop discriminates rather
-	// than agreeing with the rule it is meant to reject.
+	// THE FIRST THREE WIDTHS are each at least the path's RUNE count (24,
+	// against 36 columns), so a rune count answers "it fits" for them and
+	// the loop discriminates rather than agreeing with the rule it is
+	// meant to reject. The four below them are the bound's own end, and
+	// the paragraph after this one is their argument — not this one's:
+	// the widths were three when it was written, and it went on saying
+	// "all three" over a list of seven. Corrected in review of #524.
 	//
 	// DOWN TO ONE COLUMN, and the narrow end is a separate defect rather
 	// than more of the same: elide walked to the first cluster starting
