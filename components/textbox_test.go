@@ -255,6 +255,13 @@ func TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks(t *testing.T) {
 // the glyphs it overwrote are gone — the row read "  █" until #519 was
 // fixed, and this test carried a t.Skip citing it until then.
 func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
+	// THE SKIP RETIRED HERE, which is what it was built to do. The base
+	// branch carried a t.Skip citing #519 behind a tripwire that failed
+	// the moment the row read correctly, so the claim could not outlive
+	// the fix even if the fixer never opened this file. This is the
+	// commit that fixes it, so the tripwire fired and the skip and the
+	// tripwire came out together, leaving the fixture asserting. Merged
+	// in from #520.
 	v := prop.NewSource("世界")
 	tb := &TextBox{Text: v}
 	tb.SetFocused(true)
