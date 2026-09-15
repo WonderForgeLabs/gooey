@@ -160,6 +160,17 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 			if path == "." {
 				return nil
 			}
+			// VENDOR IS PRUNED HERE AND NOT IN discoverModules, which
+			// mirrors CLAUDE.md's find and prunes only dot-directories.
+			// TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery
+			// compares the two sets, so a vendored go.mod appearing
+			// would fail that test with a message blaming this floor for
+			// something that is not its doing. Harmless today and stays
+			// so as long as `go work vendor` keeps stripping the
+			// vendored modules' own go.mod files — which CLAUDE.md's
+			// "One workspace" section is the record for. Written down
+			// because the asymmetry is invisible from either file alone.
+			// Raised in review of #503.
 			if name := d.Name(); strings.HasPrefix(name, ".") || name == "vendor" {
 				return filepath.SkipDir
 			}
@@ -714,6 +725,29 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 			// not prose. Restricted to g.Specs[j+1] this arm was blind
 			// to two insertions where the arm eighteen lines up argued
 			// it must not be. Raised in review of #503.
+			//
+			// ONE FALSE-POSITIVE CLASS IS ACCEPTED, and it is recorded
+			// here rather than suppressed because the suppression would
+			// cost more than the class does. A JOINT doc opens on the
+			// other name it documents:
+			//
+			//	const (
+			//		// alpha and beta are the pair.
+			//		beta  = 2
+			//		alpha = 3
+			//	)
+			//
+			// That is the theft signature exactly, and the defence above
+			// does not cover it — the doc opens on a sibling because it
+			// is describing a sibling, legitimately. Measured before
+			// accepting it: ZERO instances across the tree's doc
+			// comments, including the thirty-odd-entry catalog.go blocks
+			// this arm was written for. The remedy for whoever meets it
+			// is to open the sentence on the name the doc sits above,
+			// which is what Go's own convention asks for anyway — and
+			// there is deliberately no escape hatch, because a hatch
+			// that no site in the tree needs is a hatch the next theft
+			// can use. Raised in review of #503 round 2.
 			first := opensBy(doc)
 			if first == "" || first == name || !declaresIn(g.Specs[j+1:], first) {
 				continue
