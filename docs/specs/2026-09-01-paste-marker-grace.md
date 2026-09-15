@@ -319,6 +319,26 @@ it. Count them if you want the figure.
   healthy decoder. `splitMarkerAttempt` got this one round before
   `closedTtyAttempt` did, which left the record asserting the stronger
   guarantee for the weaker of the two.
+- **The budget bounds the WRITE, and the read needed its own answer.** The
+  guard above admits an attempt on `time.Since(wrote) < 2*EscTimeout -
+  EscTimeout/4`, which bounds when `master.Write` **returns**; the grace
+  expires at `arm + 2*EscTimeout` with `arm >= wrote`. So an attempt can be
+  admitted with as little as `EscTimeout/4` left for the decoder goroutine to
+  be *scheduled* and read the tail — and descheduled past that, a healthy run
+  reached the `!ev.IsPaste()` arm, which was a `t.Fatalf` the retry loop
+  cannot absorb. The same false-cause shape as the bullet above, moved from
+  the drift to the read, and not hypothetical on shared self-hosted pools: a
+  sleep overshoot of ~18ms still passes the 70ms budget and leaves ~2ms of
+  read headroom. The discriminator is the Esc's ARRIVAL TIME — under the
+  `PasteMarkerGrace = 1` mutation it is emitted at ≈ `arm + EscTimeout` ≈
+  `wrote + 40ms`, *before* the tail write, so it comes back well under
+  `2*EscTimeout`; a loaded-but-healthy decoder cannot produce one before the
+  grace expires. An Esc at or past `2*EscTimeout` is now inconclusive and
+  retries. **The cost, stated:** this makes the `PasteMarkerGrace = 1` kill
+  probabilistic in the same way the row below already concedes — measured
+  green on three consecutive mutated runs, with the #419 message still the
+  one that fires — and `TestPasteMarkerGraceHasAFloor` remains the
+  deterministic pin. Raised in review of #445.
 - **An absolute budget, never one scaled by the constant under test.**
   `splitMarkerAttempt` first scaled its window by `PasteMarkerGrace`, so under
   the mutation it exists to catch the budget collapsed with the constant,

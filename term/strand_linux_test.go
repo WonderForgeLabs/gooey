@@ -574,7 +574,9 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// is 2*EscTimeout-EscTimeout/4 minus this sleep minus `held-wrote`, so
 	// EscTimeout/2 on an idle machine and less exactly when the machine is
 	// the reason it is needed — which is the trade, and the retry loop is
-	// what absorbs it.
+	// what absorbs it. That last clause was true of the bails and NOT of
+	// the read below, which hard-failed; the branch at the !IsPaste arm
+	// is what makes it true of both. Raised in review of #445.
 	time.Sleep(EscTimeout + EscTimeout/4)
 	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
 		t.Fatalf("write to master: %v", err)
@@ -623,6 +625,38 @@ func splitMarkerAttempt(t *testing.T) bool {
 
 	ev := next(t, evs, "no event arrived after the paste marker's tail")
 	if !ev.IsPaste() {
+		// THE BUDGET ABOVE BOUNDS THE WRITE, NOT THE READ, and that gap
+		// is the last place this helper could still blame the code for
+		// the machine.
+		//
+		// `time.Since(wrote) < 2*EscTimeout - EscTimeout/4` bounds when
+		// master.Write RETURNS; the grace expires at arm+2*EscTimeout
+		// with arm >= wrote. So an attempt is admitted with as little as
+		// EscTimeout/4 — 10ms — left for the decoder goroutine to be
+		// SCHEDULED and read the tail. Descheduled past that, the timer
+		// resolves the prefix first, an Esc arrives here, and this was a
+		// t.Fatalf — which the forty-attempt retry loop cannot absorb,
+		// whatever the comment at the sleep says. On this repo's shared
+		// self-hosted pools a sleep overshoot of ~18ms still passes the
+		// 70ms budget and leaves ~2ms of read headroom.
+		//
+		// THE ARRIVAL TIME DISCRIMINATES, which is what makes the bail
+		// safe. Under PasteMarkerGrace = 1 the Esc is emitted at
+		// ≈ arm+EscTimeout ≈ wrote+40ms — BEFORE the tail write at
+		// wrote+50ms — so it is already queued and comes back well under
+		// 2*EscTimeout. A healthy-but-loaded decoder cannot produce one
+		// before wrote+2*EscTimeout, because that is when the grace
+		// expires. So the mutation stays caught and the stall stops
+		// being reported as #419.
+		//
+		// The cost, stated: it makes the PasteMarkerGrace = 1 kill
+		// probabilistic, the same way the spec already concedes this row
+		// holds probabilistically. TestPasteMarkerGraceHasAFloor is the
+		// deterministic pin and is unaffected. Raised in review of #445.
+		if ev.IsKey() && ev.Key.Key == input.KeyEsc &&
+			time.Since(wrote) >= 2*EscTimeout {
+			return false // the grace had already expired; attribute nothing
+		}
 		// THE #419 FAILURE, and it is worth naming rather than reporting a
 		// type mismatch: at PasteMarkerGrace = 1 the first timeout resolves
 		// the held prefix to Esc, and what arrives here is that Esc followed

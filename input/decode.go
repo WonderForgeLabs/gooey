@@ -139,11 +139,21 @@ type deadline uint8
 // arm of this change routes through. Prefixed all three rather than one,
 // so the set reads as a set. Raised in review of #445.
 //
-// It opens with "These" and not with a member's name for the same reason
-// it sits where it does: a group doc that opens by naming one of its own
-// entries is the shape an insertion at the top of a documented block
-// leaves behind, and gooey.TestNoDocCommentNamesTheDeclarationBelowIt
-// cannot tell the two apart.
+// It opens with "These" and not with a member's name because a group doc
+// that opens by naming one of its own entries is the shape an insertion
+// at the top of a documented block leaves behind, and nothing reading
+// the file afterwards can tell the two apart.
+//
+// NOT because a guard here would catch it. This cited
+// gooey.TestNoDocCommentNamesTheDeclarationBelowIt, and both halves of
+// that were wrong: the test is markup.TestNoDocCommentNamesTheDeclarationBelowIt
+// (markup/doccomment_test.go), and it walks its own directory with
+// goparser.ParseDir(fset, ".", …), so input/ is outside it entirely. A
+// citation that names a guard which cannot see the file it is written in
+// is the "claim true of less than it says" class this branch's tip
+// commit is about, one file over. panel.go words it correctly —
+// "scoped to markup/ today" — and that is the form to copy. Raised in
+// review of #445.
 //
 // ABOVE THE `const (`, NOT INSIDE IT. Written between the paren and the
 // first entry, godoc attaches it to deadlineLive — a paragraph about
