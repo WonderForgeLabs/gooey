@@ -1,5 +1,16 @@
 # Bounding a component cycle: seven walks, two strategies, one number
 
+**Status:** amended 2026-09-13 — the "depth, everywhere else" strategy
+below is weaker than this page claims. A depth cap bounds the length of a
+path, not the number of them, so on a cycle that BRANCHES the four walks
+that carry only a depth counter do not return. `hitTest` gained a
+whole-walk abort in #458; `MeasureChild`/`ArrangeChild`, `firstFocusable`
+and `renderTree` did not, and that gap is
+[#506](https://github.com/WonderForgeLabs/gooey/issues/506). The rest of
+the record — the crash, the two strategies, where 512 came from, the
+load-error path — stands. Read "Two strategies, chosen per walk" with
+that correction beside it.
+
 Decided 2026-08-23 while fixing
 [#216](https://github.com/WonderForgeLabs/gooey/issues/216), which asked
 for a depth cap on `MeasureChild`. The cap is here, but the issue
@@ -60,6 +71,22 @@ during panic unwinding, so the counter cannot be left climbing).
 `hitTest`, `firstFocusable` and `renderTree` thread an `int` parameter
 instead, because they return from inside a loop and a defer per
 component per mouse event is a real cost where an increment is not.
+
+**And a depth counter bounds a PATH, not a walk.** This section was
+written as though the two strategies were equally strong, differing only
+in cost. They are not. Identity catches on the second visit however the
+cycle is shaped; depth catches the 512th step down one line of descent,
+and a container that is its own child *twice* branches, so the number of
+lines is exponential in the cap. Measured: `Measure` on such a tree did
+not return in 5 seconds, with the cap firing and a `LayoutFault` recorded
+the whole time — which is the worst shape available, because the fault
+says "handled". `hitTest` carries a whole-walk `aborted` flag as of #458,
+which it needed for an unrelated reason (the ranked overlay layer took
+away its early return on a hit) and which happens to be the bound this
+section should have specified. The other four are
+[#506](https://github.com/WonderForgeLabs/gooey/issues/506), and the fix
+belongs in #375's single walk-the-children primitive rather than in four
+copies.
 
 **A load error, for markup.** `markup.control` — the one path both
 `Include` and `UserControl` pass through — carries the ancestry of

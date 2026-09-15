@@ -479,6 +479,18 @@ layout exists and wedges the heap rather than the stack — so capping
 here alone would have turned the original crash into a hang. Compose and
 Focus detect the repeat by identity (they already key a map by
 component); Measure, Arrange, HitTest, Focusable and Render count depth.
+
+Counting depth is weaker than it sounds, and this page said otherwise
+until #458. A cap bounds the length of a path, not the number of them,
+so a cycle that BRANCHES — a container that is its own child twice —
+costs a number of visits exponential in the cap. `HitTest` carries a
+whole-walk abort as well, which it needed once the ranked overlay layer
+removed its early return on a hit; `Measure`, `Arrange`, `Focusable` and
+`Render` do not, and measurably do not return
+([#506](https://github.com/WonderForgeLabs/gooey/issues/506)). For those
+four the recorded fault is the trap rather than the reassurance: it says
+"handled" while the walk continues.
+
 A control that includes itself is caught earlier still, as a load error
 naming the loop. Nothing panics: read the report with
 `Composer.LayoutFault()`, `App.LayoutFault()`, or `Frame.LayoutFault()`
@@ -489,9 +501,9 @@ and the four walks outside the root package that remain unbounded are
 
 `Layout` itself is the FrameworkElement property set — margin
 (`Thickness`, in cells), explicit size, `HAlign`/`VAlign`, and
-`Visibility` (`Visible`, `Hidden` = occupies space but does not paint,
-`Collapsed` = occupies nothing, subtree skipped entirely). In Go
-composition it applies via `gooey.L`:
+`Visibility` (`Visible`, `Hidden` = occupies space, renders no content
+and is not hit-tested, `Collapsed` = occupies nothing, subtree skipped
+entirely). In Go composition it applies via `gooey.L`:
 
 ```go
 gooey.L(&Text{...}, gooey.Layout{Margin: gooey.M(1), HAlign: gooey.AlignCenter})
@@ -626,14 +638,44 @@ implementing `gooey.Overlay` lifted to the end with its subtree, because
 a dropdown is not at a position in the document, it is on top of it. The
 marker decides membership and nothing else — which components carry it
 is a question for the source, not for a list here, and it is more than
-the popup surface the sentence used to name. Inside the lifted layer the
-order is no longer arrival: `gooey.OverlayRanker` buckets it — popup 0,
-toast 10, adornment 20, equal ranks keeping document order — so a toast
-is above an open menu whichever was declared first. The mouse-side
-paragraph below carries the same rule and the warning that hit-testing
-does not share it. The paint loop forces a
-repaint of every node above a rect somebody below just painted — the
-forcing is a `Set` between evaluations, never inside one, so the
+the popup surface this sentence used to name.
+
+Within the lifted layer, document order is **not** the whole rule.
+`gooey.OverlayRanker` orders it: `OverlayRankPopup` (0), then
+`OverlayRankToast` (10), then `OverlayRankAdornment` (20), and a plain
+`Overlay` ranks as a popup. Equal ranks keep document order — and that
+is a **bucket pass**, not a stable sort. The distinction is the reason
+`appendByRank` exists: "stable" was a claim about the standard library
+that no mutation of this repo could falsify, whereas appending in
+encounter order within a rank makes the property structural and there is
+no comparator to get wrong.
+
+The ranks exist because "lifted" alone still left the three hosts
+fighting over position — a toast raised while a menu was open landed
+under the dropdown and was simply not seen
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439)). A rank is
+asked of the **lifting root only**: a popup nested inside a toast
+inherits the toast's rank rather than sorting out of its parent's run.
+
+One function answers this for both paint paths. `overlayOf` in
+`component.go` is the single implementation of membership-and-rank;
+`Composer.orderPaint` asks it per paint node and `gooey.Compose`'s
+`collectPaint` asks it per component
+([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Before
+that the one-shot path had never implemented the rule at all, so the two
+exported paint paths answered "what is on top" differently. The
+mouse-side paragraph below carries the same rule — and since
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465) it is the
+SAME rule rather than a warning that hit-testing does not share it:
+`hitTest` asks `overlayOf` too, so all three walks answer "what is on
+top" alike. This sentence still said hit-testing was left out, three
+paragraphs above the mouse-side one that says it is not — the
+contradiction a reader resolves by believing whichever they read first.
+Raised in review of #458.
+
+The paint loop forces a repaint of every node above a rect somebody
+below just painted — the forcing is a `Set` between evaluations, never
+inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
 `Canvas` children and runtime-hidden containers correct, and two
 exemptions keep the counts tight: a chrome-only container never forces
@@ -1026,45 +1068,100 @@ structural rather than a rule every caller has to remember.
 
 Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
-`FocusManager.HitTest` returns the deepest component whose arranged
-`Bounds()` contain the cell, children before ancestors and later
-siblings before earlier ones; `Collapsed` subtrees, zero-size
+`FocusManager.HitTest` returns **the component that paints last** among
+those whose arranged `Bounds()` — and every ancestor's `Bounds()` —
+contain the cell; `Collapsed` subtrees, `Hidden` components, zero-size
 components, and `HitTestTransparent` components are not hit.
 
-That sibling preference used to be justified as "they paint on top",
-and that reason is gone: paint order is the ordinary tree plus a
-RANKED overlay layer (`gooey.OverlayRanker` — popup 0, toast 10,
-adornment 20, equal ranks keeping document order), and this walk knows
-about neither half. **The two planes can now
-disagree, and the disagreement is silent.** A ranked overlay host
-declared FIRST paints its toasts above a button and leaves the click to
-the button, because the button is the later sibling.
-`TestARankOrdersPaintAndNotHitTesting` (root package) is what keeps
-that from drifting; it fails if hit-testing ever becomes rank-aware, so
-the caveat and the code cannot part company quietly. Closing the gap —
-by marking `Toast` transparent, or by making this walk layer-aware — is
-[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+The ancestor clause is the one place the two planes still differ, and it
+is deliberate rather than an oversight: the hit walk prunes on bounds at
+every node, while paint clips each node to *its own* rect. A surface
+arranged outside its owner's rectangle therefore paints and cannot be
+hit. Nothing shipped is in that position without also holding pointer
+capture; `FocusManager.HitTest` carries the measurement and the
+alternative resolution, and what each of the two candidate resolutions
+would cost is in
+[#482](https://github.com/WonderForgeLabs/gooey/issues/482).
 
-The transparency marker is what lets a page-spanning overlay host exist
-at all: a `ToastHost` or an `AdornmentLayer` spans the whole page, so
-the pointer meets it before anything it covers — an invisible layer
-that would eat every click and starve every hover beneath it. Declared
-last it is the *first* thing the walk finds, which is the worst case
-and no longer the required position (#437 lifted overlays, #439 ranked
-them). Transparency is about the component's own surface, not its
-subtree, so the toasts and adornments inside stay hittable — which is
-exactly why their own position still matters for clicks. The walk
-allocates nothing, because it runs on every motion report.
+**That is one sentence on purpose, and for a while it was two.**
+"Deepest component, children before ancestors and later siblings before
+earlier ones" is what this walk used to say, and it agreed with paint
+only because document order was the whole of both answers.
+`gooey.Overlay` ([#437](https://github.com/WonderForgeLabs/gooey/issues/437))
+lifted overlay subtrees into a second paint layer and
+[#439](https://github.com/WonderForgeLabs/gooey/issues/439) ranked that
+layer; paint started answering by layer-then-rank-then-position and this
+walk kept answering by position alone. An overlay painted above the page
+from anywhere while being hit-tested exactly where it was declared, so
+a host declared early painted its contents over a later sibling that
+quietly took their presses, with nothing on screen to say so.
+
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465) closed it by
+asking the *same* question rather than by writing a second ordering.
+`overlayOf` (`component.go`) is the one implementation of overlay
+membership and rank — `Composer.orderPaint` and `gooey.Compose`'s
+`collectPaint` already called it, which is what
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438) extracted it
+for — and the hit walk now threads it down the tree the same way,
+comparing candidates on exactly what `appendByRank` orders by: the
+lifted layer above the ordinary one, a higher rank above a lower one
+within it, and position only as the tiebreak. Nothing consults the
+Composer; the rule is a function of the tree.
+
+Two consequences worth naming. An **interactive adorner** — `Adornment`
+requires only `gooey.Component`, `Anchor` and `Place` — now receives the
+presses that land where it paints, which it did not before. And a
+`Popup` still never depended on any of this: it takes the pointer
+capture while open, so events route to its owner before this walk runs
+at all. `ToastHost`, `AdornmentLayer`, `tipPopup`, `markerPopup` and
+`DragGhost` are `HitTestTransparent`, and transparency is about a
+component's own surface and not its subtree, so the toasts and
+adornments inside stay hittable.
+
+`TestARankOrdersHitTestingAsWellAsPaint` (root package) builds two
+overlays differing only in rank, declares the higher-ranked one first,
+and requires paint and the hit walk to return the same one. It is the
+inversion of the guard that pinned the divergence and named the four
+files whose caveats came out with it —
+TestARankOrdersPaintAndNotHitTesting, spelled here without backticks
+because #465 deleted it along with the divergence, and a live citation
+to a dead test reads as a check while checking nothing.
+
+The walk still allocates nothing of its own — and **a drag does not run
+it at all**. A `MouseMove` arriving while something holds pointer
+capture skips the hit test entirely (`DispatchMouse`, and
+`TestADragDoesNotWalkTheTreeOnEveryMove`): the captor is the target by
+definition and hover does not move during a drag, so both consumers of
+the hit already ignored it. That is where the cost of losing the early
+exit actually lands, or rather does not — the sentence this replaced
+said the walk "runs on every motion report", which is the line a reader
+profiling pointer cost arrives at and is no longer true of the path
+that reports most of them. Corrected in review of #458.
+
+For the motion reports that DO walk, it allocates whatever
+`ChildComponents` allocates, and
+`ToastHost` and `AdornmentLayer` both build a fresh slice per call, so
+the zero is the walk's and not the frame's while either holds anything
+([#513](https://github.com/WonderForgeLabs/gooey/issues/513)). What the
+walk gave up is the early exit on a hit: an earlier sibling can out-rank
+a later one, so every subtree whose bounds contain the point is visited.
+Bounds still prune at every node, which is where the work was.
 
 `DispatchMouse` runs three framework behaviors before the app sees
-anything:
+anything — or, during a drag, one. A `MouseMove` with a captor held
+takes neither the hit test nor the hover update; the frozen retarget
+still applies, to the captor:
 
 - **The frozen retarget**, once, at the top: a frozen subtree does not
   act, so for every routing purpose the effective hit is the frozen host
   — it takes the event, the implicit capture, the focus a press moves,
-  and the click synthesized on release. `HitTest` still returns the
-  deepest component (it is a query, not dispatch); `MouseTarget` is the
-  query that models where an event would actually route.
+  and the click synthesized on release. `HitTest` still answers with the
+  component the document put under the pointer (it is a query, not
+  dispatch) — since [#465](https://github.com/WonderForgeLabs/gooey/issues/465)
+  that is the one that PAINTS last there rather than the deepest one, and
+  the bullet's argument turns on the retarget rather than on which
+  component the query returns; `MouseTarget` is the query that models
+  where an event would actually route.
 - **Focus-follows-click**: a press moves focus to the nearest focusable
   component at or above the hit — or, when there is none, the first
   focusable *below* it, so clicking a pane's border or title focuses

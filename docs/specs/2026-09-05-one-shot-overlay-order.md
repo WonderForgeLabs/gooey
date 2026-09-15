@@ -94,10 +94,11 @@ fixture that disagrees was asserting the divergence.
   what preserves it, and the `Overlay` interface's documented limit
   survives untouched.
 - **`Overlay` still moves paint, not input.** Neither path consults it
-  for hit-testing, and `gooey.TestARankOrdersPaintAndNotHitTesting` is
-  what keeps that true — citing it here puts this bullet on the list its
-  failure message prints, so closing the gap reaches this page. Added in
-  review of #456.
+  for hit-testing. (True on 2026-09-05 and superseded by
+  [#465](https://github.com/WonderForgeLabs/gooey/issues/465), which made
+  `FocusManager.HitTest` ask `overlayOf` — the same function both paint
+  paths already called. The sentence is kept because "not changed by THIS
+  change" was an accurate statement about this change.)
 - **The pixel plane.** `Compose` builds a `*Frame`, and `Frame.Flush`
   emits placements in the order they were recorded — which is now paint
   order, because that is the order `Render` runs in. The two planes agree

@@ -89,7 +89,8 @@ type PersistentAdornment interface {
 // validation marker or a tooltip is above the page, above any toast and
 // above any open dropdown. Correcting it here was missed on the first
 // pass, which left this file's godoc contradicting the docs/ edit in its
-// own commit; found in review of #456.
+// own commit; found in review of #456. Being above all of them is the
+// whole point of an adornment, and was not true while position decided.
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -295,6 +296,52 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // HitTestTransparent: the layer spans the whole page invisibly; the
 // pointer must pass through it to the content beneath, or hosting the
 // layer would starve every click and hover on the page.
+//
+// THE LAYER'S TRANSPARENCY DOES NOT REACH ITS CHILDREN, and this is the
+// cost paragraph ToastHost carries, read at the rank above it. Since
+// #465 FocusManager.HitTest answers by overlay layer first, then rank,
+// then document order — so an adornment takes the press, AND THE HOVER
+// WITH IT, from anything it covers no matter where either was declared.
+// One walk answers both: DispatchMouse derives `hit` and `hov` from the
+// same `under`, so an opaque adornment also costs the covered field its
+// tooltip and its hover highlight, which is the half of this nobody
+// sees happen. OverlayRankAdornment is the TOP rank (component.go),
+// above popups and above toasts. The
+// layer being transparent only means the layer's own empty cells are;
+// each adornment decides for itself.
+//
+// Every adornment in this repo decides the same way, and that is now a
+// CHECK rather than a grep: TestEveryAdornmentIsHitTestTransparent reads
+// this package's source for the types declaring both Anchor and Place —
+// which is what an Adornment is — and fails on one that does not also
+// declare HitTestTransparent. A fourth adornment comes under it on the
+// commit that adds it, where the sentence this replaces ("the grep to
+// run rather than a count to trust here") asked the reader to do the
+// walk by hand and would have gone on reading true while a new one
+// shipped opaque.
+//
+// What the check cannot reach is a third-party adornment: Add is
+// exported and Adornment is an interface, so one written outside this
+// package that simply omits the method is opaque, and nothing says so at
+// the point of writing it — no load error, no vet, no test. It would
+// take the press and the hover over the field it is pinned beside, at
+// the top rank, silently. That residue is the reason the remedy below
+// is the right one; a guard over this package's own types is the half
+// that can be enforced here.
+//
+// And the duration is the half that is worse here than for a toast.
+// toast.go weighs its swallowing as "three seconds of that button being
+// unclickable". A PersistentAdornment (above) is up for exactly as long
+// as its anchor is invalid — a validation marker beside a TextBox stays
+// while the user tries to fix the field it is covering. There is no
+// timer to wait out.
+//
+// Named in review of #478, which read this method's three lines as the
+// same claim ToastHost makes at length and asked why only one of them
+// carries the consequence. The remedy is the same one #481 holds for
+// Toast: transparency belongs on the thing that owns the cells, and if
+// it is ever made a default rather than an opt-in it has to be made so
+// in one place for both.
 func (l *AdornmentLayer) HitTestTransparent() bool { return true }
 
 // attachAdornment is the attach half both AdornmentLayer customers share:

@@ -26,8 +26,13 @@
 // their own.
 //
 // Two markup documents describe the screen. browser.gooey is the shell:
-// the grid, the chrome, every key gesture, the poll, and the picker's
-// place in z-order. infopane.gooey is the preview pane, a markup-only
+// the grid, the chrome, every key gesture, the poll, and why the picker
+// paints above both panes — which is that its surface is a gooey.Overlay,
+// lifted into the paint layer, NOT where it sits in the document. This
+// sentence said "the picker's place in z-order" until #443; the .gooey it
+// describes was corrected and the sentence pointing at it was not.
+//
+// infopane.gooey is the preview pane, a markup-only
 // control instantiated with the handles it needs — the lines it shows,
 // their order, and which of them collapse are all declared there. What
 // is left in Go is data (the directory scan), algorithms (markdown,
