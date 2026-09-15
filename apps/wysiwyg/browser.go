@@ -50,6 +50,7 @@ import (
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -301,10 +302,16 @@ func (ed *editor) browserItems() components.ItemSource {
 // here; the highlight is a known gap, not an oversight.
 func fileRow(p string) map[string]any {
 	return map[string]any{
-		"Name": shortPath(p, 30),
+		"Name": shortPath(p, browserNameCols),
 		"Path": p,
 	}
 }
+
+// browserNameCols is the explorer column's budget, in CELLS. It was
+// written as a bare 30 at the call above, which is the spelling that let
+// shortPath measure in runes without the disagreement being visible from
+// either end.
+const browserNameCols = 30
 
 // shortPath fits a path into w cells by dropping LEADING segments, not
 // trailing characters.
@@ -318,20 +325,48 @@ func fileRow(p string) map[string]any {
 //
 // Truncating from the right — which is what letting the cell buffer clip
 // would do — keeps exactly the part every candidate shares.
+// Measured in COLUMNS. Every comparison here was a rune count, so a
+// workspace holding `apps/世界/世界.gooey` reported a name that fits a
+// budget it overruns by the number of wide glyphs in it — and the clip
+// that then bounds it takes the TAIL, which is the exact part the
+// paragraph above exists to keep. A file system supplies these names,
+// so this is the one caller in the app that cannot choose its own
+// characters.
 func shortPath(p string, w int) string {
-	if len([]rune(p)) <= w {
+	if render.StringWidth(p) <= w {
 		return p
 	}
 	segs := strings.Split(p, "/")
 	out := segs[len(segs)-1]
 	for i := len(segs) - 2; i >= 0; i-- {
 		next := segs[i] + "/" + out
-		if len([]rune(next))+1 > w {
-			return "…/" + out
+		if render.StringWidth(next)+1 > w {
+			return elide(out, w)
 		}
 		out = next
 	}
-	return out
+	return elide(out, w)
+}
+
+// elide puts "…" in front of the LAST w-1 columns of s, and is what
+// keeps shortPath's promise at the boundary where the final segment
+// alone is too wide. Clipping from the left would keep the leading
+// characters of one long name, which is the answer this whole function
+// rejects for a list of paths.
+func elide(s string, w int) string {
+	if render.StringWidth(s) <= w-2 {
+		return "…/" + s
+	}
+	if w <= 1 {
+		return render.ClipCols("…", w)
+	}
+	drop := render.StringWidth(s) - (w - 1)
+	cut := 0
+	render.EachCluster(s, func(_ string, off, col, _ int) bool {
+		cut = off
+		return col < drop
+	})
+	return "…" + s[cut:]
 }
 
 // openWorkspaceFile loads a document out of the workspace. It reads
