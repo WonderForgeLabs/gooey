@@ -267,9 +267,9 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// CORRECT wide row — a continuation cell's recorded column is where
 	// the cursor sits mid-glyph, which is legitimately not its index —
 	// so it could not run. render.Displaced replaced it and cannot
-	// FAIL: #519 blanks the orphaned lead through healSeam, so the row
-	// is wrong without being displaced. Measured against the buggy
-	// render, all three cases of this fixture:
+	// FAIL: #519 blanked the orphaned lead through healSeam, so the row
+	// was wrong without being displaced. Measured against the render
+	// this commit fixes, all three cases of this fixture:
 	//
 	//	"世界" unfocused -> " 界       "  displaced=false
 	//	"世界" focused   -> "  █       "  displaced=false
