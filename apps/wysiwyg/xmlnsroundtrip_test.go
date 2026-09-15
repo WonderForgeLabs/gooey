@@ -2074,10 +2074,25 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	}
 	kids = slices.DeleteFunc(kids, func(fn string) bool { return fn == "restore" })
 
-	if len(kids) == 0 || len(envAttrs) == 0 {
-		t.Fatalf("the walk found envAttrs assigned in %v and ed.root.Kids in %v; "+
-			"an empty side means the matcher stopped matching and every assertion "+
-			"below would pass vacuously", envAttrs, kids)
+	// ENVDECLS IS THE THIRD, and it was leaning on this test without
+	// being in it. Its own comment cites this guard as the reason it is
+	// "assigned at the one site that assigns those" — but the two
+	// matchers above never looked at it, so a future site replacing the
+	// document and the envelope attrs while leaving envDecls behind
+	// would carry the PREVIOUS file's property declarations onto the new
+	// one, rebuild would write them into the CODE tab, and save would
+	// write them to somebody else's file, with nothing red. That is the
+	// same "prose invariant repeated, not measured" shape this test was
+	// written against, one field over. Raised in review of #522.
+	envDecls := assignedIn(t, func(e ast.Expr) bool {
+		_, ok := selects(e, "envDecls")
+		return ok
+	})
+
+	if len(kids) == 0 || len(envAttrs) == 0 || len(envDecls) == 0 {
+		t.Fatalf("the walk found envAttrs assigned in %v, ed.root.Kids in %v and "+
+			"envDecls in %v; an empty side means the matcher stopped matching and "+
+			"every assertion below would pass vacuously", envAttrs, kids, envDecls)
 	}
 	if strings.Join(envAttrs, ",") != strings.Join(kids, ",") {
 		t.Errorf("ed.envAttrs is assigned in %v and the document in %v. These must "+
@@ -2085,6 +2100,13 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 			"so a site that replaces one and not the other leaves the editor "+
 			"describing a file it is no longer showing — which is the defect three "+
 			"comments in this package warn about and nothing measured", envAttrs, kids)
+	}
+	if strings.Join(envDecls, ",") != strings.Join(kids, ",") {
+		t.Errorf("ed.envDecls is assigned in %v and ed.root.Kids in %v. These must "+
+			"be the same set for the same reason, and the cost of their parting is "+
+			"worse than the envelope attrs': a declaration left over from the last "+
+			"file becomes part of the next one's public surface, written back on "+
+			"the first save", envDecls, kids)
 	}
 }
 

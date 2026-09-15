@@ -261,6 +261,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -546,7 +547,16 @@ type node struct {
 	//
 	// It is NOT written back out by markup(): a declaration is emitted
 	// by the envelope, which re-derives the prefix from the xmlns the
-	// document declares. Nothing else in the tree carries a namespace.
+	// document declares.
+	//
+	// EVERY element carries this, not only a declaration — nodeOf sets
+	// it from whatever encoding/xml resolved — and for anything but a
+	// declaration the prefix is DROPPED on write: <t:Thing/> under the
+	// content root is re-emitted as <Thing/>. That loss predates this
+	// field and is out of scope here, but this field is the first thing
+	// in the model that can detect it, and this comment used to say
+	// "nothing else in the tree carries a namespace", which asserts the
+	// loss cannot happen. Raised in review of #522.
 	Space string
 	Attrs map[string]string
 	// Body is the element's TEXT CONTENT — the "hello" in
@@ -901,6 +911,15 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // way every other attribute in this document does and the two must agree
 // about quoting. They agreed on %q until review of #501, which is how
 // they came to agree about being wrong.
+//
+// THAT PARAGRAPH IS envelopeHead'S NOW. All three call sites moved
+// there when #517 gave the envelope declarations to write, so this
+// function has exactly one caller and envelopeHead is where the three
+// literals were collapsed. The comment kept saying otherwise because
+// envelopeHead was inserted directly below this block with no blank
+// line, which also made godoc read the whole of it as envelopeHead's
+// doc and left gooeyOpen with none. Raised in review of #522.
+
 // envelopeHead is the document's opening <Gooey …> tag together with
 // the declarations that belong to the envelope rather than to the tree.
 //
@@ -911,36 +930,96 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // in the tree to live and rides with envAttrs instead, written back
 // here. Added for #517.
 func envelopeHead(attrs map[string]string, decls []*node) string {
+	prefix, bound := declBinding(attrs)
+	if len(decls) > 0 && !bound {
+		// THE PREFIX AND THE BINDING TRAVEL TOGETHER. Writing x: without
+		// an xmlns:x on this tag saves a file markup.Build refuses, and
+		// saveOpenFile is not gated on the build, so the editor reported
+		// "✓ saved" over it. Two documents reached it, both legal and
+		// both measured: one binding the same prefix on <Gooey> AND on
+		// the content root (envelopeAttrs drops the envelope's copy as
+		// redundant, which it is for MEANING and is not for this), and
+		// one whose declaration binds the namespace as its own default
+		// xmlns. Raised in review of #522.
+		attrs = withDeclBinding(attrs, prefix)
+	}
 	var b strings.Builder
 	b.WriteString(gooeyOpen(attrs))
-	prefix := declPrefix(attrs)
 	for _, d := range decls {
 		q := *d
 		q.Elem = prefix + ":" + d.Elem
+		q.Attrs = withoutDefaultNamespace(d.Attrs)
 		b.WriteString(q.markup("  "))
 	}
 	return b.String()
 }
 
-// declPrefix is the prefix this document binds to markup.XNamespace, so
-// a declaration is written back with the spelling its author chose.
+// withDeclBinding is attrs plus the envelope's binding for
+// markup.XNamespace. A copy, because attrs is the editor's own envAttrs
+// and writing the binding into it would make the next save look as
+// though the file had always carried one.
+func withDeclBinding(attrs map[string]string, prefix string) map[string]string {
+	out := make(map[string]string, len(attrs)+1)
+	for k, v := range attrs {
+		out[k] = v
+	}
+	out["xmlns:"+prefix] = markup.XNamespace
+	return out
+}
+
+// withoutDefaultNamespace is a declaration's attributes with a default
+// xmlns binding markup.XNamespace removed.
 //
-// "x" is the fallback rather than the answer: every example uses it, and
-// a document with declarations always carries the binding (the refusal
-// in markup's splitDeclarations is what an author gets without one), so
-// the fallback is reached only by a caller assembling an envelope from
-// nothing.
+// A declaration is re-emitted PREFIXED, so a default binding it carried
+// is no longer what names it — and left in place it also re-binds the
+// default namespace for the declaration's own attributes, which is a
+// different document from the one that was opened. Returned as a copy
+// for the same reason as withDeclBinding: these attrs belong to the
+// editor's node, not to this write.
+func withoutDefaultNamespace(attrs map[string]string) map[string]string {
+	if attrs["xmlns"] != markup.XNamespace {
+		return attrs
+	}
+	out := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		if k == "xmlns" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// declBinding is the prefix this envelope binds to markup.XNamespace,
+// and whether it already binds it — so a declaration is written back
+// with the spelling its author chose, and the binding is written with
+// it when there is none to find.
+//
+// THE BOOL IS THE HALF THAT WAS MISSING. This returned "x" as a
+// fallback and called it unreachable, on the grounds that a document
+// with declarations always carries the binding. True of the FILE and
+// not of these attrs: envelopeAttrs drops a namespace attribute the
+// content root repeats, so the binding can be absent here while being
+// present in what the user wrote. Raised in review of #522.
 //
 // Over sortedKeys, not a range: a document binding two prefixes to the
 // one namespace is legal and rare, and picking whichever the map handed
 // back first would rewrite the file differently on different runs.
-func declPrefix(attrs map[string]string) string {
+//
+// "x" is the unbound spelling, because every example uses it. x2, x3 …
+// are the way out of the case where the document binds x to something
+// else — legal, strange, and not worth clobbering the author over.
+func declBinding(attrs map[string]string) (string, bool) {
 	for _, k := range sortedKeys(attrs) {
 		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
-			return strings.TrimPrefix(k, "xmlns:")
+			return strings.TrimPrefix(k, "xmlns:"), true
 		}
 	}
-	return "x"
+	p := "x"
+	for i := 2; attrs["xmlns:"+p] != ""; i++ {
+		p = "x" + strconv.Itoa(i)
+	}
+	return p, false
 }
 
 func gooeyOpen(attrs map[string]string) string {
