@@ -29,8 +29,21 @@ saying the opposite; the README had it right.
 
 So `cmd/toolkit` declaring its `MenuBar`, `ToastHost` and
 `AdornmentLayer` at the end of its Grid is house style and decides
-nothing — for the bar because its dropdown is lifted whatever the bar
-does, and for the other two because they carry the marker themselves.
+nothing about **paint** — for the bar because its dropdown is lifted
+whatever the bar does, and for the other two because they carry the
+marker themselves.
+
+Layout is the half the marker does not touch, and for `AdornmentLayer`
+that half still decides something. The layer re-anchors during its own
+`Arrange` by reading each anchor's current bounds, and layout walks
+children in document order, which the lift does not change — so a layer
+declared before the content it adorns reads those bounds as absent on
+the first frame and cannot tell that apart from an anchor that is gone.
+A `Tooltip` never meets the case (it attaches on hover, long after) and
+a `ValidationMarker` persists through it; a custom adornment that does
+neither is dropped permanently. `docs/markup-reference.md`'s
+`AdornmentLayer` entry carries the scoped rule and the tests that pin
+its two exemptions.
 
 (The sentence before that one used to say "all three" and then "the
 bar", and neither had an antecedent it could take — the nearest three

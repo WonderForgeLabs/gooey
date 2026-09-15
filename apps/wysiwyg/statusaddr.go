@@ -529,6 +529,11 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	// Cleared to cap, not truncated: the tail holds components from the
 	// last call. See clearToCap in the gooey package. Raised in review
 	// of #456.
+	//
+	// Same two costs as StatusBar.ChildComponents, and for the same
+	// reason: per CALL rather than per re-sync, and a caller holding a
+	// previous return reads nil in the slots this rebuild left short.
+	// No caller does — every one ranges the return immediately.
 	clear(s.kids[:cap(s.kids)])
 	s.kids = s.kids[:0]
 	// The notice first, which is document order and therefore the order
