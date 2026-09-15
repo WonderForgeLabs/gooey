@@ -340,7 +340,17 @@ func shortPath(p string, w int) string {
 	out := segs[len(segs)-1]
 	for i := len(segs) - 2; i >= 0; i-- {
 		next := segs[i] + "/" + out
-		if render.StringWidth(next)+1 > w {
+		// TWO COLUMNS RESERVED, because "…/" is what elide renders in
+		// front of what this loop keeps. It reserved one, which was not a
+		// bounds bug — elide bounds the result — but it produced a format
+		// that alternated with the budget: `shortPath("aa/bbbb/cc", 9)`
+		// gave `…/bbbb/cc` and `…bbbb/cc` at 8, and the second reads as
+		// "a character was cut out of bbbb" when what actually went was
+		// the whole leading `aa/`. Reserving two also makes this
+		// condition and elide's first branch the SAME predicate, so the
+		// segment this loop hands over always takes the `"…/" + s` arm
+		// rather than falling through to the cut. Found in review of #524.
+		if render.StringWidth(next)+2 > w {
 			return elide(out, w)
 		}
 		out = next
@@ -348,11 +358,18 @@ func shortPath(p string, w int) string {
 	return elide(out, w)
 }
 
-// elide puts "…" in front of the LAST w-1 columns of s, and is what
-// keeps shortPath's promise at the boundary where the final segment
-// alone is too wide. Clipping from the left would keep the leading
-// characters of one long name, which is the answer this whole function
-// rejects for a list of paths.
+// elide answers in ONE OF TWO SHAPES, and which one is the difference
+// between "there is more path above this" and "this name itself was
+// cut":
+//
+//	"…/" + s          when s fits in w-2 — the common path, and what
+//	                  every ordinary row in the explorer gets
+//	"…" + a tail of s when it does not, keeping the LAST w-1 columns
+//
+// Clipping from the left would keep the leading characters of one long
+// name instead, which is the answer this whole function rejects for a
+// list of paths. The doc used to name only the second arm, though the
+// first is the one that carries the file list (#524's review).
 func elide(s string, w int) string {
 	if render.StringWidth(s) <= w-2 {
 		return "…/" + s
@@ -361,11 +378,23 @@ func elide(s string, w int) string {
 		return render.ClipCols("…", w)
 	}
 	drop := render.StringWidth(s) - (w - 1)
-	cut := 0
+	cut, room := 0, false
+	// EachCluster stops where the callback says so, so cut lands on the
+	// first cluster starting at or past drop. WHEN THERE IS NO SUCH
+	// CLUSTER the walk runs to the end and leaves cut on the last one,
+	// whose start column is below drop — and the result overran w by the
+	// difference: elide("世", 2) answered "…世", three columns, for a
+	// string that already fitted in two. `room` is the discriminator.
 	render.EachCluster(s, func(_ string, off, col, _ int) bool {
-		cut = off
-		return col < drop
+		cut, room = off, col >= drop
+		return !room
 	})
+	if !room {
+		// The trailing cluster alone is wider than w-1, so nothing of s
+		// fits beside the ellipsis. The ellipsis alone is the honest
+		// answer and the only one inside the budget.
+		return render.ClipCols("…", w)
+	}
 	return "…" + s[cut:]
 }
 

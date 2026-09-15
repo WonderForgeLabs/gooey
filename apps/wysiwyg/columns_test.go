@@ -103,12 +103,34 @@ func TestShortPathFitsTheColumnsItWasGiven(t *testing.T) {
 	// Every width here is at least the path's RUNE count, so a rune count
 	// answers "it fits" on all three and the loop discriminates rather
 	// than agreeing with the rule it is meant to reject.
-	for _, w := range []int{30, 26, 24} {
+	//
+	// DOWN TO ONE COLUMN, and the narrow end is a separate defect rather
+	// than more of the same: elide walked to the first cluster starting
+	// at or past its cut column, and when the trailing cluster was wider
+	// than w-1 there was no such cluster, so the walk ran off the end and
+	// kept the last one anyway. shortPath("a/世世", 2) answered "…世" —
+	// three columns for a two-column budget. Nothing in the shipped app
+	// passes a width this small (fileRow always passes browserNameCols),
+	// which is exactly why the loop has to: this is the one function in
+	// the package whose entire job is the bound. Found in review of #524.
+	for _, w := range []int{30, 26, 24, 4, 3, 2, 1} {
 		got := shortPath(p, w)
 		if n := render.StringWidth(got); n > w {
 			t.Errorf("shortPath(%q, %d) = %q, %d columns wide. The path is %d runes and "+
 				"%d columns, so a rune count reports it as fitting a slot it overruns.",
 				p, w, got, n, len([]rune(p)), render.StringWidth(p))
+		}
+	}
+	// And the same at the boundary the walk actually falls off, which the
+	// path above is too long to reach: a single wide glyph in two columns
+	// needs no elision at all, and got one that overran anyway.
+	for _, tc := range []struct {
+		s string
+		w int
+	}{{wideCell, 2}, {wideWord, 2}, {"ab" + wideCell, 2}, {wideWord, 3}} {
+		got := elide(tc.s, tc.w)
+		if n := render.StringWidth(got); n > tc.w {
+			t.Errorf("elide(%q, %d) = %q, %d columns wide", tc.s, tc.w, got, n)
 		}
 	}
 }
@@ -233,5 +255,80 @@ func TestAWideNoticeIsCutWithAnEllipsisNotHardTruncated(t *testing.T) {
 	if strings.Contains(row, msg) {
 		t.Errorf("the status row reads %q and carries the whole %d-column message in a "+
 			"%d-cell slot", row, render.StringWidth(msg), copyNoticeWidth)
+	}
+}
+
+// TestAStyleListIsSizedInColumns is the dropdown's own width, and it
+// closes the one row of #523's mutation matrix that was recorded as
+// SILENT rather than pinned.
+//
+// The option list is NOT always Go source. KindEnum and KindBool come
+// from an element spec's declared values, but a KindStyle row's options
+// are the keys of the running app's Context.Styles — a live map, which
+// is the whole point of valueSet reading it rather than a table. So a
+// style whose name holds a wide glyph is reachable, and it is what the
+// surface has to be wide enough for.
+//
+// THE NUMBERS ARE WRITTEN OUT, both of them, because a want computed
+// with render.StringWidth would be the rule under test restated and
+// would pass against a rune count too.
+func TestAStyleListIsSizedInColumns(t *testing.T) {
+	const wide = "世界世界世界" // six runes, TWELVE columns
+	ed, c, p := propsPane(t)
+	ed.docCtx.Styles[wide] = render.Style{Dim: true}
+	ed.sel = ed.doc().Kids[1] // the Button, which has a Style row
+	ed.rebuild()
+	c.Frame()
+	rowAt(t, ed, c, "Style")
+	ed.beginEdit()
+	c.Frame()
+
+	if got := p.Mode(); got != editChoice {
+		t.Fatalf("the Style row opened editor %v, want editChoice — this test "+
+			"measures the dropdown and there is no dropdown", got)
+	}
+	// The fixture has to be able to tell the two rules apart: the widest
+	// option in COLUMNS must not also be the widest in RUNES.
+	byRunes := 0
+	for _, o := range p.options() {
+		byRunes = max(byRunes, len([]rune(optionLabel(o))))
+	}
+	if byRunes != 7 { // "(unset)", wider than the six runes of `wide`
+		t.Fatalf("the widest option is %d runes, want 7: the fixture no longer "+
+			"discriminates a column count from a rune count", byRunes)
+	}
+
+	if got := p.surfaceSize().W; got != 16 {
+		t.Errorf("the style dropdown reserved %d columns, want 16 — twelve for "+
+			"%q plus the four of chrome. A rune count answers 11 and clips the "+
+			"widest name it is there to show.", got, wide)
+	}
+}
+
+// TestAShortenedPathSaysWhatItDropped is about FORMAT, not bounds — both
+// shapes below fit the budget, and that is why nothing caught this.
+//
+// shortPath budgeted ONE column for the ellipsis while elide renders
+// "…/", two. Neither overruns, but the mismatch made the format
+// alternate with the width: "aa/bbbb/cc" in nine columns gave
+// "…/bbbb/cc" and in eight gave "…bbbb/cc", and the second tells the
+// reader a character was cut out of "bbbb" when what actually went was
+// the whole leading "aa/". Reserving two costs a column of packing at
+// the boundary ("…/cc" where "…bbbb/cc" would have fitted) and buys a
+// row that never says the wrong thing about what it dropped.
+func TestAShortenedPathSaysWhatItDropped(t *testing.T) {
+	const p = "aa/bbbb/cc" // ten columns; the last segment fits every width below
+	for _, w := range []int{9, 8, 7} {
+		got := shortPath(p, w)
+		if n := render.StringWidth(got); n > w {
+			t.Fatalf("shortPath(%q, %d) = %q, %d columns — a bounds failure, which "+
+				"is a different defect from the one this test is for", p, w, got, n)
+		}
+		if !strings.HasPrefix(got, "…/") {
+			t.Errorf("shortPath(%q, %d) = %q. The whole path does not fit and the "+
+				"last segment does, so what was dropped is leading SEGMENTS — which "+
+				"the separator in \"…/\" is what says. Without it the row reads as a "+
+				"cut inside the segment that survived.", p, w, got)
+		}
 	}
 }

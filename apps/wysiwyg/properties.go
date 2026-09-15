@@ -416,12 +416,18 @@ func (p *valueEditor) surfaceSize() gooey.Size {
 		opts := p.options()
 		w := 0
 		for _, o := range opts {
-			// COLUMNS. No fixture in this package discriminates it:
-			// the options are an element spec's declared enum values,
-			// which are Go source, so nothing here can put a wide glyph
-			// in one. Mutated back to len([]rune(...)) the suite stays
-			// green — recorded rather than dressed up in a test that
-			// builds an option list no document can produce.
+			// COLUMNS, and TestAStyleListIsSizedInColumns pins it.
+			//
+			// This comment used to say no fixture could discriminate the
+			// rule, on the grounds that the options are an element spec's
+			// declared enum values and so are Go source. That argument
+			// covers KindEnum and KindBool and reaches none of the other
+			// three arms: KindStyle, KindCommand and KindBinding are keys
+			// of ctx.Styles and ctx.Values, which are maps the running app
+			// fills and an in-package test can write a wide glyph into.
+			// The claim was true of less than it said — the shape this
+			// change's own statusaddr.go rewrite is about — and the
+			// mutation it recorded as SILENT is now CAUGHT.
 			w = max(w, render.StringWidth(optionLabel(o)))
 		}
 		return gooey.Size{W: w + 4, H: len(opts) + 2}
