@@ -1,7 +1,11 @@
 package gooey
 
 import (
+	"errors"
 	"fmt"
+	"go/ast"
+	goparser "go/parser"
+	gotoken "go/token"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -899,8 +904,72 @@ func accepts(t *testing.T, md string, read func(string) ([]string, error), why s
 //
 // markup-reference.md joined after review of #475 pointed out it had
 // just had a citation corrected by hand and was free to rot again the
-// same way. It measured clean when it was added.
-var citedDocs = []string{claudeMD, "docs/markup-reference.md"}
+// same way, and LEFT in review of #490, which converted its last one to
+// a symbol — `markup.textSource` cannot rot the way `markup.go:1976`
+// had by then already rotted, twice. A document with no citations
+// contributes nothing here, and the check below is what stops that
+// leaving a hole: a doc that gains one and is not listed here is an
+// error, so rejoining is not something anyone has to remember.
+var citedDocs = []string{claudeMD}
+
+// TestEveryCitingDocumentIsChecked closes the list above.
+//
+// citedDocs is hand-written, and the guard it feeds fails when a listed
+// document carries NO citation — the opposite direction, a document that
+// cites and is not listed, was unwatched. That is the state
+// docs/markup-reference.md would be in tomorrow if someone added a
+// `file:line` back to it, which is exactly how it got here: it was
+// unwatched, rotted, was corrected by hand, and only then was listed.
+//
+// docs/specs/ is out for the reason citedDocs gives: a dated record's
+// citation describes the tree on its own date. Raised in review of #490.
+func TestEveryCitingDocumentIsChecked(t *testing.T) {
+	listed := map[string]bool{}
+	for _, d := range citedDocs {
+		listed[filepath.ToSlash(d)] = true
+	}
+	var checked int
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		slash := filepath.ToSlash(path)
+		if d.IsDir() {
+			switch {
+			case path == ".":
+				return nil
+			case strings.HasPrefix(d.Name(), "."), d.Name() == "vendor",
+				slash == "docs/specs", slash == "presentations":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".md" || listed[slash] {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		checked++
+		if m := citationRe.FindString(string(b)); m != "" {
+			t.Errorf("%s carries the citation %s and is not in citedDocs, so nothing "+
+				"checks that the line still holds what it names. Add it to citedDocs "+
+				"and raise wantIdentChecked, or write the symbol instead of the line",
+				slash, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree: %v", err)
+	}
+	// The walk reaching nothing would make the check above vacuous, and
+	// it is a prune away from that: docs/ alone holds dozens.
+	if checked < 10 {
+		t.Errorf("the walk read %d unlisted markdown files, which is too few for "+
+			"this tree — a prune is eating the documents", checked)
+	}
+}
 
 func TestCLAUDEMDCitationsResolve(t *testing.T) {
 	// ONE FORM COVERAGE SET ACROSS ALL THE DOCUMENTS, not one per
@@ -998,7 +1067,7 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // two, and it is a VALUE rather than a floor for the reason the
 // assertion above gives: a >= would let a demotion hide behind an
 // addition in the same commit.
-const wantIdentChecked = 22
+const wantIdentChecked = 21
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.
@@ -1588,4 +1657,606 @@ func blockFree(lines []string) []string {
 // small and read once.
 func identRe(leaf string) *regexp.Regexp {
 	return regexp.MustCompile(`\b` + regexp.QuoteMeta(leaf) + `\b`)
+}
+
+// symbolDocs are the pages whose SYMBOL citations are checked, and it is
+// DERIVED rather than written: every markdown file in the tree outside
+// the pruned directories, so a page that starts citing code by name is
+// covered the moment it does.
+//
+// It was a two-element list — CLAUDE.md and the markup reference — and a
+// hand-written list is the exact hole TestEveryCitingDocumentIsChecked
+// exists to close for the `file:line` form one function up. The symbol
+// form had no such reciprocal, so docs/architecture.md carried dozens of
+// package-qualified names that nothing resolved, and adding a document
+// to the tree added nothing to the coverage. Deriving is what CLAUDE.md's
+// Verify section prescribes for the same reason: a written list is stale
+// the first time someone adds one, silently. Raised in review of #490.
+func symbolDocs(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		slash := filepath.ToSlash(path)
+		if d.IsDir() {
+			switch {
+			case path == ".":
+				return nil
+			case strings.HasPrefix(d.Name(), "."), d.Name() == "vendor",
+				slash == "docs/specs", slash == "presentations":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".md" {
+			out = append(out, slash)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking for documents: %v", err)
+	}
+	// THE SAME PRUNE AS TestEveryCitingDocumentIsChecked, and the same
+	// floor: specs are dated records that describe the tree on their own
+	// date, and a prune eating the walk would make every citation check
+	// below vacuous at once.
+	if len(out) < 40 {
+		t.Fatalf("the walk found %d markdown files, which is too few for this "+
+			"tree — a prune is eating the documents", len(out))
+	}
+	return out
+}
+
+// fileSuffixes are the tails that make a `pkg.name` span a FILENAME
+// rather than a package-qualified symbol. `main.go`, `wizard.go` and
+// `control.py` all match symbolCiteRe — `main`, `control` and half the
+// tree's directories are real package names — and every one of them is
+// somebody writing a path, not a citation. Skipping them is what lets
+// the walk above cover the whole tree instead of a list of two.
+var fileSuffixes = map[string]bool{
+	"go": true, "py": true, "md": true, "sh": true, "yml": true,
+	"yaml": true, "json": true, "toml": true, "txt": true, "gooey": true,
+	"mod": true, "sum": true, "png": true, "gif": true, "svg": true,
+}
+
+// symbolCiteRe is a backticked, package-qualified Go name: one lowercase
+// package segment, a dot, one identifier.
+//
+// THE LOWERCASE HEAD IS THE WHOLE FILTER, and it is what keeps this off
+// the markup reference's own vocabulary. `Grid.Row`, `Canvas.Left` and
+// `ItemsView.ItemTemplate` are attached-property spellings, not Go
+// symbols, and their heads are element names — capitalised, every one.
+// A Go package in this repo is lowercase, every one. Matching on that
+// costs the `Context.BindingValue` form, which is a TYPE and a method:
+// resolving those needs the receiver's package, which the prose does not
+// give, and guessing it is how a guard starts reporting the wrong
+// symbol.
+var symbolCiteRe = regexp.MustCompile("`([a-z][a-z0-9]*)\\.([A-Za-z_][A-Za-z0-9_]*)`")
+
+// symbolForeignMarker opts ONE LINE out of the symbol check, for a
+// `pkg.Name` that is not Go at all.
+//
+// The collision this answers is not the vendored one — vendoredByPackage
+// handles a dependency written in Go, by asking whether the dependency
+// declares the name. There is nothing to ask when the language is
+// different. apps/dynamic-activities/README.md warns that a bare
+// directory named `grpc` shadows the Python package and tells the reader
+// to probe for a real attribute on it; `grpc` is also one of OUR package
+// names, so the guard read a Python attribute as a stale citation of
+// ours and the only remedy it offered — "spell it with enough of its
+// import path" — is advice a Python symbol cannot follow.
+//
+// EXPLICIT, not inferred, for the reason specclaims_test.go's
+// plannedMarker gives at greater length. The inference I measured first
+// was "an underscore is not a Go name"; the tree holds 73 declarations
+// that disprove it, every one generated protobuf under grpc/gen, so a
+// citation of `controlv1.ActResult_SendKeys` would have been silently
+// exempted by the rule meant to exempt Python.
+//
+// AND IT EXPIRES: a marked line whose name our package of that name
+// DOES declare is a stale marker hiding a live citation, and the loop
+// below fails on it rather than skipping. Raised in review of #490.
+const symbolForeignMarker = "<!-- symbols: not-go -->"
+
+// TestEveryCitedSymbolResolves is the half TestCLAUDEMDCitationsResolve
+// cannot see, and #490 is what made it necessary.
+//
+// That PR replaced line citations with symbols on the stated ground that
+// a symbol "cannot rot the way markup.go:1976 had" — and then removed
+// docs/markup-reference.md from citedDocs, because the pattern there
+// matches `path:line` only. Nothing checked the new form: rename
+// boundaryPartition and the reference page points at nothing while every
+// test still compiles and passes, since they use the identifier rather
+// than reading the doc's spelling of it. The net was FEWER checked
+// citations than main had, from a change whose argument was that the new
+// form is safer. Raised in review of #490.
+//
+// It resolves against declarations rather than against a grep: a name
+// that appears only inside a comment or a string is exactly the rot this
+// is for.
+func TestEveryCitedSymbolResolves(t *testing.T) {
+	declared := declaredByPackage(t)
+	foreign := vendoredByPackage(t)
+	if len(declared["markup"]) == 0 || len(declared["render"]) == 0 {
+		t.Fatalf("the declaration index found %d markup symbols and %d render "+
+			"symbols, so the walk is looking somewhere else and every citation "+
+			"below would resolve vacuously",
+			len(declared["markup"]), len(declared["render"]))
+	}
+
+	checked, fromGo := 0, 0
+	docs := symbolDocs(t)
+	for _, doc := range append(docs, goCommentSources(t)...) {
+		b, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatalf("reading %s: %v", doc, err)
+		}
+		text := string(b)
+		if strings.HasSuffix(doc, ".go") {
+			text = goComments(t, doc, b)
+		}
+		// PER LINE, not per document, and the line is what the marker
+		// attaches to. A citation cannot straddle a newline — both
+		// backticks are on one line or the pattern does not match — so
+		// this reads exactly what the whole-text scan read, and the
+		// failures below can now say WHERE.
+		for ln, line := range strings.Split(text, "\n") {
+			exempt := strings.Contains(line, symbolForeignMarker)
+			for _, m := range symbolCiteRe.FindAllStringSubmatch(line, -1) {
+				pkg, name := m[1], m[2]
+				if fileSuffixes[name] {
+					continue // a path, not a citation — see fileSuffixes
+				}
+				if strings.HasPrefix(name, "Test") {
+					// TEST NAMES BELONG TO TestEveryCitedTestNameResolves,
+					// which knows where a test may live and that the root
+					// package answers to "gooey" — and which reads Go
+					// comments as well as Markdown, so this hands them to
+					// a guard that actually looks at this corpus.
+					// Delegating to one that read Markdown only left a
+					// name cited in a Go comment adjudicated by neither,
+					// which is what a delegation costs when nobody checks
+					// the delegate's corpus. Adjudicating them HERE
+					// instead reported this file's and
+					// specclaims_test.go's own EXAMPLES of the citation
+					// form — markup.TestX, gooey.TestFoo, spelled without
+					// backticks now for the reason specclaims_test.go
+					// gives: a name that is not a live reference is not
+					// written as one. Raised in review of #490, twice.
+					continue
+				}
+				syms, ours := declared[pkg]
+				if !ours {
+					continue // a stdlib or third-party name; not ours to check
+				}
+				if exempt {
+					// THE MARKER EXPIRES HERE. It says "this pkg.Name is
+					// not Go"; if our package of that name declares it,
+					// that has stopped being true and the marker is
+					// hiding a live citation from the check.
+					if syms[name] {
+						t.Errorf("%s:%d carries %s and cites `%s.%s`, which package "+
+							"%s now declares. The marker says the name is not Go, "+
+							"and it is: remove the marker so the citation is "+
+							"checked like any other. (#490)",
+							doc, ln+1, symbolForeignMarker, pkg, name, pkg)
+					}
+					continue
+				}
+				if !syms[name] && foreign[pkg][name] {
+					// NOT OURS AFTER ALL. Our package of this name does not
+					// declare it and a vendored package of the same name
+					// does, so the page is citing the dependency. See
+					// vendoredByPackage for why this is asked in that order
+					// and not the other.
+					continue
+				}
+				checked++
+				if strings.HasSuffix(doc, ".go") {
+					fromGo++
+				}
+				if !syms[name] {
+					t.Errorf("%s:%d cites `%s.%s` and package %s declares no %s. A "+
+						"symbol citation does not rot the way a line number does, "+
+						"but it does go stale on a RENAME — which is the thing a "+
+						"line citation cannot do and this form can. If this is a "+
+						"DEPENDENCY's %s and not ours, it is not vendored under "+
+						"that name either, so spell it with enough of its import "+
+						"path to say so — and if it is not Go at all, put %s on "+
+						"the line. (#490)",
+						doc, ln+1, pkg, name, pkg, name, pkg, symbolForeignMarker)
+				}
+			}
+		}
+	}
+	// A FLOOR, not an exact count: this reads whole documents rather than
+	// one section, and pinning the number would make every added sentence
+	// a test edit. Zero is the failure that matters — the pattern having
+	// drifted from how the documents spell a citation. The floor rose
+	// with the derived set, which reads the whole tree.
+	if checked < 100 {
+		t.Errorf("only %d package-qualified symbol citations were resolved across "+
+			"%d documents, which is fewer than this tree carried when the walk was "+
+			"derived — either they stopped citing code by name, or the pattern no "+
+			"longer matches the spelling they use", checked, len(docs))
+	}
+	// AND THE GO-COMMENT HALF SEPARATELY, because the floor above is
+	// dominated by markdown and would not notice it going to zero. That
+	// half is the whole of #490's finding — the conversions this guard
+	// exists for landed in Go comments, where nothing read them — so a
+	// walk that stopped returning .go files, or a parse that started
+	// failing silently, has to be its own failure rather than a dent in
+	// a three-digit total. Raised in review of #490.
+	if fromGo == 0 {
+		t.Error("no symbol citation was resolved from a Go comment, so the half " +
+			"of this guard that #490 added covers nothing. Either goComments is " +
+			"returning empty (a parse failing quietly), goCommentSources is " +
+			"pruning the tree away, or the convention changed and Go comments no " +
+			"longer backtick a pkg.Name")
+	}
+}
+
+// declaredByPackage maps a package NAME to every identifier declared at
+// the top level of one of its files, tests included: a doc may cite a
+// guard's table, and rowPartition lives in a _test.go file.
+//
+// METHOD NAMES ARE IN IT, and that is deliberate rather than an
+// oversight in the sentence above: the FuncDecl arm records d.Name.Name
+// without looking at the receiver, so `func (p *Property[T]) Set` puts
+// Set into package prop. CLAUDE.md cites `prop.Set`, which is a method,
+// and it resolves only because of that. The cost is real and worth
+// stating: a package-qualified citation can resolve against a method on
+// an unrelated type in the same package, so renaming a top-level
+// markup.textSource would still pass if any type in markup declared a
+// textSource method. Narrowing it would need the receiver's package,
+// which is the same thing symbolCiteRe refuses to guess for the
+// Context.BindingValue form. Raised in review of #490.
+//
+// BY NAME AND NOT BY DIRECTORY, because prose writes `markup.Load` and
+// never says which directory that is. Two directories with the same
+// package name union their symbols, which is the only imprecision here
+// and a safe one: it can accept a citation that resolves in the wrong
+// copy, never reject one that resolves in the right one.
+// ONCE PER BINARY, not once per caller. Two tests ask for each of these
+// indexes and each walk parses the whole tree (vendor/ included), which
+// put about 1.5 s of pure duplicate work in a ~20 s root suite. The
+// memo changes nothing either test asserts: the walk is over files on
+// disk, which no test here writes. Raised in review of #490.
+var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
+
+func declaredByPackage(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	out, err := declaredIndex()
+	if err != nil {
+		t.Fatalf("walking the tree for declarations: %v", err)
+	}
+	return out
+}
+
+func buildDeclaredByPackage() (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); p != "." && (strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, p, src, 0)
+		if err != nil {
+			return nil // the compiler owns this one
+		}
+		pkg := f.Name.Name
+		if out[pkg] == nil {
+			out[pkg] = map[string]bool{}
+		}
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				out[pkg][d.Name.Name] = true
+			case *ast.GenDecl:
+				for _, sp := range d.Specs {
+					switch sp := sp.(type) {
+					case *ast.TypeSpec:
+						out[pkg][sp.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, n := range sp.Names {
+							out[pkg][n.Name] = true
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
+// goCommentSources are the .go files whose COMMENTS carry symbol
+// citations, and their absence was a real hole: this guard read markdown
+// only, so #490's own six file:line → symbol conversions — the change
+// that motivated the guard — landed in Go comments where nothing could
+// see them.
+//
+// BACKTICKED ONLY, which is the convention that makes this tractable.
+// Measured on this tree: matching a bare pkg.Name inside comments finds
+// 1448 candidates and calls 336 of them unresolved — proto package
+// paths like gooey.control, field selectors like panel.slot, plurals —
+// so a guard on that form is noise, not coverage. The backticked form
+// finds 18 and resolves all of them. So a citation in a Go comment is
+// spelled `pkg.Name` in backticks, the same as in markdown, and one
+// written bare is simply outside this guard rather than wrong.
+//
+// Which is also why the examples in this paragraph are NOT backticked:
+// a guard reads its own explanation, and an example of a spelling that
+// does not resolve is indistinguishable from a citation that stopped
+// resolving. Write illustrative spellings bare.
+//
+// WHAT IS STILL NOT COVERED, stated because a guard that implies more
+// than it checks is the defect this whole file is about: a SAME-PACKAGE
+// identifier in a comment — `bindText`, `elementDefs`, `probeElement` —
+// has no package qualifier, so symbolCiteRe cannot match it and nothing
+// here resolves it. Three of #490's six conversions are of that shape.
+func goCommentSources(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); p != "." && (strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(p, ".go") {
+			out = append(out, filepath.ToSlash(p))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking for Go sources: %v", err)
+	}
+	return out
+}
+
+// goComments is every comment in one file, concatenated — so the caller
+// runs the same pattern over Go comments that it runs over markdown, and
+// a `pkg.Name` in a string literal or an identifier is not mistaken for
+// prose about one.
+func goComments(t *testing.T, path string, src []byte) string {
+	t.Helper()
+	fset := gotoken.NewFileSet()
+	f, err := goparser.ParseFile(fset, path, src, goparser.ParseComments)
+	if err != nil {
+		return "" // the compiler owns this one
+	}
+	var b strings.Builder
+	for _, cg := range f.Comments {
+		b.WriteString(cg.Text())
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// TestAVendoredCollisionIsNotOurStaleCitation drives the three-way
+// decision TestEveryCitedSymbolResolves makes per citation, because that
+// test reads the tree's real documents — and no document exercises the
+// collision today, so it is green whichever way the branch goes.
+//
+// The three cases are the whole contract, and the middle one is the
+// finding: ours declares it (a citation of ours, checked), ours does not
+// but a vendored package of the same name does (a citation of theirs,
+// left alone), neither declares it (the rename this guard exists for).
+// Raised in review of #490.
+func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
+	declared := declaredByPackage(t)
+	foreign := vendoredByPackage(t)
+
+	// NON-VACUITY FIRST. Every arm below is "and the other index says
+	// X"; an empty foreign index makes the middle arm unreachable and
+	// the whole test a restatement of the one above it.
+	if len(foreign) == 0 {
+		t.Fatal("no vendored package shares a short name with one of ours, so " +
+			"the collision this test is about cannot be reached. Either the " +
+			"vendor walk is looking somewhere else, or the tree genuinely " +
+			"changed — check `grpc`, `term` and `workflow` before deleting this")
+	}
+
+	for _, tc := range []struct {
+		name         string
+		pkg, sym     string
+		ours, theirs bool
+		wantSkipped  bool
+		wantContext  string
+	}{
+		{"ours declares it", "term", "DecoderTimeout", true, false, false,
+			"a citation of our own symbol must still be checked"},
+		{"only the dependency declares it", "term", "IsTerminal", false, true, true,
+			"x/term declares IsTerminal and our term does not, so the page is " +
+				"citing the dependency and rewording the page is the wrong remedy"},
+		{"neither declares it", "term", "NoSuchSymbolAnywhere", false, false, false,
+			"a name nothing declares is the rename this guard exists for"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := declared[tc.pkg][tc.sym]; got != tc.ours {
+				t.Fatalf("our %s declares %s = %v, want %v — the fixture no longer "+
+					"describes the tree, so the arm below measures nothing",
+					tc.pkg, tc.sym, got, tc.ours)
+			}
+			if got := foreign[tc.pkg][tc.sym]; got != tc.theirs {
+				t.Fatalf("the vendored %s declares %s = %v, want %v", tc.pkg, tc.sym,
+					got, tc.theirs)
+			}
+			// The decision exactly as the loop makes it.
+			skipped := !declared[tc.pkg][tc.sym] && foreign[tc.pkg][tc.sym]
+			if skipped != tc.wantSkipped {
+				t.Errorf("`%s.%s` skipped=%v, want %v: %s",
+					tc.pkg, tc.sym, skipped, tc.wantSkipped, tc.wantContext)
+			}
+		})
+	}
+}
+
+// vendoredByPackage indexes the EXPORTED declarations of vendored
+// packages whose short name collides with one of ours, which is the only
+// way a citation of `pkg.Name` can be read two ways.
+//
+// THE COLLISION IS REAL AND ALREADY HERE. Three of this repo's package
+// names are also the last segment of a vendored import path — grpc
+// (google.golang.org/grpc), term (golang.org/x/term) and workflow
+// (go.temporal.io/sdk/workflow) — so a page writing Temporal's
+// `workflow.Now` or x/term's `term.IsTerminal` was asking about a
+// package we also happen to have, and TestEveryCitedSymbolResolves
+// reported it as a stale citation of OURS. The remedy it offered was to
+// reword the documentation, which is the wrong end. Raised in review of
+// #490.
+//
+// THE TWO ABOVE ARE BACKTICKED ON PURPOSE, and this comment is a live
+// fixture because of it: the guard reads Go comments, so `workflow.Now`
+// and `term.IsTerminal` are citations it resolves on every run, and they
+// resolve only through the skip this function feeds. Remove the skip and
+// this paragraph reddens the guard it describes. Do not un-backtick them
+// to quieten that — the failure is the mechanism working.
+//
+// NARROW ON PURPOSE, and the narrowness is what keeps the coverage. This
+// is consulted ONLY when our own package does not declare the name, and
+// then only to ask whether the foreign package does. A term.Foo that
+// was renamed out of our term and exists nowhere else still errors,
+// which is the rot this guard is for; a `term.IsTerminal` that x/term
+// really declares is a citation of x/term and is left alone. Nothing is
+// skipped on the strength of the package name by itself.
+//
+// EXPORTED, AND TOP-LEVEL FUNCTIONS ONLY — both narrowings, and both in
+// the direction that keeps coverage rather than spends it. The sentence
+// at the top of this comment said EXPORTED while the code indexed every
+// top-level name, which is the wrong way round for a SKIP list: every
+// name in here is a citation this guard stops checking, so an unexported
+// vendored identifier — which no page can legitimately be citing, since
+// a consumer cannot name one — was silently widening the exemption.
+// ast.IsExported is the check the sentence already claimed. No page
+// cites an unexported vendored name today, so removing the check again
+// turns nothing red — which is the honest status of a tightening, and
+// the reason it is recorded here rather than claimed as a fix with a
+// test behind it.
+//
+// Methods are excluded (the d.Recv == nil arm), and that is the opposite
+// choice from declaredByPackage, which records them deliberately because
+// CLAUDE.md cites `prop.Set`. The asymmetry is the same principle read
+// twice: there, including methods lets a real citation RESOLVE, and the
+// cost is a citation resolving against the wrong type; here, including
+// them would let a citation be SKIPPED, and the cost is coverage. When
+// in doubt an index of ours widens and an index of theirs narrows. The
+// price is a page citing a vendored METHOD as `pkg.Name`, which would
+// still error and would have to be spelled with more of its import path
+// — and no page does today. Raised in review of #490.
+// Memoized for the reason declaredIndex gives. The parameter is not part
+// of the key because there is only one possible argument — declaredIndex
+// is itself memoized, so every caller passes the same map.
+var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
+	declared, err := declaredIndex()
+	if err != nil {
+		return nil, err
+	}
+	return buildVendoredByPackage(declared)
+})
+
+func vendoredByPackage(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	// A SKIP, NOT A SILENT EMPTY MAP. This returned `out` with a comment
+	// promising graceful degradation when vendor/ is absent, and there
+	// is none: this file's own doc deliberately backticks `workflow.Now`
+	// and `term.IsTerminal` as LIVE fixtures, so with the vendor walk
+	// empty the exemption they rely on is gone too and
+	// TestEveryCitedSymbolResolves errors on this file's explanatory
+	// prose, while TestAVendoredCollisionIsNotOurStaleCitation fails
+	// separately on its own non-vacuity Fatal. Two confusing failures in
+	// the shape the early return existed to avoid — a comment standing
+	// in for evidence, in the file whose argument is that it must not.
+	// Raised in review of #490.
+	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
+		t.Skip("vendor/ is absent (this module consumed standalone), so there is " +
+			"nothing vendored to collide with — and the two citations this file's " +
+			"own doc comment makes to vendored symbols would have nothing to " +
+			"resolve against either")
+	}
+	out, err := vendoredIndex()
+	if err != nil {
+		t.Fatalf("walking vendor for declarations: %v", err)
+	}
+	return out
+}
+
+func buildVendoredByPackage(collidesWith map[string]map[string]bool) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	err := filepath.WalkDir("vendor", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		// The DIRECTORY name, not the package clause: the collision is
+		// with how prose spells the import, and prose spells it with the
+		// path's last segment.
+		if _, ours := collidesWith[filepath.Base(filepath.Dir(p))]; !ours {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, p, src, 0)
+		if err != nil {
+			return nil
+		}
+		pkg := filepath.Base(filepath.Dir(p))
+		if out[pkg] == nil {
+			out[pkg] = map[string]bool{}
+		}
+		keep := func(name string) {
+			if ast.IsExported(name) {
+				out[pkg][name] = true
+			}
+		}
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					keep(d.Name.Name)
+				}
+			case *ast.GenDecl:
+				for _, sp := range d.Specs {
+					switch sp := sp.(type) {
+					case *ast.TypeSpec:
+						keep(sp.Name.Name)
+					case *ast.ValueSpec:
+						for _, n := range sp.Names {
+							keep(n.Name)
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return out, err
 }

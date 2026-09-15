@@ -1234,9 +1234,9 @@ var defStatusBar = &ElementDef{
 	Proto:        &components.StatusBar{},
 	Known:        true,
 	Attrs: []AttrSpec{
-		{Name: "Center", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
-		{Name: "Left", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
-		{Name: "Right", Kind: KindString, Binds: BindsLiteral, Origin: OriginBuiltin},
+		{Name: "Center", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
+		{Name: "Left", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
+		{Name: "Right", Kind: KindText, Binds: BindsEither, Origin: OriginBuiltin},
 	},
 	Children: ChildSpec{Mode: ModeAttachments},
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {

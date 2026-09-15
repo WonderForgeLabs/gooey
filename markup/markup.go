@@ -147,6 +147,27 @@ type Context struct {
 	// declared properties without reflection: the declarations are the
 	// only property schema a markup-built component has.
 	//
+	// PAGE-WIDE STOPS AT AN ITEM-TEMPLATE ROW, and that is a narrowing
+	// of the sentence above rather than an oversight. A row context is
+	// built per realization and never unregisters, and nothing sweeps
+	// retired rows — so sharing this map with rows meant a scrolling list
+	// over a declaring template added one permanent entry, and kept one
+	// dead row subtree reachable, per row ever shown. markup/itemsview.go
+	// therefore leaves it unset and control() gives each row its own.
+	//
+	// The cost is real and belongs here rather than only in a test table:
+	// a control instantiated inside an <ItemsView.ItemTemplate> is not in
+	// the page registry, so control/snapshot.go finds no declared surface
+	// for it and the MCP tree snapshot reports none. Page-wide visibility
+	// of a row's declared surface is a goal worth having; it cannot be
+	// bought with unbounded retention, and what it needs first is a
+	// retirement seam, which is issue #512. This is the one full
+	// statement of that gap: the two other sites that used to restate it
+	// (markup/itemsview.go's Declared bullet and the rowPartition row in
+	// markup/boundaryfields_test.go) now point here and cite the issue,
+	// so closing it retires the note rather than leaving three copies to
+	// find. Raised in review of #490.
+	//
 	// Created on demand at the first control instantiation; nil until
 	// then. Rebuilding a page should reset it the way Named is reset —
 	// Page.Build and Watch do — or stale instances accumulate.
@@ -160,8 +181,23 @@ type Context struct {
 	// required by documents that use handler namespaces
 	// ({{net:Get …}}) and unused by everything else.
 	Dispatcher *gooey.Dispatcher
-	// Dir is the OS directory this document's HOST-SIDE paths resolve
-	// against: a <Companion>'s working directory and its log file. Set it
+	// Dir is the OS directory the PAGE's HOST-SIDE paths resolve
+	// against: a <Companion>'s working directory and its log file.
+	//
+	// A control INHERITS IT WHEN IT LEAVES IT NIL, which is the same rule
+	// every other inheriting field follows, and the wording
+	// docs/markup-reference.md already uses. A setup returning a Context
+	// with its own Dir keeps that one. This said "the page's, at every
+	// depth", which reads as unconditional and is the one thing it is
+	// not; corrected in review of #490, which is also where the
+	// preceding "this document's" was corrected for leaving WHICH
+	// document ambiguous exactly where the answer stops being obvious.
+	//
+	// fsys is replaced while Dir is inherited, so for
+	// UserControl(otherFS, …) the two deliberately disagree: markup
+	// comes from the control's FS, host-side paths stay anchored to the
+	// app's directory. Inheriting is what this branch changed it to,
+	// from the process working directory it fell back to before. Set it
 	// to the same directory the page's fs.FS was rooted at —
 	//
 	//	app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))

@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -8,6 +9,132 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 )
+
+// attributedErr marks an error that already names the control it
+// happened in, so an ENCLOSING control does not name itself over the
+// top of it.
+//
+// The wrap this bounds was added in review of #490, and was right about
+// the problem: buildComponent's both-maps refusal is written for one
+// author holding both maps, and at the control seam there are two. It
+// was wrong about the scope. Wrapping on every unwind frame stacked the
+// package prefix once per level, and a self-include named one file four
+// times:
+//
+//	markup: control card.gooey: markup: control card.gooey includes
+//	itself: card.gooey → card.gooey — …
+//
+// The INNERMOST control is the one whose file the author opens, so it
+// is the one that attributes; every frame above passes the error
+// through untouched. An error that already names its own control says so
+// by carrying an empty name here, and attributeControl leaves it alone:
+// the cycle refusal below is the one site that does, because its message
+// traces the whole loop. Everything else goes through attributeControl,
+// which asks errors.As first — a setup is arbitrary Go and may itself
+// have called markup.Load, whose error already names the control it
+// failed in.
+//
+// attributeSetup is the exception and says why at its own site: the two
+// names there are different facts, so it adds one over an
+// already-attributed error and stops only when the name would REPEAT.
+// This paragraph read as though the sentinel bound both seams, which is
+// how the setup seam came to have no stop at all. Raised in review of
+// #490.
+type attributedErr struct {
+	name string // "" when the wrapped error names its own control already
+	err  error
+}
+
+func (e attributedErr) Error() string {
+	if e.name == "" {
+		return e.err.Error()
+	}
+	// One "markup: " on the sentence, not one per frame: the inner error
+	// is a markup load error too, and its own prefix is the package's,
+	// not a second speaker's.
+	return "markup: control " + e.name + ": " + strings.TrimPrefix(e.err.Error(), "markup: ")
+}
+
+func (e attributedErr) Unwrap() error { return e.err }
+
+// attributeControl names the control an error happened inside, once —
+// for THIS package's own recursion, where a control inside a control
+// would otherwise stack a name per frame and say nothing new.
+//
+// THE BUILDER PATH IS KNOWINGLY LEFT INNERMOST-ONLY, and it is the one
+// case where "this package's own recursion" is not the whole truth about
+// this call site: doc.build can also return an error produced by a
+// REGISTERED Builder or ElementDef.Build, which is third-party Go on the
+// same footing as a setup. A <PreviewPane Source="x.gooey"/> whose
+// builder Loads that file returns an error already attributed to
+// whatever failed inside it, errors.As finds the inner attributedErr
+// here, and the control hosting the preview is never named — the same
+// several-previews-one-message failure attributeSetup exists to end.
+//
+// It stays that way because the two paths are not symmetrical in what
+// the caller can see. A setup is reached through runSetup, a seam this
+// package owns and can wrap exactly once; a builder is reached through
+// the element table, where the error could as easily be a bad attribute
+// on the element itself — and naming the enclosing control for THAT
+// would add a frame to every ordinary element error in the tree.
+// Distinguishing "this builder loaded another document" from "this
+// builder rejected its own attribute" needs a signal the Builder
+// contract does not carry, which is a change to that contract and not a
+// wording fix. Raised in review of #490.
+func attributeControl(name string, err error) error {
+	var a attributedErr
+	if errors.As(err, &a) {
+		return err
+	}
+	return attributedErr{name: name, err: err}
+}
+
+// attributeSetup names the control whose setup was running, ALWAYS, and
+// the difference from attributeControl is the difference between the two
+// call sites.
+//
+// doc.build is this package recursing into a control it found in the
+// markup: the inner name locates the fault and every frame above it is
+// structure the author can see for themselves. runSetup is arbitrary Go
+// choosing a document of its own — a preview pane loading whatever file
+// is selected, a control Loading a sibling — and there the two names are
+// different facts: which file has the bad element, and which control's
+// setup asked for it. Innermost-only answered the first and dropped the
+// second, so several controls previewing one sub-document all produced
+// the same message with no way back to the instantiation.
+//
+// The prefix does not double: attributedErr.Error trims the inner
+// "markup: ", so two frames read "markup: control outer.gooey: control
+// mid.gooey: unknown element <Nope>". Raised in review of #490, where
+// the absence of the outer name had become a contract by being asserted.
+func attributeSetup(name string, err error) error {
+	// ONE NAME PER CONTROL, not one per FRAME — and a RECURSION CAN
+	// RE-ENTER THE SAME SETUP, which is the case the unconditional wrap
+	// missed. A control whose setup includes a document that reaches the
+	// control again passes through this seam twice, so the same name
+	// went on twice:
+	//
+	//	markup: control b.gooey: control b.gooey: control a.gooey
+	//	includes itself: a.gooey → a.gooey — …
+	//
+	// which is the stacking attributedErr exists to end, arriving from
+	// the one direction it did not cover. The cycle guard is what bounds
+	// that recursion, so its refusal is exactly the error most likely to
+	// come back through a re-entered setup. Raised in review of #490.
+	//
+	// The name == "" SENTINEL IS DELIBERATELY NOT HONOURED HERE, and
+	// that is the difference from attributeControl rather than an
+	// oversight: an error naming its own control answers "which file has
+	// the fault", and this seam exists to add the other fact, "which
+	// control's setup asked for that file". A cycle refusal traces the
+	// loop but not the setup that entered it, so dropping the name here
+	// would lose the only pointer back to the instantiation.
+	var a attributedErr
+	if errors.As(err, &a) && a.name == name {
+		return err
+	}
+	return attributedErr{name: name, err: err}
+}
 
 // UserControl wraps a markup file + code-behind setup as a Builder, so
 // a control registers like any custom component and instantiates as an
@@ -18,8 +145,20 @@ import (
 // never against the page. Data crosses the boundary through element
 // attributes, resolved in the PARENT context (see Context.BindingValue)
 // to property handles the setup wires into its context or components.
-// Styles and Components inherit from the parent when the child leaves
-// them nil; Named is scoped per instance (like x:Name in templates).
+// WHICH fields inherit is deliberately NOT written out here. This
+// sentence used to say "Styles and Components", and by #314 the real set
+// was ten — a hand-maintained list of two naming a partition of twelve,
+// in the doc comment for the function that implements it. The partition
+// lives in markup.boundaryPartition (boundaryfields_test.go), one row per
+// field with its reason, checked against Context's own declaration; read
+// that, and the assignments below, rather than a count in prose. Raised
+// in review of #490, which found this copy and the reference doc's both
+// stale in the change that fixed the behaviour.
+//
+// The two that do NOT cross are worth naming, because they are the
+// contract rather than a detail: Values isolate — data crosses only
+// through the declared surface — and Named is scoped per instance (like
+// x:Name in templates).
 //
 // If the control's markup declares dependency properties with
 // <x:Property>, they are resolved BEFORE setup runs and installed into
@@ -85,8 +224,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// skips Screen.Restore, so it costs the user their unsaved work and
 		// their terminal modes.
 		if i := indexOf(parent.controls, name); i >= 0 {
-			return nil, fmt.Errorf("markup: control %s includes itself: %s — a control cannot be its own ancestor, because instantiating it never terminates",
-				name, strings.Join(append(append([]string{}, parent.controls[i:]...), name), " → "))
+			// ALREADY ATTRIBUTED: this message names the control and the
+			// whole loop, so an enclosing one prefixing itself to it says
+			// nothing the sentence does not already say twice over.
+			return nil, attributedErr{err: fmt.Errorf("markup: control %s includes itself: %s — a control cannot be its own ancestor, because instantiating it never terminates",
+				name, strings.Join(append(append([]string{}, parent.controls[i:]...), name), " → "))}
 		}
 		// Variant-resolved like a page: a control specializes on the pixel
 		// protocol by shipping card.sixel.gooey beside card.gooey, and the
@@ -117,7 +259,12 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if setup != nil {
 			child, err = runSetup(setup, e, parent, declared)
 			if err != nil {
-				return nil, fmt.Errorf("markup: control %s: %w", name, err)
+				// attributeSetup, which names this control even when the
+				// error already names one: a setup is arbitrary Go and
+				// routinely calls markup.Load or markup.Build on a
+				// document of ITS OWN choosing, so the inner name is a
+				// different fact from this one. See attributeSetup.
+				return nil, attributeSetup(name, err)
 			}
 		}
 		if child == nil {
@@ -130,7 +277,7 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// every attribute passes through, unchecked, as it always has.
 		if passThrough && !doc.decls.present {
 			if err := passAttrs(e, parent, child.Values); err != nil {
-				return nil, fmt.Errorf("markup: control %s: %w", name, err)
+				return nil, attributeControl(name, err)
 			}
 		}
 		for _, d := range doc.decls.list {
@@ -173,14 +320,78 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Components == nil {
 			child.Components = parent.Components
 		}
+		// THE DECLARED HALF OF THE SAME SEAM, and it was missing while
+		// Components above was not (issue #314). Context.Elements is a
+		// host element that DECLARES its surface; Context.Components is
+		// the same registration without a schema. Only the second
+		// crossed, so `<Meter Level="{{.N}}"/>` inside any control
+		// failed to load with `unknown element <Meter>` while the
+		// undeclared spelling of the same component worked — the
+		// incentive exactly backwards from the one the catalog exists to
+		// create.
+		//
+		// THE COST, and it is a document that used to load: a control
+		// whose setup registers Components["X"] privately, on a page
+		// that declares Elements["X"], now hits
+		// markup.buildComponent's both-maps refusal instead of quietly
+		// winning. That refusal is the right answer — which of the two
+		// won would otherwise depend on the order of the ifs — but the
+		// error names a collision the control author did not create.
+		// The way out is to stop registering the private builder and
+		// let the declared element through, or to declare the control's
+		// own under a different name. Pinned by
+		// TestAControlCannotShadowAPageDeclaredElement; raised in review
+		// of #490.
+		if child.Elements == nil {
+			child.Elements = parent.Elements
+		}
 		if child.Handlers == nil {
 			child.Handlers = parent.Handlers
+		}
+		// docs/markup-reference.md calls extending the <Validate>
+		// vocabulary "a registration, exactly like Components and
+		// Handlers". It was not one: an Include always starts from
+		// &Context{}, so Rules was nil inside every control and
+		// <Validate Email="true"/> failed naming only the built-ins.
+		if child.Rules == nil {
+			child.Rules = parent.Rules
 		}
 		if child.Includes == nil {
 			child.Includes = parent.Includes
 		}
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
+		}
+		// Dir is the DOCUMENT DIRECTORY <Companion> resolves Dir/Log
+		// against. Unpropagated it was "", and hostPath falls back to
+		// filepath.Clean — the process working directory — so a
+		// companion declared in a control file quietly ran somewhere
+		// else. Nothing restricts <Companion> to page level, so this was
+		// reachable (issue #314).
+		if child.Dir == "" {
+			child.Dir = parent.Dir
+		}
+		// Variant is the PIXEL-PROTOCOL SPECIALIZATION, and this arm is
+		// not redundant with the resolveVariant call above even though
+		// that one reads parent.Variant directly.
+		//
+		// AT DEPTH 1 IT LOOKS REDUNDANT, WHICH IS WHY IT WAS MISSING. A
+		// page instantiating <Inner/> resolves inner.sixel.gooey off the
+		// PAGE's Variant and everything is right. One level down the
+		// parent IS this child context, so a <Card/> that includes a
+		// <Panel/> resolved the panel against "" — the plain file, on an
+		// app that asked for sixel, with no error anywhere. Measured:
+		// depth 1 gave SIXEL and depth 2 gave PLAIN. #314's own text
+		// says "Variant is read off the parent directly, so only Dir
+		// actually breaks", which is true at one level and false below
+		// it.
+		//
+		// INHERITED WHEN THE CHILD LEAVES IT NIL, like every field in
+		// this block: a setup returning a Context with its own Variant
+		// keeps it. Flagged in review of #490 alongside Dir's doc, which
+		// said "at every depth" of the same nil-guarded arm.
+		if child.Variant == "" {
+			child.Variant = parent.Variant
 		}
 		// THE ARM SCOPE IS PAGE-WIDE, so it crosses this boundary the
 		// same way Declared does — and armScope.sinks' own doc comment
@@ -233,12 +444,26 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// from it later — where a sibling appending in the meantime would
 		// rewrite ancestry the retained context still points at.
 		//
-		// No test in this package discriminates this line; it guards a
-		// deferred-build path, not the load path the cycle tests take.
+		// TestAControlsAncestryIsNotAliasedByItsSiblings is what
+		// discriminates it, and it has to reach past the load path to do
+		// so: a registered element records the slice its control was
+		// handed and the contents at that moment, standing in for the
+		// retained row context, and compares them once Load has returned.
+		// Four levels deep, because append leaves no spare slot to fight
+		// over until growth has over-allocated.
 		child.controls = append(parent.controls[:len(parent.controls):len(parent.controls)], name)
 		w, err := doc.build(child)
 		if err != nil {
-			return nil, err
+			// ATTRIBUTED TO THE CONTROL, the way the setup-error path
+			// above already is. The both-maps refusal this file's Elements
+			// arm describes is the case that made it necessary: the page
+			// declared Elements["X"], the control's setup registered
+			// Components["X"], and neither author wrote a duplicate — so a
+			// bare "<X> is registered in both" reaches the one person who
+			// can act on it as a sentence about a page they may not own.
+			// ONCE, at the innermost control: see attributeControl for why
+			// every frame above it passes the error through untouched.
+			return nil, attributeControl(name, err)
 		}
 		if len(doc.decls.list) > 0 {
 			surface := DeclaredSurface{Control: name, Props: make([]DeclaredProp, 0, len(doc.decls.list))}

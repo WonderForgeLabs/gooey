@@ -1,6 +1,8 @@
 package gooey
 
 import (
+	goparser "go/parser"
+	gotoken "go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,9 +30,10 @@ import (
 // package qualifier.
 //
 // The qualifier is not decoration and matching it is not optional: six
-// live citations in docs/specs are written `markup.TestX` and
-// `wysiwyg.TestX`, and the first version of this guard's pattern required
-// a backtick immediately before `Test`, so all six were invisible to it —
+// live citations in docs/specs are written as a backticked markup.TestX
+// or wysiwyg.TestX, and the first version of this guard's pattern
+// required a backtick immediately before Test, so all six were invisible
+// to it —
 // a guard against rot that could not see the citations most likely to
 // rot, because a cross-package name is the one whose test you are least
 // likely to notice renaming. Review of PR #476 caught that.
@@ -305,7 +308,7 @@ func testFuncsUnder(t *testing.T, root string) map[string]map[string]bool {
 			found[m[1]][dir] = true
 			// AND UNDER THE MODULE'S OWN NAME, for a root-package test.
 			// filepath.Base(filepath.Dir(path)) is "." there, so
-			// `gooey.TestFoo` — the natural spelling, and the one the
+			// gooey.TestFoo — the natural spelling, and the one the
 			// race-tier citation above now uses — could never resolve:
 			// the report read "the test exists, but in `.`, not gooey",
 			// which is a false failure with a confusing message. Raised
@@ -432,6 +435,71 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 			"so this test checks nothing. Either the docs have stopped citing " +
 			"tests or the pattern has drifted from how they are written.")
 	}
+
+	// GO COMMENTS TOO, and this half was missing while claudemd_test.go's
+	// symbol guard skipped every Test-prefixed name with "TEST NAMES
+	// BELONG TO TestEveryCitedTestNameResolves". They did not: this test
+	// read proseFiles, which is Markdown, so a test name cited in a Go
+	// comment was adjudicated by neither guard. A delegation is only as
+	// true as the corpus the delegate reads. Raised in review of #490.
+	goCited := 0
+	for _, p := range goCommentSources(t) {
+		cites := goCitations(t, p)
+		goCited += len(cites)
+		for _, f := range unresolved(cites, funcs) {
+			t.Errorf("%s:%d cites %s in a comment and %s.\n\t%s\n"+
+				"A renamed test leaves the sentence reading as a reference to "+
+				"something. Fix the name, or — if it is a shape rather than a "+
+				"reference — drop the backticks, which is how this file already "+
+				"spells a name that is not live. (#468)",
+				f.file, f.line, f.cited(), f.why, f.text)
+		}
+	}
+	if goCited == 0 {
+		t.Errorf("no Go comment in the tree cites a test, so the half of this " +
+			"guard that reads Go checks nothing. Either the comments have " +
+			"stopped naming tests — they have not, CLAUDE.md's own invariants " +
+			"rest on several — or goCitations has drifted from how they are " +
+			"written.")
+	}
+}
+
+// goCitations is every backticked test-name citation in one Go file's
+// COMMENTS.
+//
+// Go has no headings and no fences, so it needs none of readProse: the
+// parser separates comment from code, which is the only classification
+// this corpus requires. It also has no plannedMarker and wants none — a
+// comment proposing a test that does not exist is describing work, and
+// this file's own rule covers it: a name that is not a live reference is
+// spelled WITHOUT backticks, which is honest and needs nothing to
+// classify it.
+func goCitations(t *testing.T, path string) []citation {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	fset := gotoken.NewFileSet()
+	f, err := goparser.ParseFile(fset, path, src, goparser.ParseComments)
+	if err != nil {
+		return nil // the compiler owns this one
+	}
+	var out []citation
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			at := fset.Position(c.Slash).Line
+			for i, l := range strings.Split(c.Text, "\n") {
+				for _, m := range citedTestName.FindAllStringSubmatch(l, -1) {
+					out = append(out, citation{
+						file: path, line: at + i,
+						pkg: m[1], name: m[2], text: strings.TrimSpace(l),
+					})
+				}
+			}
+		}
+	}
+	return out
 }
 
 // TestNoMarkedSectionNamesALandedTest is what stops the exemption from
@@ -650,7 +718,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 
 	// THE ROOT MODULE ANSWERS TO ITS OWN NAME. testFuncsUnder keys a
 	// root-package test under filepath.Base(filepath.Dir(path)), which is
-	// ".", so `gooey.TestFoo` — the spelling CLAUDE.md's race-tier
+	// ".", so gooey.TestFoo — the spelling CLAUDE.md's race-tier
 	// citation now uses — reported "the test exists, but in `.`, not
 	// gooey". A false failure with a confusing message. Raised in review
 	// of #476.
