@@ -166,7 +166,8 @@ func checkCompanionAttrs(e Element) error {
 // exec.LookPath so a binary that is not installed is a LOAD error naming
 // it, rather than a start failure behind a screen that is already up. A
 // pathful one is resolved against the PAGE's directory (Context.Dir,
-// which a control inherits — see its doc) and made absolute: exec.Cmd
+// which a control inherits when it leaves it nil — see its doc) and
+// made absolute: exec.Cmd
 // resolves a relative Path against Dir, so leaving it relative would
 // silently mean two different files depending on whether Dir was also
 // set.
@@ -217,9 +218,9 @@ func absPath(p, name, raw string) (string, error) {
 }
 
 // companionDir resolves the working directory against the PAGE's
-// directory — Context.Dir, which a control inherits rather than
-// replacing, so a <Companion> inside a UserControl loaded from another
-// FS still runs where the app runs. This said "the document's own
+// directory — Context.Dir, which a control inherits when it leaves it
+// nil rather than replacing, so a <Companion> inside a UserControl
+// loaded from another FS still runs where the app runs. This said "the document's own
 // directory" while pointing at the field that says otherwise, which is
 // the answer that stops being obvious exactly where a control's markup
 // and its host paths come from different places. Raised in review of
@@ -275,9 +276,9 @@ func companionLog(e Element, ctx *Context, name string) (string, error) {
 
 // hostPath resolves one host-side path against the PAGE's directory.
 // An absolute path is left alone; everything else is joined onto
-// Context.Dir — the page's at every depth, not the enclosing document's —
-// which is empty (the process's working directory) for a document built
-// from bytes.
+// Context.Dir — the page's, inherited by a control that leaves it nil,
+// not the enclosing document's — which is empty (the process's working
+// directory) for a document built from bytes.
 func (ctx *Context) hostPath(p string) string {
 	if filepath.IsAbs(p) || ctx.Dir == "" {
 		return filepath.Clean(p)

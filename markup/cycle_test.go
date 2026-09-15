@@ -339,6 +339,64 @@ func TestACycleRefusalIsNotAttributedTwice(t *testing.T) {
 	}
 }
 
+// TestARecursionThroughOneSetupNamesItOnce is the case
+// TestASetupsOwnLoadErrorIsNotAttributedTwice structurally cannot
+// reach: its inner Load takes a FRESH Context, so the ancestry restarts
+// and the setup is entered exactly once.
+//
+// Here the setup includes a document that reaches the control again, so
+// the same seam is crossed twice on the way down and twice on the way
+// back up. Measured before the fix:
+//
+//	markup: control b.gooey: control b.gooey: control a.gooey includes
+//	itself: a.gooey → a.gooey — …
+//
+// b.gooey twice, which is the frame-per-name stacking attributedErr
+// exists to end, arriving from the one direction attributeSetup did not
+// cover. Raised in review of #490.
+//
+// AND THE NAME IS STILL THERE ONCE, which is the half a blanket "pass
+// an already-attributed error through" would have lost: the cycle
+// message traces the loop (a.gooey → a.gooey) and never names the
+// control whose setup entered it, so b.gooey is the only pointer back
+// to the instantiation.
+func TestARecursionThroughOneSetupNamesItOnce(t *testing.T) {
+	fsys := fstest.MapFS{
+		"a.gooey": &fstest.MapFile{Data: []byte(`<Gooey><B/></Gooey>`)},
+		"b.gooey": &fstest.MapFile{Data: []byte(`<Gooey><Text>x</Text></Gooey>`)},
+	}
+	ctx := &Context{
+		Includes: fsys,
+		Components: map[string]Builder{
+			"B": UserControl(fsys, "b.gooey", func(e Element, parent *Context) (*Context, error) {
+				_, err := Include(fsys, "a.gooey")(e, parent)
+				return nil, err
+			}),
+		},
+	}
+	_, err := Load(fsys, "a.gooey", ctx)
+	if err == nil {
+		t.Fatal("the setup re-entered the control and the load succeeded")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "includes itself") {
+		t.Fatalf("the load failed for some other reason than the cycle, so this "+
+			"measures nothing: %v", err)
+	}
+	if n := strings.Count(msg, "b.gooey"); n != 1 {
+		t.Errorf("the error names b.gooey %d times, want once — the setup is one "+
+			"control however many times the recursion passes through it: %v", n, err)
+	}
+	// Three: the attribution on a.gooey, and the two ends of the trace.
+	if n := strings.Count(msg, "a.gooey"); n != 3 {
+		t.Errorf("the error names a.gooey %d times, want 3 (the attribution plus "+
+			"both ends of the trace): %v", n, err)
+	}
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+}
+
 // A SETUP IS ARBITRARY GO, and the commonest thing it does with a
 // document is load another one — a control whose code-behind builds a
 // sub-view, a designer that renders a preview. That gives the reader TWO

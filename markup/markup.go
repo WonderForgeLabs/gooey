@@ -184,14 +184,20 @@ type Context struct {
 	// Dir is the OS directory the PAGE's HOST-SIDE paths resolve
 	// against: a <Companion>'s working directory and its log file.
 	//
-	// The page's, at every depth — a control inherits it while fsys is
-	// replaced with the control's own FS, so for UserControl(otherFS, …)
-	// the two deliberately disagree: markup comes from the control's FS,
-	// host-side paths stay anchored to the app's directory. Inheriting is
-	// what this branch changed it to, from the process working directory
-	// it fell back to before. Wording corrected in review of #490, which
-	// read "this document's" and left which document ambiguous exactly
-	// where the answer stopped being obvious. Set it
+	// A control INHERITS IT WHEN IT LEAVES IT NIL, which is the same rule
+	// every other inheriting field follows, and the wording
+	// docs/markup-reference.md already uses. A setup returning a Context
+	// with its own Dir keeps that one. This said "the page's, at every
+	// depth", which reads as unconditional and is the one thing it is
+	// not; corrected in review of #490, which is also where the
+	// preceding "this document's" was corrected for leaving WHICH
+	// document ambiguous exactly where the answer stops being obvious.
+	//
+	// fsys is replaced while Dir is inherited, so for
+	// UserControl(otherFS, …) the two deliberately disagree: markup
+	// comes from the control's FS, host-side paths stay anchored to the
+	// app's directory. Inheriting is what this branch changed it to,
+	// from the process working directory it fell back to before. Set it
 	// to the same directory the page's fs.FS was rooted at —
 	//
 	//	app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))

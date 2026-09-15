@@ -27,11 +27,19 @@ import (
 // The INNERMOST control is the one whose file the author opens, so it
 // is the one that attributes; every frame above passes the error
 // through untouched. An error that already names its own control says so
-// by carrying an empty name here, and is left alone: the cycle refusal
-// below is the one site that does, because its message traces the whole
-// loop. Everything else goes through attributeControl, which asks
-// errors.As first — a setup is arbitrary Go and may itself have called
-// markup.Load, whose error already names the control it failed in.
+// by carrying an empty name here, and attributeControl leaves it alone:
+// the cycle refusal below is the one site that does, because its message
+// traces the whole loop. Everything else goes through attributeControl,
+// which asks errors.As first — a setup is arbitrary Go and may itself
+// have called markup.Load, whose error already names the control it
+// failed in.
+//
+// attributeSetup is the exception and says why at its own site: the two
+// names there are different facts, so it adds one over an
+// already-attributed error and stops only when the name would REPEAT.
+// This paragraph read as though the sentinel bound both seams, which is
+// how the setup seam came to have no stop at all. Raised in review of
+// #490.
 type attributedErr struct {
 	name string // "" when the wrapped error names its own control already
 	err  error
@@ -100,6 +108,31 @@ func attributeControl(name string, err error) error {
 // mid.gooey: unknown element <Nope>". Raised in review of #490, where
 // the absence of the outer name had become a contract by being asserted.
 func attributeSetup(name string, err error) error {
+	// ONE NAME PER CONTROL, not one per FRAME — and a RECURSION CAN
+	// RE-ENTER THE SAME SETUP, which is the case the unconditional wrap
+	// missed. A control whose setup includes a document that reaches the
+	// control again passes through this seam twice, so the same name
+	// went on twice:
+	//
+	//	markup: control b.gooey: control b.gooey: control a.gooey
+	//	includes itself: a.gooey → a.gooey — …
+	//
+	// which is the stacking attributedErr exists to end, arriving from
+	// the one direction it did not cover. The cycle guard is what bounds
+	// that recursion, so its refusal is exactly the error most likely to
+	// come back through a re-entered setup. Raised in review of #490.
+	//
+	// The name == "" SENTINEL IS DELIBERATELY NOT HONOURED HERE, and
+	// that is the difference from attributeControl rather than an
+	// oversight: an error naming its own control answers "which file has
+	// the fault", and this seam exists to add the other fact, "which
+	// control's setup asked for that file". A cycle refusal traces the
+	// loop but not the setup that entered it, so dropping the name here
+	// would lose the only pointer back to the instantiation.
+	var a attributedErr
+	if errors.As(err, &a) && a.name == name {
+		return err
+	}
 	return attributedErr{name: name, err: err}
 }
 
@@ -352,6 +385,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// says "Variant is read off the parent directly, so only Dir
 		// actually breaks", which is true at one level and false below
 		// it.
+		//
+		// INHERITED WHEN THE CHILD LEAVES IT NIL, like every field in
+		// this block: a setup returning a Context with its own Variant
+		// keeps it. Flagged in review of #490 alongside Dir's doc, which
+		// said "at every depth" of the same nil-guarded arm.
 		if child.Variant == "" {
 			child.Variant = parent.Variant
 		}

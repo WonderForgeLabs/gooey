@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1777,7 +1778,7 @@ const symbolForeignMarker = "<!-- symbols: not-go -->"
 // is for.
 func TestEveryCitedSymbolResolves(t *testing.T) {
 	declared := declaredByPackage(t)
-	foreign := vendoredByPackage(t, declared)
+	foreign := vendoredByPackage(t)
 	if len(declared["markup"]) == 0 || len(declared["render"]) == 0 {
 		t.Fatalf("the declaration index found %d markup symbols and %d render "+
 			"symbols, so the walk is looking somewhere else and every citation "+
@@ -1918,8 +1919,23 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 // package name union their symbols, which is the only imprecision here
 // and a safe one: it can accept a citation that resolves in the wrong
 // copy, never reject one that resolves in the right one.
+// ONCE PER BINARY, not once per caller. Two tests ask for each of these
+// indexes and each walk parses the whole tree (vendor/ included), which
+// put about 1.5 s of pure duplicate work in a ~20 s root suite. The
+// memo changes nothing either test asserts: the walk is over files on
+// disk, which no test here writes. Raised in review of #490.
+var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
+
 func declaredByPackage(t *testing.T) map[string]map[string]bool {
 	t.Helper()
+	out, err := declaredIndex()
+	if err != nil {
+		t.Fatalf("walking the tree for declarations: %v", err)
+	}
+	return out
+}
+
+func buildDeclaredByPackage() (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -1966,10 +1982,7 @@ func declaredByPackage(t *testing.T) map[string]map[string]bool {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("walking the tree for declarations: %v", err)
-	}
-	return out
+	return out, err
 }
 
 // goCommentSources are the .go files whose COMMENTS carry symbol
@@ -2052,7 +2065,7 @@ func goComments(t *testing.T, path string, src []byte) string {
 // Raised in review of #490.
 func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 	declared := declaredByPackage(t)
-	foreign := vendoredByPackage(t, declared)
+	foreign := vendoredByPackage(t)
 
 	// NON-VACUITY FIRST. Every arm below is "and the other index says
 	// X"; an empty foreign index makes the middle arm unreachable and
@@ -2151,12 +2164,45 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // price is a page citing a vendored METHOD as `pkg.Name`, which would
 // still error and would have to be spelled with more of its import path
 // — and no page does today. Raised in review of #490.
-func vendoredByPackage(t *testing.T, collidesWith map[string]map[string]bool) map[string]map[string]bool {
-	t.Helper()
-	out := map[string]map[string]bool{}
-	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
-		return out // consumed standalone; nothing vendored to collide with
+// Memoized for the reason declaredIndex gives. The parameter is not part
+// of the key because there is only one possible argument — declaredIndex
+// is itself memoized, so every caller passes the same map.
+var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
+	declared, err := declaredIndex()
+	if err != nil {
+		return nil, err
 	}
+	return buildVendoredByPackage(declared)
+})
+
+func vendoredByPackage(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	// A SKIP, NOT A SILENT EMPTY MAP. This returned `out` with a comment
+	// promising graceful degradation when vendor/ is absent, and there
+	// is none: this file's own doc deliberately backticks `workflow.Now`
+	// and `term.IsTerminal` as LIVE fixtures, so with the vendor walk
+	// empty the exemption they rely on is gone too and
+	// TestEveryCitedSymbolResolves errors on this file's explanatory
+	// prose, while TestAVendoredCollisionIsNotOurStaleCitation fails
+	// separately on its own non-vacuity Fatal. Two confusing failures in
+	// the shape the early return existed to avoid — a comment standing
+	// in for evidence, in the file whose argument is that it must not.
+	// Raised in review of #490.
+	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
+		t.Skip("vendor/ is absent (this module consumed standalone), so there is " +
+			"nothing vendored to collide with — and the two citations this file's " +
+			"own doc comment makes to vendored symbols would have nothing to " +
+			"resolve against either")
+	}
+	out, err := vendoredIndex()
+	if err != nil {
+		t.Fatalf("walking vendor for declarations: %v", err)
+	}
+	return out
+}
+
+func buildVendoredByPackage(collidesWith map[string]map[string]bool) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
 	err := filepath.WalkDir("vendor", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -2212,8 +2258,5 @@ func vendoredByPackage(t *testing.T, collidesWith map[string]map[string]bool) ma
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("walking vendor for colliding declarations: %v", err)
-	}
-	return out
+	return out, err
 }
