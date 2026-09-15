@@ -827,6 +827,17 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 
 // Build parses markup and constructs the component tree.
 func Build(src []byte, ctx *Context) (gooey.Component, error) {
+	// THE SAME PRE-PARSE CHECK Load runs, because this is the other
+	// public way in and the ambiguity it refuses belongs to the
+	// CONTEXT rather than to the document. It was wired into Load
+	// alone, so a host that registered a mismatched key and built from
+	// bytes still got the map-order-dependent grant — measured, Build
+	// answered nil where Load named the key.
+	// TestBothEntryPointsRefuseAMismatchedElementName is what keeps the
+	// two in step. Raised in review of #486.
+	if err := ctx.checkElementNames(); err != nil {
+		return nil, err
+	}
 	doc, err := parseDocument(src)
 	if err != nil {
 		return nil, err

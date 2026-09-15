@@ -1206,7 +1206,14 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 				// acceptance, so it is sayable where the content move is
 				// not: if the element does not take the name, the
 				// attribute gate answers with its own list rather than a
-				// second blank refusal. Raised in review of #486.
+				// second blank refusal — EXCEPT on a spec whose
+				// AttrsKnown is false, where checkAttrs returns before
+				// that gate and the name is accepted and dropped. <Tab>
+				// is the one such pseudo-element, the remedy carries the
+				// caveat for it, and
+				// TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped
+				// is what holds that. Raised in review of #486, and
+				// corrected there in the round after.
 				if !strings.Contains(err.Error(), "write it as an attribute on this element") {
 					t.Errorf("%s is refused with no remedy at all. The content move "+
 						"is rightly withheld here, but the attribute spelling on "+
@@ -1604,10 +1611,16 @@ func TestTheParserStampsAParentOnEveryElement(t *testing.T) {
 //
 // attributeHere justifies prescribing `<X Name="…">` with "if the
 // element does not take the name, the attribute gate answers with its
-// own list, which is a better error". True for a name the VOCABULARY
-// gate sees — <Tab.Frobnicate> reaches suggest(). False for everything
-// cannotApplyTo covers, because refuseComponentAttr intercepts those
-// first and answers with no advice at all. Measured before the fix:
+// own list, which is a better error". False for everything cannotApplyTo
+// covers, because refuseComponentAttr intercepts those first and answers
+// with no advice at all. Measured before the fix:
+//
+// (This comment used to say the claim was "true for a name the
+// VOCABULARY gate sees — <Tab.Frobnicate> reaches suggest()". It does
+// not: <Tab>'s AttrsKnown is false, so checkAttrs returns before the
+// gate and <Tab Frobnicate="z"> loads and is dropped.
+// TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped is that case,
+// and the remedy carries the caveat now. Corrected in review of #486.)
 //
 //	<Menu.Name>x</Menu.Name>  -> …; write it as an attribute on this
 //	                             element instead, <Menu Name="…">, …
@@ -1722,5 +1735,78 @@ func TestANamelessHostRegistrationStillNamesItself(t *testing.T) {
 	}
 	if !strings.Contains(got, "<Leafy>") {
 		t.Errorf("readsAsData renders %q and does not name <Leafy>", got)
+	}
+}
+
+// TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped is the other
+// half of the guard above, at the gate that does not exist.
+//
+// attributeHere's argument is that a wrong name lands on the attribute
+// gate, which answers with its own list. checkAttrs returns BEFORE that
+// gate when a spec's AttrsKnown is false, so the name is accepted and
+// dropped instead — the #461 class, reached by following this PR's own
+// advice. Measured on the head this was written against:
+//
+//	<Tab.Frobnicate>z</Tab.Frobnicate>  -> refused, advising <Tab Frobnicate="…">
+//	<Tab Frobnicate="z">                -> <nil>
+//
+// The sibling case shows the premise holding where the surface IS
+// declared, which is what makes this a shape rather than a wording
+// problem:
+//
+//	<MenuItem Frobnicate="z">  -> no such attribute; this element takes
+//	                              Checked, Command, Gesture, …
+//
+// So the remedy stays — <Tab.Header> is a real property with an obvious
+// home, and nothing can tell Header from Frobnicate on a spec whose
+// Attrs are not exhaustive — and it has to say what it cannot promise.
+// Raised in review of #486.
+func TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped(t *testing.T) {
+	ctx := &Context{}
+	// OUTSIDE cannotApplyTo, which is what the guard above ranges over
+	// and why it could not see this: every name it asks about is
+	// intercepted by refuseComponentAttr before any vocabulary gate.
+	const name = "Frobnicate"
+
+	var unchecked, checked int
+	for _, sp := range ctx.Catalog() {
+		if !sp.Pseudo {
+			continue
+		}
+		r := propRemedy(sp, ctx, name)
+		if !strings.Contains(r, "write it as an attribute on this element") {
+			continue
+		}
+		if sp.AttrsKnown {
+			checked++
+			continue
+		}
+		unchecked++
+		if !strings.Contains(r, "silently dropped") {
+			t.Errorf("<%s.%s> is refused with advice to write <%s %s=\"…\">, and %s's "+
+				"AttrsKnown is false — so checkAttrs returns before the vocabulary "+
+				"gate and that attribute is accepted and dropped rather than "+
+				"refused. The remedy must say so. Remedy: %q",
+				sp.Name, name, sp.Name, name, sp.Name, r)
+		}
+	}
+	if unchecked == 0 {
+		t.Fatalf("no pseudo-element with AttrsKnown false was reached (%d with it "+
+			"true), so this guard compared nothing. <Tab> is the one the finding "+
+			"was written about; if it gained an exhaustive Attrs the #461 "+
+			"residual hole is closed and this test should say that instead",
+			checked)
+	}
+
+	// AND THE BEHAVIOUR, because the assertion above reads a sentence.
+	// A remedy is a promise that following it gets somewhere, so the
+	// document it prescribes is what settles whether the caveat is
+	// needed.
+	if _, err := Build([]byte(
+		`<Gooey><Tabs><Tab Header="a" `+name+`="z"><Text>x</Text></Tab></Tabs></Gooey>`,
+	), &Context{}); err != nil {
+		t.Errorf("<Tab %s=\"z\"> is refused with %v, so the attribute gate DOES "+
+			"answer for <Tab> and the caveat this test requires is now false. "+
+			"Drop it from attributeHere and delete this arm", name, err)
 	}
 }

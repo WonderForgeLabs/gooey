@@ -586,20 +586,22 @@ func propRemedy(spec ElementSpec, ctx *Context, name string) string {
 		// carries over to the destination unchanged.
 		return r
 	case r == contentRemedy:
-		// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL, where
-		// acceptance at the destination is derivable without a schema.
-		// For anything else it is advice nothing checked — and
-		// <Text Frobnicate="…"> is itself a load error — so the
-		// attribute form, which asserts no destination, stands in.
-		if isUniversalAttr(name) {
-			return r + ", written as an attribute: a property element names a property " +
-				"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
-				"form that moves"
-		}
-		if !sayableHere(name) {
-			return ""
-		}
-		return attributeHere(spec, name)
+		// THE NAME IS A UNIVERSAL HERE, by construction rather than by
+		// check. pseudoRemedy returns anything other than "" only for a
+		// universal or for Behaviors/Resources, and the case above has
+		// already consumed those two — so the `isUniversalAttr(name)`
+		// this arm used to ask was always true, and the two statements
+		// that followed it were dead. Proven by replacing them with a
+		// panic: the whole markup suite stayed green. Raised in review
+		// of #486, which is the same dead-arm-with-a-live-comment shape
+		// round 4 fixed one function over.
+		//
+		// The content move is sayable here precisely BECAUSE the name is
+		// universal: acceptance at the destination is derivable without
+		// a schema, which it is for nothing else.
+		return r + ", written as an attribute: a property element names a property " +
+			"of the element carrying it, so <" + spec.Name + "." + name + "> is not a " +
+			"form that moves"
 	case r != "":
 		return r // a reservation has its own sentence
 	}
@@ -653,11 +655,36 @@ func sayableHere(name string) bool { return !cannotApplyTo(name) }
 // does not take the name, the attribute gate answers with its own list,
 // which is a better error than this one rather than a second blank
 // refusal to walk to.
+//
+// EXCEPT WHERE THERE IS NO GATE, which is the one case that argument did
+// not account for: a spec whose AttrsKnown is false. checkAttrs returns
+// before the vocabulary gate for those, so an unrecognized attribute is
+// not refused with a list — it is ACCEPTED and dropped, which is the
+// #461 class this whole change exists to close. <Tab> is the only
+// pseudo-element in that state, and it is reachable by following this
+// very remedy:
+//
+//	<Tab.Frobnicate>z</Tab.Frobnicate>  -> refused, advising the
+//	                                       attribute spelling
+//	<Tab Frobnicate="z">                -> loads, and is dropped
+//
+// Silence is not the answer either — <Tab.Header> is a real property
+// with an obvious home — and nothing here can tell Header from
+// Frobnicate, because that is exactly what AttrsKnown false means. So
+// the advice stands and says what it cannot promise. Raised in review of
+// #486.
 func attributeHere(spec ElementSpec, name string) string {
-	return "; write it as an attribute on this element instead, <" +
-		spec.Name + " " + name + "=\"…\">, if <" + spec.Name +
-		"> takes one — a property element names a property of the " +
+	tail := "> takes one — a property element names a property of the " +
 		"element carrying it, and this element builds none"
+	if !spec.AttrsKnown {
+		tail = "> consumes it — a property element names a property of the " +
+			"element carrying it, and this element builds none. <" + spec.Name +
+			"> declares no attribute vocabulary this package can check, so a " +
+			"name it does not consume is accepted there and silently dropped " +
+			"rather than refused"
+	}
+	return "; write it as an attribute on this element instead, <" +
+		spec.Name + " " + name + "=\"…\">, if <" + spec.Name + tail
 }
 
 // isUniversalAttr reports whether name is one of the attributes every
