@@ -887,6 +887,126 @@ func TestEveryReusedSliceInComposerClearsToCap(t *testing.T) {
 // backing bytes, but those are bounded by the string and are not a
 // component tree; counting them would flag every []string reset in the
 // repo for a few bytes each.
+// TestOnlyAClearThatReachesCapExemptsAReset is the fixture the tree
+// itself cannot supply: every real site in the repo is already written
+// the right way, so the guard above is green under BOTH rules and could
+// not tell the reader which one it enforces.
+//
+// The three rejected spellings are the point. clear(x) is the natural
+// thing to reach for and clears exactly [0, len) — the partial reset the
+// whole guard exists to reject — and the version of this exemption that
+// stripped any slice expression off the argument accepted all three.
+func TestOnlyAClearThatReachesCapExemptsAReset(t *testing.T) {
+	const src = `package p
+
+func full()      { clear(x[:cap(x)]) }
+func fullTail()  { clear(x[len(x):cap(x)]) }
+func named()     { x = clearToCap(x) }
+func namedSlice(){ x = clearToCap(x[:0]) }
+func whole()     { clear(x) }
+func toLen()     { clear(x[:len(x)]) }
+func toZero()    { clear(x[:0]) }
+func otherCap()  { clear(x[:cap(y)]) }
+func notAClear() { copy(x[:cap(x)], y) }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	text := func(e ast.Expr) string {
+		return src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset]
+	}
+
+	for _, tc := range []struct {
+		fn   string
+		want bool
+	}{
+		{"full", true},
+		{"fullTail", true},
+		{"named", true},
+		{"namedSlice", true},
+		{"whole", false},
+		{"toLen", false},
+		{"toZero", false},
+		{"otherCap", false},
+		{"notAClear", false},
+	} {
+		var decl *ast.FuncDecl
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == tc.fn {
+				decl = fd
+			}
+		}
+		if decl == nil {
+			t.Fatalf("the fixture has no func %s", tc.fn)
+		}
+		if got := clearsToCapIn(decl, text)["x"]; got != tc.want {
+			t.Errorf("%s: clearsToCapIn exempts x = %v, want %v. %s", tc.fn, got, tc.want,
+				map[bool]string{
+					true: "this spelling does reach cap and a reset beside it is safe",
+					false: "this spelling leaves elements reachable past the truncation, " +
+						"which is the defect the guard is for",
+				}[tc.want])
+		}
+	}
+}
+
+// clearsToCapIn is every slice base that fn clears ALL THE WAY TO CAP,
+// keyed by source text. It is the exemption the reset guard below reads:
+// a `x = x[:0]` is accepted when the same function clears x's whole
+// backing array.
+//
+// THE SPELLING HAS TO REACH CAP, and this used to accept three that do
+// not. Stripping any slice expression off the argument meant `clear(x)`,
+// `clear(x[:len(x)])` and `clear(x[:0])` all exempted a subsequent
+// `x = x[:0]` — and `clear(x)` is the natural thing to reach for while
+// clearing exactly [0, len), which is precisely the partial reset this
+// guard exists to reject: after the truncation the elements between the
+// old len and cap stay reachable. Raised in review of #456.
+//
+// So `clear` is accepted only as clear(x[…:cap(x)]) — the High must be
+// a cap() over the same base — while `clearToCap(…)` is accepted
+// whatever slice it is handed, because cap(x[:0]) is cap(x) and the
+// function clears to its argument's own cap either way.
+//
+// text renders an expression back to source, which is how two different
+// `c.kids` compare equal and a `c.kids` and a `d.kids` do not.
+func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
+	found := map[string]bool{}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return true
+		}
+		id, ok := call.Fun.(*ast.Ident)
+		if !ok || (id.Name != "clear" && id.Name != "clearToCap") {
+			return true
+		}
+		arg := call.Args[0]
+		sl, sliced := arg.(*ast.SliceExpr)
+		if id.Name == "clear" {
+			if !sliced || sl.High == nil {
+				return true // clear(x) leaves [len, cap) reachable
+			}
+			hi, ok := sl.High.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			fn, ok := hi.Fun.(*ast.Ident)
+			if !ok || fn.Name != "cap" || len(hi.Args) != 1 || text(hi.Args[0]) != text(sl.X) {
+				return true
+			}
+		}
+		if sliced {
+			arg = sl.X
+		}
+		found[text(arg)] = true
+		return true
+	})
+	return found
+}
+
 func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 	parsed := parseTree(t)
 	types := typeIndex(parsed)
@@ -919,26 +1039,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 		// caller reads the reset. If your new reset is not covered by a
 		// clear in the SAME function, this guard will tell you — which
 		// is the property the file-wide version did not have.
-		clearsIn := func(fn ast.Node) map[string]bool {
-			found := map[string]bool{}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok || len(call.Args) != 1 {
-					return true
-				}
-				id, ok := call.Fun.(*ast.Ident)
-				if !ok || (id.Name != "clear" && id.Name != "clearToCap") {
-					return true
-				}
-				arg := call.Args[0]
-				if sl, ok := arg.(*ast.SliceExpr); ok {
-					arg = sl.X
-				}
-				found[text(arg)] = true
-				return true
-			})
-			return found
-		}
+		clearsIn := func(fn ast.Node) map[string]bool { return clearsToCapIn(fn, text) }
 
 		// The reset walk runs per function too, so `clears` below is
 		// the enclosing function's and no other's. A reset outside any

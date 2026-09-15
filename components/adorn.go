@@ -60,11 +60,27 @@ type PersistentAdornment interface {
 }
 
 // AdornmentLayer hosts adornments above the whole page: the app declares
-// it ANYWHERE spanning the page — the same hosting shape as ToastHost —
-// and adorners are added and removed at runtime through the Dynamic
-// re-sync a list uses. The layer paints nothing and declares no
-// background, so a page that never shows an adornment pays nothing for
-// hosting the layer.
+// it anywhere spanning the page FOR PAINT, and adorners are added and
+// removed at runtime through the Dynamic re-sync a list uses. The layer
+// paints nothing and declares no background, so a page that never shows
+// an adornment pays nothing for hosting the layer.
+//
+// "THE SAME HOSTING SHAPE AS ToastHost" is what this said, and it is
+// the half that is not true. ToastHost really has no layout-order
+// dependency; this layer re-anchors during its own Arrange, and layout
+// still walks children in DOCUMENT ORDER because the overlay lift moves
+// paint only. So a layer declared before the content it adorns drops a
+// custom adornment that is neither a PersistentAdornment nor a
+// gooey.PointerFollower — orphaned on its first arrange, permanently,
+// with no error and no fault. Tooltip and ValidationMarker are exempt
+// by construction, which is why every doc scoped to those two is right
+// to say the position is free.
+//
+// docs/markup-reference.md carries the same caveat for the markup
+// surface and TestAnAdornmentLayerDeclaredBeforeItsAnchorLosesTheAdornment
+// pins the drop. This godoc is what a Go author writing a custom adorner
+// reads, and it licensed the order that loses their adornment; found in
+// review of #456.
 //
 // "AS THE LAST CHILD OF ITS ROOT, BECAUSE DOCUMENT ORDER IS Z-ORDER" is
 // what this used to say, and both halves stopped being true: #437 lifted

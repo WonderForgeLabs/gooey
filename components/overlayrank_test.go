@@ -248,14 +248,44 @@ func TestAnAdornmentIsAboveAToast(t *testing.T) {
 // hosts claim these ranks" (below). Neither substitutes for the other,
 // and each has a mutation that fires only it.
 func TestTheOverlayHostsClaimTheRanksTheyDocument(t *testing.T) {
-	for _, tc := range []struct {
+	// THE VALUES ARE NOT DERIVABLE AND THE SET IS, which is why this is a
+	// literal table with a derived floor under it rather than either
+	// alone. Which constant a host should claim is a design decision; no
+	// walk can read it out of the tree. WHICH HOSTS must appear is a
+	// property of the tree, and a hand-written list of them goes stale in
+	// exactly the way TestEveryExportedOverlayHostIsNamed exists to
+	// catch one directory over.
+	//
+	// Without the floor, a third self-marked host — menus v2's
+	// context-menu host (#104) is the concrete candidate — lands with
+	// OverlayRank returning whatever it returns, this table never names
+	// it, and nothing goes red. That is the reversal-with-a-green-suite
+	// this whole PR was filed about. Found in review of #456.
+	ranks := []struct {
 		name string
 		w    gooey.Component
 		want int
 	}{
 		{"AdornmentLayer", &AdornmentLayer{}, gooey.OverlayRankAdornment},
 		{"ToastHost", &ToastHost{}, gooey.OverlayRankToast},
-	} {
+	}
+	named := map[string]bool{}
+	for _, tc := range ranks {
+		named[tc.name] = true
+	}
+	// selfMarkedHosts derives from overlayHostByName, whose own
+	// completeness against the package is TestEveryExportedOverlayHostIsNamed's
+	// subject — so this arm inherits that derivation rather than
+	// restating it.
+	for _, h := range selfMarkedHosts(t) {
+		if !named[h] {
+			t.Errorf("%s carries the gooey.Overlay marker and has no row in this "+
+				"table, so no test says which rank it claims. Add one: the rank "+
+				"is a decision, and an undecided host paints at whatever "+
+				"OverlayRank happens to return.", h)
+		}
+	}
+	for _, tc := range ranks {
 		if got := rankOf(t, tc.w); got != tc.want {
 			t.Errorf("%s ranks %d, want %d — the ordering docs/markup-reference.md "+
 				"and this package's godoc both state comes from these constants, "+

@@ -39,27 +39,32 @@ func StatusText(content *prop.Property[string]) *Text {
 }
 
 func (s *StatusBar) ChildComponents() []gooey.Component {
-	// Cleared to cap, not truncated: a StatusBar that loses its Right
-	// keeps it reachable in the tail otherwise. See clearToCap in the
-	// root package. Raised in review of #456.
-	//
-	// TWO THINGS THIS COSTS, both deliberate. The clear is paid per
-	// CALL — the framework asks for children several times a frame —
-	// rather than once per structural change, because this type has no
-	// re-sync seam to hang it on; at three elements that is noise. And
-	// a caller holding the slice a PREVIOUS call returned now reads nil
-	// wherever this rebuild did not refill, where it used to read a
-	// stale-but-live component. Nothing in the tree keeps the return
-	// past the range that consumes it, so this is the contract, not a
-	// bug — written down here because rediscovering it costs more than
-	// saying it. Raised in review of #456.
-	clear(s.kids[:cap(s.kids)])
 	s.kids = s.kids[:0]
 	for _, c := range []gooey.Component{s.Left, s.Center, s.Right} {
 		if c != nil {
 			s.kids = append(s.kids, c)
 		}
 	}
+	// Cleared to cap, not truncated: a StatusBar that loses its Right
+	// keeps it reachable in the tail otherwise. See clearToCap in the
+	// root package. Raised in review of #456.
+	//
+	// AFTER THE REFILL, which is the same idiom AdornmentLayer.Arrange
+	// uses one file over (components/adorn.go) and is strictly the
+	// better one. Clearing FIRST — which this did — releases the same
+	// tail, but it costs cap on every call rather than cap minus len
+	// (zero in the steady state), and it leaves a window in which a
+	// live slot holds nil. The framework re-enters ChildComponents on a
+	// container while another walk is mid-range over the same backing
+	// array — hitTest, findAdornmentLayer, AdornmentLayer.Arrange's
+	// reachability walks all start at the ROOT while an ancestor is
+	// iterating its own children — so a shortening rebuild would hand
+	// the outer loop a nil where it used to hand a stale-but-live
+	// component, and ArrangeChild(nil, …) is a panic rather than a
+	// wrong pixel. Nothing shortens today (Left/Center/Right are stable
+	// within a frame), which is the reason to take the free version
+	// rather than to write the hazard down. Raised in review of #456.
+	clear(s.kids[len(s.kids):cap(s.kids)])
 	return s.kids
 }
 

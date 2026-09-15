@@ -170,9 +170,30 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 			return false
 		}
 		for _, b := range proseBlocks(text) {
-			if distinctionRe.MatchString(b) {
-				continue
-			}
+			// THE EXCUSE IS SCOPED TO THE SENTENCE THAT MAKES THE CLAIM,
+			// not to the block containing it, and the two are not close
+			// to the same thing. proseBlocks splits on a blank line, so
+			// a block is a whole Go doc comment plus its declaration, or
+			// a whole markdown bullet list, or a whole table — units in
+			// which one incidental "paint" anywhere silences every claim
+			// in the rest.
+			//
+			// This was block-scoped for one round and could not see the
+			// defect in its own commit: adorn.go's godoc said the layer
+			// goes ANYWHERE, and was excused by "The layer PAINTS
+			// nothing and declares no background" two sentences later,
+			// about a different subject. Disabling the excuse entirely
+			// flagged six sites, of which that one was the real
+			// contradiction and five were the block-level noise the
+			// excuse is legitimately there to absorb. Found in review of
+			// #456, which is also where the godoc was corrected.
+			//
+			// Scoped to the sentence, the five keep their excuse because
+			// each qualifies in its own words — "decides nothing about
+			// paint", "free for paint", a table row saying "lifts out of
+			// document order" — which is the property that makes the
+			// narrowing safe rather than merely stricter.
+			//
 			// THE CLAIM AND THE HOST MUST BE THE SAME SENTENCE, and
 			// within the same 80 characters the positional arm uses,
 			// in either order — "Position is free … for AdornmentLayer"
@@ -183,6 +204,9 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 			// ABOUT the freedom, and two sentences whose subject was
 			// ToastHost. Noise is how a guard gets deleted.
 			for _, sen := range splitSentences(b) {
+				if distinctionRe.MatchString(sen) {
+					continue
+				}
 				if freeNearRe.MatchString(sen) {
 					return true
 				}
@@ -428,6 +452,33 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		{"the qualification in a LATER paragraph is not this one's",
 			"## Overlays\n\nPut the AdornmentLayer anywhere.\n\nIt re-anchors " +
 				"during Arrange.", true},
+		// THE EXCUSE'S SCOPE, which is a different question from whether
+		// it exists — and the one the guard got wrong for a round.
+		//
+		// Both fixtures are ONE block: no blank line, so proseBlocks
+		// returns a single unit and a block-scoped excuse cannot tell
+		// them apart. They differ only in WHICH sentence carries the
+		// distinction word. The first is adorn.go's shape verbatim —
+		// the claim, then a sentence about what the layer PAINTS, whose
+		// subject is the layer's own background and not the ordering —
+		// and a block-scoped excuse silenced it. The second puts the
+		// qualification in the claim's own sentence, which is the thing
+		// a reader actually meets.
+		//
+		// The spec's existing mutation row tests whether the excuse
+		// FIRES. Nothing tested where it reaches, and that is where the
+		// one real site in the tree walked through. Found in review of
+		// #456.
+		{"a distinction word in a NEIGHBOURING sentence does not excuse the claim",
+			"The `AdornmentLayer` hosts adornments above the whole page: the app " +
+				"declares it anywhere spanning the page. The layer paints nothing " +
+				"and declares no background, so a page that never shows an " +
+				"adornment pays nothing for hosting it.", true},
+		{"the same block with the distinction in the claim's own sentence",
+			"The `AdornmentLayer` hosts adornments above the whole page: the app " +
+				"declares it anywhere spanning the page, for paint. The layer " +
+				"paints nothing and declares no background, so a page that never " +
+				"shows an adornment pays nothing for hosting it.", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if hit := unqualifiedFreedom(tc.text); hit != tc.want {
