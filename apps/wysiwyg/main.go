@@ -1875,10 +1875,6 @@ func describeAttrs(e markup.ElementSpec) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// attrRow is one inspector line. kind/legal/value came from AttrSpec
-// all along — Enum, Binds and Required are populated by the catalog and
-// were simply never read, which is most of what "the inspector doesn't
-// show binding or enum" meant.
 // legalValues says how an attribute may be written: the enum's members
 // where there are members, otherwise how it binds. A KindEnum row that
 // does not list its own values is the catalog knowing something the user
@@ -1901,6 +1897,10 @@ func legalValues(a markup.AttrSpec) string {
 	return ""
 }
 
+// attrRow is one inspector line. kind/legal/value came from AttrSpec
+// all along — Enum, Binds and Required are populated by the catalog and
+// were simply never read, which is most of what "the inspector doesn't
+// show binding or enum" meant.
 type attrRow struct {
 	name  string
 	kind  string
