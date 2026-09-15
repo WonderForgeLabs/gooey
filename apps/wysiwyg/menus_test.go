@@ -11,6 +11,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 func theMenuBar(t *testing.T, ed *editor) *components.MenuBar {
@@ -211,7 +212,137 @@ func TestTogglingTheViewerRepaintsOnlyTheOpenDropdown(t *testing.T) {
 
 // TestTheCheckBoxIsDrawn — the state has to be VISIBLE, in the cell
 // plane, or a pty transcript can never show it.
+//
+// AND THE ASSERTIONS ARE PER ROW. They were a Contains over nineteen
+// joined rows, which cannot say WHICH row carries the box — a menu that
+// drew the item twice, or put the box on its neighbour, passed. The
+// negative arm was worse than imprecise: it looked for "  $EDITOR" in a
+// blob where the only line holding "$EDITOR" begins "│[ ] ", so no
+// rendering of this menu could have produced it and the arm could not
+// fail. What replaces it reads the four cells in front of the label,
+// which tells "[x] " (wrong state), "[ ] " (right) and "    " (no box at
+// all) apart by their text instead of by their absence.
 func TestTheCheckBoxIsDrawn(t *testing.T) {
+	dropdown := viewMenuRows(t, codeBuiltin)
+
+	// THE EXPECTED BOX IS SPELLED ONCE, here and in every assertion
+	// below it. Spelling it again inside the message lets the two
+	// drift: with the comparison mutated to "[x] " one run printed
+	// `carries "[x] ", want "[x] "` — a tautology, because the literal
+	// in the message no longer came from the check. Raised in review of
+	// #502.
+	got, row := boxBefore(t, dropdown, "Built in")
+	if want := "[x] "; got != want {
+		t.Errorf("the \"Built in\" row carries %q in front of its label, want a "+
+			"checked %q; the row reads %q", got, want, row)
+	}
+	// The unchecked box must be a real box, not blank: "[ ]" and nothing
+	// at all read very differently to a user deciding which is selected.
+	got, row = boxBefore(t, dropdown, "$EDITOR")
+	if want := "[ ] "; got != want {
+		t.Errorf("the $EDITOR row carries %q in front of its label, want an "+
+			"unchecked %q; the row reads %q", got, want, row)
+	}
+	// AND A ROW WITH NO STATE TO SHOW. Without this the third answer
+	// boxBefore distinguishes — four blanks — is asserted nowhere: a
+	// boxBefore that got a boxless row wrong, or a menu that started
+	// drawing "[ ] " in front of plain commands, passes this whole file.
+	// Raised in review of #502.
+	got, row = boxBefore(t, dropdown, "Next Pane")
+	if want := "    "; got != want {
+		t.Errorf("the \"Next Pane\" row carries %q in front of its label, want %q "+
+			"— a command item has no state to check: %q", got, want, row)
+	}
+}
+
+// TestTheCheckBoxFollowsTheSelection is the other half, and what it adds
+// is narrower than a second selection looks.
+//
+// A GLOBAL constant in the template is already caught one test up, which
+// asserts "[x] " on one row and "[ ] " on another IN THE SAME FRAME.
+// What needs a second selection is ONE mutation no single frame can
+// reach: a PER-ITEM constant that ignores it.Checked. Measured:
+//
+//	--- PASS: TestTheCheckBoxIsDrawn
+//	--- FAIL: TestTheCheckBoxFollowsTheSelection
+//
+// AND NOT A SECOND MUTATION, though one looks as though it belongs
+// here: an item bound to the wrong *prop.Property[bool] is not unique
+// to this test. Swapping BuiltinChecked and EditorChecked in menus.go
+// fails BOTH, because the test above reads two rows of one frame and a
+// swap inverts both of them; so does binding the pair to a single
+// property, which renders "[x] [x]" or "[ ] [ ]". Raised in review of
+// #502.
+//
+// Neither this test nor TestTheCheckAndTheAcceleratorAreOneState covers
+// the per-item constant otherwise.
+func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
+	dropdown := viewMenuRows(t, codeExternal)
+
+	got, row := boxBefore(t, dropdown, "$EDITOR")
+	if want := "[x] "; got != want {
+		t.Errorf("with $EDITOR selected its row carries %q, want %q; the row reads %q",
+			got, want, row)
+	}
+	got, row = boxBefore(t, dropdown, "Built in")
+	if want := "[ ] "; got != want {
+		t.Errorf("with $EDITOR selected the \"Built in\" row carries %q, want %q; "+
+			"the row reads %q", got, want, row)
+	}
+}
+
+// viewMenuRows opens the View menu with the code viewer set to which,
+// and returns the dropdown's own rows — its interior, one string per
+// row, border excluded.
+//
+// THE WINDOW IS THE MENU'S, and that is the point of the helper rather
+// than the fourteen duplicated lines it replaces. Reading
+// `rowText(f, y, 0, 60)` for nineteen rows below the bar takes a 60x19
+// slab of the PAGE: the explorer pane, the "EDITOR" pane title, the
+// tools palette and the tab strip are all inside it. dropdownRow's
+// "exactly one" is then an assertion about the whole screen, and the day
+// any other pane renders "Built in" or "$EDITOR" it fails and blames the
+// menu for a change somewhere else. Requiring a rarer search string
+// works around one instance; the leak is general.
+//
+// MenuBar.DropdownBounds() is the rect the menu actually painted into,
+// and clipping to it also makes boxBefore's third answer real: with the
+// page's border out of the window, a row with no check box returns four
+// spaces instead of the border glyph plus one.
+//
+// THE ENVIRONMENT IS STATED, NOT INHERITED, and it is worth being exact
+// about what that buys, because the obvious answer is wrong here.
+//
+// It does NOT make an env-dependent test deterministic. The assertions
+// below match on `$EDITOR`, which editorItemText renders as a constant
+// prefix of `$EDITOR (…)`; the resolved program only ever appears inside
+// the parentheses. Replayed under six values — unset, vim,
+// `/usr/bin/env -i`, an uninstalled name, a long path, and an
+// emacsclient invocation with a quoted alternate — every arm returned
+// the same booleans. Whoever removes this Setenv will find the tests
+// still passing, which is why the real reason is written down:
+//
+// THE DIAGNOSTICS QUOTE THE ROW, so an inherited $EDITOR makes a failure
+// message differ per machine and a reader cannot compare one with
+// anyone else's. The label is where it gets in: editorItemText renders
+// `$EDITOR (env)` today and the assertions match only the constant
+// `$EDITOR` prefix, so what an inherited value changes is exactly what
+// a failure PRINTS. That was written as a second bullet and conceded in
+// its own last clause that it was the first one from the other side —
+// two justifications where there is one, which is one more thing for
+// somebody to decide is redundant and remove. Present tense on purpose:
+// the interpolation ships today, and #477 does not ask for a label
+// change. Raised in review of #502, twice.
+//
+// resolveEditor reads only EDITOR (no VISUAL fallback), so the one
+// variable pins the label. `/usr/bin/env -i` is the value the sibling
+// test uses: it exists on any machine that can run this suite, and
+// resolves to the basename "env".
+func viewMenuRows(t *testing.T, which int) []string {
+	t.Helper()
+	// BEFORE buildPage, which is where resolveEditor runs — and here
+	// rather than in each test, so the two callers cannot drift.
+	t.Setenv("EDITOR", "/usr/bin/env -i")
 	ed, root := buildPage(t)
 	c := gooey.NewComposer(root, 150, 44)
 	c.Frame()
@@ -219,27 +350,248 @@ func TestTheCheckBoxIsDrawn(t *testing.T) {
 
 	bar := theMenuBar(t, ed)
 	i, _ := menuNamed(t, bar, "View")
-	ed.codeView.Set(codeBuiltin)
+	// THE PROPERTY, NOT setCodeView, and this is the one place in this
+	// file that does not go in through a shipped verb. setCodeView
+	// (menus.go) calls launchEditor for codeExternal — App.Suspend plus
+	// exec.Command on whatever $EDITOR names — and
+	// TestTheCheckBoxFollowsTheSelection passes codeExternal while the
+	// Setenv above points EDITOR at a program that really exists, so
+	// driving the shipped verb would spawn a subprocess under go test.
+	// The property is what the menu template reads, which is the whole
+	// input these assertions need. Raised in review of #502.
+	ed.codeView.Set(which)
 	bar.Open(i, nil)
 	settle(t, c)
 	f, _ := c.Frame()
 
-	b := bar.Bounds()
-	var dropdown []string
-	for y := b.Y + 1; y < b.Y+20 && y < 44; y++ {
-		dropdown = append(dropdown, rowText(f, y, 0, 60))
+	d := bar.DropdownBounds()
+	if d.W <= 2 || d.H <= 2 {
+		t.Fatalf("the open View menu reports bounds %v; nothing was painted, so "+
+			"every assertion below would be about an empty window", d)
 	}
-	all := strings.Join(dropdown, "\n")
-	if !strings.Contains(all, "[x] Built in") {
-		t.Errorf("the open View menu does not show a checked \"Built in\"; got:\n%s", all)
+	var rows []string
+	for y := d.Y + 1; y < d.Y+d.H-1; y++ {
+		rows = append(rows, rowText(f, y, d.X+1, d.W-2))
 	}
-	if !strings.Contains(all, "[ ] $EDITOR") {
-		t.Errorf("the open View menu does not show an unchecked $EDITOR item; got:\n%s", all)
+	return rows
+}
+
+// dropdownRow returns the ONE row of an open menu whose text contains
+// want, and fails if there is any other number of them.
+//
+// Exactly one is the assertion, not a convenience: zero and two are both
+// real defects a Contains over the joined rows reports as a pass — an
+// item drawn twice, or a label that has migrated to a neighbouring row,
+// or a search string loose enough to also match the chrome around the
+// menu.
+//
+// THE WINDOW IS WHAT BUYS UNIQUENESS, not the search string.
+// viewMenuRows clips to MenuBar.DropdownBounds, so nothing outside the
+// dropdown interior is in rows at all — measured on the twelve rows it
+// returns, "EDITOR" without the dollar hits exactly 1. The dollar is
+// kept because it is the label a user reads, not because anything
+// depends on it. Raised in review of #502.
+func dropdownRow(t *testing.T, rows []string, want string) string {
+	t.Helper()
+	var hits []string
+	for _, r := range rows {
+		if strings.Contains(r, want) {
+			hits = append(hits, r)
+		}
 	}
-	// The unchecked box must be a real box, not blank: "[ ]" and nothing
-	// at all read very differently to a user deciding which is selected.
-	if strings.Contains(all, "  $EDITOR") {
-		t.Error("the $EDITOR item has no check box at all, only indentation")
+	if len(hits) != 1 {
+		// "of the open menu" is what this said, and the signature is
+		// `rows []string` precisely so a test can hand it a synthetic
+		// fixture with no menu and no frame — which
+		// TestTheCheckBoxIsReadPastAWideGlyphAfterTheLabel does. A
+		// message naming a render that was never involved sends the
+		// reader to the wrong place on the day the fixture changes
+		// shape. Raised in review of #502.
+		t.Fatalf("%d of the %d rows given contain %q, want exactly 1:\n%s",
+			len(hits), len(rows), want, strings.Join(rows, "\n"))
+	}
+	return hits[0]
+}
+
+// boxBefore returns the four entries immediately in front of want on its
+// row — the check box, if the menu drew one there — and the row itself.
+//
+// Returned as TEXT so the caller compares it against the box it expects,
+// rather than testing for a box's absence. "    " is a real answer and a
+// distinct failure from "[x] ": one is a missing box, the other is the
+// wrong state, and a negative Contains reports both as the same thing
+// while also passing when the label has moved somewhere the search never
+// looked. TestTheCheckBoxIsDrawn asks this of the "Next Pane" row, which
+// returns exactly "    ", so the three-way distinction is exercised
+// rather than hypothetical. Raised in review of #502.
+//
+// THE ROW COMES BACK WITH THE BOX because the caller needs it for the
+// failure message, and finding it again there means a second
+// dropdownRow — which holds a t.Fatalf, evaluated inside a t.Errorf's
+// argument list. A Fatal from there ends the test while the Errorf that
+// asked for it never runs, so the diagnostic the caller was building is
+// lost at exactly the moment it is wanted.
+//
+// A CELL CONTRIBUTES ANY NUMBER OF RUNES, which is why this helper
+// indexes neither runes nor bytes. rowText yields one entry per cell: a
+// continuation contributes none, and a cell carrying a grapheme cluster
+// (render.Cell.Text returns Cluster when one is set) contributes as many
+// as the cluster holds — a base plus a combining mark is two runes in
+// one narrow column. "Narrow glyphs" is not the fence that closes the
+// cluster case, and neither is any precondition over totals; the body
+// below says what replaced them and what was measured to get there.
+//
+// AND THE WITHIN-ROW HALF OF dropdownRow's GUARANTEE. That helper buys
+// "exactly one ROW contains want" and argues for why it matters;
+// strings.Index gives the same guarantee back inside the row, taking
+// the leftmost of two copies and reporting the box in front of it as
+// the answer — a label echoed into the accelerator column would read
+// clean. Asserted rather than documented as out of scope, because the
+// uniqueness argument one helper up is the reason the omission is
+// conspicuous. Raised in review of #502.
+func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
+	t.Helper()
+	row = dropdownRow(t, rows, want)
+	at := strings.Index(row, want)
+	if last := strings.LastIndex(row, want); last != at {
+		t.Fatalf("%q appears at byte %d and again at %d of %q, so the box in front "+
+			"of the left copy is not the answer to which box precedes the label",
+			want, at, last, row)
+	}
+	// NO PRECONDITION, BECAUSE THE QUESTION IS ANSWERABLE DIRECTLY.
+	//
+	// This used to slice four RUNES off the prefix and guard the slice
+	// with render.StringWidth(prefix) == len([]rune(prefix)). That guard
+	// compares TOTALS, and totals-equality does not make the last four
+	// runes the last four cells: a wide glyph before the boundary and a
+	// zero-width combining mark after it cancel in the sum, so the
+	// prefix passes while the mapping is 1:1 nowhere except at its end.
+	// Measured on "世abcé" with a decomposed é — 6 runes, 6 columns,
+	// precondition PASSES — the rune slice answered "bcé", three
+	// columns, where the four cells in front of the label are "abcé".
+	// A wrong answer, not an error, which is the failure the old doc
+	// described and the old check did not prevent. Raised in review of
+	// #502.
+	//
+	// EachCluster walks columns, so the boundary is found rather than
+	// assumed, and the helper has nothing left to require of its input.
+	prefix := row[:at]
+	total := render.StringWidth(prefix)
+	if total < 4 {
+		t.Fatalf("%q starts at column %d of %q, with no room for a check box in "+
+			"front of it — which is how a row with no box at all reads when the "+
+			"label sits within four columns of the start", want, total, row)
+	}
+	cut := -1
+	render.EachCluster(prefix, func(_ string, off, col, _ int) bool {
+		if col == total-4 {
+			cut = off
+			return false
+		}
+		return true
+	})
+	if cut < 0 {
+		// Reachable only if a glyph STRADDLES the four-cell boundary,
+		// which no check box can: every box this menu draws is four
+		// narrow cells. Reported rather than rounded, because half a
+		// glyph is not an answer.
+		t.Fatalf("no character in %q starts at column %d, so the four cells in front "+
+			"of %q begin inside a wide glyph and there is no four-cell box to read",
+			prefix, total-4, want)
+	}
+	return prefix[cut:], row
+}
+
+// TestTheCheckBoxIsReadPastAWideGlyph is the half a passing suite cannot
+// show on its own: every fixture the real menus produce is ASCII, and
+// CLAUDE.md's rule is that an ASCII fixture agrees with itself under the
+// rune rule and the column rule alike. So both rows here are synthetic
+// and deliberately fail that agreement — same column width, different
+// rune count.
+//
+// TWO ARMS, NEITHER OF THEM THE DISCRIMINATING ONE, and saying so is the
+// point of this paragraph. A glyph behind the label cannot move any cell
+// the helper reads. A glyph in front of it but OUTSIDE the last four
+// columns does not move the boundary either — measured, and the inline
+// comment on that arm records the measurement. What both arms show is
+// that the helper does not refuse a CJK menu row, which is not
+// hypothetical in an editor that lays out whatever markup it is handed.
+// The arm that discriminates is
+// TestTheFourCellsInFrontAreNotTheFourRunes, below, whose row is not a
+// menu row at all.
+//
+// This paragraph claimed the in-front arm discriminated, and sat in a
+// block fused to the next test's — no blank line, so godoc read all of
+// it as that test's doc and left this one undocumented, while the
+// sentences landed on a test they are false about. render/width.go
+// records the identical defect being fixed in review of #425. Both
+// corrected in review of #502.
+func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rows  []string
+		label string
+	}{
+		{"behind the label", []string{"  [x] Wrap 世界", "  ( ) Other"}, "Wrap"},
+		// A wide glyph in front of the label but OUTSIDE the last four
+		// columns does not discriminate — measured: the rune slice and
+		// the column walk both answer "[x] " here, because the glyph is
+		// left of the boundary either rule puts the box at. Kept
+		// because it is the shape a real CJK menu row has, and dropped
+		// as the discriminating arm because it is not one.
+		{"in front of the label", []string{"  世 [x] Wrap", "  ( ) Other"}, "Wrap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			box, row := boxBefore(t, tc.rows, tc.label)
+			if cols, runes := render.StringWidth(row), len([]rune(row)); cols == runes {
+				t.Fatalf("the fixture row %q measures %d columns and %d runes — equal, "+
+					"so it cannot tell a column answer from a rune one and this arm "+
+					"guards nothing", row, cols, runes)
+			}
+			if want := "[x] "; box != want {
+				t.Errorf("boxBefore read %q in front of %q on %q, want %q — %q is "+
+					"%d columns and %d runes, so the two rules disagree about where "+
+					"the four cells start", box, tc.label, row, want, row,
+					render.StringWidth(row), len([]rune(row)))
+			}
+		})
+	}
+}
+
+// TestTheFourCellsInFrontAreNotTheFourRunes is the DISCRIMINATING arm,
+// and it is separate because its row is not a menu row at all.
+//
+// For the two rules to disagree, something inside the last four columns
+// of the prefix has to make a rune and a column different — and for the
+// retired precondition to have PASSED while they disagreed, the prefix's
+// totals had to come out equal anyway. The reviewer's string does both
+// at once: 世 is one rune and two columns, a decomposed é is two runes
+// and one column, and they cancel. "世abcé" measures 6 runes and 6
+// columns, the guard passed, and the rune slice answered "bcé" — three
+// columns — where the four cells in front of the label are "abcé".
+//
+// So this fixture is the wrong answer itself, asserted. Raised in review
+// of #502.
+func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
+	const acute = "\u0301"
+	rows := []string{"世abce" + acute + "Wrap", "  ( ) Other"}
+	prefix := "世abce" + acute
+	if cols, runes := render.StringWidth(prefix), len([]rune(prefix)); cols != runes {
+		t.Fatalf("the fixture prefix %q measures %d columns and %d runes. They must be "+
+			"EQUAL, or this arm proves only that an unequal prefix is handled — the "+
+			"retired precondition refused those and let this one through",
+			prefix, cols, runes)
+	}
+	box, row := boxBefore(t, rows, "Wrap")
+	if want := "abce" + acute; box != want {
+		t.Errorf("boxBefore read %q in front of %q on %q, want %q. Four RUNES back "+
+			"from the label is %q, which is %d columns; the four CELLS are %q.",
+			box, "Wrap", row, want, "bce"+acute,
+			render.StringWidth("bce"+acute), want)
+	}
+	if got := render.StringWidth(box); got != 4 {
+		t.Errorf("boxBefore returned %q, %d columns — the contract is the four CELLS "+
+			"in front of the label", box, got)
 	}
 }
 

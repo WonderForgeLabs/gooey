@@ -8,6 +8,7 @@ import (
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/preview"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // Every verb goes in through Composer.Handle, exactly as the terminal
@@ -107,7 +108,7 @@ func TestTheTrackSpecIsShownAgainstTheSpaceItProduces(t *testing.T) {
 	// margin and writing outside it lands on the editor's own chrome.
 	for c := range g.Cols {
 		q := g.Cells[0][c]
-		got := readCells(f, q.X+1, q.Y, len([]rune(g.Cols[c])))
+		got := rowText(f, q.Y, q.X+1, render.StringWidth(g.Cols[c]))
 		if got != g.Cols[c] {
 			t.Errorf("column %d is %q but the gutter at its top edge reads %q — the number "+
 				"you edit is not shown against the space it produces", c, g.Cols[c], got)
@@ -119,19 +120,11 @@ func TestTheTrackSpecIsShownAgainstTheSpaceItProduces(t *testing.T) {
 		if q.H < 2 {
 			continue
 		}
-		got := readCells(f, q.X, q.Y+1, len([]rune(g.Rows[r])))
+		got := rowText(f, q.Y+1, q.X, render.StringWidth(g.Rows[r]))
 		if got != g.Rows[r] {
 			t.Errorf("row %d is %q but its gutter reads %q", r, g.Rows[r], got)
 		}
 	}
-}
-
-func readCells(f *gooey.Frame, x, y, n int) string {
-	var b strings.Builder
-	for i := 0; i < n; i++ {
-		b.WriteRune(f.Cells.At(x+i, y).Rune)
-	}
-	return b.String()
 }
 
 // TestTheKeyboardResizesATrack drives the SHIPPED bindings.

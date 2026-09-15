@@ -40,14 +40,81 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 	return p
 }
 
-// rowText reads w cells of row y — the assertion primitive for "is
-// anything drawn here".
+// rowText reads w CELLS of row y — the assertion primitive for "is
+// anything drawn here", and the only SPAN reader in this package.
+// designmode_test.go's screen() reads a whole plane and goes through
+// render.RowText, which is the whole-row form of the same read.
+//
+// Text(), NOT .Rune: a continuation cell — the second column of a wide
+// glyph — carries render.Continuation, and writing that rune out puts a
+// literal marker in the row. CLAUDE.md names that helper shape as the
+// reason no fixture in six packages could hold a wide glyph and be
+// asserted on, so a second copy reading .Rune reopens exactly that.
+// This package and apps/wysiwyg/components/panel are converted; twelve
+// others are not, and the fixtures they cannot hold are #516.
+// HOW MANY READERS THERE ARE is deliberately not written: a count in
+// prose is a sample taken once, and this one cannot even be taken
+// cleanly, because whether a whole-plane reader and a helper that slices
+// a row by index count as span readers is an argument a number invites
+// and cannot settle. Derive the current set with a grep for `Cells.At(`
+// under apps/wysiwyg.
+//
+// W IS A COLUMN COUNT. A caller with a string in hand wants
+// render.StringWidth of it, not len([]rune(…)) — those differ by one
+// per wide glyph, and the rune count reads short, dropping the end of
+// the very label being checked.
+//
+// IT RETURNS THE SPAN, TRAILING BLANKS AND ALL, and so does the
+// same-named reader in apps/wysiwyg/components/panel. A helper that
+// trimmed would decide part of every equality assertion made through it
+// — tracks_test.go's two gutter checks compare a rendered track spec
+// against that spec exactly — so the trim belongs at the call site that
+// wants it, where it is one visible call. Raised in review of #502.
 func rowText(f *gooey.Frame, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
+		sb.WriteString(f.Cells.At(x+i, y).Text())
 	}
-	return strings.TrimRight(sb.String(), " ")
+	return sb.String()
+}
+
+// TestRowTextReturnsTheWholeSpan is the contract above, pinned. Every
+// other caller reads a span it expects to be full, so none of them can
+// tell a reader that returns the blanks from one that eats them — the
+// difference only shows where the span is WIDER than what was drawn into
+// it, which is why this fixture is eight cells holding two.
+// wideLabel is two glyphs and FOUR columns — the discriminating shape,
+// since a rune count answers 2 and a column count answers 4.
+const wideLabel = "世界"
+
+func TestRowTextReturnsTheWholeSpan(t *testing.T) {
+	c := gooey.NewComposer(&components.Text{Content: components.Str("hi")}, 8, 1)
+	f, _ := c.Frame()
+	if got, want := rowText(f, 0, 0, 8), "hi      "; got != want {
+		t.Errorf("rowText read %q across eight cells holding %q, want %q. A span "+
+			"reader returns the span: trimming here decides part of every equality "+
+			"assertion made through it, at the one site that cannot see the decision",
+			got, "hi", want)
+	}
+
+	// AND A WIDE GLYPH, which is the OTHER half of this helper's contract
+	// and the half the ASCII fixture above cannot see. A continuation
+	// cell carries render.Continuation, so writing .Rune out puts a
+	// literal U+FFFD in the row — reverting both copies of this helper
+	// to WriteRune(….Rune) left the whole apps/wysiwyg tree GREEN,
+	// measured, because every fixture in it is ASCII and agrees with
+	// itself under either rule. CLAUDE.md's recipe exactly: a glyph
+	// whose column count and rune count differ, in a span wider than
+	// what was drawn into it, so the trim rule and the continuation rule
+	// are pinned by one read. Raised in review of #502.
+	c = gooey.NewComposer(&components.Text{Content: components.Str(wideLabel)}, 8, 1)
+	f, _ = c.Frame()
+	if got, want := rowText(f, 0, 0, 8), wideLabel+"    "; got != want {
+		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
+			"read this is %q — the continuation marker rendered as a literal "+
+			"rune, which is the defect this helper exists to avoid",
+			got, wideLabel, want, "世\uFFFD界\uFFFD  ")
+	}
 }
 
 // TestHideIsNotCollapse is the central discrimination test, and it is
