@@ -176,7 +176,7 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// than its content — on both sides, which is what mid-string editing
 	// needs: walking left off the window has to pull it back, not just
 	// walking right off the end.
-	t.scroll = scrollFor(t.scroll, caret, len(runes), avail)
+	t.scroll = scrollFor(runes, t.scroll, caret, avail)
 
 	textSty := getSty(t.Style)
 	if errMsg != "" {
@@ -190,7 +190,21 @@ func (t *TextBox) Render(f *gooey.Frame) {
 			textSty.Underline = true
 		}
 	}
-	for i := t.scroll; i < len(runes) && x < b.X+b.W; i++ {
+	// ONE RUNE, ITS OWN COLUMNS. `x++` was the whole of #519: a wide
+	// glyph occupies two columns and SetCell places both, so advancing
+	// one put the next rune on the continuation cell the previous glyph
+	// had just claimed — healSeam then blanked the orphaned lead and the
+	// character vanished. "世界" rendered as " 界", and with the caret
+	// at the end as "  █": a TextBox silently deleted every wide glyph
+	// in its own value. The stop is on the glyph's FULL width too, for
+	// the same reason SetCell answers a half-glyph at the clip edge with
+	// a space — a lead written without room for its tail displaces the
+	// rest of the row.
+	for i := t.scroll; i < len(runes); i++ {
+		w := render.StringWidth(string(runes[i]))
+		if x+w > b.X+b.W {
+			break
+		}
 		st := textSty
 		switch {
 		case selected && i >= lo && i < hi:
@@ -199,33 +213,65 @@ func (t *TextBox) Render(f *gooey.Frame) {
 			st.Reverse = true // the caret sits ON the character it precedes
 		}
 		f.Cells.Set(x, b.Y, runes[i], st)
-		x++
+		x += w
 	}
 	if t.IsFocused() && !selected && caret >= len(runes) && x < b.X+b.W {
 		f.Cells.Set(x, b.Y, '█', accent)
 	}
 }
 
-// scrollFor keeps caret inside a window of avail cells over n runes,
+// scrollFor keeps caret inside a window of avail CELLS over runes,
 // moving the window as little as possible. The caret may sit one past
-// the last rune, so the window has to be able to show n as a position.
-func scrollFor(cur, caret, n, avail int) int {
+// the last rune, so the window has to be able to show len(runes) as a
+// position, and the caret itself owns one column.
+//
+// IT TOOK A RUNE COUNT UNTIL #519, and the two agree exactly while every
+// rune is one column wide — which every fixture in this package was.
+// Over wide glyphs they do not: a window of `avail` runes is up to twice
+// `avail` columns, so a field of CJK scrolled by half a field and the
+// caret left the window it exists to stay inside. The conditions below
+// are the same two, written in columns:
+//
+//	caret > cur+avail-1   ->   colsBetween(cur, caret) + 1 > avail
+//	cur > n-avail+1       ->   colsBetween(cur, len) + 1 > avail
+//
+// Substituting one column per rune turns each back into the line above
+// it, which is why no ASCII test moved.
+func scrollFor(runes []rune, cur, caret, avail int) int {
 	if avail <= 0 {
 		return 0
 	}
 	if caret < cur {
 		cur = caret
 	}
-	if caret > cur+avail-1 {
-		cur = caret - avail + 1
-	}
-	if max := n - avail + 1; cur > max {
-		cur = max
-	}
 	if cur < 0 {
 		cur = 0
 	}
+	// Right far enough that the caret's own column fits.
+	for cur < caret && colsBetween(runes, cur, caret)+1 > avail {
+		cur++
+	}
+	// And no further: show as much of the tail as the window holds.
+	for cur > 0 && colsBetween(runes, cur-1, len(runes))+1 <= avail {
+		cur--
+	}
 	return cur
+}
+
+// colsBetween is the display width of runes[i:j] — the columns a
+// terminal advances drawing them.
+func colsBetween(runes []rune, i, j int) int {
+	if i < 0 {
+		i = 0
+	}
+	if j > len(runes) {
+		j = len(runes)
+	}
+	w := 0
+	for ; i < j; i++ {
+		w += render.StringWidth(string(runes[i]))
+	}
+	return w
 }
 
 // HandleKey owns text editing while focused. Keys it does not use bubble
@@ -549,7 +595,29 @@ func (t *TextBox) indexAt(x int) int {
 	// text it belongs to — the same rune-vs-column confusion clipCols
 	// was renamed for, one line further on.
 	promptW := render.StringWidth(clipCols(getStr(t.Prompt), t.Bounds().W))
-	return clamp(t.scroll+x-t.Bounds().X-promptW, 0, len(t.value()))
+	// AND COLUMNS FOR THE TEXT TOO, since #519. `scroll + col` is the
+	// rune at that offset only while every rune is one column wide; over
+	// a wide glyph it lands one character right per glyph passed, so a
+	// click in the middle of a CJK field put the caret somewhere else.
+	// Walking the widths is the same arithmetic the renderer does, in
+	// the same order.
+	//
+	// A CLICK LEFT OF THE TEXT (on the prompt, col < 0) answers with the
+	// first VISIBLE rune. The old expression returned scroll+col, an
+	// index scrolled off the left edge — a caret placed where the user
+	// cannot see it, and unreachable for anything but scroll == 0.
+	runes := t.value()
+	col := x - t.Bounds().X - promptW
+	i := t.scroll
+	for col > 0 && i < len(runes) {
+		w := render.StringWidth(string(runes[i]))
+		if col < w {
+			break
+		}
+		col -= w
+		i++
+	}
+	return clamp(i, 0, len(runes))
 }
 
 // selectWord selects the run of like characters around the caret: a

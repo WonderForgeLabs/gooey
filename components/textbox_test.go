@@ -250,18 +250,25 @@ func TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks(t *testing.T) {
 //
 // TWO GLYPHS, FOUR COLUMNS, TWO RUNES, which is CLAUDE.md's recipe for
 // pinning one of these. The caret sits after them, so its column is the
-// assertion: a TextBox advancing one column per rune puts it at 2 and
-// leaves the row reading "世界█" two columns early.
+// assertion: a TextBox advancing one column per rune puts it at 2, and
+// the glyphs it overwrote are gone — the row read "  █" until #519 was
+// fixed, and this test carried a t.Skip citing it until then.
 func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
-	// SKIPPED AGAINST AN OPEN BUG, not against a design decision. The
-	// fixture is what found #519 — TextBox advances one COLUMN per rune,
-	// so the next rune lands on the continuation cell the previous glyph
-	// claimed, healSeam blanks the orphaned lead, and the glyph is gone:
-	// "世界" renders as " 界" unfocused and "  █" with the caret at the
-	// end. Written here so the claim dies with the fix in the same
-	// commit, which is what CLAUDE.md asks for instead of a list
-	// somewhere else. Check that #519 is still open before believing
-	// this line.
+	v := prop.NewSource("世界")
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	tb.setCaret(len([]rune("世界")))
+	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+
+	if got, want := render.SpanText(f.Cells, 0, 0, 10), "世界█     "; got != want {
+		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
+			"the caret belongs in column 4", got, want)
+	}
+	// AND THE COLUMN MODEL AGREES WITH THE ROW, which the string alone
+	// cannot say: a buffer column must be a terminal column, or
+	// everything right of the glyph is drawn one column off and the
+	// displaced cells are CLEAN, so nothing repaints over them.
 	//
 	// AND IT RETIRES ITSELF, which is the half a skip naming an issue
 	// does not have on its own. An unconditional t.Skip as the first
@@ -367,5 +374,73 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 		if tw.got != tw.want {
 			t.Errorf("%s rendered %q, want %q — %s", tw.shape, tw.got, tw.want, tw.why)
 		}
+	}
+}
+
+// TestTextBoxClickLandsOnTheGlyphUnderTheColumn is #519's third site.
+// The renderer and the click have to agree about where a character is,
+// and they agreed only while every rune was one column wide: indexAt
+// read `scroll + column`, which walks one character per COLUMN, so a
+// click past a wide glyph landed one character right per glyph passed.
+//
+// "a世b" occupies four columns — a, then 世 across two, then b — so the
+// column-to-rune map is the assertion. Both columns of the glyph answer
+// with the glyph: half of one is not a position a caret can take.
+func TestTextBoxClickLandsOnTheGlyphUnderTheColumn(t *testing.T) {
+	v := prop.NewSource("a世b")
+	tb := &TextBox{Text: v}
+	gooey.Compose(tb, term.Caps{Cols: 20, Rows: 1}, nil)
+
+	for _, c := range []struct {
+		col, want int
+		why       string
+	}{
+		{0, 0, "the ascii head"},
+		{1, 1, "the glyph's first column"},
+		{2, 1, "and its second — the same character"},
+		{3, 2, "the ascii tail, four columns in but only three runes"},
+	} {
+		if !tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: c.col, Y: 0}) {
+			t.Fatalf("click at column %d was not handled", c.col)
+		}
+		if got := tb.Caret(); got != c.want {
+			t.Errorf("a click at column %d put the caret at rune %d, want %d — %s",
+				c.col, got, c.want, c.why)
+		}
+	}
+}
+
+// TestTextBoxScrollsByColumnsOverWideGlyphs is #519's second site. The
+// window is avail CELLS and scrollFor indexed it in runes, so a field of
+// CJK scrolled by half a field: the caret left the window the function
+// exists to keep it inside.
+//
+// Six columns over four glyphs (eight columns) is the discriminating
+// shape — a rune-counted window of six would think the whole value fits.
+func TestTextBoxScrollsByColumnsOverWideGlyphs(t *testing.T) {
+	v := prop.NewSource("東西南北")
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	tb.setCaret(4) // one past the last rune, where typing leaves it
+	row := func() string {
+		f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+		if x, by, bad := render.Displaced(f.Cells, 0); bad {
+			t.Fatalf("cell %d is drawn %d columns off: %q", x, by,
+				render.RowText(f.Cells, 0))
+		}
+		return render.SpanText(f.Cells, 0, 0, 6)
+	}
+
+	// Four glyphs are eight columns and the caret owns a ninth, so the
+	// window holds the last two glyphs and the caret.
+	if got, want := row(), "南北█ "; got != want {
+		t.Errorf("caret at the end showed %q, want %q — six columns hold two "+
+			"glyphs and the caret, not three glyphs", got, want)
+	}
+	tb.HandleKey(input.Named(input.KeyHome))
+	if got, want := row(), "東西南"; got != want {
+		t.Errorf("home showed %q, want %q — the window pulled back to the start "+
+			"and holds exactly three glyphs, the caret sitting ON the first one "+
+			"rather than after the last", got, want)
 	}
 }
