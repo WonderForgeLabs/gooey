@@ -225,25 +225,33 @@ func TestTogglingTheViewerRepaintsOnlyTheOpenDropdown(t *testing.T) {
 func TestTheCheckBoxIsDrawn(t *testing.T) {
 	dropdown := viewMenuRows(t, codeBuiltin)
 
-	if got, row := boxBefore(t, dropdown, "Built in"); got != "[x] " {
-		t.Errorf("the \"Built in\" row carries %q in front of its label, want a checked "+
-			"\"[x] \"; the row reads %q", got, row)
+	// THE EXPECTED BOX IS SPELLED ONCE, here and in every assertion
+	// below it. Spelling it again inside the message lets the two
+	// drift: with the comparison mutated to "[x] " one run printed
+	// `carries "[x] ", want "[x] "` — a tautology, because the literal
+	// in the message no longer came from the check. Raised in review of
+	// #502.
+	got, row := boxBefore(t, dropdown, "Built in")
+	if want := "[x] "; got != want {
+		t.Errorf("the \"Built in\" row carries %q in front of its label, want a "+
+			"checked %q; the row reads %q", got, want, row)
 	}
 	// The unchecked box must be a real box, not blank: "[ ]" and nothing
 	// at all read very differently to a user deciding which is selected.
-	if got, row := boxBefore(t, dropdown, "$EDITOR"); got != "[ ] " {
-		t.Errorf("the $EDITOR row carries %q in front of its label, want an unchecked "+
-			"\"[ ] \"; the row reads %q", got, row)
+	got, row = boxBefore(t, dropdown, "$EDITOR")
+	if want := "[ ] "; got != want {
+		t.Errorf("the $EDITOR row carries %q in front of its label, want an "+
+			"unchecked %q; the row reads %q", got, want, row)
 	}
 	// AND A ROW WITH NO STATE TO SHOW. Without this the third answer
 	// boxBefore distinguishes — four blanks — is asserted nowhere: a
 	// boxBefore that got a boxless row wrong, or a menu that started
-	// drawing "[ ] " in front of plain commands, passed this whole file.
-	// The doc comment claimed the distinction was exercised; it named
-	// this row and nothing called it. Raised in review of #502.
-	if got, row := boxBefore(t, dropdown, "Next Pane"); got != "    " {
-		t.Errorf("the \"Next Pane\" row carries %q in front of its label, want four "+
-			"blanks; a command item has no state to check: %q", got, row)
+	// drawing "[ ] " in front of plain commands, passes this whole file.
+	// Raised in review of #502.
+	got, row = boxBefore(t, dropdown, "Next Pane")
+	if want := "    "; got != want {
+		t.Errorf("the \"Next Pane\" row carries %q in front of its label, want %q "+
+			"— a command item has no state to check: %q", got, want, row)
 	}
 }
 
@@ -258,28 +266,28 @@ func TestTheCheckBoxIsDrawn(t *testing.T) {
 //	--- PASS: TestTheCheckBoxIsDrawn
 //	--- FAIL: TestTheCheckBoxFollowsTheSelection
 //
-// THIS CLAIMED A SECOND ONE — an item bound to the wrong
-// *prop.Property[bool] — and that is not unique to this test. Swapping
-// BuiltinChecked and EditorChecked in menus.go fails BOTH, because the
-// test above reads two rows of one frame and a swap inverts both of
-// them; so does binding the pair to a single property, which renders
-// "[x] [x]" or "[ ] [ ]". One measured mutation is enough to justify a
-// test, and a coverage claim with nothing behind it, inside a comment
-// block whose point is that it measured rather than claimed, is not.
-// Raised in review of #502.
+// AND NOT A SECOND MUTATION, though one looks as though it belongs
+// here: an item bound to the wrong *prop.Property[bool] is not unique
+// to this test. Swapping BuiltinChecked and EditorChecked in menus.go
+// fails BOTH, because the test above reads two rows of one frame and a
+// swap inverts both of them; so does binding the pair to a single
+// property, which renders "[x] [x]" or "[ ] [ ]". Raised in review of
+// #502.
 //
 // Neither this test nor TestTheCheckAndTheAcceleratorAreOneState covers
 // the per-item constant otherwise.
 func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 	dropdown := viewMenuRows(t, codeExternal)
 
-	if got, row := boxBefore(t, dropdown, "$EDITOR"); got != "[x] " {
-		t.Errorf("with $EDITOR selected its row carries %q, want \"[x] \"; the row reads %q",
-			got, row)
+	got, row := boxBefore(t, dropdown, "$EDITOR")
+	if want := "[x] "; got != want {
+		t.Errorf("with $EDITOR selected its row carries %q, want %q; the row reads %q",
+			got, want, row)
 	}
-	if got, row := boxBefore(t, dropdown, "Built in"); got != "[ ] " {
-		t.Errorf("with $EDITOR selected the \"Built in\" row carries %q, want \"[ ] \"; "+
-			"the row reads %q", got, row)
+	got, row = boxBefore(t, dropdown, "Built in")
+	if want := "[ ] "; got != want {
+		t.Errorf("with $EDITOR selected the \"Built in\" row carries %q, want %q; "+
+			"the row reads %q", got, want, row)
 	}
 }
 
@@ -377,16 +385,12 @@ func viewMenuRows(t *testing.T, which int) []string {
 // or a search string loose enough to also match the chrome around the
 // menu.
 //
-// THE WINDOW IS WHAT BUYS UNIQUENESS, not the search string, and this
-// said the opposite until the same PR made it untrue. rows used to be
-// the whole 60x19 page, where the pane title on the right reads
-// "EDITOR" and a search without the dollar matched two; viewMenuRows
-// now clips to MenuBar.DropdownBounds, so nothing outside the dropdown
-// interior is in rows at all. Measured on the twelve rows it returns:
-// "EDITOR" without the dollar hits exactly 1. The dollar is kept
-// because it is the label a user reads, not because anything depends on
-// it — which is the comment-asserts-what-is-no-longer-there shape this
-// branch exists to remove. Raised in review of #502.
+// THE WINDOW IS WHAT BUYS UNIQUENESS, not the search string.
+// viewMenuRows clips to MenuBar.DropdownBounds, so nothing outside the
+// dropdown interior is in rows at all — measured on the twelve rows it
+// returns, "EDITOR" without the dollar hits exactly 1. The dollar is
+// kept because it is the label a user reads, not because anything
+// depends on it. Raised in review of #502.
 func dropdownRow(t *testing.T, rows []string, want string) string {
 	t.Helper()
 	var hits []string
@@ -412,9 +416,7 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // while also passing when the label has moved somewhere the search never
 // looked. TestTheCheckBoxIsDrawn asks this of the "Next Pane" row, which
 // returns exactly "    ", so the three-way distinction is exercised
-// rather than hypothetical — it said that before any caller made the
-// call, which is the coverage-claiming-itself shape this branch exists
-// to remove. Raised in review of #502.
+// rather than hypothetical. Raised in review of #502.
 //
 // THE ROW COMES BACK WITH THE BOX because the caller needs it for the
 // failure message, and finding it again there means a second
