@@ -129,11 +129,11 @@ func TestButtonMnemonicRendersStrippedAndUnderlined(t *testing.T) {
 	c := gooey.NewComposer(btn, 30, 3)
 	f, _ := c.Frame()
 
-	var line []rune
-	for x := 0; x < 10; x++ {
-		line = append(line, f.Cells.At(x, 0).Rune)
-	}
-	if got := string(line[:8]); got != "[ Save ]" {
+	// render.SpanText, not an append loop sliced with line[:8]: the 8
+	// means COLUMNS, and slicing a []rune counts runes, so this pair of
+	// lines conflated the two one level above the reader they were
+	// working around. Raised in review of #520.
+	if got := render.SpanText(f.Cells, 0, 0, 8); got != "[ Save ]" {
 		t.Fatalf("label = %q, want %q — the marker must be stripped", got, "[ Save ]")
 	}
 	// "[ Save ]": the S sits at x=2.

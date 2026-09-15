@@ -189,11 +189,19 @@ func ClipCols(s string, w int) string {
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
 func RowText(b *Buffer, y int) string {
-	return SpanText(b, y, 0, b.W)
+	return SpanText(b, 0, y, b.W)
 }
 
 // SpanText is RowText over w columns starting at x — what that part of
 // row y would read as on a terminal.
+//
+// (x, y, w), NOT (y, x, w). Every other coordinate-taking function in
+// this package is x-then-y — Buffer.At, Buffer.Set, Buffer.SetString —
+// and this took y first for one commit. All four parameters are int, so
+// a transposed call COMPILES, and by the off-buffer rule below it
+// returns spaces rather than panicking: the fixture simply stops
+// matching and the message blames the component. Raised in review of
+// #520, before #516 spread the call across eleven more directories.
 //
 // THE SPAN FORM IS THE ONE THE TESTS ACTUALLY WANT, and its absence is
 // why RowText did not stop the copies it was written to stop. A test
@@ -219,7 +227,24 @@ func RowText(b *Buffer, y int) string {
 // A caller comparing against a fixture of known width should keep its
 // span off a glyph's middle; a caller measuring should use StringWidth
 // on the result rather than assuming w.
-func SpanText(b *Buffer, y, x, w int) string {
+//
+// OFF THE BUFFER READS AS BLANKS, and that is a choice rather than an
+// accident — Buffer.At answers a space out of bounds, so a span that
+// runs past b.W, starts left of 0, or names a row that does not exist
+// returns spaces for those columns instead of a short string or a
+// panic. It matters because every converted reader here reads a FIXED
+// extent: a dropdown that moves down the screen, or a composer resized
+// in a later edit, turns the tail of one of these reads into phantom
+// blanks, and an assertion shaped `!strings.Contains(got, …)` or "the
+// row is empty" passes on blank input.
+//
+// TerminalColumns chose the other answer for the same question (nil for
+// an out-of-range y) because its result is a per-cell map and there is
+// no blank cell to report. Padding is the right answer HERE: a span is
+// a region of a terminal, and a terminal has blanks where nothing was
+// drawn. TestSpanTextPadsWhereTheBufferIsNot pins it, so the contract
+// is chosen rather than inherited from Buffer.At.
+func SpanText(b *Buffer, x, y, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
 		sb.WriteString(b.At(x+i, y).Text())

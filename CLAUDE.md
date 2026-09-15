@@ -512,7 +512,12 @@ quietest in the suite: ~35 sites counted runes across
 everything green, because every fixture in the repo was ASCII, *and*
 because six packages' `row(b, y)` test helpers rendered the continuation
 marker as a literal rune — so no fixture could hold a wide glyph and be
-asserted on. Read a row back with `render.RowText`. To pin one of these,
+asserted on. Read a row back with `render.RowText`, and a REGION of one
+with `render.SpanText(b, x, y, w)` — the span form is the one a test
+asserting on a dock header, a menu row or a status gutter actually
+wants, and its absence is why those six helpers grew back one directory
+over ([#516](https://github.com/WonderForgeLabs/gooey/issues/516)). Never
+hand-roll either. To pin one of these,
 use two strings of the same COLUMN width and different rune counts
 (`"世界"` against `"abcd"`) and assert they measure alike; an ASCII
 fixture agrees with itself under either rule and passes against the bug.

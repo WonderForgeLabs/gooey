@@ -257,26 +257,33 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	v := prop.NewSource("世界")
 	tb := &TextBox{Text: v}
 	tb.SetFocused(true)
-	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 	tb.setCaret(len([]rune("世界")))
-	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
+	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
+	// to stand beside it are gone for opposite reasons.
+	//
+	// A loop over TerminalColumns asserting col == i was false of a
+	// CORRECT wide row — a continuation cell's recorded column is where
+	// the cursor sits mid-glyph, which is legitimately not its index —
+	// so it could not run. render.Displaced replaced it and cannot
+	// FAIL: #519 blanks the orphaned lead through healSeam, so the row
+	// is wrong without being displaced. Measured against the buggy
+	// render, all three cases of this fixture:
+	//
+	//	"世界" unfocused -> " 界       "  displaced=false
+	//	"世界" focused   -> "  █       "  displaced=false
+	//	"a世b" unfocused -> "a b       "  displaced=false
+	//
+	// Nor is it reachable for any component test: Buffer.Set and
+	// SetString lay the continuation themselves, and render/cell.go says
+	// of the remaining displacement branch that it is only reachable by
+	// assigning Cells directly. An assertion that cannot fail measures
+	// nothing, and a second one beside a real pin reads as corroboration
+	// it is not supplying. Raised in review of #520.
 	if got, want := render.SpanText(f.Cells, 0, 0, 10), "世界█     "; got != want {
 		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
 			"the caret belongs in column 4", got, want)
-	}
-	// AND THE COLUMN MODEL AGREES WITH THE ROW, which the string alone
-	// cannot say: a buffer column must be a terminal column, or
-	// everything right of the glyph is drawn one column off and the
-	// displaced cells are CLEAN, so nothing repaints over them.
-	//
-	// Through render.Displaced rather than a loop over TerminalColumns:
-	// a continuation cell's recorded column is where the cursor sits
-	// MID-GLYPH, which is legitimately not its index, so the raw loop
-	// calls every correct wide row displaced.
-	if x, by, bad := render.Displaced(f.Cells, 0); bad {
-		t.Errorf("cell %d is drawn %d columns off, so everything right of it is "+
-			"displaced: %q", x, by, render.RowText(f.Cells, 0))
 	}
 }
 

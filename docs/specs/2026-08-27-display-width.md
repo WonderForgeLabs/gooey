@@ -116,7 +116,14 @@ generalises:
    **no fixture could contain a wide glyph and be asserted on.** The
    failure was unassertable by construction, not merely unasserted.
 
-`render.RowText` is the fix for (2), and the technique for (1) is to
+`render.RowText` is the fix for (2) — with `render.SpanText(b, x, y, w)`
+beside it for the REGION case, added in
+[#520](https://github.com/WonderForgeLabs/gooey/pull/520) once it was
+clear that a whole-row reader does not serve a test asserting on a dock
+header or a menu row's check box, and that each such test had therefore
+re-grown the private helper this section is about
+([#516](https://github.com/WonderForgeLabs/gooey/issues/516)). The
+technique for (1) is to
 build fixtures from two strings with the same **column** width and
 different rune counts — `"世界"` against `"abcd"` — and assert they
 measure alike. An ASCII fixture agrees with itself under either rule and
