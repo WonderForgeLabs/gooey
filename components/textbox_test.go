@@ -270,97 +270,13 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// everything right of the glyph is drawn one column off and the
 	// displaced cells are CLEAN, so nothing repaints over them.
 	//
-	// AND IT RETIRES ITSELF, which is the half a skip naming an issue
-	// does not have on its own. An unconditional t.Skip as the first
-	// statement leaves the repo's only wide-glyph TextBox fixture dark
-	// behind a green check once the bug is fixed, and "the fixing branch
-	// already satisfies it" is a cross-branch promise rather than a
-	// local pin. Composing FIRST and deciding after costs one frame and
-	// needs nothing from the issue tracker: the day all three rows read
-	// correctly the skip below does not fire and the assertions at the
-	// bottom take over.
-	//
-	// ALL THREE SHAPES, and a tripwire on each, because the table below
-	// tabulates three renders: a fix that corrected the unfocused path
-	// and left the caret column wrong would otherwise keep this file
-	// dark behind a green check.
-	const (
-		wantCaret = "世界█     "
-		wantPlain = "世界      "
-		wantMixed = "a世b      "
-	)
-	compose := func(text string, focused bool) string {
-		tb := &TextBox{Text: prop.NewSource(text)}
-		tb.SetFocused(focused)
-		if focused {
-			tb.setCaret(len([]rune(text)))
-		}
-		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-		return render.RowText(f.Cells, 0)
-	}
-	caret := compose("世界", true)
-	plain := compose("世界", false)
-	mixed := compose("a世b", false)
-	// THE SKIP IS THE CONDITION, not a statement after one: retiring by
-	// hand needs an instruction that is complete and stays complete,
-	// and retiring by CONDITION needs no instruction at all.
-	//
-	// AND IT SKIPS ON THE DOCUMENTED BUGGY RENDER, not on "not correct",
-	// which is what makes the assertions below reachable at all. t.Skipf
-	// calls runtime.Goexit, so a loop skipping on any mismatch leaves
-	// this fixture with two outcomes forever — pass and skip — and the
-	// three t.Errorf blocks could never run. Measured: with a plausible
-	// #519 fix applied, changing the caret glyph in textbox.go from '█'
-	// to '|' gave
-	//
-	//	--- SKIP: TestTextBoxRendersAWideGlyphInItsOwnColumns
-	//	    TextBox blanks wide glyphs — the focused row … reads "世界|     "
-	//
-	// a check quietly reporting the wrong answer.
-	//
-	// WHAT THIS DOES NOT BUY, stated because the paragraph above used to
-	// claim it did: the quietly-wrong-answer class is narrowed, not
-	// removed. Once #519 is fixed this block stays live, and the single
-	// most likely future regression — the same per-rune advance loop,
-	// reintroduced — produces exactly the three strings below. That
-	// re-arms the skip and the suite goes green with a message citing a
-	// CLOSED issue, which is the same failure one lifetime later.
-	//
-	// The block therefore has a lifetime the code cannot express, so the
-	// deletion has to live somewhere: **#519's fixing commit deletes
-	// this whole loop**, not just the skip, and #519's acceptance
-	// criteria say so. Self-retiring means nobody is FORCED to delete
-	// it; it does not mean nobody has to.
-	//
-	// ONE TABLE DRIVES BOTH, and it did not: `want` was set three times
-	// and read nowhere, while the assertions below re-spelled the three
-	// constants by hand. A fourth shape could then get a tripwire and no
-	// assertion, or the reverse, and nothing would go red — in the test
-	// whose whole design is about not relying on somebody remembering.
-	// The `why` column is what the three bespoke t.Errorf blocks were
-	// carrying and is the only part of them that differed.
-	shapes := []struct{ got, want, buggy, shape, why string }{
-		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs",
-			"the two glyphs occupy FOUR columns, so the caret belongs in column 4"},
-		{plain, wantPlain, " 界       ", "the unfocused row",
-			"the glyphs occupy their own columns with no caret to make room for"},
-		{mixed, wantMixed, "a b       ", "the unfocused mixed-width row",
-			"a narrow glyph either side of a wide one is the arrangement a " +
-				"per-rune advance loses in the middle rather than at the end"},
-	}
-	for _, tw := range shapes {
-		if tw.got == tw.buggy {
-			t.Skipf("#519 is still open — %s reads %q, the blanked-lead render "+
-				"this fixture was written against — "+
-				"https://github.com/WonderForgeLabs/gooey/issues/519",
-				tw.shape, tw.got)
-		}
-	}
-
-	// THE STRING IS THE ONLY PIN HERE, and a render.Displaced assertion
-	// beside it would be corroboration it cannot supply: #519 blanks the
-	// orphaned lead through healSeam, so the row is wrong WITHOUT being
-	// displaced. Measured against the buggy render, all three cases:
+	// A loop over TerminalColumns asserting col == i was false of a
+	// CORRECT wide row — a continuation cell's recorded column is where
+	// the cursor sits mid-glyph, which is legitimately not its index —
+	// so it could not run. render.Displaced replaced it and cannot
+	// FAIL: #519 blanked the orphaned lead through healSeam, so the row
+	// was wrong without being displaced. Measured against the render
+	// this commit fixes, all three cases of this fixture:
 	//
 	//	"世界" unfocused -> " 界       "  displaced=false
 	//	"世界" focused   -> "  █       "  displaced=false
