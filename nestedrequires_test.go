@@ -208,15 +208,33 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// resolving it, so the count of what it skipped is the honest
 	// output — a silent skip is how a check comes to cover less than its
 	// name. Raised in review of #497.
+	//
+	// AND THE COUNT COMPARED IS PART OF THE REPORT, because "3 skipped"
+	// reads very differently beside 36 pins and beside 4. Raised in
+	// review of #497.
 	if len(tagged) > 0 {
-		t.Logf("%d own-module require(s) name a plain tag, which this check "+
-			"cannot compare against a commit without the network, so they are "+
-			"outside the skew report:\n\t%s",
-			len(tagged), strings.Join(tagged, "\n\t"))
+		t.Logf("%d of %d own-module require(s) name a plain tag, which this "+
+			"check cannot compare against a commit without the network, so "+
+			"they are outside the skew report:\n\t%s",
+			len(tagged), len(seen), strings.Join(tagged, "\n\t"))
 	}
-	// AND A LOG IS NOT A SIGNAL IN CI. ci.yml runs `go test ./...` with
-	// no -v, and Go discards a passing test's log output — so the report
-	// above prints nothing where it matters. Combined with skewFrom's
+	// AND A LOG IS NOT A SIGNAL IN CI, AND STDERR IS NOT EITHER — which
+	// was worth measuring rather than assuming, because the obvious fix
+	// is to write the report to os.Stderr on the grounds that `go test`
+	// passes it through. It does not: in package-list mode `go test`
+	// buffers a package's whole output and prints only `ok` when it
+	// passes, so a bare Fprintf to stderr from a passing test is
+	// discarded exactly like t.Logf. Measured on this tree with
+	// -count=1, both spellings, both `./` and `.` forms: neither string
+	// appears. So the log stays a log, and the middle band — SOME
+	// requires tagged, at least one pseudo-version left, comparedNothing
+	// false and nothing red — has no signal available to it short of
+	// failing, which would be the two-distinct-commits rule that reds a
+	// correct tree. That residue is #515's, which already owns "this
+	// guard's claim is narrower than it reads". Raised in review of
+	// #497 round 8.
+	//
+	// Combined with skewFrom's
 	// early return on fewer than two revisions, a tree whose own-module
 	// requires ALL name plain tags passes having compared nothing: the
 	// silent skip the paragraph above calls out, arrived at by the
@@ -315,6 +333,12 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []st
 			version[rev] = r.version
 		}
 	}
+	// SORTED BEFORE THE EARLY RETURN, not after it. The sort used to sit
+	// at the bottom, below this return — which covers both states a
+	// correct tree is in (one revision everywhere, and every require a
+	// plain tag), so on exactly the two paths the caller PRINTS tagged
+	// the list was unsorted. Raised in review of #497.
+	sort.Strings(tagged)
 	if len(byRev) < 2 {
 		return "", nil, tagged
 	}
@@ -335,7 +359,6 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []st
 	for _, rev := range revs {
 		behind = append(behind, skewGroup{version: version[rev], at: byRev[rev]})
 	}
-	sort.Strings(tagged)
 	return newest, behind, tagged
 }
 
@@ -375,9 +398,11 @@ func revisionOf(v string) (string, bool) {
 	// calls the round-6 defect and that laterThan's own comment claims
 	// nothing here reaches. What separates them is not the tail: a
 	// pseudo-version ALWAYS carries a 14-digit stamp and a tag never
-	// does, so asking stampOf is the whole test — and it is what makes
-	// laterThan's backstop the unreachable-by-construction statement it
-	// is documented as. Raised in review of #497.
+	// does, so asking stampOf is the whole test — and it is what keeps a
+	// TAG out of laterThan's backstop. It does not empty the backstop:
+	// two pseudo-versions sharing a committer second reach it with both
+	// stamps present, which laterThan's own comment now names. Raised in
+	// review of #497.
 	if stampOf(v) == "" {
 		return "", false
 	}
@@ -391,10 +416,26 @@ func revisionOf(v string) (string, bool) {
 // them is a plain tag and carries none", which told a reader that tags
 // are ordered here — and they are not: skewFrom filters every tag into
 // `tagged` before populating `version`, so both arguments always carry a
-// stamp. What can still reach it is a pseudo-version this package failed
-// to parse, i.e. a fourth spelling Go starts writing, and a string
-// compare is the wrong answer there too — it is here so the ordering is
-// total rather than to be relied on. Raised in review of #497.
+// stamp. Raised in review of #497.
+//
+// TWO ROUTES REACH IT, AND THE SECOND NEEDS NO UNPARSED VERSION. This
+// said the fallback was reachable only by a pseudo-version this package
+// failed to parse — a fourth spelling Go starts writing — and that
+// missed the ordinary one: the short-circuit above requires the stamps
+// to DIFFER, so two distinct commits sharing a committer second (two
+// pushes in the same second, or a landing and the merge that contains
+// it) fall through to the string compare with both stamps present and
+// equal. What decides then is the trailing revision hash, so skewFrom
+// picks whichever hash sorts higher and tells the other group to move
+// to it.
+//
+// The tie is not breakable here: two commits one second apart carry no
+// offline evidence of their order, which is the same reason a plain tag
+// cannot be ordered. So the fallback stays, the ordering stays total
+// and deterministic, and the cost is written down instead of implied —
+// on a tie the "newest" is arbitrary but stable, and the skew it reports
+// is real either way (the two groups do disagree). Raised in review of
+// #497 round 8.
 func laterThan(a, b string) bool {
 	sa, sb := stampOf(a), stampOf(b)
 	if sa != "" && sb != "" && sa != sb {
@@ -541,6 +582,17 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		t.Error("the compared-nothing guard does not fire on a tree whose every " +
 			"require names a plain tag, so that tree passes having checked nothing")
 	}
+	// AND SORTED ON THIS PATH, which is where it was not. allTags is
+	// deliberately given "mcp" before "grpc" — sorted the other way —
+	// because the sort used to sit BELOW skewFrom's early return, so the
+	// two paths that actually print this list (the caller's log and the
+	// compared-nothing error) were the two it never reached. Raised in
+	// review of #497.
+	if _, _, skipped := skewFrom(allTags); !sort.StringsAreSorted(skipped) {
+		t.Errorf("the skipped-require report comes back unsorted (%v) for an "+
+			"all-tags tree, so it reorders itself run to run in exactly the "+
+			"case it exists for", skipped)
+	}
 
 	// AND IT MUST NOT FIRE ON A TREE THAT IS MERELY PARTLY TAGGED — the
 	// half that went the wrong way. The guard asked for two DISTINCT
@@ -631,5 +683,45 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		if got := stampOf(tc.v); got != tc.want {
 			t.Errorf("stampOf(%q) = %q, want %q", tc.v, got, tc.want)
 		}
+	}
+}
+
+// TestTwoCommitsInOneSecondReachTheStringFallback is the second route
+// into laterThan's backstop — the one that needs no unparsed version and
+// that the comment above it used to exclude. Raised in review of #497.
+//
+// The short-circuit requires the stamps to DIFFER, so two distinct
+// commits carrying the same 14-digit second (two pushes in one second,
+// or a landing and the merge that contains it) fall through to the
+// string compare with both stamps present. What decides is then the
+// trailing revision hash.
+//
+// THE ASSERTION IS THE PROPERTY, NOT THE WINNER. Which hash sorts higher
+// is arbitrary and this test does not bless it; what it pins is that the
+// order is TOTAL and STABLE — exactly one of the two is later, and the
+// answer does not depend on argument order — because that is what
+// skewFrom needs to name a reference at all. A tie-break on anything
+// meaningful is not available offline: two commits one second apart
+// carry no evidence of their order, which is the same reason a plain tag
+// carries none.
+func TestTwoCommitsInOneSecondReachTheStringFallback(t *testing.T) {
+	const stamp = "20260913132232"
+	a := "v0.0.0-" + stamp + "-aaaaaaaaaaaa"
+	b := "v0.0.0-" + stamp + "-bbbbbbbbbbbb"
+
+	// NON-VACUITY: if either stamp were missing the fallback would be
+	// reached for the round-6 reason instead, and this would be a second
+	// copy of the hex-tag arm.
+	if stampOf(a) != stamp || stampOf(b) != stamp {
+		t.Fatalf("stampOf reads %q and %q, want %q for both — these fixtures "+
+			"reach the fallback because the stamps are EQUAL, not because "+
+			"either is unparsed", stampOf(a), stampOf(b), stamp)
+	}
+	if laterThan(a, b) == laterThan(b, a) {
+		t.Errorf("laterThan(a,b)=%v and laterThan(b,a)=%v for two revisions "+
+			"sharing one stamp, so the order is not total: skewFrom picks a "+
+			"reference by scanning a map, and an order that answers the same "+
+			"way both ways round makes which module it met first decide",
+			laterThan(a, b), laterThan(b, a))
 	}
 }
