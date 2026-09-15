@@ -81,8 +81,16 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 		// also falsifies half a sentence above — "nothing legitimate has
 		// that shape" — for a doc that opens with an ordinary English
 		// word which is also the next declaration's name. In
-		// hand-written code the claim held across 4777 doc comments;
-		// generated code is where it does not.
+		// hand-written code the claim held across every doc comment in
+		// the tree; generated code is where it does not.
+		//
+		// NO FIGURE HERE, and the omission is the point: this said 4777
+		// and the guard's own t.Logf already reported a different number
+		// on the same branch, because the bounds moved under it. A count
+		// in prose is a sample taken once — CLAUDE.md's Verify section
+		// says so — and this one is DERIVED on every run a few hundred
+		// lines down, which is the reader's source. Raised in review of
+		// #503.
 		if ast.IsGenerated(f) {
 			continue
 		}
@@ -483,12 +491,12 @@ const (
 			want: "KindAlpha",
 			wantMsg: "the doc comment on KindBeta opens by naming KindAlpha, which " +
 				"is a later entry of this block. That is a doc comment that was " +
-				"separated from what it documents — either KindAlpha was inserted " +
-				"between the two, or the blank line between two comment groups was " +
-				"lost, and either way KindBeta is now undocumented.",
+				"separated from what it documents — either KindBeta was inserted " +
+				"between it and KindAlpha, or the blank line between two comment " +
+				"groups was lost, and either way KindBeta is now undocumented.",
 		},
 		{
-			// THE SHAPE FIVE OF THE SIX REAL FINDINGS HAD, which is not
+			// THE SHAPE MOST OF THE REAL FINDINGS HAD, which is not
 			// an inserted declaration at all: two adjacent comment groups
 			// whose separating blank line was lost, so the upper group's
 			// subject is now declared below the merged comment. The AST
@@ -629,11 +637,22 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	// insertion "between the two" is the class of defect
 	// declaresDirectlyBelow's own comment records fixing one arm over.
 	// Raised in review of #503.
+	// THE INSERTED DECLARATION IS name, NOT first. first is what the
+	// comment documents — one of "the two" the sentence has just
+	// established — so it cannot have been inserted between itself and
+	// its own comment. The declaration that came between them is the one
+	// the comment now sits on. The file header states the defect in that
+	// direction ("leaves the comment attached to the newcomer") and the
+	// sibling below has always had the roles right; this closure was the
+	// one place they were swapped, and wantMsg asserted the swap as
+	// correct, so nothing could go red over it. Raised in review of
+	// #503, which is also where the same shape was fixed on the block
+	// arm.
 	separated := func(name, first string) string {
 		return fmt.Sprintf("That is a doc comment that was separated from what it "+
-			"documents — either %s was inserted between the two, or the blank line "+
+			"documents — either %s was inserted between it and %s, or the blank line "+
 			"between two comment groups was lost, and either way %s is now "+
-			"undocumented.", first, name)
+			"undocumented.", name, first, name)
 	}
 	inherited := func(name, first string) string {
 		return fmt.Sprintf("That is a block doc that no longer opens on its own "+
@@ -777,8 +796,8 @@ func declaresIn(specs []ast.Spec, want string) bool {
 //
 // `go doc` does not read _test.go files at all — `go doc -u . citeForms`
 // answers "no symbol in package" — and test files are much of the
-// population this guard was widened to reach: two of the six thefts this
-// branch repaired are in one, and the guard's own rationale is that
+// population this guard was widened to reach: several of the thefts this
+// branch repaired are in test files, and the guard's own rationale is that
 // nobody runs `go doc` on a test file. A command that reports nothing
 // reads as a false alarm to whoever the guard just fired on, which is
 // worse than no command beside a position that already locates the line.
