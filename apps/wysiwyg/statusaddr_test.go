@@ -589,47 +589,47 @@ func TestANarrowRowKeepsTheAddressesAndDropsTheNotice(t *testing.T) {
 // TestTheStateDotIsNarrow is the wide-rune guard, and it is a real trap
 // rather than a stylistic one.
 //
-// NOTHING in render/, components/ or term/ consults a character-width
-// table: render.Buffer.SetString advances x by one per rune and
-// Text.Measure sizes with len([]rune(...)). A two-cell grapheme written
-// into a one-cell slot leaves the cell plane and the terminal's cursor
-// permanently out of step for the rest of the row — and by the damage
-// model every cell it corrupts belongs to a CLEAN node that will not
-// repaint, so the corruption stays until something unrelated dirties it.
+// addrChip.Render writes the dot with Cells.Set at b.X and the address
+// with Cells.SetString at b.X+2, so the two cells between them are
+// SPENT, not measured. A two-column dot lays a render.Continuation in
+// b.X+1 and the address then starts on top of it — and by the damage
+// model the cells it corrupts belong to CLEAN nodes that will not
+// repaint, so it stays until something unrelated dirties them.
 //
-// The ranges below are the unambiguously East-Asian-Wide blocks plus the
-// emoji planes. U+25CF sits below all of them; a 🟢 (U+1F7E2) does not,
-// which is exactly the substitution this exists to refuse.
+// This used to argue from "nothing in render/, components/ or term/
+// consults a character-width table", naming SetString as advancing one
+// per rune and Text.Measure as sizing with len([]rune(...)). Neither is
+// true: render/width.go imports uniseg, SetString walks grapheme
+// clusters, and Text.Measure calls render.StringWidth. The claim was
+// stale in the direction that fails OPEN — a reader would conclude the
+// framework cannot help them and hand-roll the block table this test
+// used to carry.
+//
+// So it asks render.RuneWidth, which is the function the painter itself
+// resolves widths with. A table of East-Asian blocks written down here
+// is a SAMPLE of that function taken once; it happened to agree, and it
+// would have stopped agreeing silently. U+25CF is Ambiguous, i.e. one
+// column outside a CJK locale; a 🟢 (U+1F7E2) is two, which is exactly
+// the substitution this exists to refuse.
 func TestTheStateDotIsNarrow(t *testing.T) {
-	wide := []struct {
-		lo, hi rune
-		name   string
-	}{
-		{0x1100, 0x115F, "Hangul Jamo"},
-		{0x2E80, 0xA4CF, "CJK"},
-		{0xAC00, 0xD7A3, "Hangul syllables"},
-		{0xF900, 0xFAFF, "CJK compatibility ideographs"},
-		{0xFE30, 0xFE6F, "CJK compatibility forms"},
-		{0xFF00, 0xFF60, "fullwidth forms"},
-		{0xFFE0, 0xFFE6, "fullwidth signs"},
-		{0x1F300, 0x1FAFF, "emoji and pictographs"},
-		{0x20000, 0x3FFFD, "CJK extension planes"},
-	}
-	for _, w := range wide {
-		if addrDot >= w.lo && addrDot <= w.hi {
-			t.Fatalf("the state dot %q (U+%04X) is in the %s block, which terminals draw "+
-				"two cells wide. Nothing in this repo is rune-width aware — SetString "+
-				"advances one cell per rune — so it would shift every cell to its right "+
-				"out of step with the terminal, permanently, because those cells are "+
-				"clean and never repaint.", addrDot, addrDot, w.name)
-		}
+	if got := render.RuneWidth(addrDot); got != 1 {
+		t.Fatalf("the state dot %q (U+%04X) is %d columns wide. Render places it at b.X "+
+			"and the address at b.X+2, so anything but one cell puts the address's first "+
+			"column on the dot's continuation cell — and the substitution this exists to "+
+			"refuse is a 🟢 (U+1F7E2), which measures %d.",
+			addrDot, addrDot, got, render.RuneWidth('🟢'))
 	}
 }
 
 // TestTheDotOccupiesOneCellAndTheAddressFollowsIt is the cell assertion
-// that pins the layout the width guard above assumes: the plane is
-// written on a one-cell-per-rune model, so the dot takes cell 0, a
-// space takes cell 1, and the text starts at cell 2.
+// that pins the layout the width guard above assumes: the dot takes
+// cell 0, a space takes cell 1, and the text starts at cell 2.
+//
+// It used to say the plane is written on a one-cell-per-rune model. It
+// is not, and has not been since Buffer.SetString started walking
+// grapheme clusters and laying a render.Continuation marker — what the
+// guard above assumes is that THIS dot is one column, which is a fact
+// about the dot rather than about the plane.
 func TestTheDotOccupiesOneCellAndTheAddressFollowsIt(t *testing.T) {
 	ed, c := addrPage(t, testGrpc, testMCP)
 	f, _ := c.Frame()
@@ -1281,18 +1281,47 @@ func TestAnEndpointWithNoSpaceStillBuilds(t *testing.T) {
 // ellipsis marking the loss` — which is exactly what deleting this
 // function as a "duplicate" would have shipped, silently, everywhere in
 // the address strip.
+//
+// IT MEASURED RUNES, AND SO DID THE FUNCTION, so for the life of both it
+// could not see the defect it was written to catch. Every fixture was
+// one column per rune — "é" is a rune with an accent, not a wide glyph —
+// and against an input like that a rune count and a column count are the
+// same number, so the wrong rule agreed with the right one on every case
+// the loop ran. CLAUDE.md names this shape: to pin one of these, use two
+// strings of the same COLUMN width and different rune counts. The pair
+// below is `strings.Repeat("世", 30)` against the accented run it
+// replaced — 30 runes and 60 columns against 60 runes and 60 columns.
 func TestEllipsizeNeverExceedsItsWidth(t *testing.T) {
 	for _, w := range []int{0, 1, 2, 5, 40} {
-		for _, s := range []string{"", "x", "copy failed: terminal suspended", strings.Repeat("é", 60)} {
-			if got := len([]rune(ellipsize(s, w))); got > w {
-				t.Errorf("ellipsize(%q, %d) is %d runes wide", s, w, got)
+		for _, s := range []string{
+			"",
+			"x",
+			"copy failed: terminal suspended",
+			strings.Repeat("é", 60),
+			strings.Repeat("世", 30),
+			"copy failed: " + strings.Repeat("世", 20),
+		} {
+			if got := render.StringWidth(ellipsize(s, w)); got > w {
+				t.Errorf("ellipsize(%q, %d) is %d COLUMNS wide. The input is %d runes and "+
+					"%d columns; a rune count lets a wide glyph through as if it were one "+
+					"cell, and the composer's clip then cuts the result with no ellipsis.",
+					s, w, got, len([]rune(s)), render.StringWidth(s))
 			}
 		}
 	}
 	// The DISCRIMINATING half: width alone is satisfied by a hard cut, so
-	// without this clause dock.go's clipTo would pass this test.
+	// without this clause dock.go's clipTo would pass this test. Asserted
+	// for a wide input too, because ClipCols stops BEFORE a glyph that
+	// would overrun and can therefore return a column short — the
+	// ellipsis has to survive that, not just the ASCII case where the
+	// budget divides evenly.
 	if got := ellipsize("abcdef", 4); got != "abc…" {
 		t.Errorf("ellipsize truncated to %q, want an ellipsis marking the loss", got)
+	}
+	if got := ellipsize(strings.Repeat("世", 6), 5); got != "世世…" {
+		t.Errorf("ellipsize(six wide glyphs, 5) = %q, want two glyphs and the ellipsis: "+
+			"four columns of glyph and one of ellipsis is the most that fits, and the "+
+			"fifth column stays blank rather than holding half of a third", got)
 	}
 }
 

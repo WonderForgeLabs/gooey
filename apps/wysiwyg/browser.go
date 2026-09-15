@@ -50,6 +50,7 @@ import (
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -301,10 +302,16 @@ func (ed *editor) browserItems() components.ItemSource {
 // here; the highlight is a known gap, not an oversight.
 func fileRow(p string) map[string]any {
 	return map[string]any{
-		"Name": shortPath(p, 30),
+		"Name": shortPath(p, browserNameCols),
 		"Path": p,
 	}
 }
+
+// browserNameCols is the explorer column's budget, in CELLS. It was
+// written as a bare 30 at the call above, which is the spelling that let
+// shortPath measure in runes without the disagreement being visible from
+// either end.
+const browserNameCols = 30
 
 // shortPath fits a path into w cells by dropping LEADING segments, not
 // trailing characters.
@@ -318,20 +325,77 @@ func fileRow(p string) map[string]any {
 //
 // Truncating from the right — which is what letting the cell buffer clip
 // would do — keeps exactly the part every candidate shares.
+// Measured in COLUMNS. Every comparison here was a rune count, so a
+// workspace holding `apps/世界/世界.gooey` reported a name that fits a
+// budget it overruns by the number of wide glyphs in it — and the clip
+// that then bounds it takes the TAIL, which is the exact part the
+// paragraph above exists to keep. A file system supplies these names,
+// so this is the one caller in the app that cannot choose its own
+// characters.
 func shortPath(p string, w int) string {
-	if len([]rune(p)) <= w {
+	if render.StringWidth(p) <= w {
 		return p
 	}
 	segs := strings.Split(p, "/")
 	out := segs[len(segs)-1]
 	for i := len(segs) - 2; i >= 0; i-- {
 		next := segs[i] + "/" + out
-		if len([]rune(next))+1 > w {
-			return "…/" + out
+		// TWO COLUMNS RESERVED, because "…/" is what elide renders in
+		// front of what this loop keeps. It reserved one, which was not a
+		// bounds bug — elide bounds the result — but it produced a format
+		// that alternated with the budget: `shortPath("aa/bbbb/cc", 9)`
+		// gave `…/bbbb/cc` and `…bbbb/cc` at 8, and the second reads as
+		// "a character was cut out of bbbb" when what actually went was
+		// the whole leading `aa/`. Reserving two also makes this
+		// condition and elide's first branch the SAME predicate, so the
+		// segment this loop hands over always takes the `"…/" + s` arm
+		// rather than falling through to the cut. Found in review of #524.
+		if render.StringWidth(next)+2 > w {
+			return elide(out, w)
 		}
 		out = next
 	}
-	return out
+	return elide(out, w)
+}
+
+// elide answers in ONE OF TWO SHAPES, and which one is the difference
+// between "there is more path above this" and "this name itself was
+// cut":
+//
+//	"…/" + s          when s fits in w-2 — the common path, and what
+//	                  every ordinary row in the explorer gets
+//	"…" + a tail of s when it does not, keeping the LAST w-1 columns
+//
+// Clipping from the left would keep the leading characters of one long
+// name instead, which is the answer this whole function rejects for a
+// list of paths. The doc used to name only the second arm, though the
+// first is the one that carries the file list (#524's review).
+func elide(s string, w int) string {
+	if render.StringWidth(s) <= w-2 {
+		return "…/" + s
+	}
+	if w <= 1 {
+		return render.ClipCols("…", w)
+	}
+	drop := render.StringWidth(s) - (w - 1)
+	cut, room := 0, false
+	// EachCluster stops where the callback says so, so cut lands on the
+	// first cluster starting at or past drop. WHEN THERE IS NO SUCH
+	// CLUSTER the walk runs to the end and leaves cut on the last one,
+	// whose start column is below drop — and the result overran w by the
+	// difference: elide("世", 2) answered "…世", three columns, for a
+	// string that already fitted in two. `room` is the discriminator.
+	render.EachCluster(s, func(_ string, off, col, _ int) bool {
+		cut, room = off, col >= drop
+		return !room
+	})
+	if !room {
+		// The trailing cluster alone is wider than w-1, so nothing of s
+		// fits beside the ellipsis. The ellipsis alone is the honest
+		// answer and the only one inside the budget.
+		return render.ClipCols("…", w)
+	}
+	return "…" + s[cut:]
 }
 
 // openWorkspaceFile loads a document out of the workspace. It reads
