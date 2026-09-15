@@ -186,6 +186,8 @@ sat one file away from the spec saying the opposite. Raised in review of
 | **A toast is not hidden by an open menu** | `TestAToastIsNotHiddenByAnOpenMenu` | M2, M4 |
 | Ranks order PAINT | `TestAnAdornmentIsAboveAToast` | M2, M4 |
 | These hosts claim these ranks | `TestTheOverlayHostsClaimTheRanksTheyDocument` | rank `AdornmentLayer` at the floor (M1) |
+| Every self-marked host has a rank row | `TestTheOverlayHostsClaimTheRanksTheyDocument` | delete a row from its table |
+| The freedom guard's excuse is SENTENCE-scoped | `TestNoDocSaysASelfMarkedHostStaysInDocumentOrder` | move the excuse back to the block (`distinctionRe.MatchString(b)`) |
 | A negative rank lands on the floor | `TestANegativeRankLandsOnTheFloor` | drop the clamp in `overlayRank` (`component.go`) |
 | Ranks order paint and NOT hit-testing | `TestARankOrdersPaintAndNotHitTesting` | walk `hitTest`'s children forward (`mouse.go`) — and M4, which reddens the paint arm |
 
@@ -199,6 +201,38 @@ stub that names `OverlayRankAdornment` itself, so **M1 — ranking the real
 Two claims need two tests: *ranks order paint*, and *these hosts claim
 these ranks*. Each now has a mutation that fires only it. Found in review
 of #456.
+
+**And the hosts row needed a floor under it.** Which constant a host
+should claim is a decision no walk can read out of the tree, so the table
+is correctly a literal — but WHICH hosts must appear in it is a property
+of the tree, and a hand-written list of those goes stale exactly the way
+`TestEveryExportedOverlayHostIsNamed` exists to catch one file over. A
+third self-marked host — menus v2's context-menu host
+([#104](https://github.com/WonderForgeLabs/gooey/issues/104)) is the
+concrete candidate — would have landed with `OverlayRank` returning
+whatever it returns and nothing red. The floor derives from
+`selfMarkedHosts`, so it inherits that test's derivation rather than
+restating it. Round 2 of #456.
+
+**The freedom guard's excuse was scoped to the wrong unit, and the site
+it let through was in this PR's own diff.** `unqualifiedFreedom` matched
+the claim per SENTENCE and applied the qualification excuse per BLOCK,
+and `proseBlocks` splits on a blank line — so a block is a whole Go doc
+comment plus its declaration, or a whole bullet list, or a whole table.
+`components/adorn.go`'s godoc said the layer goes *anywhere*, with the
+`ToastHost` equivalence the rest of this PR had just retired, and was
+excused by *"The layer **paints** nothing and declares no background"*
+two sentences later and about a different subject entirely.
+
+Measured by disabling only the excuse: **six** sites, of which that one
+was the real contradiction and five were the block-level noise the
+excuse exists to absorb. Scoped to the sentence, three survive — the
+godoc, plus two sentences whose subject genuinely is something else
+(`mouse.go` describing the hit-test walk, `07-app-chrome.md` scoped to
+`Tooltip`), and both of those now say which question they are answering.
+The existing mutation row tested whether the excuse FIRES; nothing
+tested where it REACHES, and that is where the one real site walked
+through. Round 2 of #456.
 
 **The stability row is gone because the property is now structural.** It
 used to read "`sort.Slice` with `<=`", which conflated two different

@@ -379,7 +379,7 @@ so `tab` never lands on a button nobody can see.
 - Toasts are imperative: the host is markup, `Show` is code through
   `markup.Find`, looked up per fire so hot reload cannot strand it.
 - Tooltips (both spellings) need an `AdornmentLayer` on the page, and
-  where you put it decides nothing: the layer is lifted and sits at
+  where you put it decides nothing about **paint**: the layer is lifted and sits at
   `gooey.OverlayRankAdornment`, the top of the stack, because an
   adornment describes something already on screen and is useless
   underneath it.

@@ -58,7 +58,8 @@ func (h *HoverState) hover() *prop.Property[bool] {
 //
 // The overlay hosts need this to exist at all: a ToastHost or an
 // AdornmentLayer spans the whole page, so wherever it is declared the
-// pointer meets it before anything it covers — an invisible layer that
+// hit-test walk below meets it before anything it covers — an invisible
+// layer that
 // ate every click and starved every hover beneath it. Declared LAST it
 // is the FIRST thing this walk finds, which is the worst case rather
 // than the required one: #437 and #439 made a host's position free for
