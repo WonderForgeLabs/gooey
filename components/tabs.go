@@ -89,11 +89,15 @@ func (t *Tabs) ensure() {
 		return
 	}
 	t.bound = true
-	// The tail holds components, so it is cleared rather than truncated
-	// — see clearToCap in the root package, which this reproduces with
-	// the builtin it wraps (it is unexported and this is another
-	// package). Raised in review of #456.
-	clear(t.kids[:cap(t.kids)])
+	// retains nothing: this body runs ONCE. t.bound is set immediately
+	// above and never reset, so t.kids is still the zero slice here and
+	// cap is 0 — a clear to cap was added in review of #456 and could
+	// not be reddened by any mutation of this tree, which is the
+	// standard this PR applies everywhere else. The retention Tabs
+	// actually has is a different one and the clear never touched it:
+	// ensure() cannot re-run, so a Tabs whose Items shrink keeps the old
+	// page components inside len, not past it. Corrected in the round
+	// after.
 	t.kids = t.kids[:0]
 	for i := range t.Items {
 		i := i

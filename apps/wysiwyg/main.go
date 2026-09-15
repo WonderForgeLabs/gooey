@@ -1811,7 +1811,6 @@ func (ed *editor) loadPalette() {
 	// An ElementSpec holds maps and strings, so the tail keeps a whole
 	// catalog's worth of them alive past len. See clearToCap in the
 	// gooey package. Raised in review of #456.
-	clear(ed.palette[:cap(ed.palette)])
 	ed.palette = ed.palette[:0]
 	ed.pseudo = map[string]bool{}
 	ed.specs = map[string]markup.ElementSpec{}
@@ -1836,6 +1835,9 @@ func (ed *editor) loadPalette() {
 		}
 		ed.palette = append(ed.palette, e)
 	}
+	// AFTER THE REFILL, which costs cap - len rather than cap and never
+	// leaves a live slot holding nil. Corrected in review of #456.
+	clear(ed.palette[len(ed.palette):cap(ed.palette)])
 
 	// THE LOAD-TIME GATE for every icon the palette will draw, in BOTH
 	// tints the theme switches between.

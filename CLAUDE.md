@@ -501,7 +501,7 @@ on click. The `fs.FS` seam is what makes `os.DirFS` + watcher (dev) and
 interleaved on one wire and stay on one ordered stream — ONE channel,
 `evs` (`term/term.go:61`), fed by a single decoder — because two channels
 could reorder them. `FocusManager.Dispatch`
-(`input.go:764`) routes a key in phases, and it **tunnels before it
+(`input.go:787`) routes a key in phases, and it **tunnels before it
 bubbles**: every `PreviewKeyHandler` from the root *down* to the focused
 component is offered the event first, and the first that takes it ends
 dispatch. Then the bubble, focused → ancestors, **three steps per level**
@@ -511,7 +511,7 @@ middle step's position is load-bearing and silently breakable: swapping it
 past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
-arrow fall through to focus navigation (`FocusDir`, `input.go:892`).
+arrow fall through to focus navigation (`FocusDir`, `input.go:915`).
 `DispatchMouse` (`mouse.go:552`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
@@ -545,6 +545,16 @@ come back down. Write `clearToCap(x)` in the root package, or
 `clear(x[len(x):cap(x)])` **after** the refill elsewhere (the after-the-
 refill form costs `cap - len` rather than `cap`, and never leaves a live
 slot holding nil for a walk that re-enters mid-`range`).
+
+The after-the-refill form needs the refill to be *reachable from the
+reset*, and that is not a formality — `ButtonBar` resets `b.cut` in
+`Measure` and appends to it in `Arrange`, so a clear at the end of
+`Arrange` is undone by the next `Measure`'s truncation
+(`components/buttonbar.go` carries the argument at the reset). Where the two are
+split like that, clear to cap at the reset and say why. The re-entrancy
+half of the rule only has a reader when the slice is one a container
+PUBLISHES — `ChildComponents()`'s return, or `FocusManager.Order()`'s —
+so those are the sites where the after-form is not merely cheaper.
 
 `TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
 it, and where that test LIVES is the half worth knowing: it walks every

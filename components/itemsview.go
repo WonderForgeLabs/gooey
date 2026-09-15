@@ -321,11 +321,19 @@ func (v *ItemsView) sync(src ItemSource, top, count, sel int) {
 	// from: scrolling to a shorter row set left every previous row's
 	// component reachable past len. See clearToCap in the root package.
 	// Raised in review of #456.
-	clear(v.kids[:cap(v.kids)])
 	v.kids = v.kids[:0]
 	for _, r := range next {
 		v.kids = append(v.kids, r)
 	}
+	// AFTER THE REFILL, because v.kids is what ChildComponents hands out
+	// and sync is reached from Arrange. Clearing first zeroes [0, len)
+	// too, so an outer walk holding a slice a previous ChildComponents
+	// returned would read nil where it had read a stale-but-live
+	// component — and ArrangeChild(nil, …) is a panic rather than a
+	// wrong pixel. Nothing in the tree re-enters that way today; the
+	// after-form is free, so this takes it anyway, which is the same
+	// argument statusbar.go makes. Corrected in review of #456.
+	clear(v.kids[len(v.kids):cap(v.kids)])
 	if v.structure != nil {
 		v.structure()
 	}
