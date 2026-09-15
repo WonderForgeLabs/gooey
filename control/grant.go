@@ -169,13 +169,17 @@ func (s *Service) VisibleDamage(rects []gooey.Rect) []gooey.Rect {
 	if !s.scoped() {
 		return rects
 	}
-	var clip gooey.Rect
-	if root := s.islandRoot(); root != nil {
-		if b, ok := root.(gooey.Bounded); ok {
-			clip = b.Bounds()
-		}
-	}
-	if clip.W <= 0 || clip.H <= 0 {
+	// islandBounds RATHER THAN islandRect, and that is about allocation
+	// rather than about the answer. grpc/session.go calls this once per
+	// composed frame on the UI goroutine; islandRect's failing arms build
+	// an *Error through fmt.Sprintf and this function would drop it, so a
+	// scoped session whose island has been swapped away formatted and
+	// threw away a denial every frame. Asking the question that has no
+	// error in it is the whole fix, and it leaves the rule stated once.
+	// Raised in review of #504, twice — the first answer put an
+	// islandRoot() nil check here instead and resolved the island twice.
+	clip, ok := s.islandBounds()
+	if !ok || clip.W <= 0 || clip.H <= 0 {
 		return nil
 	}
 	out := make([]gooey.Rect, 0, len(rects))
@@ -205,7 +209,7 @@ func (s *Service) mayAddress(name string) error {
 		return notFoundf("no element named %q; SnapshotTree lists the named elements", name)
 	}
 	if s.islandRoot() == nil {
-		return deniedf("this session is scoped to island %q, which names no element in the running tree; every address is refused until it exists again", s.grant.Island)
+		return deniedf(islandGoneFmt+"; every address is refused until it exists again", s.grant.Island)
 	}
 	if !s.islandSet()[w] {
 		return deniedf("element %q is outside this session's island %q; a session may only address its own subtree", name, s.grant.Island)

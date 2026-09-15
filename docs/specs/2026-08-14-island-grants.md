@@ -234,8 +234,17 @@ all.
 
 ## Residual gaps
 
-- **A guest can still infer host geometry** from its own island's bounds
-  moving when the host's layout changes.
+- **A guest is TOLD where it sits, and can still infer more.** Since
+  [#204](https://github.com/WonderForgeLabs/gooey/issues/204) the
+  `screen_size` tool hands a scoped session its island's absolute origin
+  outright — it has to, because `send_mouse` takes absolute screen cells
+  and refuses anything outside the island, so a size without an origin
+  would hand a guest coordinates its own pointer call rejects. This
+  bullet said the origin was only *inferable* from the island's bounds
+  moving, which stopped being true when the tool started stating it.
+  What remains inferable is the rest of the host's layout: the origin
+  moving under a guest still reports that something above it changed
+  size.
 - **No per-guest component vocabulary.** A guest may patch in any
   registered `Component`, `Handler` or `Rule`. That is the capability
   handshake, not this.
