@@ -390,8 +390,8 @@ the FIRST timeout before asserting the second resolves it, so a fix that removed
 the exception instead of bounding it fails there rather than passing every
 liveness check in the file.
 
-The term test lives in `term` for the reason its neighbour
-`TestEscBeforeAMouseReportDoesNotStrandTheDecoder` gives: only the loop can show
+`TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` lives in `term` for the
+reason its neighbour `TestEscBeforeAMouseReportDoesNotStrandTheDecoder` gives: only the loop can show
 that a decoding contract strands live input, and only a real tty makes the loop
 the thing under test. Here the **gap is the fixture** — the three bytes must
 arrive in their own read with nothing after them for two timeouts, which is what

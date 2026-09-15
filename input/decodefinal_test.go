@@ -137,9 +137,14 @@ func TestFinalDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 // TestFinalDecodeHoldsNoMarkerPrefix is the UPPER bound, the complement
 // of TestTheIdleExceptionIsExactlyThePasteMarker next door.
 //
-// The walk there proves the idle exception is exactly the marker
-// prefixes. This one proves that under final NONE of them is left: every
-// input beginning ESC [ and continuing in parameter bytes resolves.
+// The walk there proves the upper bound over every buffer of ESC [ plus
+// parameter bytes — which is narrower than "the idle exception", a list
+// with two members, only one of which that alphabet can build ('~' never
+// lands, so no open paste is ever constructed). Same correction this
+// test's own name got one round earlier, applied to the sentence
+// describing its sibling. This one proves that under final NONE of the
+// prefixes is left: every input beginning ESC [ and continuing in
+// parameter bytes resolves.
 // Without it, a change that made DecodeFinal a synonym for Decode would
 // turn no test in this file red except the named case above.
 //

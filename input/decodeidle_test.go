@@ -24,7 +24,7 @@ import (
 //
 // The range is the scope, not a detail. Stated as "every non-empty
 // input" — which it was — the claim is false, and contradicted by
-// TestTheIdleExceptionIsExactlyThePasteMarker seventy lines below:
+// TestTheIdleExceptionIsExactlyThePasteMarker, below in this file:
 // splitPasteMarker holds 3-to-5-byte marker prefixes, and decodePaste
 // holds an open paste indefinitely.
 //
@@ -43,9 +43,18 @@ import (
 //     alphabet could not spell the thing that file is about. Measured
 //     here: adding '2' produces 18 stranding inputs ("\x1b[2" ×17 and
 //     "\x1b[20" ×1) and reddens the sweep against a CORRECT decoder.
-//   - TestIdleDecodeMakesProgressOnEscBeforeAMouseReport passes 5-to-13
-//     byte sequences including "\x1b\x1b[200~", and is safe because each
-//     is a complete sequence rather than a prefix.
+//   - TestIdleDecodeMakesProgressOnEscBeforeAMouseReport is safe because
+//     every input in it is SEVEN BYTES OR MORE, so the buffer itself can
+//     never be one of the ≤5-byte prefixes splitPasteMarker accepts, and
+//     decodeEsc's nested-escape arm consumes the leading Esc alone. Not
+//     "each is a complete sequence": measured, "\x1b\x1b[200~" is seven
+//     bytes and its tail alone answers (0, false) — an OPEN PASTE, the
+//     exception that waits forever — and "\x1b\x1b[?1000;1006" is
+//     labelled a truncated mode report in the list itself. The old
+//     rationale invited a reader to add "\x1b[200~", which is what a
+//     terminal actually sends, to a list of "complete sequences"; that
+//     one strands, and the sweep would go red against a CORRECT decoder.
+//     Corrected in review of #445 round twelve.
 //
 // So widening either alphabet means skipping the buffers
 // splitPasteMarker accepts, the way the five-byte ceiling is handled one
@@ -135,10 +144,14 @@ func TestIdleDecodeMakesProgressOnEscBeforeAMouseReport(t *testing.T) {
 // TestTheIdleExceptionIsExactlyThePasteMarker is the UPPER bound on the
 // liveness exception, and until PR #425's review nothing asserted it.
 //
-// Decode's doc is careful that the (0, false)-under-idle exception is
-// "the narrow thing it is: ESC [ 2 0 0 ~ and its prefixes from the third
-// byte on, nothing else", and cites the exhaustive walk above as the
-// enforcement. But that walk covers 1- and 2-byte inputs — precisely the
+// Decode's doc is careful that the (0, false)-under-idle exception has
+// TWO members and no more — a SPLIT MARKER (ESC [ 2 0 0 ~ or
+// ESC [ 2 0 1 ~ and their prefixes from the third byte on) and an OPEN
+// PASTE — and cites the exhaustive walk above as the enforcement.
+// Paraphrased rather than quoted: this carried a verbatim quotation of
+// the single-member sentence that doc used to open with, and a grep for
+// it now finds nothing but the quotation marks. "Nothing else" is also
+// the opposite of what the two-member list says. But that walk covers 1- and 2-byte inputs — precisely the
 // range the exception stays OUT of, as the doc itself says. So the walk
 // proves the exception does not start too early and says nothing about
 // where it stops.
