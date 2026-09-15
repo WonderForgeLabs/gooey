@@ -320,6 +320,18 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	if got, want := SpanText(b, 0, 9, 4), "    "; got != want {
 		t.Errorf("a span on row 9 of a one-row buffer = %q, want %q", got, want)
 	}
+	// A NIL BUFFER IS THE FOURTH SHAPE, and it was the one the doc
+	// promised and the body did not have: Buffer.At dereferences b.W, so
+	// this panicked inside render with At on the stack rather than the
+	// caller. Raised in review of #520.
+	if got, want := SpanText(nil, 0, 0, 3), "   "; got != want {
+		t.Errorf("a span of a nil buffer = %q, want %q — the out-of-range "+
+			"contract is blanks, and a nil buffer is the most out of range a "+
+			"span can be", got, want)
+	}
+	if got := SpanText(nil, 0, 0, 0); got != "" {
+		t.Errorf("a zero-width span of a nil buffer = %q, want empty", got)
+	}
 	// The sibling answering the same question the other way, asserted so
 	// the asymmetry is deliberate rather than noticed later: a per-cell
 	// map has no blank cell to report, so it reports nothing.
@@ -327,5 +339,8 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 		t.Errorf("TerminalColumns on row 9 of a one-row buffer = %v, want empty — "+
 			"the two functions answer an out-of-range row differently and that is "+
 			"the point", got)
+	}
+	if got := TerminalColumns(nil, 0); len(got) != 0 {
+		t.Errorf("TerminalColumns of a nil buffer = %v, want empty", got)
 	}
 }
