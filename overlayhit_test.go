@@ -69,8 +69,17 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 	})
 }
 
-// TestAHiddenComponentPaintsNothingAndIsNotHit is the PAINTS half of
-// the contract, and it was the half nothing checked.
+// TestAHiddenComponentRendersNoContentAndIsNotHit is the RENDERS half
+// of the contract, and it was the half nothing checked.
+//
+// "RENDERS NO CONTENT", not "paints nothing" — the distinction mouse.go
+// argues for at length, and this test carried the retired wording in
+// its own NAME until #458's review. A hidden leaf still pre-clears its
+// own bounds, so "paints nothing" is measurably false of it and
+// TestAHiddenLeafStillWritesItsOwnCells is the measurement. The spec's
+// claims table stated the retired form three rows above its own
+// refutation. Renaming fixes the name, this doc and the table together,
+// which is what made the name the place to fix it.
 //
 // Measured before the fix, with a Hidden component declared after a
 // visible sibling at the same rect:
@@ -79,8 +88,8 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 //	later sibling Hidden    → hit = the later one   ← renders nothing
 //	later sibling Collapsed → hit = the earlier, visible one
 //
-// So a component that painted nothing beat one that did, which is the
-// one thing the contract sentence promises cannot happen. A Hidden
+// So a component that rendered no content beat one that did, which is
+// the one thing the contract sentence promises cannot happen. A Hidden
 // button silently eating the presses on what is behind it is the shape
 // that costs. Raised in review of #478.
 //
@@ -89,7 +98,7 @@ func TestAnOverlayTakesThePressFromALaterOrdinarySibling(t *testing.T) {
 // pass; without Collapsed the two visibilities are not distinguished
 // from each other; and Hidden alone says nothing about whether the
 // fixture can produce a later-sibling win at all.
-func TestAHiddenComponentPaintsNothingAndIsNotHit(t *testing.T) {
+func TestAHiddenComponentRendersNoContentAndIsNotHit(t *testing.T) {
 	for _, tc := range []struct {
 		vis  Visibility
 		want string // "later" or "earlier"

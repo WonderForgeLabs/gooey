@@ -83,7 +83,11 @@ Four framework behaviors run before your code sees anything:
   synthesized on release. A frozen subtree is also out of focus order,
   scoped bindings, mnemonics and hover watchers. See the
   [design-surface spec](../../specs/2026-08-11-design-surface.md).
-- **Hover** moves to the nearest hover target at or above the hit.
+- **Hover** moves to the nearest hover target at or above the hit —
+  except while a drag is in flight. A `MouseMove` arriving with the
+  pointer captured performs no hit test at all and leaves hover where
+  it was: the captor is the target by definition, and a drag that
+  re-pointed hover under the pointer is not what dragging means.
 - **A press focuses** the nearest focusable component at or above the hit,
   and failing that the first focusable descendant — which is what makes
   clicking a pane's border focus the pane.

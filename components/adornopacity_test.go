@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -74,7 +73,6 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	}
 	// receiver -> set of methods it declares, over the non-test files.
 	methods := map[string]map[string]bool{}
-	recvRe := regexp.MustCompile(`^\*?(\w+)$`)
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -108,9 +106,6 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 					"through", f, fn.Name.Name)
 				continue
 			}
-			if !recvRe.MatchString(name) {
-				continue
-			}
 			if methods[name] == nil {
 				methods[name] = map[string]bool{}
 			}
@@ -118,6 +113,14 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 		}
 	}
 
+	// BY METHOD NAME, which is LOOSER than the Adornment interface it
+	// models (components/adorn.go): there is no signature check, so a
+	// future type declaring an unrelated Place(int) and Anchor() string
+	// would be reported here as an opaque adornment at the top rank.
+	// That direction is loud — a false alarm naming a type, not a
+	// silence — so it is a cost of the derivation rather than a hole in
+	// it, and worth one sentence rather than a types pass. Raised in
+	// review of #458.
 	var adornments []string
 	for recv, m := range methods {
 		if m["Anchor"] && m["Place"] {

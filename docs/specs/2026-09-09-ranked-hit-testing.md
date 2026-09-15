@@ -19,8 +19,14 @@ did:
 
 - A `ToastHost` declared **first** painted its toasts over a button and
   left the press to the button.
-- An `AdornmentLayer`'s validation marker painted above a popup and
-  routed beneath it.
+- An **opaque** overlay child painted above an ordinary one and routed
+  beneath it. `Toast` is the only one that ships: every adornment in
+  this repo declares `HitTestTransparent`, so a validation marker's
+  press went beneath it before this change and still does, and naming
+  the marker here would claim a divergence #465 did not fix. The
+  exposure that is real is stated below — a third-party adornment
+  omitting the method is opaque at the top rank, with nothing to say
+  so. Corrected in review of #458.
 - A `Hidden` component, which renders no content, still won the hit and
   ate presses on whatever was actually visible under the pointer.
 
@@ -121,7 +127,7 @@ no walk runs at all.
 | An overlay takes the press from a later ordinary sibling | `TestAnOverlayTakesThePressFromALaterOrdinarySibling` |
 | A transparent host passes the press to its own child | `TestATransparentOverlayHostPassesThePressToItsOwnChild` |
 | An overlay painting outside its parent's bounds is not hit | `TestAnOverlayOutsideItsParentPaintsAndIsNotHit` |
-| A `Hidden` component paints nothing and is not hit | `TestAHiddenComponentPaintsNothingAndIsNotHit` |
+| A `Hidden` component renders no content and is not hit | `TestAHiddenComponentRendersNoContentAndIsNotHit` |
 | …but a visible child of a hidden parent still is | `TestAVisibleChildOfAHiddenParentIsStillHit` |
 | …and the hidden leaf's own cells are still written | `TestAHiddenLeafStillWritesItsOwnCells` |
 | `Collapsed` is still skipped | `TestHitTestSkipsCollapsed` |

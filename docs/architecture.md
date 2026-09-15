@@ -1127,8 +1127,19 @@ TestARankOrdersPaintAndNotHitTesting, spelled here without backticks
 because #465 deleted it along with the divergence, and a live citation
 to a dead test reads as a check while checking nothing.
 
-The walk still allocates nothing of its own, because it runs on every
-motion report. It allocates whatever `ChildComponents` allocates, and
+The walk still allocates nothing of its own — and **a drag does not run
+it at all**. A `MouseMove` arriving while something holds pointer
+capture skips the hit test entirely (`DispatchMouse`, and
+`TestADragDoesNotWalkTheTreeOnEveryMove`): the captor is the target by
+definition and hover does not move during a drag, so both consumers of
+the hit already ignored it. That is where the cost of losing the early
+exit actually lands, or rather does not — the sentence this replaced
+said the walk "runs on every motion report", which is the line a reader
+profiling pointer cost arrives at and is no longer true of the path
+that reports most of them. Corrected in review of #458.
+
+For the motion reports that DO walk, it allocates whatever
+`ChildComponents` allocates, and
 `ToastHost` and `AdornmentLayer` both build a fresh slice per call, so
 the zero is the walk's and not the frame's while either holds anything
 ([#513](https://github.com/WonderForgeLabs/gooey/issues/513)). What the
@@ -1137,7 +1148,9 @@ a later one, so every subtree whose bounds contain the point is visited.
 Bounds still prune at every node, which is where the work was.
 
 `DispatchMouse` runs three framework behaviors before the app sees
-anything:
+anything — or, during a drag, one. A `MouseMove` with a captor held
+takes neither the hit test nor the hover update; the frozen retarget
+still applies, to the captor:
 
 - **The frozen retarget**, once, at the top: a frozen subtree does not
   act, so for every routing purpose the effective hit is the frozen host
