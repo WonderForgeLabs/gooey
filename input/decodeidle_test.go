@@ -26,11 +26,32 @@ import (
 // input" — which it was — the claim is false, and contradicted by
 // TestTheIdleExceptionIsExactlyThePasteMarker seventy lines below:
 // splitPasteMarker holds 3-to-5-byte marker prefixes, and decodePaste
-// holds an open paste indefinitely. What keeps the absolute true HERE is
-// splitPasteMarker's three-byte floor, which puts both exceptions
-// outside the 1- and 2-byte sweep by construction. See input.Decode's
-// doc for the exception list and input.DecodeFinal for which half is
-// bounded. Scoped in review of #445.
+// holds an open paste indefinitely.
+//
+// WHY EACH CALLER IS SAFE IS A DIFFERENT ANSWER, and "by construction"
+// was true of one of the three. TestIdleDecodeAlwaysMakesProgress
+// sweeps one and two bytes, which splitPasteMarker's three-byte floor
+// puts outside the exception — that one IS structural. The other two
+// reach inside it:
+//
+//   - TestIdleDecodeMakesProgressOnNestedEscapes asserts buf[:3] and
+//     buf[:4], squarely in the 3-to-5-byte range, and is green only
+//     because its alphabet has no '2', so no marker prefix is
+//     constructible from it. That is an accident of the alphabet, not a
+//     property of the sweep — the same accident this branch diagnoses in
+//     TestFinalDecodeMakesProgressOnNestedEscapes, whose inherited
+//     alphabet could not spell the thing that file is about. Measured
+//     here: adding '2' produces 18 stranding inputs ("\x1b[2" ×17 and
+//     "\x1b[20" ×1) and reddens the sweep against a CORRECT decoder.
+//   - TestIdleDecodeMakesProgressOnEscBeforeAMouseReport passes 5-to-13
+//     byte sequences including "\x1b\x1b[200~", and is safe because each
+//     is a complete sequence rather than a prefix.
+//
+// So widening either alphabet means skipping the buffers
+// splitPasteMarker accepts, the way the five-byte ceiling is handled one
+// file over. See input.Decode's doc for the exception list and
+// input.DecodeFinal for which half is bounded. Scoped in review of #445,
+// corrected per caller in review of #445 round eleven.
 func assertProgress(t *testing.T, b []byte) {
 	t.Helper()
 	_, n, ok := Decode(b, true)
@@ -64,6 +85,17 @@ func TestIdleDecodeAlwaysMakesProgress(t *testing.T) {
 // in the grammar (the introducers, an SGR mouse prefix and its finals, a
 // parameter separator and digits, the CSI tilde, a plain rune, and the
 // three bytes that decode to nothing), which is where the branches are.
+//
+// THE ALPHABET MAY NOT GAIN A '2' WITHOUT SKIPPING THE MARKER PREFIXES,
+// and this is the caveat TestFinalDecodeMakesProgressOnNestedEscapes
+// carries for its five-byte ceiling. These buffers are three and four
+// bytes long, inside splitPasteMarker's 3-to-5-byte hold, so the only
+// reason assertProgress's absolute holds here is that "\x1b[2…" cannot
+// be spelled from the bytes below. Measured: adding '2' yields 18
+// stranding inputs and turns this test red against a decoder doing
+// exactly what it should. A reader widening the alphabet has to skip
+// what splitPasteMarker accepts, not weaken the assertion. Raised in
+// review of #445.
 func TestIdleDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
 	buf := make([]byte, 4)

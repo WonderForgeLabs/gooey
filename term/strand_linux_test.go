@@ -209,7 +209,7 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 	// Enough silent attempts to rule out the benign reading, and no
 	// more; see the arm below for why the bound is on this outcome only.
 	const silentEnough = 5
-	var late, silent int
+	var late, silent, drifted int
 	for i := range attempts {
 		switch closedTtyAttempt(t) {
 		case attemptMeasured:
@@ -218,6 +218,11 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 			late++
 			t.Logf("attempt %d missed the grace window (the timer resolved the "+
 				"prefix first); retrying", i+1)
+		case attemptDrifted:
+			drifted++
+			t.Logf("attempt %d was abandoned before the close: the handshake "+
+				"took more than a quarter timeout, so the arm cannot be "+
+				"located; retrying", i+1)
 		case attemptSilent:
 			silent++
 			t.Logf("attempt %d saw no event at all after the close; retrying", i+1)
@@ -241,42 +246,60 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 	switch {
 	case silent >= silentEnough:
 		t.Fatalf("%d attempts produced NO event after the tty closed (%d "+
-			"more arrived too late to attribute). That is what the regression "+
+			"more arrived too late to attribute, %d were abandoned before the "+
+			"close). That is what the regression "+
 			"under test looks like: a held prefix discarded instead of drained, "+
 			"so the last keystrokes before the terminal went away are lost. The "+
 			"benign reading — every one of those attempts lost its prefix to a "+
 			"split read before the close — needs %d independent accidents, so "+
 			"read DecodeEvents' tty-close arm before blaming the runner",
-			silent, late, silent)
+			silent, late, drifted, silent)
 	case silent > 0:
 		// NO CAUSE NAMED. Below the threshold the two readings are not
 		// separable: a discarded prefix and a split read look the same
 		// from here, and the counts are the only thing this attempt
 		// established.
-		t.Fatalf("%d of %d attempts produced no event after the tty closed and %d "+
-			"arrived too late to attribute, so none of them measured the grace "+
-			"window. Below %d silent attempts a lost prefix (a split read before "+
-			"the close) is as good an explanation as a discarded one, so this "+
-			"names neither: re-run, and read DecodeEvents' tty-close arm if the "+
-			"silent count climbs",
-			silent, attempts, late, silentEnough)
+		t.Fatalf("%d of %d attempts produced no event after the tty closed, %d "+
+			"arrived too late to attribute and %d were abandoned before the "+
+			"close, so none of them measured the grace window. Below %d silent "+
+			"attempts a lost prefix (a split read before the close) is as good "+
+			"an explanation as a discarded one, so this names neither: re-run, "+
+			"and read DecodeEvents' tty-close arm if the silent count climbs",
+			silent, attempts, late, drifted, silentEnough)
 	}
-	t.Fatalf("all %d attempts missed the grace window: the timer resolved the "+
-		"held prefix before the close every time. This machine is too loaded to "+
-		"attribute the resolution to the tty-close path, and passing on that "+
-		"basis would be a test that guards nothing", attempts)
+	// A CAUSE PER COUNT, because the two routes here establish different
+	// things and a single sentence over both named the timer for
+	// attempts that never reached it. Raised in review of #445.
+	t.Fatalf("none of %d attempts measured the grace window: %d arrived after "+
+		"the close but late enough that the timer could have produced them, and "+
+		"%d were abandoned before the close because the handshake drifted more "+
+		"than a quarter timeout, which locates no arm and observes no timer. "+
+		"This machine is too loaded to attribute the resolution to the "+
+		"tty-close path, and passing on that basis would be a test that guards "+
+		"nothing", attempts, late, drifted)
 }
 
 // attemptOutcome is what one closedTtyAttempt could establish. Only
-// attemptMeasured is a pass; the other two are the two ways an attempt
-// can fail to be an attempt, and they are distinguished because the
-// caller's diagnosis differs — see the loop above.
+// attemptMeasured is a pass; the other three are the three ways an
+// attempt can fail to be an attempt, and they are distinguished because
+// the caller's diagnosis differs — see the loop above.
+//
+// attemptDrifted IS NOT attemptLate, and folding them cost the messages
+// their truth. attemptLate is observed: the close ran, an event arrived,
+// and its timing says the timer could have produced it. The drift bail
+// returns BEFORE master.Close() — no close, no event, no timer seen
+// resolving anything — so rendering it as "the timer resolved the prefix
+// first" names a cause the attempt never established. That is the same
+// class this file corrected twice already (the threshold the loop breaks
+// on is the threshold the message claims on, and the silent arm's NO
+// CAUSE NAMED). Raised in review of #445.
 type attemptOutcome int
 
 const (
 	attemptMeasured attemptOutcome = iota
 	attemptLate
 	attemptSilent
+	attemptDrifted
 )
 
 // closedTtyAttempt runs one attempt. It returns a non-measured outcome
@@ -360,7 +383,9 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// bounds held-minus-arm from above and is the discriminator the
 	// elapsed check below cannot be. Raised in review of #445.
 	if held.Sub(wrote) > EscTimeout/4 {
-		return attemptLate // held may be a quarter-timeout past the arm; attribute nothing
+		// NOT attemptLate: nothing has been closed or observed yet, so
+		// there is no timer to blame. See attemptOutcome.
+		return attemptDrifted // held may be a quarter-timeout past the arm
 	}
 
 	if err := master.Close(); err != nil {

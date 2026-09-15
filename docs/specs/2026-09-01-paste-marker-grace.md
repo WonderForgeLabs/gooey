@@ -199,7 +199,7 @@ trusting the prose. Mutation-tested, each mutation turning its own tests red:
 | the loop never escalates to the final pass | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
 | the stall counter resets on every timeout instead of counting | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
 | the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
-| `PasteMarkerGrace` lowered from 2 to 1 | `TestASplitPasteMarkerStillPastes`, `TestPasteMarkerGraceHasAFloor` |
+| `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
 | the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
 
 **Every row is re-derived by running its mutation**, never edited by hand, and
@@ -210,7 +210,7 @@ tty-close test red as well, since with the grace never withdrawn that route
 cannot resolve a held prefix either. A table whose whole value is that it can
 be re-run has to be re-run. Corrected in review of #445.
 
-### The two pty tests refuse to pass vacuously, and that took six goes
+### One pty test refuses to pass vacuously; the other narrows the window and names the residue
 
 Both `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` and
 `TestASplitPasteMarkerStillPastes` need a window: the first needs the tty to
@@ -221,10 +221,13 @@ red. So each measures whether it hit the window, treats a miss as
 **inconclusive** and retries.
 
 What happens when the retries run out is not the same on both, and the
-difference is the point of `closedTtyAttempt`'s three outcomes.
-`splitMarkerAttempt` has one kind of miss and the loop simply exhausts.
-`closedTtyAttempt` distinguishes **late** — an Esc arrived, too late to
-attribute to the close rather than to the timer — from **silent**, and silence
+difference is the point of `closedTtyAttempt`'s non-measured outcomes — how
+many there are is derived from the type, not written here, for the reason
+CLAUDE.md gives about counts in prose. `splitMarkerAttempt` has one kind of
+miss and the loop simply exhausts. `closedTtyAttempt` distinguishes
+**drifted** — abandoned before the close, so no timer was observed and none
+may be named — from **late**, an Esc that arrived too late to attribute to
+the close rather than to the timer, from **silent**, and silence
 after the close *is the regression's own symptom*: a held prefix discarded
 instead of drained, so nothing will ever arrive. One silent attempt is not
 evidence, because a write split across two slave reads looks identical from
@@ -263,10 +266,22 @@ reservation but the same one, because the tail budget is measured from
 `wrote` and so spends the window the drift guard already draws on. A
 sufficiently pathological deschedule of the decoder between the send and the
 `Reset` could still let an attempt land early and pass without exercising the
-grace. What is not
-conditional is the pin: lowering `PasteMarkerGrace` to 1 turns this test red,
-re-measured three runs out of three after the window was rebalanced.
-Corrected in review of #445.
+grace: the drift guard bounds `held - wrote`, so it bounds `arm - held` from
+ABOVE only, and an arm landing late leaves the tail arriving while the prefix
+is still live. The marker is then never split at the decoder at all - the
+whole sequence decodes as one paste, `IsPaste()` holds, and the helper
+returns true having exercised nothing.
+
+**So this test is not the structural pin on the constant, and the heading
+above used to say it was.** Lowering `PasteMarkerGrace` to 1 does turn it red,
+re-measured three runs out of three after the window was rebalanced - but a
+vacuous attempt pastes under the mutation too, so that row holds
+probabilistically. `TestPasteMarkerGraceHasAFloor` is the deterministic guard
+on the constant and is what the mutation table credits first. There is no
+cheap observable for "the first idle timeout fired" - nothing is emitted at
+`stalls = 1` - so a symmetric guard is not available today, and the record
+says that rather than implying one. Corrected in review of #445, and the
+half-claim in the heading corrected in round eleven.
 
 Getting the measurement itself right took the run of corrections below, all
 from review. There is no count in that sentence on purpose: it said *seven*
