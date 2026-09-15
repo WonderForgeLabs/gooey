@@ -493,7 +493,7 @@ const (
 				"is a later entry of this block. That is a doc comment that was " +
 				"separated from what it documents — either KindBeta was inserted " +
 				"between it and KindAlpha, or the blank line between two comment " +
-				"groups was lost, and either way KindBeta is now undocumented.",
+				"groups was lost, and either way KindAlpha is now undocumented.",
 		},
 		{
 			// THE SHAPE MOST OF THE REAL FINDINGS HAD, which is not
@@ -637,6 +637,7 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	// insertion "between the two" is the class of defect
 	// declaresDirectlyBelow's own comment records fixing one arm over.
 	// Raised in review of #503.
+	//
 	// THE INSERTED DECLARATION IS name, NOT first. first is what the
 	// comment documents — one of "the two" the sentence has just
 	// established — so it cannot have been inserted between itself and
@@ -648,11 +649,24 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	// correct, so nothing could go red over it. Raised in review of
 	// #503, which is also where the same shape was fixed on the block
 	// arm.
+	//
+	// AND THE BARE DECLARATION IS first, which the fix for the above got
+	// wrong in the other direction: it corrected who was inserted and
+	// left the closing clause naming the same declaration for who went
+	// bare, so the sentence read "name was inserted … and either way name
+	// is now undocumented". name is the one holding a comment — the wrong
+	// one, but a comment. first is the one with none attached, in both
+	// shapes: after an insertion its own doc is now the newcomer's, and
+	// after a lost blank line the two groups have merged onto name and
+	// nothing is left above first. A reader sent to document name would
+	// write a second doc comment for a declaration that already has one
+	// and leave first bare, which is the edit the guard exists to
+	// prevent. Raised in the round after, on #503 again.
 	separated := func(name, first string) string {
 		return fmt.Sprintf("That is a doc comment that was separated from what it "+
 			"documents — either %s was inserted between it and %s, or the blank line "+
 			"between two comment groups was lost, and either way %s is now "+
-			"undocumented.", name, first, name)
+			"undocumented.", name, first, first)
 	}
 	inherited := func(name, first string) string {
 		return fmt.Sprintf("That is a block doc that no longer opens on its own "+
