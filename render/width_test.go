@@ -343,4 +343,13 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	if got := TerminalColumns(nil, 0); len(got) != 0 {
 		t.Errorf("TerminalColumns of a nil buffer = %v, want empty", got)
 	}
+	// AND THE WHOLE-ROW SPELLING, which sat outside the contract its own
+	// doc had just written down: RowText evaluates b.W in the argument
+	// list, so it faulted before SpanText's guard could answer. Empty
+	// rather than blanks, because a nil buffer has no width to pad to.
+	// Raised in review of #520, the round after the SpanText case.
+	if got := RowText(nil, 0); got != "" {
+		t.Errorf("RowText of a nil buffer = %q, want empty — the guard has to be "+
+			"in RowText, since b.W is read before SpanText is entered", got)
+	}
 }

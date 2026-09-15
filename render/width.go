@@ -188,7 +188,19 @@ func ClipCols(s string, w int) string {
 // "世\ufffd界\ufffd" and no fixture in the repo could contain one. A
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
+// A NIL BUFFER IS ANSWERED HERE TOO, and it has to be answered here
+// rather than left to SpanText: `b.W` is evaluated in the argument list,
+// so a nil buffer faults before the guard one call down can run — inside
+// this package, with the caller off the stack. SpanText's doc calls a
+// nil buffer "the most out of range a span can be"; the whole-row
+// spelling of the same read cannot sit outside that promise. Raised in
+// review of #520, the round after the same finding closed one function
+// over. A row of no buffer is empty rather than padded, because there
+// is no width to pad TO.
 func RowText(b *Buffer, y int) string {
+	if b == nil {
+		return ""
+	}
 	return SpanText(b, 0, y, b.W)
 }
 

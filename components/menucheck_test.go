@@ -282,10 +282,14 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 	// surface comes back as blanks rather than going short, so going
 	// short is not the signal either. Raised in review of #520.
 	if !found {
+		// len(rows)-1: menuRows TERMINATES each line with a newline, so
+		// Split hands back a trailing empty element that is not a row of
+		// the window. This message exists to name the window, so the
+		// number in it has to BE the window. Raised in review of #520.
 		t.Fatalf("none of the %d rows menuRows read holds %q. The dropdown is "+
 			"outside the reader's window (a fixed 40 columns from bar.Bounds), "+
 			"which is a different fault from the row being mis-sized:\n%s",
-			len(rows), "Wrap", strings.Join(rows, "\n"))
+			len(rows)-1, "Wrap", strings.Join(rows, "\n"))
 	}
 	if want := "│[x] Wrap 世界 │"; got != want {
 		t.Errorf("the wide label's row reads %q, want %q. A box narrower than "+

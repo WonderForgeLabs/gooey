@@ -262,13 +262,28 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// commit, which is what CLAUDE.md asks for instead of a list
 	// somewhere else. Check that #519 is still open before believing
 	// this line.
-	t.Skip("TextBox blanks wide glyphs — https://github.com/WonderForgeLabs/gooey/issues/519")
-
+	//
+	// AND IT RETIRES ITSELF, which is the half a skip naming an issue
+	// does not have on its own. An unconditional t.Skip as the first
+	// statement leaves the repo's only wide-glyph TextBox fixture dark
+	// behind a green check once the bug is fixed, and "the fixing branch
+	// already satisfies it" is a cross-branch promise rather than a
+	// local pin. Composing FIRST and deciding after costs one frame and
+	// needs nothing from the issue tracker: the day the row reads
+	// correctly, this fails and says to delete the skip. Raised in
+	// review of #520.
 	v := prop.NewSource("世界")
 	tb := &TextBox{Text: v}
 	tb.SetFocused(true)
 	tb.setCaret(len([]rune("世界")))
 	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+
+	if render.SpanText(f.Cells, 0, 0, 10) == "世界█     " {
+		t.Fatal("#519 looks fixed — this row reads correctly now, so delete the " +
+			"skip below and let this fixture assert. The skip is what has to " +
+			"die with the fix, and nothing outside this file can make it")
+	}
+	t.Skip("TextBox blanks wide glyphs — https://github.com/WonderForgeLabs/gooey/issues/519")
 
 	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
 	// to stand beside it are gone for opposite reasons.

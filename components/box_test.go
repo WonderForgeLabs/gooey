@@ -45,7 +45,15 @@ func outsideWrites(t *testing.T, b *render.Buffer, r gooey.Rect) {
 // because that issue derives its site list from
 // `grep -rln 'WriteRune(.*\.Rune)'` and this spells the same defect
 // with append. The grep under-counts; the defect has two spellings.
-func rowString(b *render.Buffer, y, x0, x1 int) string {
+//
+// (x0, y, x1), NOT (y, x0, x1), for the reason SpanText itself was
+// reordered: all four parameters are int, so a transposed call compiles
+// and reads blanks, and the fixture then fails somewhere else with a
+// message blaming the component. A wrapper that takes the opposite
+// order from the function directly under it is the likelier trap of the
+// two — a reader who has just learned the new order mis-calls the
+// wrapper. Raised in review of #520.
+func rowString(b *render.Buffer, x0, y, x1 int) string {
 	return render.SpanText(b, x0, y, x1-x0)
 }
 
@@ -60,7 +68,7 @@ func TestDrawBoxRunesShape(t *testing.T) {
 		"#╰────╯#",
 	}
 	for i, w := range want {
-		if got := rowString(b, r.Y+i, 0, 8); got != w {
+		if got := rowString(b, 0, r.Y+i, 8); got != w {
 			t.Errorf("row %d = %q, want %q", r.Y+i, got, w)
 		}
 	}
@@ -128,7 +136,7 @@ func TestDrawBoxTitleClipsAndNeverStrandsPadding(t *testing.T) {
 		r := gooey.Rect{X: 1, Y: 1, W: tc.w, H: 3}
 		DrawBoxRunes(b, r, render.Style{})
 		DrawBoxTitle(b, r, "title", render.Style{})
-		if got := rowString(b, r.Y, r.X, r.X+r.W); got != tc.want {
+		if got := rowString(b, r.X, r.Y, r.X+r.W); got != tc.want {
 			t.Errorf("w=%d top row = %q, want %q", tc.w, got, tc.want)
 		}
 		outsideWrites(t, b, r)
