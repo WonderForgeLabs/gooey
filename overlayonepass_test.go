@@ -972,6 +972,19 @@ func notAClear() { copy(x[:cap(x)], y) }
 //
 // text renders an expression back to source, which is how two different
 // `c.kids` compare equal and a `c.kids` and a `d.kids` do not.
+//
+// WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and the guard
+// below says so only here. It matches an assignment whose right side is
+// a slice expression with the literal 0 as its High — `x = x[:0]`. Two
+// spellings retain identically and are invisible to it: a compaction
+// `x = x[:n]`, whose High is not a literal, and `x = append(x[:0], …)`,
+// whose right side is a call. Measured across the tree in review of
+// #456: neither appears on a REUSED FIELD today (the two `x = x[:n]`
+// sites, apps/introdeck/sysmon.go and cmd/finder/main.go, are locals
+// handed back to the caller), so this is scope rather than a live miss —
+// but a guard CLAUDE.md calls "what enforces it" should not leave the
+// reader to derive its own reach from the AST. Raised in review of #456,
+// round two.
 func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 	found := map[string]bool{}
 	ast.Inspect(fn, func(n ast.Node) bool {
