@@ -7,6 +7,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
@@ -190,10 +191,13 @@ func TestSelectionRendersReversed(t *testing.T) {
 	tb.HandleKey(shift(input.KeyRight))
 	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
+	// Cell.Text() rather than Cell.Rune, for #516's reason: this one
+	// cannot be a SpanText because the span is chosen by STYLE, but the
+	// cell still has to read back as the terminal shows it.
 	var rev strings.Builder
 	for x := 0; x < 6; x++ {
 		if f.Cells.At(x, 0).Style.Reverse {
-			rev.WriteRune(f.Cells.At(x, 0).Rune)
+			rev.WriteString(f.Cells.At(x, 0).Text())
 		}
 	}
 	if got := rev.String(); got != "ab" {
@@ -210,11 +214,7 @@ func TestScrollFollowsTheCaretBothWays(t *testing.T) {
 	tb.setCaret(16)
 	row := func() string {
 		f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
-		var sb strings.Builder
-		for x := 0; x < 6; x++ {
-			sb.WriteRune(f.Cells.At(x, 0).Rune)
-		}
-		return sb.String()
+		return render.SpanText(f.Cells, 0, 0, 6)
 	}
 	if got := row(); !strings.HasSuffix(strings.TrimRight(got, " "), "p█") {
 		t.Fatalf("caret at the end showed %q, want the tail with the caret", got)

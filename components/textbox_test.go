@@ -144,11 +144,7 @@ func TestTextBoxRendersPromptTextAndCaret(t *testing.T) {
 	tb.setCaret(2)
 	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
-	var sb strings.Builder
-	for x := 0; x < 10; x++ {
-		sb.WriteRune(f.Cells.At(x, 0).Rune)
-	}
-	if got, want := sb.String(), "> hi█     "; got != want {
+	if got, want := render.SpanText(f.Cells, 0, 0, 10), "> hi█     "; got != want {
 		t.Errorf("rendered %q, want %q", got, want)
 	}
 }
@@ -161,12 +157,8 @@ func TestTextBoxScrollsToKeepTheCaretVisible(t *testing.T) {
 	tb.setCaret(len("abcdefghijklmnop")) // caret at the end, as after typing
 	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
-	var sb strings.Builder
-	for x := 0; x < 6; x++ {
-		sb.WriteRune(f.Cells.At(x, 0).Rune)
-	}
 	// Caret is at the end, so the tail is what shows.
-	if got := sb.String(); !strings.Contains(got, "p") {
+	if got := render.SpanText(f.Cells, 0, 0, 6); !strings.Contains(got, "p") {
 		t.Errorf("narrow field showed %q; the caret end must stay visible", got)
 	}
 }
@@ -245,5 +237,62 @@ func TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks(t *testing.T) {
 		if got := v.Get(); got != tc.want {
 			t.Errorf("%s: pasting %q gave %q, want %q", tc.name, tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestTextBoxRendersAWideGlyphInItsOwnColumns is the fixture the reader
+// above could not hold, which is the whole of #516: a rune-per-cell read
+// builds "世�界�" for a row the terminal draws as "世界", so a
+// wide-glyph assertion failed for a reason that was not the bug and
+// nobody wrote one. Every fixture in this package stayed ASCII, and an
+// ASCII fixture agrees with itself under the rune rule and the column
+// rule alike — it passes against the defect either way.
+//
+// TWO GLYPHS, FOUR COLUMNS, TWO RUNES, which is CLAUDE.md's recipe for
+// pinning one of these. The caret sits after them, so its column is the
+// assertion: a TextBox advancing one column per rune puts it at 2 and
+// leaves the row reading "世界█" two columns early.
+func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
+	// SKIPPED AGAINST AN OPEN BUG, not against a design decision. The
+	// fixture is what found #519 — TextBox advances one COLUMN per rune,
+	// so the next rune lands on the continuation cell the previous glyph
+	// claimed, healSeam blanks the orphaned lead, and the glyph is gone:
+	// "世界" renders as " 界" unfocused and "  █" with the caret at the
+	// end. Written here so the claim dies with the fix in the same
+	// commit, which is what CLAUDE.md asks for instead of a list
+	// somewhere else. Check that #519 is still open before believing
+	// this line.
+	t.Skip("TextBox blanks wide glyphs — https://github.com/WonderForgeLabs/gooey/issues/519")
+
+	v := prop.NewSource("世界")
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	tb.setCaret(len([]rune("世界")))
+	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+
+	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
+	// to stand beside it are gone for opposite reasons.
+	//
+	// A loop over TerminalColumns asserting col == i was false of a
+	// CORRECT wide row — a continuation cell's recorded column is where
+	// the cursor sits mid-glyph, which is legitimately not its index —
+	// so it could not run. render.Displaced replaced it and cannot
+	// FAIL: #519 blanks the orphaned lead through healSeam, so the row
+	// is wrong without being displaced. Measured against the buggy
+	// render, all three cases of this fixture:
+	//
+	//	"世界" unfocused -> " 界       "  displaced=false
+	//	"世界" focused   -> "  █       "  displaced=false
+	//	"a世b" unfocused -> "a b       "  displaced=false
+	//
+	// Nor is it reachable for any component test: Buffer.Set and
+	// SetString lay the continuation themselves, and render/cell.go says
+	// of the remaining displacement branch that it is only reachable by
+	// assigning Cells directly. An assertion that cannot fail measures
+	// nothing, and a second one beside a real pin reads as corroboration
+	// it is not supplying. Raised in review of #520.
+	if got, want := render.SpanText(f.Cells, 0, 0, 10), "世界█     "; got != want {
+		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
+			"the caret belongs in column 4", got, want)
 	}
 }

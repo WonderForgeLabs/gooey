@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
@@ -18,12 +19,17 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 	return gooey.Compose(root, term.Caps{Cols: cols, Rows: rows}, nil)
 }
 
+// dump is the frame as a terminal would show it, one row per line.
+//
+// Through render.SpanText, which leaves the continuation markers out.
+// Reading Cell.Rune instead writes render.Continuation — rune(-1),
+// U+FFFD when stringified — into the middle of any row holding a wide
+// glyph, so no fixture in this file could contain one and be asserted
+// on. See #516.
 func dump(f *gooey.Frame, cols, rows int) string {
 	var sb strings.Builder
 	for y := 0; y < rows; y++ {
-		for x := 0; x < cols; x++ {
-			sb.WriteRune(f.Cells.At(x, y).Rune)
-		}
+		sb.WriteString(render.SpanText(f.Cells, 0, y, cols))
 		sb.WriteByte('\n')
 	}
 	return sb.String()

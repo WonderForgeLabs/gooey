@@ -189,9 +189,80 @@ func ClipCols(s string, w int) string {
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
 func RowText(b *Buffer, y int) string {
+	return SpanText(b, 0, y, b.W)
+}
+
+// SpanText is RowText over w columns starting at x — what that part of
+// row y would read as on a terminal.
+//
+// (x, y, w), NOT (y, x, w). Every other coordinate-taking function in
+// this package is x-then-y — Buffer.At, Buffer.Set, Buffer.SetString —
+// and this took y first for one commit. All four parameters are int, so
+// a transposed call COMPILES, and by the off-buffer rule below it
+// returns spaces rather than panicking: the fixture simply stops
+// matching and the message blames the component. Raised in review of
+// #520, before #516 spread the call across eleven more directories.
+//
+// THE SPAN FORM IS THE ONE THE TESTS ACTUALLY WANT, and its absence is
+// why RowText did not stop the copies it was written to stop. A test
+// asserting on a dock header, a menu row's check box or a status gutter
+// is asking about a REGION, so each package grew its own reader — and
+// each wrote Continuation as a literal rune, which is the defect
+// RowText exists to remove, re-introduced one directory over.
+// [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the
+// sweep; this is the function that makes each site a call rather than a
+// helper.
+//
+// TWO EDGES, BOTH FROM THE SPAN CUTTING A WIDE GLYPH, and both are the
+// honest answer rather than a rounding:
+//
+//   - starting ON a continuation cell reads one column SHORT. The
+//     glyph's own cell is outside the span, and its continuation carries
+//     no text — half a glyph is not drawable, which is the same reason
+//     ClipCols stops before one.
+//   - ending on a glyph's FIRST cell reads one column LONG: that cell
+//     holds the whole glyph, so the returned string is two columns wide
+//     where the span asked for one.
+//
+// A caller comparing against a fixture of known width should keep its
+// span off a glyph's middle; a caller measuring should use StringWidth
+// on the result rather than assuming w.
+//
+// OFF THE BUFFER READS AS BLANKS, and that is a choice rather than an
+// accident — Buffer.At answers a space out of bounds, so a span that
+// runs past b.W, starts left of 0, or names a row that does not exist
+// returns spaces for those columns instead of a short string or a
+// panic. It matters because every converted reader here reads a FIXED
+// extent: a dropdown that moves down the screen, or a composer resized
+// in a later edit, turns the tail of one of these reads into phantom
+// blanks, and an assertion shaped `!strings.Contains(got, …)` or "the
+// row is empty" passes on blank input.
+//
+// TerminalColumns chose the other answer for the same question (nil for
+// an out-of-range y) because its result is a per-cell map and there is
+// no blank cell to report. Padding is the right answer HERE: a span is
+// a region of a terminal, and a terminal has blanks where nothing was
+// drawn. TestSpanTextPadsWhereTheBufferIsNot pins it, so the contract
+// is chosen rather than inherited from Buffer.At.
+//
+// A NIL BUFFER IS PART OF THAT CONTRACT, and it was the one out-of-range
+// shape the paragraph above promised and did not deliver: Buffer.At
+// dereferences b.W, so a nil buffer panicked inside render with At on
+// the stack rather than the caller. Not a regression — RowText's old
+// body read b.W the same way — but this is the commit that writes the
+// contract down and points eleven more directories at the function, so
+// it is where the gap closes. TerminalColumns guards nil as its first
+// condition for the same reason. Raised in review of #520.
+func SpanText(b *Buffer, x, y, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if b == nil {
+		return strings.Repeat(" ", w)
+	}
 	var sb strings.Builder
-	for x := 0; x < b.W; x++ {
-		sb.WriteString(b.At(x, y).Text())
+	for i := 0; i < w; i++ {
+		sb.WriteString(b.At(x+i, y).Text())
 	}
 	return sb.String()
 }
