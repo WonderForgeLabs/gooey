@@ -706,7 +706,40 @@ func (ed *editor) pasteMarkup(src string) {
 		ed.status.Set("✗ pasted text is not markup: " + err.Error())
 		return
 	}
+	// AND THE DECLARATION CASE SAYS WHY IT IS REFUSED. unwrapGooey's
+	// comment explains the asymmetry with openWorkspaceFile at length
+	// and no user-facing string carried a word of it: the envelope fell
+	// through to insertSubtree, which reported "markup: unknown element
+	// <Gooey>" to somebody who had just copied a valid file. Raised in
+	// review of #522.
+	if n.Elem == "Gooey" {
+		if d := len(declarationsIn(n)); d > 0 {
+			noun := "declarations"
+			if d == 1 {
+				noun = "declaration"
+			}
+			ed.status.Set(fmt.Sprintf("✗ not pasted: this document declares %d property %s "+
+				"on its <Gooey>, and a paste lands inside a document that already has an "+
+				"envelope of its own — merging them would change this control's public "+
+				"surface. Open the file instead, or paste just the element you want.",
+				d, noun))
+			return
+		}
+	}
 	ed.insertSubtree(n, "pasted markup:")
+}
+
+// declarationsIn is the property declarations among an envelope's
+// children — the same partition markup's splitDeclarations makes, keyed
+// on Space for the reason node.Space records.
+func declarationsIn(n *node) []*node {
+	var out []*node
+	for _, k := range n.Kids {
+		if k.Space == markup.XNamespace {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // unwrapGooey strips a <Gooey> envelope with exactly one element in it.

@@ -398,7 +398,20 @@ func (ed *editor) openWorkspaceFile(rel string) {
 			msg := "✗ " + rel + ": a <Gooey> document needs exactly one root element, found " +
 				strconv.Itoa(len(n.Kids))
 			if len(decls) > 0 {
-				msg += " (its " + strconv.Itoa(len(decls)) + " <x:Property> declaration(s) are not root elements)"
+				// THE AUTHOR'S OWN PREFIX, not "x:". The message exists
+				// to tell them which of their elements is being counted
+				// separately, and #522 is the change that made a p:
+				// document round-trip as p: — so naming x: here sends
+				// the reader looking for elements their file does not
+				// contain. n.Attrs is in hand, which is where the
+				// binding lives. Raised in review of #522.
+				prefix, _ := declBinding(n.Attrs)
+				noun := " declarations are"
+				if len(decls) == 1 {
+					noun = " declaration is"
+				}
+				msg += " (its " + strconv.Itoa(len(decls)) + " <" + prefix + ":Property>" +
+					noun + " not root elements)"
 			}
 			ed.status.Set(msg)
 			return
