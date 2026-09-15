@@ -718,9 +718,14 @@ func (ed *editor) pasteMarkup(src string) {
 	// file does not, and refusing the second would be refusing the
 	// common case.
 	n, err := nodeOf(src)
+	var envelopeWhy string
 	if err == nil {
-		if inner, ok := unwrapGooey(n); ok {
+		inner, ok, why := unwrapGooey(n)
+		switch {
+		case ok:
 			n = inner
+		default:
+			envelopeWhy = why
 		}
 	}
 	if err != nil {
@@ -732,40 +737,14 @@ func (ed *editor) pasteMarkup(src string) {
 		ed.status.Set("✗ pasted text is not markup: " + err.Error())
 		return
 	}
-	// AND THE DECLARATION CASE SAYS WHY IT IS REFUSED. unwrapGooey's
-	// comment explains the asymmetry with openWorkspaceFile at length
-	// and no user-facing string carried a word of it: the envelope fell
-	// through to insertSubtree, which reported "markup: unknown element
-	// <Gooey>" to somebody who had just copied a valid file. Raised in
-	// review of #522.
-	if n.Elem == "Gooey" {
-		if d := len(declarationsIn(n)); d > 0 {
-			noun := "declarations"
-			if d == 1 {
-				noun = "declaration"
-			}
-			ed.status.Set(fmt.Sprintf("✗ not pasted: this document declares %d property %s "+
-				"on its <Gooey>, and a paste lands inside a document that already has an "+
-				"envelope of its own — merging them would change this control's public "+
-				"surface. Open the file instead, or paste just the element you want.",
-				d, noun))
-			return
-		}
+	// AND A REFUSED ENVELOPE SAYS WHY. unwrapGooey decides the refusal
+	// and now carries the sentence with it, rather than this caller
+	// re-deriving one arm of it. Raised in review of #522.
+	if envelopeWhy != "" {
+		ed.status.Set("✗ not pasted: " + envelopeWhy)
+		return
 	}
 	ed.insertSubtree(n, "pasted markup:")
-}
-
-// declarationsIn is the property declarations among an envelope's
-// children — the same partition markup's splitDeclarations makes, keyed
-// on Space for the reason node.Space records.
-func declarationsIn(n *node) []*node {
-	var out []*node
-	for _, k := range n.Kids {
-		if k.Space == markup.XNamespace {
-			out = append(out, k)
-		}
-	}
-	return out
 }
 
 // unwrapGooey strips a <Gooey> envelope with exactly one element in it.
@@ -806,42 +785,43 @@ func declarationsIn(n *node) []*node {
 // paste of this editor's own output therefore arrives with the
 // declaration already on the child and nothing to carry — the carry is
 // for the documents the editor did not write. Raised in review of #501.
-//
-// `xmlns:x` IS DROPPED HERE, DELIBERATELY, and this is the one place
-// that is true. carryDeclarations skips markup.XNamespace because moving
-// an ELEMENT prefix down changes its scope — its own comment argues the
-// case, and calls deleting the guard a fidelity loss on every
-// `<Gooey xmlns:x>` file on disk. That argument is openWorkspaceFile's,
-// where the envelope survives in ed.envAttrs and "stays on the envelope"
-// means kept. HERE THE ENVELOPE IS THROWN AWAY two lines down, so the
-// same skip means discarded — silently, with no message. Measured:
-// pasting `<Gooey xmlns:x="…/x" xmlns:t="urn:t" Graphics="halfblock">`
-// over a Canvas carries xmlns:t onto the content root and drops
-// xmlns:x, leaving envAttrs empty.
-//
-// Dropping is CORRECT for a fragment and carrying would be wrong. x:
-// names elements, the `<x:Property>` elements it exists for are siblings
-// of the content root, and a fragment is a content subtree — so a
-// carried declaration would land on the root scoping nothing, which is
-// precisely the scope change the skip exists to prevent. Graphics goes
-// for the neighbouring reason fragmentFor argues: a fragment must not
-// carry the source document's envelope.
-//
-// WHAT HOLDS IT UP IS ANOTHER FUNCTION, which is the part worth writing
-// down rather than leaving to be rediscovered. It is harmless only
-// because nodeOf refuses a prefixed element (main.go), so nothing the
-// model can hold uses `x:` and no dropped declaration can strand a
-// prefix that is still in use. Relax that refusal — #522's
-// markup.XNamespace exemption is the live proposal — and this drop stops
-// being free in the same commit, with nothing here to notice.
-// TestAPastedEnvelopesXDeclarationIsDropped pins the behaviour so the
-// change has to be deliberate. Raised in review of #501.
-func unwrapGooey(n *node) (*node, bool) {
-	if n.Elem != "Gooey" || len(n.Kids) != 1 || len(n.Slots) != 0 {
-		return nil, false
+// IT RETURNS THE REASON IT REFUSED, and the reason is the whole point
+// of the paragraph above: the envelope falls through to insertSubtree,
+// which reports "markup: unknown element <Gooey>" to somebody who has
+// just copied a valid file. The first repair explained only the
+// declaration arm, from pasteMarkup, which left the case this comment is
+// actually written about — a whole page pasted into a selected <Text> —
+// reporting the unknown-element string verbatim. Deciding the refusal
+// and explaining it in two places is what let them diverge; they are one
+// place now. An empty reason means this is not an envelope at all, which
+// is not a refusal. Raised in review of #522.
+func unwrapGooey(n *node) (inner *node, ok bool, why string) {
+	if n.Elem != "Gooey" {
+		return nil, false, ""
+	}
+	decls, kids := splitDecls(n)
+	switch {
+	case len(decls) > 0:
+		noun := "declarations"
+		if len(decls) == 1 {
+			noun = "declaration"
+		}
+		return nil, false, fmt.Sprintf("this document declares %d property %s on its "+
+			"<Gooey>, and a paste lands inside a document that already has an "+
+			"envelope of its own — merging them would change this control's "+
+			"public surface. Open the file instead, or paste just the element "+
+			"you want.", len(decls), noun)
+	case len(n.Slots) != 0:
+		return nil, false, "this <Gooey> carries property-element content of its " +
+			"own, which belongs to the document it came from rather than to any " +
+			"element in this one. Paste just the element you want."
+	case len(kids) != 1:
+		return nil, false, fmt.Sprintf("this is a whole document with %d root "+
+			"elements, and a paste inserts ONE element into the selection. "+
+			"Open the file instead, or copy just the element you want.", len(kids))
 	}
 	carryDeclarations(n, n.Kids[0])
-	return n.Kids[0], true
+	return n.Kids[0], true, ""
 }
 
 // reconcileNamespaces settles a pasted subtree's namespace declarations

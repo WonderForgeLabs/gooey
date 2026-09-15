@@ -577,3 +577,141 @@ func TestTheXPropertyRefusalNamesTheRoot(t *testing.T) {
 			"that has nothing to do with namespaces", tc.name, err)
 	}
 }
+
+// TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet pins
+// NewValue against the arm of resolve it is the public spelling of: a
+// caller with no instantiation site gets what an omitted optional
+// attribute gets, and gets it from the same table row.
+//
+// Derived from Declarations rather than from a literal Declaration,
+// because a Declaration built here would carry no type table row and
+// the last case below is the one that proves that matters.
+func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
+	src := `<Gooey xmlns:x="` + XNamespace + `">
+  <x:Property Name="Title" Type="string" Default="hi"/>
+  <x:Property Name="Count" Type="int"/>
+  <x:Property Name="Who" Type="string" Required="true"/>
+  <x:Property Name="Tint" Type="style"/>
+  <Text Text="{{.Title}}"/>
+</Gooey>
+`
+	decls, err := Declarations([]byte(src))
+	if err != nil {
+		t.Fatalf("Declarations: %v", err)
+	}
+	by := map[string]Declaration{}
+	for _, d := range decls {
+		by[d.Name] = d
+	}
+
+	// Default is the value, and a type with no Default — Required or
+	// not — is the type's zero, never an error.
+	title, err := by["Title"].NewValue()
+	if err != nil {
+		t.Fatalf("Title: %v", err)
+	}
+	p, ok := title.(*prop.Property[string])
+	if !ok {
+		t.Fatalf("Title is %T, want *prop.Property[string]", title)
+	}
+	if got := p.Get(); got != "hi" {
+		t.Errorf("Title = %q, want %q — Default is what an absent attribute resolves to", got, "hi")
+	}
+	count, err := by["Count"].NewValue()
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if got := count.(*prop.Property[int]).Get(); got != 0 {
+		t.Errorf("Count = %d, want 0", got)
+	}
+	// Required has no Default and cannot have one (parseDeclaration
+	// refuses the pair), so the zero handle is the only thing left. It
+	// is deliberately not an error: Required is a contract with an
+	// instantiation site, and a caller holding the definition alone has
+	// not broken it.
+	who, err := by["Who"].NewValue()
+	if err != nil {
+		t.Fatalf("Who is Required, and NewValue must not treat that as a breach: %v", err)
+	}
+	if got := who.(*prop.Property[string]).Get(); got != "" {
+		t.Errorf("Who = %q, want the zero string", got)
+	}
+	// Bind-only follows the same rule it already follows for an absent
+	// attribute: the zero handle, not a refusal.
+	tint, err := by["Tint"].NewValue()
+	if err != nil {
+		t.Fatalf("Tint: %v", err)
+	}
+	if _, ok := tint.(*prop.Property[render.Style]); !ok {
+		t.Fatalf("Tint is %T, want *prop.Property[render.Style]", tint)
+	}
+
+	// PER CALL, not per declaration. Two hosts previewing the same
+	// control file must not write through each other's handle, which is
+	// the rule resolve states for two <Card/> elements.
+	a, _ := by["Title"].NewValue()
+	b, _ := by["Title"].NewValue()
+	if a == b {
+		t.Error("two NewValue calls returned the same handle; a declaration's value is per-instance")
+	}
+
+	// A Declaration the caller built themselves names a Type and
+	// carries no row for it. Refused by name rather than panicking on a
+	// nil closure inside this package.
+	if _, err := (Declaration{Name: "Made", Type: "string"}).NewValue(); err == nil {
+		t.Error("a Declaration that never came from a parse must not resolve")
+	} else if !strings.Contains(err.Error(), "Made") || !strings.Contains(err.Error(), "type table row") {
+		t.Errorf("error is %q, want it to name the property and say why", err)
+	}
+}
+
+// TestSeedingDeclaredDefaultsBuildsTheDefiningDocument is the reason
+// NewValue is exported, end to end: the document that DECLARES a
+// property and then binds it has no instantiation site, so nothing
+// fills Values and the body's own binding is a load error. Seeded, it
+// builds.
+//
+// Build, not Include — an Include has a site, and it is the absence of
+// one that this pins.
+func TestSeedingDeclaredDefaultsBuildsTheDefiningDocument(t *testing.T) {
+	src := `<Gooey xmlns:x="` + XNamespace + `">
+  <x:Property Name="Title" Type="string" Default="hi"/>
+  <Text>{{.Title}}</Text>
+</Gooey>
+`
+	// The premise: unseeded, this is the failure the editor reported.
+	if _, err := Build([]byte(src), &Context{}); err == nil {
+		t.Fatal("a defining document built without its declarations seeded; " +
+			"if top-level Build now instantiates declarations, this test and NewValue's reason for existing both need revisiting")
+		// The MESSAGE, not just "an error": a fixture that fails to
+		// build for an unrelated reason — a misspelled attribute, say —
+		// would satisfy a bare err != nil and prove nothing about
+		// declarations at all.
+	} else if !strings.Contains(err.Error(), `"Title" not found in context`) {
+		t.Fatalf("unseeded build failed with %v, want the unresolved binding", err)
+	}
+
+	decls, err := Declarations([]byte(src))
+	if err != nil {
+		t.Fatalf("Declarations: %v", err)
+	}
+	ctx := &Context{Values: map[string]any{}}
+	for _, d := range decls {
+		v, err := d.NewValue()
+		if err != nil {
+			t.Fatalf("%s: %v", d.Name, err)
+		}
+		ctx.Values[d.Name] = v
+	}
+	root, err := Build([]byte(src), ctx)
+	if err != nil {
+		t.Fatalf("seeded build: %v", err)
+	}
+	txt, ok := root.(*components.Text)
+	if !ok {
+		t.Fatalf("root is %T, want *components.Text", root)
+	}
+	if got := txt.Content.Get(); got != "hi" {
+		t.Errorf("Text = %q, want the declared Default %q", got, "hi")
+	}
+}

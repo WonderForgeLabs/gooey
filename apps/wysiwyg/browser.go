@@ -50,7 +50,6 @@ import (
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
-	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -382,13 +381,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// told the author a file markup loads has "2 root elements" —
 		// advice whose only reading is to delete the declaration. #517.
 		var kids []*node
-		for _, k := range n.Kids {
-			if k.Space == markup.XNamespace {
-				decls = append(decls, k)
-				continue
-			}
-			kids = append(kids, k)
-		}
+		decls, kids = splitDecls(n)
 		n.Kids = kids
 		if len(n.Kids) != 1 {
 			// NAMING THE DECLARATIONS SEPARATELY, so the count the
@@ -405,13 +398,30 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// the reader looking for elements their file does not
 				// contain. n.Attrs is in hand, which is where the
 				// binding lives. Raised in review of #522.
-				prefix, _ := declBinding(n.Attrs)
-				noun := " declarations are"
-				if len(decls) == 1 {
-					noun = " declaration is"
+				// THE WHOLE TAIL AGREES, not just the verb. It read
+				// "its 1 <p:Property> declaration is not root elements"
+				// — the noun carried the verb and the trailing literal
+				// stayed plural. Nothing went red over it because
+				// nothing asserted this branch at all; the tests here
+				// now do.
+				//
+				// AND AN UNBOUND PREFIX IS NOT WRITTEN. declBinding
+				// falls back to "x" when the envelope binds nothing,
+				// which is exactly the document whose declaration is
+				// named by its own default xmlns — a file containing no
+				// x: anywhere. Naming <x:Property> there sends the
+				// author looking for an element they never wrote.
+				// Raised in review of #522.
+				prefix, bound := declBinding(n.Attrs)
+				elem := "<Property>"
+				if bound {
+					elem = "<" + prefix + ":Property>"
 				}
-				msg += " (its " + strconv.Itoa(len(decls)) + " <" + prefix + ":Property>" +
-					noun + " not root elements)"
+				noun := " declarations are not root elements"
+				if len(decls) == 1 {
+					noun = " declaration is not a root element"
+				}
+				msg += " (its " + strconv.Itoa(len(decls)) + " " + elem + noun + ")"
 			}
 			ed.status.Set(msg)
 			return

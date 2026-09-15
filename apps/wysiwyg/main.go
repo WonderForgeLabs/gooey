@@ -886,40 +886,6 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 	return out
 }
 
-// gooeyOpen is the envelope's opening tag, carrying whatever the opened
-// file wrote on it.
-//
-// ONE FUNCTION FOR EVERY ENVELOPE THAT DESCRIBES A DOCUMENT. `"<Gooey>\n"`
-// was spelled independently in ed.rebuild and in saveOpenFile, and nothing
-// crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
-// was added to close from the other end.
-//
-// ONE LITERAL IS LEFT, AND ON PURPOSE: fragmentFor (remotemode.go). A
-// patch fragment is not a document — it addresses an island inside
-// someone else's, so the envelope attributes this function writes are
-// exactly the ones it must not carry. A Graphics or a default xmlns
-// belongs to the file the author saved; an xmlns:x scopes <x:Property>
-// elements that are siblings of the content root and never travel in a
-// fragment at all. The handler prefixes DO travel, because
-// carryDeclarations already put them on the content root, which is what
-// ed.root.markup writes. The count that used to be here was
-// hand-maintained and was already one behind — so
-// TestOnlyOneFunctionWritesADocumentEnvelope derives the set instead.
-// Raised in review of #501, twice.
-//
-// attrValue like node.markup, because these attributes go back out the
-// way every other attribute in this document does and the two must agree
-// about quoting. They agreed on %q until review of #501, which is how
-// they came to agree about being wrong.
-//
-// THAT PARAGRAPH IS envelopeHead'S NOW. All three call sites moved
-// there when #517 gave the envelope declarations to write, so this
-// function has exactly one caller and envelopeHead is where the three
-// literals were collapsed. The comment kept saying otherwise because
-// envelopeHead was inserted directly below this block with no blank
-// line, which also made godoc read the whole of it as envelopeHead's
-// doc and left gooeyOpen with none. Raised in review of #522.
-
 // envelopeHead is the document's opening <Gooey …> tag together with
 // the declarations that belong to the envelope rather than to the tree.
 //
@@ -1022,6 +988,26 @@ func declBinding(attrs map[string]string) (string, bool) {
 	return p, false
 }
 
+// gooeyOpen is the envelope's opening tag, carrying whatever the opened
+// file wrote on it.
+//
+// ONE FUNCTION FOR THREE LITERALS. `"<Gooey>\n"` was spelled
+// independently in ed.rebuild (twice) and in saveOpenFile, and nothing
+// crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
+// was added to close from the other end.
+//
+// attrValue like node.markup, because these attributes go back out the
+// way every other attribute in this document does and the two must agree
+// about quoting. They agreed on %q until review of #501, which is how
+// they came to agree about being wrong.
+//
+// THAT PARAGRAPH IS envelopeHead'S NOW. All three call sites moved
+// there when #517 gave the envelope declarations to write, so this
+// function has exactly one caller and envelopeHead is where the three
+// literals were collapsed. The comment kept saying otherwise because
+// envelopeHead was inserted directly below this block with no blank
+// line, which also made godoc read the whole of it as envelopeHead's
+// doc and left gooeyOpen with none. Raised in review of #522.
 func gooeyOpen(attrs map[string]string) string {
 	var b strings.Builder
 	b.WriteString("<Gooey")
@@ -1030,6 +1016,27 @@ func gooeyOpen(attrs map[string]string) string {
 	}
 	b.WriteString(">\n")
 	return b.String()
+}
+
+// splitDecls partitions an envelope's children into the property
+// DECLARATIONS and the rest, on the same key markup's splitDeclarations
+// uses (markup/property.go).
+//
+// ONE FUNCTION BECAUSE THERE ARE TWO READERS, which is carryDeclarations'
+// argument three files over and applies unchanged: openWorkspaceFile
+// needs both halves and pasteMarkup needs the declarations, and they had
+// a copy of the split each. markup refuses any <x:Foo> that is not
+// Property, so the day that predicate moves the editor would otherwise
+// have two places to follow it to. Raised in review of #522.
+func splitDecls(n *node) (decls, kids []*node) {
+	for _, k := range n.Kids {
+		if k.Space == markup.XNamespace {
+			decls = append(decls, k)
+			continue
+		}
+		kids = append(kids, k)
+	}
+	return decls, kids
 }
 
 // nodeOf parses markup into the editor's document model — a palette
@@ -1660,6 +1667,12 @@ type editor struct {
 	// assigned at the one site that assigns those, for the reason
 	// TestEnvAttrsIsAssignedWhereTheDocumentIs exists. Added for #517.
 	envDecls []*node
+	// seededDecls are the declared names seedDeclared last put into
+	// ed.docCtx.Values, so the next rebuild can take exactly those back
+	// out and no others. See seedDeclared for why the map is shared and
+	// why that makes retirement this method's job. Added in review of
+	// #522.
+	seededDecls []string
 
 	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
 	// recorded from rebuild rather than from each mutator, so a mutation
@@ -2875,6 +2888,12 @@ func (ed *editor) rebuild() {
 		return
 	}
 
+	// The document's own declarations are part of the vocabulary it is
+	// built against, and only the editor can put them there — see
+	// seedDeclared. Before the Build, because that is what consumes
+	// them.
+	ed.seedDeclared(full)
+
 	// Built against the DOCUMENT vocabulary, so a document can never
 	// contain the editor's own chrome. FULL, not src: the preview is the
 	// document on its surface.
@@ -2896,6 +2915,78 @@ func (ed *editor) rebuild() {
 	ed.nodeOf = map[gooey.Component]*node{}
 	ed.compOf = map[*node]gooey.Component{}
 	ed.mapNodes(ed.root, w)
+}
+
+// seedDeclared gives the open document's own <x:Property> declarations
+// a live handle in the vocabulary the preview is built against, so a
+// file that DECLARES a property and then binds it — {{.Title}} in the
+// body of the control that declares Title — previews instead of
+// refusing to load.
+//
+// NOTHING ELSE DOES THIS, and the reason is structural rather than an
+// oversight. declarations.instantiate runs at an INSTANTIATION SITE
+// (markup/usercontrol.go): the page that writes <Card Title="…"/>
+// resolves the attribute and hands the result down. The editor is
+// holding card.gooey itself, which has no site above it, so the
+// declared names never reach Context.Values and the control's own
+// binding is the error the user sees:
+//
+//	✗ markup: "Title" not found in context
+//
+// #517 opened such a file and #522's first rounds made it round-trip;
+// this is the half that makes it BUILD. Raised in review of #522.
+//
+// markup.Declaration.NewValue picks the value, and that call is the
+// whole of the policy: it is the handle an omitted optional attribute
+// would have got, Default included. A Required property has no default
+// and previews as its type's zero — the only stand-in available to a
+// tool that is not an instantiation site, and a visible one, since an
+// empty string on the surface is what a caller who forgot it would see.
+//
+// RETIRED AND RESEEDED WHOLE, every rebuild. docCtx.Values is the
+// editor's one binding map (newEditor gives docCtx ed.ctx.Values), so a
+// name the previous file declared would otherwise still resolve in the
+// next one — and a Type edited in place would keep the handle of the
+// type it used to be, which builds and then paints the wrong thing.
+// Reseeding costs one parse of a document the rebuild is about to parse
+// again; the early return keeps that off every document that declares
+// nothing.
+//
+// A name Values already holds is LEFT ALONE, and that check is load
+// bearing rather than defensive. menuValues registers the IDE shell's
+// own bindings under BARE names — Region, CodeView, Save — in this same
+// map, and a declaration may legally be called any of them. Without the
+// check such a document would replace the editor's handle with a string
+// source and then, on the next open, DELETE it: the menus would be
+// bound to nothing, in a session that had merely opened a file.
+// markup.Seeded's placeholders are safe by spelling (<Name>_<Attr>) and
+// these are not.
+func (ed *editor) seedDeclared(src string) {
+	if len(ed.envDecls) == 0 && len(ed.seededDecls) == 0 {
+		return
+	}
+	for _, name := range ed.seededDecls {
+		delete(ed.docCtx.Values, name)
+	}
+	ed.seededDecls = ed.seededDecls[:0]
+	decls, err := markup.Declarations([]byte(src))
+	if err != nil {
+		// The build this precedes reports it, with the same message and
+		// in the place the user is already looking. Parsing twice is
+		// what needing the declarations BEFORE the build costs.
+		return
+	}
+	for _, d := range decls {
+		if _, taken := ed.docCtx.Values[d.Name]; taken {
+			continue
+		}
+		v, err := d.NewValue()
+		if err != nil {
+			continue
+		}
+		ed.docCtx.Values[d.Name] = v
+		ed.seededDecls = append(ed.seededDecls, d.Name)
+	}
 }
 
 func (ed *editor) outline() string {
