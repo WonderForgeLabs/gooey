@@ -491,6 +491,28 @@ in the framework will catch a violation.
 **joins** the decoder while draining its channel, bounded by
 `term.DecoderTimeout`, with `Screen.DecoderLeaked` as the tripwire.
 
+**A REUSED SLICE WHOSE ELEMENTS HOLD REFERENCES IS CLEARED TO CAP, NOT
+TRUNCATED.** `x = x[:0]` moves `len` and leaves the backing array holding
+every element past it, so a list that shrinks — a container that loses a
+child, a computed whose dependency set narrows, a filter that drops an
+adornment — keeps the dropped components, property nodes or closures
+alive for as long as the owner is. Nothing reports it: the tree renders
+correctly, the tests pass, and the only symptom is a heap that does not
+come back down. Write `clearToCap(x)` in the root package, or
+`clear(x[len(x):cap(x)])` **after** the refill elsewhere (the after-the-
+refill form costs `cap - len` rather than `cap`, and never leaves a live
+slot holding nil for a walk that re-enters mid-`range`).
+
+`TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
+it, and where that test LIVES is the half worth knowing: it walks every
+non-test Go file in the whole tree, **nested modules included**, from the
+ROOT module's suite. So a reset added in `packs/temporal-workflow` reddens
+`go test ./...` at the repo root while that module's own `go test ./...`
+stays green — the verify loop above will not show it to you, and the
+failure message says so at the point it fires. A `retains nothing:`
+comment above the reset is the documented escape, for elements that
+genuinely cannot hold a reference.
+
 **Heavy dependencies live in nested modules.** The rule is about what an
 SDK drags in, not about the count: a dependency that pulls a client library,
 a protocol stack or a transitive graph belongs in a nested module, and the
@@ -552,7 +574,7 @@ repo-restructure epic
 relocation and demo-suffix scrub landed in
 [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
 
-**`prop.Set` does not compare values** (`prop/prop.go:124`). Setting a
+**`prop.Set` does not compare values** (`prop/prop.go:134`). Setting a
 property to what it already holds still invalidates every dependent and
 still costs a repaint. Guard at the call site if you need idempotence.
 

@@ -262,20 +262,72 @@ func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
 	}
 }
 
+// isTheDivergencePin says whether a walked path is THIS file — the pin
+// that asserts the divergence, rather than a page that carries the
+// caveat about it.
+//
+// It compares the repo-relative PATH, and that is the whole content of
+// the function. Two files here are called overlayrank_test.go: this one
+// and components/overlayrank_test.go, which holds the user-facing claim.
+// A base-name match excluded both, so the second could never join the
+// derived list — and it is the file a reader is most likely to put the
+// caveat in next. The list is derived precisely so a page joins it by
+// citing rather than by being remembered, and an accidental exclusion
+// is the one way that guarantee fails quietly. Raised in review of #456.
+func isTheDivergencePin(p string) bool {
+	return filepath.ToSlash(p) == "overlayrank_test.go"
+}
+
+// TestTheDivergencePinExcludesItselfAndNothingElse is the fixture the
+// tree cannot supply: components/overlayrank_test.go does not cite the
+// test today, so the walk is green under both the path rule and the
+// base-name rule it replaced, and nothing would say which is in force.
+func TestTheDivergencePinExcludesItselfAndNothingElse(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"overlayrank_test.go", true},
+		{"components/overlayrank_test.go", false},
+		{"docs/specs/2026-09-05-overlay-ranks.md", false},
+		{"apps/wysiwyg/overlayrank_test.go", false},
+	} {
+		if got := isTheDivergencePin(tc.path); got != tc.want {
+			t.Errorf("isTheDivergencePin(%q) = %v, want %v — %s", tc.path, got, tc.want,
+				map[bool]string{
+					true:  "this is the pin and must be excluded from the list it derives",
+					false: "this is a page like any other and joins the list by citing",
+				}[tc.want])
+		}
+	}
+	// And the pin really is one of two files sharing a base name, which
+	// is the fact the path comparison exists for.
+	if _, err := os.Stat("components/overlayrank_test.go"); err != nil {
+		t.Skipf("components/overlayrank_test.go is gone (%v), so the base-name "+
+			"collision this guards against no longer exists", err)
+	}
+}
+
 // citingPages walks the tree for every page naming this test, which is
 // the convention that puts a page on the divergence list. It replaces a
 // literal enumeration in the failure message above; see the comment
 // there for why, and for the one gap it leaves.
 //
-// The walk excludes this file — it is the pin, not a page carrying the
-// caveat — and prunes dot-directories at EVERY depth, not just the top:
+// The walk excludes this file BY PATH, not by base name. Two files in
+// this repo are called overlayrank_test.go — this one and
+// components/overlayrank_test.go, which carries the user-facing claim —
+// and a base-name match silently skipped both. The second is the file a
+// reader is most likely to put the caveat in next, and the list is
+// derived precisely so a page joins it by citing rather than by being
+// remembered. Raised in review of #456.
+//
+// It prunes dot-directories at EVERY depth, not just the top:
 // .claude/worktrees/ holds whole checkouts of this repo, so a walk
 // anchored only at the root reports the same page several times on a
 // developer machine and once in CI. vendor/ is pruned because it cannot
 // carry this caveat and is most of the tree.
 func citingPages(t *testing.T) []string {
 	t.Helper()
-	const self = "overlayrank_test.go"
 	var pages []string
 	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -292,7 +344,7 @@ func citingPages(t *testing.T) []string {
 		default:
 			return nil
 		}
-		if d.Name() == self {
+		if isTheDivergencePin(p) {
 			return nil
 		}
 		b, err := os.ReadFile(p)
