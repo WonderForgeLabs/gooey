@@ -267,7 +267,7 @@ type ElementSpec struct {
 	// ElementDef because a diagnostic wants to NAME the reader:
 	// "<MenuBar> reads <Menu> as data" tells an author where the
 	// attribute went, and "its parent reads it as data" does not.
-	// Raised in review of #486 — refuseUniversal's reason clause leaned
+	// Raised in review of #486 — refuseComponentAttr's reason clause leaned
 	// on this field while the type it reads did not carry it, so the
 	// message it could actually produce was the generic one.
 	ParsedBy string
@@ -617,10 +617,11 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// for an OPAQUE pseudo-element this gate dropped the row while
 		// the loader accepted it: <Tab Name="Zonk"> loaded clean and was
 		// dropped, with no designer surface left to reveal it.
-		// checkAttrs now refuses the universal set BEFORE either of its
-		// gates, because the universal set belongs to no element and so
-		// survives not knowing the element's own (refuseUniversal,
-		// attrcheck.go).
+		// checkAttrs now refuses every attribute only a COMPONENT could
+		// carry BEFORE either of its gates — the universal set and any
+		// attached property, which is what cannotApplyTo admits — because
+		// neither belongs to the element's own surface and so both
+		// survive not knowing it (refuseComponentAttr, attrcheck.go).
 		//
 		// TestNoPseudoElementAcceptsAUniversalAttribute and
 		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement assert the

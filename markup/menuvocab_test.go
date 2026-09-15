@@ -101,7 +101,7 @@ func TestAPseudoElementRefusesName(t *testing.T) {
 			// IT NO LONGER ANCHORS ON "no such attribute". Cutting on
 			// that literal and Fatal-ing when it was absent pinned the
 			// vocabulary wording in place, so unifying the three
-			// pseudo-elements onto refuseUniversal's sentence turned
+			// pseudo-elements onto refuseComponentAttr's sentence turned
 			// this test red FOR THE IMPROVEMENT — a test change was the
 			// price of a better message. Raised in review of #486. The
 			// property is what is asserted now, and it holds under

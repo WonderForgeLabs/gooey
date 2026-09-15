@@ -355,10 +355,12 @@ test go red.
 | the host/child read split collapses | `TestAHostsOwnReadIsNotAChildsAttribute` |
 | the child walk ignores the `generic` deny-list | `TestTheDenyListAppliesToTheChildWalk` |
 | `Pseudo` derived from a nil `Proto` alone | `TestAHostElementWithNoProtoIsNotPseudo` |
-| the `universal` skip applied to a pseudo-element | `TestAPseudoElementGetsNoUniversalPass` (and `Margin` on `<MenuItem>` in the real vocabulary)
+| the `universal` skip applied to a pseudo-element | `TestAPseudoElementGetsNoUniversalPass` (and `Margin` on `<MenuItem>` in the real vocabulary) |
 | an attached property accepted and dropped on a pseudo-element | `TestAPseudoElementRefusesAnAttachedProperty` |
 | an unknown attribute reaching a declared surface but not an opaque one | `TestAnUnknownAttributeReachesAKnownPseudoSurfaceAndNotAnOpaqueOne` |
-| the `ParsedBy` clause in the refusal's reader name | `TestTheParsedByFallbackNamesAHostRegisteredReader` | |
+| the `ParsedBy` clause in the refusal's reader name | `TestTheParsedByFallbackNamesAHostRegisteredReader` |
+| the reader named from the document's parent, not the alphabet | `TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst` |
+| the content remedy withheld from an attached property | `TestARefusalPrescribesOnlyAPlaceThatExists` (its attached arm) |
 | the helper idiom not counted as a read | `TestTheHelperIdiomIsAChildRead` |
 | a pseudo-element's own `Build` not scanned | `TestAPseudoElementsOwnBuildIsScanned` |
 | `specOf` rebuilds the catalog | `TestAttrRowsDoesNotRebuildTheCatalog` |

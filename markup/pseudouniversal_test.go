@@ -15,7 +15,7 @@ import (
 // copied.
 //
 // It was a third identical loop over universalAttrs — one in
-// refuseUniversal, one exported as isUniversalAttr, one here — and a
+// refuseComponentAttr, one exported as isUniversalAttr, one here — and a
 // test that restates a predicate instead of calling it cannot see the
 // predicate change, which is the trap this branch already hit once.
 // Kept as a name because every assertion below reads better for it, and
@@ -391,11 +391,11 @@ func TestEveryPseudoElementIsRefusedThroughAWholeLoad(t *testing.T) {
 // #486's round 1, and it is the guard that keeps the three from drifting
 // back apart.
 //
-// refuseUniversal began inside checkAttrs' !AttrsKnown early return, so
+// refuseComponentAttr began inside checkAttrs' !AttrsKnown early return, so
 // only <Tab> — the one pseudo-element whose attributes are not
 // enumerable — reached it. <Menu> and <MenuItem> fell through to the
 // exhaustive check and refused a universal with "no such attribute; this
-// element takes Title", the wording refuseUniversal's own comment calls a
+// element takes Title", the wording refuseComponentAttr's own comment calls a
 // lie: the attribute exists everywhere else, and the author's question is
 // where to put it instead.
 //
@@ -429,7 +429,7 @@ func TestEveryPseudoElementRefusesAUniversalTheSameWay(t *testing.T) {
 // this tree did not have, and it is here because a mutation went SILENT
 // without it.
 //
-// Swapping refuseUniversal's gate from spec.Pseudo to !TakesLayout(spec)
+// Swapping refuseComponentAttr's gate from spec.Pseudo to !TakesLayout(spec)
 // broke nothing in the suite, and the comment beside that gate asserts
 // the swap would break working apps. That claim was unpinned.
 //
@@ -697,25 +697,40 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 		// unread — and reservedOnContent exists precisely because two
 		// attributes on one element can want different answers. Raised
 		// in review of #486.
-		for _, u := range universalAttrs {
-			attr := fmt.Sprintf("%s=%q", u.Name, validLiteralFor(t, "Border", u))
+		for _, u := range refusableAttrs(t) {
+			attr := fmt.Sprintf("%s=%q", u.name, u.literal)
 			_, err := Build([]byte(fmt.Sprintf(tc.onPseudo, attr)), &Context{})
 			if err == nil {
 				t.Errorf("<%s %s> was not refused at all", sp.Name, attr)
 				continue
 			}
 			offered := strings.Contains(err.Error(), contentRemedy)
+			// AN ATTACHED PROPERTY HAS NO DESTINATION HERE, whatever the
+			// content mode says. The move is to the content, whose
+			// parent is this pseudo-element, and a pseudo-element grants
+			// nothing — so accepts, which reads Children.Mode, is
+			// answering a question about the wrong attribute class.
+			if strings.Contains(u.name, ".") {
+				withheld++
+				if offered {
+					t.Errorf("<%s>'s refusal of the attached property %s tells the "+
+						"author to put it on the content inside, whose parent is "+
+						"<%s> and contributes nothing — the move is a second load "+
+						"error:\n\t%v", sp.Name, u.name, sp.Name, err)
+				}
+				continue
+			}
 			if !accepts {
 				withheld++
 				if offered {
 					t.Errorf("nothing <%s> may contain (%s) would accept %s, and its "+
 						"refusal tells the author to put the attribute on the content "+
 						"inside — a remedy whose destination refuses it too:\n\t%v",
-						sp.Name, sp.Children.Mode, u.Name, err)
+						sp.Name, sp.Children.Mode, u.name, err)
 				}
 				continue
 			}
-			if _, reserved := reservedOnContent[sp.Name][u.Name]; reserved {
+			if _, reserved := reservedOnContent[sp.Name][u.name]; reserved {
 				// A CONSIDERED EXCEPTION, which carries its own sentence
 				// instead of the remedy. The other direction of that
 				// table — a reservation whose destination would in fact
@@ -729,7 +744,7 @@ func TestARefusalPrescribesOnlyAPlaceThatExists(t *testing.T) {
 					"prescribes nowhere to put it — the author is told the "+
 					"attribute went nowhere and left to guess the destination "+
 					"the catalog already knows:\n\t%v",
-					sp.Name, sp.Children.Mode, u.Name, err)
+					sp.Name, sp.Children.Mode, u.name, err)
 			}
 		}
 	}
@@ -781,6 +796,42 @@ func acceptsAUniversal(t *testing.T, sp ElementSpec) bool {
 	return true
 }
 
+// tagRe matches one tag as a document spells it: an optional slash, a
+// name, and whatever the tag carries before its closing bracket.
+var tagRe = regexp.MustCompile(`<(/?)([A-Za-z][A-Za-z0-9.]*)([^>]*)>`)
+
+// enclosingTag is the element a document opens immediately around the
+// first <name in it, read from the source text and from nothing else.
+//
+// It is what makes the reader assertion independent: every other way of
+// answering "who reads this element" in this package is a loop over the
+// catalog, and a test that runs one of those is comparing the
+// implementation against a copy of itself.
+func enclosingTag(t *testing.T, doc, name string) string {
+	t.Helper()
+	var stack []string
+	for _, m := range tagRe.FindAllStringSubmatch(doc, -1) {
+		tag, rest := m[2], strings.TrimSpace(m[3])
+		if m[1] == "/" {
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			continue
+		}
+		if tag == name {
+			if len(stack) == 0 {
+				t.Fatalf("<%s> is the root of %q, so nothing encloses it", name, doc)
+			}
+			return stack[len(stack)-1]
+		}
+		if !strings.HasSuffix(rest, "/") {
+			stack = append(stack, tag)
+		}
+	}
+	t.Fatalf("no <%s> in %q, so this fixture cannot say who reads it", name, doc)
+	return ""
+}
+
 // TestARefusalNamesTheReaderWhenTheCatalogKnowsIt is finding 6's half:
 // ElementSpec now carries ParsedBy, so the message can say WHO consumed
 // the element rather than "its parent".
@@ -792,25 +843,26 @@ func acceptsAUniversal(t *testing.T, sp ElementSpec) bool {
 // skipped, and it was getting the generic "its parent reads it as data"
 // clause. Raised in review of #486 round 2.
 //
-// legalParent is the derivation, and the order matters: this read
-// sp.ParsedBy FIRST, which is the very field the message splices in, so
-// for every element carrying one the assertion was `the message contains
-// the string the message was built from` and could not see a wrong
-// value. <MenuItem>'s was wrong — "MenuBar", where the element's own
-// placement error says <Menu> — and this test was green over it.
-// Containment is the independent answer: the ModeRestricted element
-// whose Children.Only names this one, read from the catalog rather than
-// by calling namingParent, so it states the answer instead of echoing
-// the implementation. ParsedBy is the fallback for a pseudo-element no
-// container names, which is the same order readsAsData now uses.
-// Raised in review of #486.
+// THE EXPECTATION IS THE DOCUMENT'S OWN TAG, which is the third answer
+// this test has had and the first that is not a copy of an
+// implementation. It read sp.ParsedBy first — the very field the message
+// splices in, so for every element carrying one the assertion was "the
+// message contains the string the message was built from" and could not
+// see a wrong value; <MenuItem>'s was wrong ("MenuBar", where the
+// element's own placement error says <Menu>) and this test was green
+// over it. It then read legalParent, which is namingParent's first-match
+// loop re-typed, so it agreed with the search rather than with the
+// answer — including on the search's alphabetical bias.
+//
+// enclosingTag reads the fixture's SOURCE TEXT: the tag the document
+// opens immediately around this element. No catalog, no spec, no second
+// copy of anybody's loop — and it is the reader by definition, since a
+// pseudo-element is consumed by whatever encloses it. Raised in review
+// of #486.
 func TestARefusalNamesTheReaderWhenTheCatalogKnowsIt(t *testing.T) {
 	var checked int
 	for _, sp := range pseudoSpecs(t) {
-		want := legalParent(t, sp)
-		if want == "" {
-			want = sp.ParsedBy
-		}
+		want := enclosingTag(t, wholeLoadCases[sp.Name].refused, sp.Name)
 		checked++
 		tc := wholeLoadCases[sp.Name]
 		_, err := Build([]byte(tc.refused), &Context{})
@@ -907,6 +959,46 @@ func TestAPseudoElementNamesOneContainerInBothOfItsLoadErrors(t *testing.T) {
 	}
 }
 
+// refusable is one attribute spelling that reaches a pseudo-element's
+// refusal, with a literal its own grammar accepts.
+type refusable struct{ name, literal string }
+
+// refusableAttrs is every such spelling: the universals, and — since
+// cannotApplyTo widened to "a dot and nothing else" — the attached
+// properties.
+//
+// THE TWO SETS ANSWER THE REMEDY QUESTION DIFFERENTLY, which is why
+// ranging over the first alone is not a smaller version of the right
+// test but a test of the wrong population. A universal is carried by
+// every component, so "put it on the content inside" names a
+// destination that accepts it. An attached property is an instruction
+// to a particular PARENT, and the content of a pseudo-element has the
+// pseudo-element for a parent, which grants nothing — so the same
+// sentence walks the author into a second load error. Both remedy tests
+// below were written over universalAttrs and stayed green through the
+// widening that made the second population reachable. Raised in review
+// of #486.
+func refusableAttrs(t *testing.T) []refusable {
+	t.Helper()
+	var out []refusable
+	for _, u := range universalAttrs {
+		// ASKED OF <Border>, not of the pseudo-element: see the note in
+		// TestTheContentRemedyIsAPlaceThatAccepts.
+		out = append(out, refusable{u.Name, validLiteralFor(t, "Border", u)})
+	}
+	for _, parent := range AttachedParents() {
+		for _, a := range AttachedAttrs(parent) {
+			out = append(out, refusable{a.Name, validLiteralFor(t, parent, a)})
+		}
+	}
+	if len(out) == len(universalAttrs) {
+		t.Fatal("the catalog declares no attached property, so every caller of " +
+			"this helper ranges over universals only — which is the state the " +
+			"attached remedy shipped wrong in")
+	}
+	return out
+}
+
 // TestTheContentRemedyIsAPlaceThatAccepts asks the remedy's question
 // BEHAVIOURALLY, which is the half TestARefusalPrescribesOnlyAPlaceThatExists
 // cannot reach.
@@ -942,7 +1034,7 @@ func TestTheContentRemedyIsAPlaceThatAccepts(t *testing.T) {
 				"variable only in its own failure message", sp.Name)
 			continue
 		}
-		for _, u := range universalAttrs {
+		for _, u := range refusableAttrs(t) {
 			// ASKED OF <Border>, not of the pseudo-element. Kind alone
 			// answers "x" for Margin, whose Kind is KindString and whose
 			// grammar is one, two or four whole numbers — so the generic
@@ -951,7 +1043,9 @@ func TestTheContentRemedyIsAPlaceThatAccepts(t *testing.T) {
 			// records that fact under "Border.Margin"; borrowing it is
 			// cheaper and better guarded than a second table here, and a
 			// pseudo-element declares nothing for such a row to key on.
-			attr := fmt.Sprintf("%s=%q", u.Name, validLiteralFor(t, "Border", u))
+			// An attached property is asked of its GRANTING parent for
+			// the same reason. See refusableAttrs.
+			attr := fmt.Sprintf("%s=%q", u.name, u.literal)
 			_, err := Build([]byte(fmt.Sprintf(tc.onPseudo, attr)), &Context{})
 			if err == nil {
 				t.Errorf("<%s %s> loaded; a universal on a pseudo-element is a load error",
@@ -970,7 +1064,7 @@ func TestTheContentRemedyIsAPlaceThatAccepts(t *testing.T) {
 				// and so could only ever see the one the row spells.
 				t.Errorf("<%s> prescribes the content remedy for %s and this table "+
 					"has no onContent template for it, so nothing checks that the "+
-					"destination accepts it:\n\t%v", sp.Name, u.Name, err)
+					"destination accepts it:\n\t%v", sp.Name, u.name, err)
 				continue
 			}
 			if _, err := Build([]byte(fmt.Sprintf(tc.onContent, attr)), &Context{}); err != nil {
@@ -1029,7 +1123,7 @@ func universalByName(name string) (AttrSpec, bool) {
 
 // nonUniversalProp is a property-element name no element in the catalog
 // declares, which is what makes it the discriminating one: it is the
-// shape refusePropElement refuses and refuseUniversal never sees.
+// shape refusePropElement refuses and refuseComponentAttr never sees.
 const nonUniversalProp = "Frobnicate"
 
 // TestEveryPseudoElementRefusesAPropertyElement is the other spelling of
@@ -1043,7 +1137,7 @@ const nonUniversalProp = "Frobnicate"
 // consumes it as data.
 //
 // IT ASSERTS THE SHARED SENTENCE, not merely a refusal. Two dialects of
-// the same rule is how the wording drifts, and refuseUniversal's comment
+// the same rule is how the wording drifts, and refuseComponentAttr's comment
 // already calls "no such attribute" a lie for these elements — a
 // property-element refusal that said something else would reintroduce
 // exactly that.
@@ -1068,7 +1162,7 @@ func TestEveryPseudoElementRefusesAPropertyElement(t *testing.T) {
 		// rather than somewhere in the middle of the list.
 		// AND ONE NAME THE CATALOG ANSWERS NOTHING ABOUT. The range was
 		// ["Behaviors", "Resources"] + universalAttrs, which is exactly
-		// the set where refusePropElement and refuseUniversal AGREE —
+		// the set where refusePropElement and refuseComponentAttr AGREE —
 		// so the one set the property-element rule refuses BEYOND the
 		// attribute rule was the one set nothing exercised, and the
 		// remedy walked an author from <Tab.Frobnicate> to a <Text
@@ -1223,6 +1317,15 @@ func TestAPseudoElementRefusesAnAttachedProperty(t *testing.T) {
 			// THE SHARED SENTENCE, for the reason the property-element
 			// test gives: two dialects of one rule is how the wording
 			// drifts apart, and this arm is the newest dialect.
+			//
+			// THE TAIL IS ASSERTED NEXT DOOR, deliberately and not by
+			// omission: the remedy an attached refusal may carry is
+			// TestARefusalPrescribesOnlyAPlaceThatExists's attached arm,
+			// which reaches every pseudo-element and every attached name
+			// from one loop. Repeating it here would be a second copy of
+			// one claim, and review of #486 found this test cited as
+			// covering a tail it does not read — so the citation lives
+			// here instead of the assertion.
 			if !strings.Contains(err.Error(), "builds no component") {
 				t.Errorf("<%s %s=\"1\"> is refused without the shared sentence:\n\t%v",
 					sp.Name, name, err)
@@ -1275,7 +1378,7 @@ func attachedNames(t *testing.T) []string {
 // A pseudo-element declaring its attributes is covered by the ORDINARY
 // unknown-attribute gate — <Menu Frobnicate="1"> is refused with "no
 // such attribute; this element takes Title", and has been all along.
-// That is why refuseUniversal does not widen to spec.Attrs: doing so
+// That is why refuseComponentAttr does not widen to spec.Attrs: doing so
 // would change no acceptance and would replace a better message with a
 // worse one, since "no such attribute" is only a lie for an attribute
 // that exists elsewhere.
@@ -1308,7 +1411,7 @@ func TestAnUnknownAttributeReachesAKnownPseudoSurfaceAndNotAnOpaqueOne(t *testin
 					nonUniversalProp)
 			} else if !strings.Contains(err.Error(), "no such attribute") {
 				t.Errorf("<%s %s=\"1\"> is refused by something other than the "+
-					"unknown-attribute gate:\n\t%v\nIf refuseUniversal widened to "+
+					"unknown-attribute gate:\n\t%v\nIf refuseComponentAttr widened to "+
 					"spec.Attrs, note that it changes no acceptance here and costs "+
 					"the better message", sp.Name, nonUniversalProp, err)
 			}
@@ -1373,11 +1476,61 @@ func TestTheParsedByFallbackNamesAHostRegisteredReader(t *testing.T) {
 		t.Fatalf("a container (<%s>) names <Widget>, so namingParent answers first "+
 			"and the ParsedBy clause is not what produced the string below", p)
 	}
-	got := readsAsData(sp, ctx)
+	// AN ELEMENT WITH NO PARENT STAMPED, which is the third non-vacuity
+	// half and the one the parent-first branch added: readsAsData now
+	// answers from e.parent when the document has one, so a fixture
+	// carrying a parent would be measuring that branch instead.
+	got := readsAsData(Element{Name: "Widget"}, sp, ctx)
 	if !strings.Contains(got, "<Host>") {
 		t.Errorf("readsAsData says %q for a host-registered pseudo-element whose "+
 			"ParsedBy is \"Host\". Without this branch it falls to the generic "+
 			"\"its parent reads it as data\", and the host's users lose the one "+
 			"name that says WHO consumed their element", got)
+	}
+}
+
+// TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst is the
+// discriminating case for which source readsAsData answers from. Raised
+// in review of #486.
+//
+// namingParent returns the FIRST catalog element naming the child, and
+// definedElements sorts by name, so "first" is alphabetical. Nothing in
+// the builtin vocabulary makes that visible — <Menu> is the only
+// container naming <MenuItem> — so the search agreed with the parent by
+// luck, and every test over the builtins agreed with the search.
+//
+// A host registration supplies the second namer. <AContextMenu> sorts
+// before <Menu> and names <MenuItem>; the document still puts the
+// <MenuItem> inside a <Menu>. If the message came from the search it
+// would now name a container this document does not contain, while
+// defMenuItem.Build goes on saying "only valid directly inside <Menu>" —
+// two containers in two errors about one element, which is the
+// divergence round 2's finding 6 was filed to remove.
+func TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{
+		"AContextMenu": {
+			Name:     "AContextMenu",
+			Known:    true,
+			Children: ChildSpec{Mode: ModeRestricted, Only: []string{"MenuItem"}},
+		},
+	}}
+	// NON-VACUITY: the decoy has to be what the search would answer, or
+	// this test passes without discriminating anything.
+	if p := namingParent("MenuItem", ctx); p != "AContextMenu" {
+		t.Fatalf("the catalog search answers <%s> for <MenuItem>, not the decoy — "+
+			"either the sort is not by name or the registration did not take, "+
+			"and either way this test is not measuring the two sources apart", p)
+	}
+
+	_, err := Build([]byte(wholeLoadCases["MenuItem"].refused), ctx)
+	if err == nil {
+		t.Fatal("the refusal fixture loaded, so there is no message to read")
+	}
+	if !strings.Contains(err.Error(), "<Menu> reads <MenuItem> as data") {
+		t.Errorf("the refusal names a reader the document does not contain:\n\t%v\n"+
+			"The <MenuItem> is inside a <Menu>; <AContextMenu> is merely the "+
+			"alphabetically first element naming it. defMenuItem.Build says "+
+			"\"only valid directly inside <Menu>\", so an author who reads both "+
+			"is told about two containers for one element.", err)
 	}
 }

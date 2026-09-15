@@ -44,7 +44,7 @@ func checkAttrs(e Element, ctx *Context) error {
 	// only pseudo-element that could reach it — <Menu> and <MenuItem>
 	// are AttrsKnown and fell through to the exhaustive check, which
 	// refuses a universal with "no such attribute; this element takes
-	// Title". refuseUniversal's own comment calls that wording a lie,
+	// Title". refuseComponentAttr's own comment calls that wording a lie,
 	// and it was being told by two of the three elements the argument
 	// was written for. Raised in review of #486; the three now share
 	// one sentence, and TestEveryPseudoElementRefusesAUniversalTheSameWay
@@ -68,7 +68,7 @@ func checkAttrs(e Element, ctx *Context) error {
 			// refusal alone dropped them into the gate below, which
 			// answered `<VStack><Menu Name="Zonk">` with "no such
 			// attribute; this element takes Title" — the wording
-			// refuseUniversal's comment calls a lie, about the smaller
+			// refuseComponentAttr's comment calls a lie, about the smaller
 			// of two faults, while defMenu.Build's "<Menu> is only
 			// valid directly inside <MenuBar>" never printed.
 			//
@@ -78,7 +78,7 @@ func checkAttrs(e Element, ctx *Context) error {
 			// gate over.
 			return nil
 		}
-		if err := refuseUniversal(e, spec, ctx); err != nil {
+		if err := refuseComponentAttr(e, spec, ctx); err != nil {
 			return err
 		}
 		// THE PROPERTY-ELEMENT SPELLING OF THE SAME THING, which was
@@ -134,7 +134,7 @@ func checkAttrs(e Element, ctx *Context) error {
 	return nil
 }
 
-// refuseUniversal rejects a universal attribute on a pseudo-element,
+// refuseComponentAttr rejects a universal attribute on a pseudo-element,
 // and it exists because that is the one judgement an UNENUMERABLE
 // element still supports (issue #461).
 //
@@ -195,6 +195,12 @@ func checkAttrs(e Element, ctx *Context) error {
 //
 // So the gate asks two questions, in the order of what it can know.
 //
+// THE NAME IS THE OLDER HALF AND WAS RENAMED WITH THE SET. This was
+// refuseUniversal while universalAttrs was the whole of what it refused;
+// cannotApplyTo is the authority on the set now, and the name says
+// "component attribute" because that is the single question both arms
+// ask. Raised in review of #486.
+//
 // AN ATTACHED PROPERTY IS REFUSED WHATEVER THE CATALOG KNOWS. Grid.Row
 // is an instruction to the element's CONTAINER about a component, and a
 // pseudo-element has none to instruct — that holds without knowing the
@@ -221,7 +227,7 @@ func checkAttrs(e Element, ctx *Context) error {
 // surface enumerable is tracked. An attached property is the part that
 // needs no surface to adjudicate, which is why it is the whole of this
 // change. Raised in review of #486.
-func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
+func refuseComponentAttr(e Element, spec ElementSpec, ctx *Context) error {
 	names := make([]string, 0, len(e.Attrs))
 	for name := range e.Attrs {
 		names = append(names, name)
@@ -237,14 +243,14 @@ func refuseUniversal(e Element, spec ElementSpec, ctx *Context) error {
 		// to put it instead.
 		return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
 			e.Name, name, e.Attrs[name],
-			readsAsData(spec, ctx), name, pseudoRemedy(spec, ctx, name))
+			readsAsData(e, spec, ctx), name, pseudoRemedy(spec, ctx, name))
 	}
 	return nil
 }
 
 // cannotApplyTo reports that this attribute names something only a
 // COMPONENT could have, on an element that builds none. See
-// refuseUniversal for the three cases and why they are ordered so.
+// refuseComponentAttr for the three cases and why they are ordered so.
 // A DOT AND NOTHING ELSE. The first spelling of this excluded an xmlns
 // prefix as "the other dotted name an element carries", which is simply
 // wrong — a prefixed declaration is xmlns:h, with a COLON — so the
@@ -259,7 +265,7 @@ func cannotApplyTo(name string) bool {
 
 // refusePropElement rejects ANY property element on a pseudo-element,
 // and "any" is not an over-reach — it is the same sentence
-// refuseUniversal makes, read through the other spelling.
+// refuseComponentAttr makes, read through the other spelling.
 //
 // A property element is consumed by the builder of the element that
 // carries it, and a pseudo-element HAS no builder: <Tabs> reads a
@@ -275,7 +281,7 @@ func cannotApplyTo(name string) bool {
 // what a pseudo-element does not go through. An exemption that is true
 // of every element that builds is not true of one that does not.
 //
-// It shares readsAsData with refuseUniversal so the author gets one
+// It shares readsAsData with refuseComponentAttr so the author gets one
 // sentence rather than two dialects of it, and
 // TestEveryPseudoElementRefusesAPropertyElement is what keeps them
 // sharing it. The REMEDY is not shared verbatim: see propRemedy, which
@@ -292,7 +298,7 @@ func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
 	sort.Strings(names)
 	name := names[0]
 	return fmt.Errorf("markup: <%s.%s>: %sso it builds no component for %s to apply to%s",
-		e.Name, name, readsAsData(spec, ctx), name, propRemedy(spec, ctx, name))
+		e.Name, name, readsAsData(e, spec, ctx), name, propRemedy(spec, ctx, name))
 }
 
 // readsAsData is the reason clause of the message above: who consumes
@@ -338,7 +344,29 @@ func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
 // attribute no <Tabs>-parsed element declares. Opaque is <Tab>'s
 // annotation precisely because its surface is not enumerable. Raised in
 // review of #486 round 2.
-func readsAsData(spec ElementSpec, ctx *Context) string {
+func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
+	// THE DOCUMENT'S OWN PARENT FIRST, and it is not one source among
+	// several — it is the only one that answers the question asked.
+	//
+	// Both callers run after acceptedByParent (attrcheck.go:64) has
+	// established that e.parent is a ModeRestricted container naming
+	// e.Name. That IS the reader. namingParent discards it and searches
+	// the catalog for the FIRST element naming this one, and
+	// definedElements sorts by name — so "first" means alphabetically
+	// first, not the container this element is inside. One more builtin
+	// restricted to <MenuItem> sorting before <Menu> (a <ContextMenu>,
+	// say) and the refusal would say "<ContextMenu> reads <MenuItem> as
+	// data" while defMenuItem.Build goes on saying "only valid directly
+	// inside <Menu>" — the two-containers-in-two-errors divergence round
+	// 2's finding 6 was filed to remove, reintroduced by the search.
+	// Reading e.parent also drops a whole catalog assembly per refusal.
+	// Raised in review of #486.
+	if p, ok := ctx.spec(e.parent); ok && namesChild(p, spec.Name) {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", p.Name, spec.Name)
+	}
+	// The catalog search stays as the fallback for an element with no
+	// parent stamped on it — one constructed by hand rather than parsed,
+	// which is the only way past the branch above.
 	if p := namingParent(spec.Name, ctx); p != "" {
 		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
 	}
@@ -414,6 +442,31 @@ func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 	if why, ok := reservedOnContent[spec.Name][name]; ok {
 		return why
 	}
+	// THE CONTENT MOVE IS ONLY SAYABLE FOR A UNIVERSAL, the same guard
+	// propRemedy states below and the half this function was missing.
+	//
+	// It did not need one until the attribute gate widened: cannotApplyTo
+	// admitted only universalAttrs, and every universal a component
+	// carries is one any other component carries too, so "put it on the
+	// content inside" landed somewhere that accepts it. An ATTACHED
+	// property is the opposite shape — it is an instruction to a
+	// particular PARENT, and the content of a pseudo-element has the
+	// pseudo-element for a parent, which contributes nothing. Measured,
+	// following the advice:
+	//
+	//	<Tab Grid.Row="1"><Text>x</Text></Tab>
+	//	  -> ... builds no component for Grid.Row to apply to; put it on
+	//	     the content inside instead
+	//	<Tab><Text Grid.Row="1">x</Text></Tab>
+	//	  -> Grid.Row is contributed by a <Grid> parent, but this
+	//	     element's parent is <Tab>; it would be ignored here
+	//
+	// A remedy that walks the author into a second load error is worse
+	// than none, and there is no destination to name instead — so the
+	// refusal says what is wrong and stops. Raised in review of #486.
+	if !isUniversalAttr(name) {
+		return ""
+	}
 	switch spec.Children.Mode {
 	case ModeLeaf, ModeNone:
 		return ""
@@ -475,7 +528,7 @@ var reservedOnContent = map[string]map[string]string{
 //
 // AND THE DESTINATION IS ONLY DERIVABLE FOR A UNIVERSAL.
 // refusePropElement refuses ANY property element on a pseudo-element —
-// deliberately, and wider than refuseUniversal — so this is reached for
+// deliberately, and wider than refuseComponentAttr — so this is reached for
 // names the catalog answers nothing about, and it prescribed the content
 // move for every one of them. Measured before the guard below:
 //
@@ -600,9 +653,13 @@ func acceptedByParent(e Element, ctx *Context) bool {
 // into itself. acceptsAUniversal (pseudouniversal_test.go) asks whether
 // an element's OWN children are all pseudo-elements, which is a
 // question about the far side of the relation and gives a different
-// answer. legalParent, in the same test file, is namingParent restated
-// deliberately: its comment records that an independent derivation is
-// the point of it. Raised in review of #486.
+// answer. legalParent, in the same test file, is namingParent restated,
+// and it is no longer anybody's independent answer — the reader
+// assertion reads the document's own tag (enclosingTag) since review of
+// #486 found a re-typed loop agreeing with the loop it copied, this
+// comment included. What legalParent still does is supply a parent for
+// the fixtures that need one to build a document at all. Raised in
+// review of #486.
 func namesChild(spec ElementSpec, name string) bool {
 	if spec.Children.Mode != ModeRestricted {
 		return false

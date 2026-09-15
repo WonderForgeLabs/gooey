@@ -288,7 +288,7 @@ func probeElement(t *testing.T, def *ElementDef, attr, value string) string {
 	// instead, for a reason readsAsData records — so an opaque one that
 	// ever declared an attribute would be seeded with a Name the loader
 	// now refuses, and the probe would fail on the seed again. Pseudo is
-	// the property refuseUniversal itself gates on. The quoted message
+	// the property refuseComponentAttr itself gates on. The quoted message
 	// above was the pre-#486 one and is corrected with it. Raised in
 	// review of #486.
 	spec, known := (&Context{}).spec(def.Name)

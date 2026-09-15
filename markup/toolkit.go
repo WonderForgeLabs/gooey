@@ -237,7 +237,7 @@ func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
 		// element's own vocabulary and refuses only the UNIVERSAL set,
 		// which belongs to no element. So <Tab Name="Zonk"> is a load
 		// error and <Tab Frobnicate="yes"> is still accepted. See
-		// refuseUniversal (attrcheck.go) for why Pseudo is the gate and
+		// refuseComponentAttr (attrcheck.go) for why Pseudo is the gate and
 		// !TakesLayout could not be.
 		//
 		// BEFORE the Header requirement, not after: "needs a Header" is
