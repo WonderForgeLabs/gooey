@@ -772,7 +772,8 @@ func isExportedName(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z
 //
 // The freedom arm needs the paragraph and the sentence arms need the
 // sentence, and that is not an inconsistency. A positional INSTRUCTION
-// is wrong on its own — "declare it last" misleads whatever follows it.
+// is wrong on its own — a lifted host paints above from wherever it is
+// declared, so "declare it last" misleads whatever follows it.
 // A freedom claim is wrong only if nothing NEARBY qualifies it, and the
 // qualification is almost always the next sentence, so judging it one
 // sentence at a time would flag every correct paragraph in the repo.
