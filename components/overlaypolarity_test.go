@@ -60,6 +60,16 @@ import (
 // OverlaysPage out of components/*.go. The map stays a VALUE lookup —
 // constructing a host is something no scan can do — and stops being the
 // thing that decides scope. Raised in review of #456.
+//
+// THREE ARMS, AND THE THIRD IS THE OTHER POLARITY. The first two look
+// for the RETIRED claim: a denial of the lift, and an instruction to
+// declare the host last. A later round of review found a wrong sentence
+// that walked through both, because the claim this change introduces is
+// the inverse — position is free, declare it anywhere — and a matcher
+// built for one polarity has full coverage of the sentences it was
+// written for and none of the ones the fix writes. The third arm is
+// that inverse, scoped by arrangeOrderedHosts to the hosts whose LAYOUT
+// position still decides something.
 func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	hosts := selfMarkedHosts(t)
 	if len(hosts) == 0 {
@@ -112,6 +122,69 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		`(?:last child|declare it last|must be last|` +
 		`last element|at the end of the root|bottom of the root)`)
 
+	// THE OPPOSITE POLARITY, which is the gap review of #456 found by
+	// walking a wrong sentence straight through the two matchers above.
+	//
+	// Both of those look for the RETIRED claim — a denial of the lift, or
+	// an instruction to declare the host last. The claim this whole
+	// change INTRODUCES is the inverse: position is free, declare it
+	// anywhere, the marker decides. Six sites now say it, and for
+	// AdornmentLayer saying only that is wrong: the marker moved its
+	// PAINT out of the document, and the layer still re-anchors during
+	// its own Arrange, so a layer declared before the content it adorns
+	// drops a custom adornment that neither persists nor follows the
+	// pointer. A guard with one polarity has full coverage of the
+	// sentences it was built for and none of the ones the fix writes.
+	//
+	// What is required is not a particular wording but the DISTINCTION:
+	// a paragraph claiming positional freedom for a host that still
+	// reads anchors during layout has to say that layout, arranging or
+	// anchoring is the part that is not free. Any of those words counts,
+	// because the arm is a prompt to a writer, not a style rule.
+	freedomRe := regexp.MustCompile(`(?i)\b(?:anywhere|wherever it is declared|` +
+		`position (?:no longer|does not|doesn't) (?:decide|matter)|` +
+		`decides nothing|position is free|order (?:no longer|does not) matter)\b`)
+	distinctionRe := regexp.MustCompile(`(?i)\b(?:arrange[sd]?|arranging|` +
+		`anchor(?:s|ed|ing)?|layout|document order|paints?|painting|` +
+		`hit-test(?:s|ed|ing)?)\b`)
+	arrangeOrdered := arrangeOrderedHosts(t, hosts)
+	t.Logf("hosts whose layout position still decides: %v", arrangeOrdered)
+	var freeNearRe *regexp.Regexp
+	if len(arrangeOrdered) > 0 {
+		name := "`?" + `\b(?:` + strings.Join(arrangeOrdered, "|") + `)\b` + "`?"
+		free := freedomRe.String()
+		freeNearRe = regexp.MustCompile(
+			`(?:` + name + `.{0,80}?` + free + `)|(?:` + free + `.{0,80}?` + name + `)`)
+	}
+	// unqualifiedFreedom is the predicate, in one place, for the same
+	// reason flagged is: a fixture that reimplements it can agree with a
+	// broken one.
+	unqualifiedFreedom := func(text string) bool {
+		if freeNearRe == nil {
+			return false
+		}
+		for _, b := range proseBlocks(text) {
+			if distinctionRe.MatchString(b) {
+				continue
+			}
+			// THE CLAIM AND THE HOST MUST BE THE SAME SENTENCE, and
+			// within the same 80 characters the positional arm uses,
+			// in either order — "Position is free … for AdornmentLayer"
+			// reads as naturally as the reverse. Without proximity the
+			// arm flags a paragraph for an "anywhere" belonging to some
+			// other subject: measured at seven hits over this tree, of
+			// which four were a press dismissing a popup, a caveat
+			// ABOUT the freedom, and two sentences whose subject was
+			// ToastHost. Noise is how a guard gets deleted.
+			for _, sen := range splitSentences(b) {
+				if freeNearRe.MatchString(sen) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
 	// flagged is the whole question, in one place, so the tree walk and
 	// every fixture below ask it identically. A fixture that reimplements
 	// the predicate is a fixture that can agree with a broken one.
@@ -128,7 +201,7 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		return false
 	}
 
-	var examined int
+	var examined, freed int
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -165,6 +238,23 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		body, rerr := os.ReadFile(path)
 		if rerr != nil {
 			return rerr
+		}
+		// docs/specs/ is exempt here too, and for the same reason the
+		// positional arm gives: a dated record describes the hosts of
+		// its own date.
+		if !strings.HasPrefix(path, "../docs/specs/") {
+			for _, b := range proseBlocks(string(body)) {
+				if !unqualifiedFreedom(b) {
+					continue
+				}
+				freed++
+				t.Errorf("%s tells a reader that %v may go anywhere, and stops "+
+					"there:\n\t%s\nThe marker took its PAINT position out of the "+
+					"document; the layer still re-anchors during its own Arrange, so "+
+					"a layer declared before the content it adorns drops a custom "+
+					"adornment that neither persists nor follows the pointer. Say "+
+					"which order is free and which is not.", path, arrangeOrdered, b)
+			}
 		}
 		for _, s := range proseUnits(string(body)) {
 			if !nameRe.MatchString(s) {
@@ -292,6 +382,47 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 					"The negation in this sentence belongs to another subject. A "+
 					"guard that fires on prose like this is noise, and noise is "+
 					"how a guard gets deleted.", tc.text)
+			}
+		})
+	}
+
+	// AND THE INVERSE ARM, both polarities, for the same reason the two
+	// tables above exist: the tree walk finding nothing is not evidence
+	// that the matcher works. `freed` is logged rather than floored —
+	// the arm's whole purpose is that the tree contains no such sentence,
+	// so a floor over the tree would be a floor that can only fail.
+	t.Logf("%d unqualified freedom claims in the tree", freed)
+	for _, tc := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"the sentence this arm was written for",
+			"Place the `AdornmentLayer` anywhere in the tree, spanning the page. " +
+				"The marker decides the stacking.", true},
+		{"the same claim, qualified",
+			"Place the `AdornmentLayer` anywhere in the tree, spanning the page — " +
+				"for paint. It still re-anchors during its own Arrange, so declare " +
+				"it after the content it adorns.", false},
+		{"a claim in the NEXT sentence is not this host's, even up close",
+			"Declare the `AdornmentLayer` after the content it adorns. A press " +
+				"anywhere outside dismisses the popup.", false},
+		{"the host named far from the claim is not its subject",
+			"An `AdornmentLayer` spans the whole page and is found by walking " +
+				"the live tree from the root at show time, later siblings first, " +
+				"which is a heuristic and not a requirement — and a press " +
+				"anywhere outside an open popup dismisses it.", false},
+		{"a host whose layout position really is free",
+			"Place the `ToastHost` anywhere in the tree; position no longer " +
+				"decides the stacking.", false},
+		{"the qualification in a LATER paragraph is not this one's",
+			"## Overlays\n\nPut the AdornmentLayer anywhere.\n\nIt re-anchors " +
+				"during Arrange.", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if hit := unqualifiedFreedom(tc.text); hit != tc.want {
+				t.Errorf("unqualifiedFreedom=%v, want %v, for:\n\t%q",
+					hit, tc.want, tc.text)
 			}
 		})
 	}
@@ -634,3 +765,77 @@ func receiversDeclaring(t *testing.T, re *regexp.Regexp, root string) []string {
 }
 
 func isExportedName(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }
+
+// proseBlocks is proseUnits stopping one step earlier: whitespace
+// flattened, blank-line paragraphs kept whole instead of cut into
+// sentences.
+//
+// The freedom arm needs the paragraph and the sentence arms need the
+// sentence, and that is not an inconsistency. A positional INSTRUCTION
+// is wrong on its own — "declare it last" misleads whatever follows it.
+// A freedom claim is wrong only if nothing NEARBY qualifies it, and the
+// qualification is almost always the next sentence, so judging it one
+// sentence at a time would flag every correct paragraph in the repo.
+func proseBlocks(body string) []string {
+	var out []string
+	for _, block := range strings.Split(body, "\n\n") {
+		if flat := strings.Join(strings.Fields(block), " "); flat != "" {
+			out = append(out, flat)
+		}
+	}
+	return out
+}
+
+// arrangeOrderedHosts is the subset of hosts whose LAYOUT position still
+// decides something after the marker has taken their paint position out
+// of the document: the ones that re-anchor against another component's
+// arranged bounds during their own Arrange.
+//
+// DERIVED FROM THE METHOD BODY, not from a list, and that is the whole
+// point — it is the property that makes the freedom claim incomplete for
+// AdornmentLayer and complete for ToastHost. If the layer ever stops
+// reading Anchor() during Arrange (an anchor cache filled at re-sync
+// would do it), the caveat stops being required in prose on the same
+// commit, and this returns nothing, and the arm below goes quiet by
+// itself rather than by somebody remembering.
+//
+// A grep over source text rather than a type assertion because there is
+// no interface to assert: "re-anchors during layout" is a property of a
+// method body. Raised in review of #456.
+func arrangeOrderedHosts(t *testing.T, hosts []string) []string {
+	t.Helper()
+	var out []string
+	for _, name := range hosts {
+		open := regexp.MustCompile(`(?m)^func \(\w+ \*?` + name + `\) Arrange\(`)
+		entries, err := os.ReadDir(".")
+		if err != nil {
+			t.Fatalf("reading the package: %v", err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") ||
+				strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			body, rerr := os.ReadFile(e.Name())
+			if rerr != nil {
+				t.Fatalf("reading %s: %v", e.Name(), rerr)
+			}
+			loc := open.FindIndex(body)
+			if loc == nil {
+				continue
+			}
+			// To the closing brace in column zero, which is where a
+			// gofmt'd method ends.
+			rest := string(body[loc[0]:])
+			if end := strings.Index(rest, "\n}\n"); end >= 0 {
+				rest = rest[:end]
+			}
+			if strings.Contains(rest, "Anchor()") {
+				out = append(out, name)
+			}
+			break
+		}
+	}
+	slices.Sort(out)
+	return out
+}

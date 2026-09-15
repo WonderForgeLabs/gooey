@@ -900,86 +900,108 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 		text := func(e ast.Expr) string {
 			return string(p.src[p.fset.Position(e.Pos()).Offset:p.fset.Position(e.End()).Offset])
 		}
-		// Every base a clear(…) or clearToCap(…) names anywhere in this
-		// file. Per FILE rather than per statement, because the
+		// Every base a clear(…) or clearToCap(…) names, scoped to the
+		// FUNCTION that names it. Not per statement, because the
 		// adornment filter clears its tail after the loop that refilled
-		// it and the two are one reset.
+		// it and the two are one reset; not per file, which is what
+		// this was and is the wider mistake — one clear(x…) anywhere in
+		// a file exempted EVERY `x = x[:0]` in it, including one on a
+		// path that never reaches the clear, and `components/adorn.go`
+		// had just acquired such a clear. Function scope keeps the one
+		// case the width was added for and drops the rest. Narrowed in
+		// review of #456.
 		//
-		// AND THE COST IS AN EXEMPTION THAT TRAVELS: one clear(x…)
-		// anywhere in a file exempts EVERY `x = x[:0]` in it, including
-		// one on a code path that never reaches the clear. The scope is
-		// keyed on source TEXT too, so `c.kids` in two methods of two
-		// types in one file is one key. It is the price of matching a
-		// reset to a clear that is not adjacent to it, and it is
-		// written down here because this comment is what a maintainer
-		// reads before adding the next reset: if your new one is not
-		// covered by the clear already in the file, this guard will not
-		// tell you. Raised in review of #456.
-		clears := map[string]bool{}
-		ast.Inspect(p.file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) != 1 {
+		// The residual cost is worth knowing before you add a reset.
+		// The scope is keyed on source TEXT, so `c.kids` in two methods
+		// of one type is two keys now but one within either; and a
+		// clear inside a closure counts for the whole enclosing
+		// function, because the closure's own scope is not where a
+		// caller reads the reset. If your new reset is not covered by a
+		// clear in the SAME function, this guard will tell you — which
+		// is the property the file-wide version did not have.
+		clearsIn := func(fn ast.Node) map[string]bool {
+			found := map[string]bool{}
+			ast.Inspect(fn, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok || len(call.Args) != 1 {
+					return true
+				}
+				id, ok := call.Fun.(*ast.Ident)
+				if !ok || (id.Name != "clear" && id.Name != "clearToCap") {
+					return true
+				}
+				arg := call.Args[0]
+				if sl, ok := arg.(*ast.SliceExpr); ok {
+					arg = sl.X
+				}
+				found[text(arg)] = true
 				return true
-			}
-			id, ok := call.Fun.(*ast.Ident)
-			if !ok || (id.Name != "clear" && id.Name != "clearToCap") {
-				return true
-			}
-			arg := call.Args[0]
-			if sl, ok := arg.(*ast.SliceExpr); ok {
-				arg = sl.X
-			}
-			clears[text(arg)] = true
-			return true
-		})
+			})
+			return found
+		}
 
-		ast.Inspect(p.file, func(n ast.Node) bool {
-			as, ok := n.(*ast.AssignStmt)
-			// PAIRWISE — see the composer-only guard above, which had
-			// the same bail and the same blind spot.
-			if !ok || len(as.Lhs) != len(as.Rhs) {
+		// The reset walk runs per function too, so `clears` below is
+		// the enclosing function's and no other's. A reset outside any
+		// function body is not expressible in Go, so nothing is skipped
+		// by only visiting FuncDecls.
+		for _, decl := range p.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			clears := clearsIn(fn)
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				as, ok := n.(*ast.AssignStmt)
+				// PAIRWISE — see the composer-only guard above, which had
+				// the same bail and the same blind spot.
+				if !ok || len(as.Lhs) != len(as.Rhs) {
+					return true
+				}
+				for i, rhs := range as.Rhs {
+					sl, ok := rhs.(*ast.SliceExpr)
+					if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
+						continue
+					}
+					hi, ok := sl.High.(*ast.BasicLit)
+					if !ok || hi.Value != "0" {
+						continue
+					}
+					base := text(sl.X)
+					// The element type is looked up by the LAST segment:
+					// c.gonePlacements is the gonePlacements field.
+					name := base
+					if i := strings.LastIndex(name, "."); i >= 0 {
+						name = name[i+1:]
+					}
+					elem, known := elems[name]
+					if known && elem != nil && !holdsAReference(elem, here, types, 0) {
+						safe++
+						continue
+					}
+					retaining++
+					if clears[base] || clears[text(as.Lhs[i])] {
+						cleared++
+						continue
+					}
+					pos := p.fset.Position(sl.Pos())
+					if retainsNothingAbove(lines, pos.Line) {
+						continue
+					}
+					t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
+						"reference (%s). That truncates len and leaves the backing array "+
+						"holding everything past it — for a list that shrinks and stays "+
+						"small, until nothing. Clear to cap (clearToCap here, "+
+						"clear(x[:cap(x)]) in another package), or say why the elements "+
+						"are safe to keep in a `retains nothing:` comment. NOTE: the "+
+						"reset is in module %s, but this check lives in the ROOT "+
+						"module's suite and walks the whole tree — `go test ./...` in "+
+						"%s will stay green, so this is the only place it goes red",
+						p.path, pos.Line, base, elemDesc(elem, known),
+						owningModule(p.path), owningModule(p.path))
+				}
 				return true
-			}
-			for i, rhs := range as.Rhs {
-				sl, ok := rhs.(*ast.SliceExpr)
-				if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
-					continue
-				}
-				hi, ok := sl.High.(*ast.BasicLit)
-				if !ok || hi.Value != "0" {
-					continue
-				}
-				base := text(sl.X)
-				// The element type is looked up by the LAST segment:
-				// c.gonePlacements is the gonePlacements field.
-				name := base
-				if i := strings.LastIndex(name, "."); i >= 0 {
-					name = name[i+1:]
-				}
-				elem, known := elems[name]
-				if known && elem != nil && !holdsAReference(elem, here, types, 0) {
-					safe++
-					continue
-				}
-				retaining++
-				if clears[base] || clears[text(as.Lhs[i])] {
-					cleared++
-					continue
-				}
-				pos := p.fset.Position(sl.Pos())
-				if retainsNothingAbove(lines, pos.Line) {
-					continue
-				}
-				t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
-					"reference (%s). That truncates len and leaves the backing array "+
-					"holding everything past it — for a list that shrinks and stays "+
-					"small, until nothing. Clear to cap (clearToCap here, "+
-					"clear(x[:cap(x)]) in another package), or say why the elements "+
-					"are safe to keep in a `retains nothing:` comment",
-					p.path, pos.Line, base, elemDesc(elem, known))
-			}
-			return true
-		})
+			})
+		}
 	}
 
 	// NON-VACUITY IN BOTH DIRECTIONS. A classifier answering "holds a
@@ -997,6 +1019,28 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 	}
 	t.Logf("resets examined: %d can hold a reference (%d cleared), %d cannot",
 		retaining, cleared, safe)
+}
+
+// owningModule is the nearest ancestor directory of path holding a
+// go.mod, as a repo-relative path ("." for the root module).
+//
+// It exists for the FAILURE MESSAGE, not for the scan. The corpus here
+// is the whole tree, which is the right scope — a slice reset retains
+// components wherever it is written — but it means a reset added in
+// packs/temporal-core reddens the ROOT module's suite, in a package the
+// contributor never opened, while that module's own `go test ./...`
+// says nothing. Naming the module is what closes the distance between
+// where the defect is and where the red appears. Raised in review of
+// #456.
+func owningModule(path string) string {
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		if dir == "." || dir == string(filepath.Separator) {
+			return "."
+		}
+	}
 }
 
 // goFile is one parsed file, kept with the bytes it was parsed from so a

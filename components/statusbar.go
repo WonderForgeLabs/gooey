@@ -42,6 +42,17 @@ func (s *StatusBar) ChildComponents() []gooey.Component {
 	// Cleared to cap, not truncated: a StatusBar that loses its Right
 	// keeps it reachable in the tail otherwise. See clearToCap in the
 	// root package. Raised in review of #456.
+	//
+	// TWO THINGS THIS COSTS, both deliberate. The clear is paid per
+	// CALL — the framework asks for children several times a frame —
+	// rather than once per structural change, because this type has no
+	// re-sync seam to hang it on; at three elements that is noise. And
+	// a caller holding the slice a PREVIOUS call returned now reads nil
+	// wherever this rebuild did not refill, where it used to read a
+	// stale-but-live component. Nothing in the tree keeps the return
+	// past the range that consumes it, so this is the contract, not a
+	// bug — written down here because rediscovering it costs more than
+	// saying it. Raised in review of #456.
 	clear(s.kids[:cap(s.kids)])
 	s.kids = s.kids[:0]
 	for _, c := range []gooey.Component{s.Left, s.Center, s.Right} {
