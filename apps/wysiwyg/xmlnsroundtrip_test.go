@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1261,12 +1262,68 @@ func TestUndoDoesNotReachBackPastAnOpen(t *testing.T) {
 	}
 }
 
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen is the end-to-end
+// half the round before this one said was unreachable.
+//
+// The argument for unreachability was that #517 refuses a document
+// declaring xmlns:x as having two roots. It refuses one CONTAINING an
+// <x:Property>: that element is a second kid of <Gooey>, and the
+// len(n.Kids) != 1 arm in openWorkspaceFile is what turns it away. A
+// document that only DECLARES the prefix has one kid and opens like any
+// other, which is what this drives — through the file browser, on a file
+// on disk, so the arm runs where a user reaches it rather than where a
+// unit call does.
+//
+// The assertion is on ed.source and ed.doc().Attrs rather than on the
+// screen: the defect a carried element prefix causes is not visible in
+// the running canvas at all. It appears on the next OPEN, when the
+// declaration sits on the content root and <x:Property> — its sibling —
+// is out of scope.
+func TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "decl.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("decl.gooey")
+
+	// THE OPEN ITSELF IS HALF THE FINDING. If this refuses, the skip in
+	// carryDeclarations really is unreachable through this path and the
+	// comment that said so was right.
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening a document that DECLARES xmlns:x reports %q. Only a "+
+			"document that CONTAINS an <x:Property> has two kids of <Gooey>; "+
+			"this one has a single Canvas and must open", got)
+	}
+	if got, ok := ed.doc().Attrs["xmlns:x"]; ok {
+		t.Errorf("the element prefix came down onto the content root as %q. "+
+			"<x:Property> is a SIBLING of this root, so a declaration here is "+
+			"out of scope at the element it exists for and the saved document "+
+			"stops loading", got)
+	}
+	if src := ed.source.Get(); !strings.Contains(src, `<Gooey xmlns:x=`) {
+		t.Errorf("the rebuilt source does not carry the declaration on its "+
+			"envelope:\n%s", src)
+	}
+}
+
 // TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope calls the
-// function directly, because the editor's own open path cannot reach it:
-// a document with an <x:Property> has two children of <Gooey> and
-// openWorkspaceFile refuses it as having two root elements (#517). So the
-// unit call IS the coverage, and it says so rather than dressing up as an
-// end-to-end test that would pass on the refusal.
+// function directly, which pins the rule at the seam both unwraps share.
+// The end-to-end half is
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen, and it is reachable
+// today: the comment here used to say the open path could not get here,
+// on the grounds that #517 refuses such a document. What #517 refuses is
+// a document CONTAINING an <x:Property>, which gives <Gooey> two kids.
+// One that merely DECLARES xmlns:x has one kid and opens normally.
+// Corrected in review of #501.
 //
 // The rule: an ATTRIBUTE prefix may come down onto the content root,
 // because markup.parse resolves one through a flat document-wide table
@@ -1299,6 +1356,88 @@ func TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope(t *testing.T) {
 		t.Errorf("the default declaration came down; it is decorative versioning " +
 			"that markup.parse skips, and the root has no use for it")
 	}
+}
+
+// TestOnlyOneFunctionWritesADocumentEnvelope replaces the count that used
+// to sit in gooeyOpen's doc comment.
+//
+// A hand-maintained list of call sites inside a comment is the
+// enumeration CLAUDE.md's Verify section is about, and this one had
+// already gone stale: it named three literals in two functions while a
+// fourth sat in fragmentFor. The set is derived here, so adding a bare
+// envelope anywhere reddens this rather than quietly making a sentence
+// wrong. Raised in review of #501.
+func TestOnlyOneFunctionWritesADocumentEnvelope(t *testing.T) {
+	// EXEMPT, WITH THE REASON, not dropped: a patch fragment addresses an
+	// island inside another document, so the envelope attributes gooeyOpen
+	// writes are the ones it must NOT carry. See gooeyOpen's doc.
+	const exempt = "fragmentFor"
+
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parsing this package: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				fn, ok := d.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				// OPENS WITH IT, rather than contains it:
+				// openWorkspaceFile's refusal message says "a <Gooey>
+				// document needs exactly one root element", which is
+				// prose about an envelope and not one. lit.Value keeps
+				// the quote, so [1:] drops either kind of it.
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING &&
+						strings.HasPrefix(lit.Value[1:], "<Gooey") {
+						seen[fn.Name.Name] = true
+					}
+					return true
+				})
+			}
+		}
+	}
+	if !seen["gooeyOpen"] {
+		t.Fatalf("no <Gooey literal found in gooeyOpen; the walk found %v. An "+
+			"empty or wrong side makes every assertion below vacuous",
+			sortedNames(seen))
+	}
+	var extra []string
+	for name := range seen {
+		if name != "gooeyOpen" && name != exempt {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	if len(extra) != 0 {
+		t.Errorf("%v spell a <Gooey envelope by hand. gooeyOpen is the one "+
+			"function that writes a document's envelope, because the attributes "+
+			"that belong on it — Graphics, a default xmlns, an xmlns:x — are "+
+			"carried by ed.envAttrs and a hand-written literal drops all of "+
+			"them silently. Route it through gooeyOpen, or exempt it here with "+
+			"the reason it describes something other than a document, as "+
+			"%s is", extra, exempt)
+	}
+	if !seen[exempt] {
+		t.Errorf("%s no longer writes its own envelope; the exemption above is "+
+			"stale and should go with whatever replaced it", exempt)
+	}
+}
+
+// sortedNames is the keys of set, sorted, for a message.
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // assignedIn returns the names of the functions in this package's
@@ -1374,14 +1513,37 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 		_, ok := selects(e, "envAttrs")
 		return ok
 	})
+	// TWO SPELLINGS OF REPLACING THE DOCUMENT, because matching one of
+	// them is the hole this test was written to close, one level up.
+	// `ed.root.Kids = …` swaps the content under a root the editor keeps;
+	// `ed.root = …` swaps the root itself. history.restore (undo.go)
+	// spells it the second way, does not touch envAttrs, and was invisible
+	// to a matcher that only knew the first — so the guard reported the
+	// package clean while holding a live example of the arrangement its
+	// own message describes. Raised in review of #501.
 	kids := assignedIn(t, func(e ast.Expr) bool {
-		se, ok := selects(e, "Kids")
-		if !ok {
-			return false
+		if se, ok := selects(e, "Kids"); ok {
+			_, ok = selects(se.X, "root")
+			return ok
 		}
-		_, ok = selects(se.X, "root")
+		_, ok := selects(e, "root")
 		return ok
 	})
+	// AND ONE OF THEM IS ALLOWED TO, with the reason stated rather than
+	// the site quietly dropped. history.reset (undo.go) clears the stack
+	// on every open, so every snapshot restore can reach belongs to the
+	// file that is open — the same document ed.envAttrs already describes,
+	// which is why restoring one without re-assigning the other cannot
+	// separate them. TestUndoDoesNotReachBackPastAnOpen is
+	// what holds that premise; if reset ever stops clearing, this
+	// exemption is what has to go with it.
+	if !slices.Contains(kids, "restore") {
+		t.Fatalf("the document-replacement walk found %v, with no restore in it "+
+			"— the exemption below would then remove nothing and the matcher has "+
+			"stopped seeing history.restore's `ed.root = s.root.clone()`, which "+
+			"is the site this widening was for", kids)
+	}
+	kids = slices.DeleteFunc(kids, func(fn string) bool { return fn == "restore" })
 
 	if len(kids) == 0 || len(envAttrs) == 0 {
 		t.Fatalf("the walk found envAttrs assigned in %v and ed.root.Kids in %v; "+
@@ -1389,7 +1551,7 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 			"below would pass vacuously", envAttrs, kids)
 	}
 	if strings.Join(envAttrs, ",") != strings.Join(kids, ",") {
-		t.Errorf("ed.envAttrs is assigned in %v and ed.root.Kids in %v. These must "+
+		t.Errorf("ed.envAttrs is assigned in %v and the document in %v. These must "+
 			"be the same set: the envelope belongs to the document on the canvas, "+
 			"so a site that replaces one and not the other leaves the editor "+
 			"describing a file it is no longer showing — which is the defect three "+

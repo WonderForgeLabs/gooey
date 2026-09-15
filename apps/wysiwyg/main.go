@@ -740,16 +740,19 @@ func (n *node) markup(indent string) string {
 // flat-table reasoning above is an ATTRIBUTE prefix's and does not reach
 // here.
 //
-// THIS ARM IS UNREACHABLE TODAY, and that is worth saying rather than
-// leaving for someone to discover as dead code: openWorkspaceFile counts
-// a declaration as a second root and refuses the document before this
-// runs (#517), so no such envelope gets here. The guard is written
-// anyway because #517's fix is to stop counting them, and that fix is
-// exactly what makes this path live — a correctness rule the fix depends
-// on should not be one the fix has to rediscover.
-// TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope calls the
-// function directly, which is the only way to reach it. Raised in review
-// of #501.
+// THIS ARM IS LIVE ON BOTH UNWRAPS, and the round that added it said the
+// opposite: that openWorkspaceFile refuses such a document as a second
+// root (#517), so only a direct call could reach the skip. What #517
+// refuses is a document CONTAINING an <x:Property> — that is two kids of
+// <Gooey>, and the len(n.Kids) != 1 arm turns it away. A document that
+// merely DECLARES xmlns:x has one kid and opens like any other, measured
+// through openWorkspaceFile in
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen; pasteMarkup ->
+// unwrapGooey reaches the same skip the other way. So this is not
+// pre-work for #517: delete it and every <Gooey xmlns:x> document already
+// on disk gets its element prefix moved onto the content root, out of
+// scope at the <x:Property> it exists for. Corrected in review of #501,
+// the round after the claim was written.
 //
 // ONE FUNCTION BECAUSE THERE ARE TWO UNWRAPS. openWorkspaceFile had
 // this inline and unwrapGooey (clipboard.go) had nothing, so #472
@@ -799,10 +802,23 @@ func envelopeAttrs(env, root *node) map[string]string {
 // gooeyOpen is the envelope's opening tag, carrying whatever the opened
 // file wrote on it.
 //
-// ONE FUNCTION FOR THREE LITERALS. `"<Gooey>\n"` was spelled
-// independently in ed.rebuild (twice) and in saveOpenFile, and nothing
+// ONE FUNCTION FOR EVERY ENVELOPE THAT DESCRIBES A DOCUMENT. `"<Gooey>\n"`
+// was spelled independently in ed.rebuild and in saveOpenFile, and nothing
 // crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
 // was added to close from the other end.
+//
+// ONE LITERAL IS LEFT, AND ON PURPOSE: fragmentFor (remotemode.go). A
+// patch fragment is not a document — it addresses an island inside
+// someone else's, so the envelope attributes this function writes are
+// exactly the ones it must not carry. A Graphics or a default xmlns
+// belongs to the file the author saved; an xmlns:x scopes <x:Property>
+// elements that are siblings of the content root and never travel in a
+// fragment at all. The handler prefixes DO travel, because
+// carryDeclarations already put them on the content root, which is what
+// ed.root.markup writes. The count that used to be here was
+// hand-maintained and was already one behind — so
+// TestOnlyOneFunctionWritesADocumentEnvelope derives the set instead.
+// Raised in review of #501, twice.
 //
 // attrValue like node.markup, because these attributes go back out the
 // way every other attribute in this document does and the two must agree
