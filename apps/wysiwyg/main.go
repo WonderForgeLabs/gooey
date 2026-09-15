@@ -1796,6 +1796,10 @@ func (ed *editor) loadPalette() {
 	// not fail, it just started offering a <Menu> that produces markup
 	// refusing to load. The catalog answers this now — see
 	// markup.ElementSpec.Nested — so the second one costs nothing here.
+	// An ElementSpec holds maps and strings, so the tail keeps a whole
+	// catalog's worth of them alive past len. See clearToCap in the
+	// gooey package. Raised in review of #456.
+	clear(ed.palette[:cap(ed.palette)])
 	ed.palette = ed.palette[:0]
 	ed.pseudo = map[string]bool{}
 	ed.specs = map[string]markup.ElementSpec{}

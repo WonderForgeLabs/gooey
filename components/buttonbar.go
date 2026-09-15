@@ -75,6 +75,10 @@ func (b *ButtonBar) Measure(avail gooey.Size) gooey.Size {
 			l.Visibility = m.was
 		}
 	}
+	// cutMember holds a gooey.Component, so this tail retains buttons
+	// from the last measure. See clearToCap in the root package. Raised
+	// in review of #456.
+	clear(b.cut[:cap(b.cut)])
 	b.cut = b.cut[:0]
 
 	b.sizes = b.sizes[:0]

@@ -87,10 +87,27 @@ func (p *Property[T]) Get() T {
 		for _, d := range p.n.deps {
 			delete(d.dependents, &p.n)
 		}
+		// The tail is cleared, not just the length: these are the
+		// nodes this computed used to depend on, and a computed whose
+		// dependency set shrinks would hold the old ones past len until
+		// the slot is written again. prop has no clearToCap of its own
+		// — the builtin is what that function wraps. Raised in review of
+		// #456.
+		//
+		// AFTER compute() HAS REFILLED THE SET, which matters here more
+		// than anywhere else the same reset appears: this is the one
+		// site on a genuinely per-frame path — inside Get, for every
+		// dirty computed, which is every paint node that repaints.
+		// Every other site is a structural re-sync and can afford cap.
+		// Clearing after costs cap minus len, which is zero in the
+		// steady state where a component's dependency set is stable and
+		// non-zero exactly when the set SHRANK — the case the clear is
+		// for. Raised in review of #456.
 		p.n.deps = p.n.deps[:0]
 		evalStack = append(evalStack, &p.n)
 		p.value = p.compute()
 		evalStack = evalStack[:len(evalStack)-1]
+		clear(p.n.deps[len(p.n.deps):cap(p.n.deps)])
 		p.n.dirty = false
 		p.evals++
 	}

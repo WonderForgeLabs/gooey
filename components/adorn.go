@@ -60,11 +60,36 @@ type PersistentAdornment interface {
 }
 
 // AdornmentLayer hosts adornments above the whole page: the app declares
-// it as the LAST child of its root — document order is z-order, the same
-// hosting shape as ToastHost — and adorners are added and removed at
-// runtime through the Dynamic re-sync a list uses. The layer paints
-// nothing and declares no background, so a page that never shows an
-// adornment pays nothing for hosting the layer.
+// it anywhere spanning the page FOR PAINT, and adorners are added and
+// removed at runtime through the Dynamic re-sync a list uses. The layer
+// paints nothing and declares no background, so a page that never shows
+// an adornment pays nothing for hosting the layer.
+//
+// "THE SAME HOSTING SHAPE AS ToastHost" is what this said, and it is
+// the half that is not true. ToastHost really has no layout-order
+// dependency; this layer re-anchors during its own Arrange, and layout
+// still walks children in DOCUMENT ORDER because the overlay lift moves
+// paint only. So a layer declared before the content it adorns drops a
+// custom adornment that is neither a PersistentAdornment nor a
+// gooey.PointerFollower — orphaned on its first arrange, permanently,
+// with no error and no fault. Tooltip and ValidationMarker are exempt
+// by construction, which is why every doc scoped to those two is right
+// to say the position is free.
+//
+// docs/markup-reference.md carries the same caveat for the markup
+// surface and TestAnAdornmentLayerDeclaredBeforeItsAnchorLosesTheAdornment
+// pins the drop. This godoc is what a Go author writing a custom adorner
+// reads, and it licensed the order that loses their adornment; found in
+// review of #456.
+//
+// "AS THE LAST CHILD OF ITS ROOT, BECAUSE DOCUMENT ORDER IS Z-ORDER" is
+// what this used to say, and both halves stopped being true: #437 lifted
+// overlays into a layer of their own, and #439 — this change — gave that
+// layer ranks. The layer is at gooey.OverlayRankAdornment, the top, so a
+// validation marker or a tooltip is above the page, above any toast and
+// above any open dropdown. Correcting it here was missed on the first
+// pass, which left this file's godoc contradicting the docs/ edit in its
+// own commit; found in review of #456.
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -115,6 +140,23 @@ type AdornmentLayer struct {
 	structure func()
 	mgr       *gooey.FocusManager
 }
+
+// OverlaysPage and OverlayRank put the layer at the top of the overlay
+// layer — above toasts, which are above popups.
+//
+// TOP because an adornment describes something ALREADY ON SCREEN: a
+// tooltip names the control under the pointer, a validation marker
+// points at the field it is about. Covered by the thing it annotates it
+// says nothing, so of the three kinds it is the one with no reason ever
+// to be underneath. See gooey.OverlayRanker and #439.
+//
+// These live BELOW the struct on purpose. Inserted above it they sat
+// between the type's doc comment and the type, which left AdornmentLayer
+// undocumented and hung its sixty-line design block on OverlaysPage —
+// invisible to every reader who does not run `go doc`. Found in review
+// of #456.
+func (l *AdornmentLayer) OverlaysPage()    {}
+func (l *AdornmentLayer) OverlayRank() int { return gooey.OverlayRankAdornment }
 
 // SetStructureHook receives the composition's structural-change hook —
 // adding and removing adorners are child-set changes (gooey.Dynamic).
@@ -186,6 +228,11 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		// observer, not from here.
 		pointer, seen = l.mgr.Pointer()
 	}
+	// FILTER IN PLACE, so the tail below len holds whatever was dropped
+	// — an orphaned tooltip, a finished drag ghost — until the slot is
+	// written again. Transience is the whole point of an adornment, so
+	// the tail is cleared after the assignment below rather than left.
+	// See clearToCap in the root package. Raised in review of #456.
 	live := l.adorns[:0]
 	dropped := false
 	for _, a := range l.adorns {
@@ -225,6 +272,7 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		gooey.ArrangeChild(a, a.Place(ab, b))
 	}
 	l.adorns = live
+	clear(l.adorns[len(l.adorns):cap(l.adorns)])
 	if dropped && l.structure != nil {
 		l.structure()
 	}
@@ -274,8 +322,12 @@ func attachAdornment(host gooey.Component, mgr *gooey.FocusManager, pop Adornmen
 	return layer
 }
 
-// findAdornmentLayer walks the live tree for the page's layer. Overlays
-// are declared last, so the walk searches later siblings first.
+// findAdornmentLayer walks the live tree for the page's layer,
+// searching later siblings first. That is a HEURISTIC and not a
+// requirement: it is where apps still put the layer, out of the habit
+// document-order z-order left behind, so looking there first usually
+// wins on the first probe. A layer declared anywhere is found just the
+// same, one subtree later.
 func findAdornmentLayer(w gooey.Component) *AdornmentLayer {
 	if l, ok := w.(*AdornmentLayer); ok {
 		return l

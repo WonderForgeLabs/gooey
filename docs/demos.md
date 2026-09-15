@@ -619,8 +619,9 @@ the element itself),
 the damage system — an animation tick repaints exactly one component, and
 the picker's damage is pinned too (open paints the overlay, navigation
 repaints the popup alone, dismissal restores exactly what was covered) —
-and the MenuBar overlay recipe reused in an app: last-in-document-order
-z-order, modal focus with key swallowing, pointer capture while open,
+and the MenuBar overlay recipe reused in an app: lifted out of
+document order into a paint layer of its own, modal focus with key
+swallowing, pointer capture while open,
 focus restored on dismiss. All git work (enumeration, `worktree add`
 / `remove`) runs on one worker goroutine and marshals back through the
 dispatcher, per the UI-confinement rule.
