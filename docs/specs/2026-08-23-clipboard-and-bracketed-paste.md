@@ -58,6 +58,19 @@ tell, where a wedge is at least visible.
 
 Pinned by `TestUnterminatedPasteWaitsEvenWhenIdle`.
 
+**The same reasoning was later extended to a split MARKER, and that half is
+now bounded.** `ESC [ 2` is a strict prefix of the six-byte opener, so
+[#425](https://github.com/WonderForgeLabs/gooey/pull/425) gave it the same
+wait. Unlike an open paste, that buffer is *also* three keys a person can
+type — Esc, `[`, `2` — and for those the wait never ends: the Esc is
+never delivered, the next keystroke is absorbed into the CSI parse, and the
+decoder wakes every 40ms forever
+([#440](https://github.com/WonderForgeLabs/gooey/issues/440)). It now resolves
+after `term.PasteMarkerGrace` consecutive timeouts, through
+`input.DecodeFinal`. The unterminated-paste wedge above is explicitly **not**
+on that scale and still waits indefinitely — see
+[specs/2026-09-01-paste-marker-grace.md](2026-09-01-paste-marker-grace.md).
+
 ## Decision 2 — on by default, and `TextBox` must handle it
 
 `gooey.App` enables mode 2004 by default with `WithoutPaste()` to opt
