@@ -277,12 +277,15 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	}
 	// AND THE COLUMN MODEL AGREES WITH THE ROW, which the string alone
 	// cannot say: a buffer column must be a terminal column, or
-	// everything right of the glyph is displaced.
-	for i, col := range render.TerminalColumns(f.Cells, 0) {
-		if col != i {
-			t.Fatalf("cell %d lands in terminal column %d, so the row is "+
-				"displaced from there rightward: %q",
-				i, col, render.RowText(f.Cells, 0))
-		}
+	// everything right of the glyph is drawn one column off and the
+	// displaced cells are CLEAN, so nothing repaints over them.
+	//
+	// Through render.Displaced rather than a loop over TerminalColumns:
+	// a continuation cell's recorded column is where the cursor sits
+	// MID-GLYPH, which is legitimately not its index, so the raw loop
+	// calls every correct wide row displaced.
+	if x, by, bad := render.Displaced(f.Cells, 0); bad {
+		t.Errorf("cell %d is drawn %d columns off, so everything right of it is "+
+			"displaced: %q", x, by, render.RowText(f.Cells, 0))
 	}
 }
