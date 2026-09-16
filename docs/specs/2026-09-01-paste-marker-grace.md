@@ -266,9 +266,10 @@ reservation but the same one, because the tail budget is measured from
 `wrote` and so spends the window the drift guard already draws on. A
 sufficiently pathological deschedule of the decoder between the send and the
 `Reset` could still let an attempt land early and pass without exercising the
-grace: the drift guard bounds `held - wrote`, so it bounds `arm - held` from
-ABOVE only, and an arm landing late leaves the tail arriving while the prefix
-is still live. The marker is then never split at the decoder at all - the
+grace: the drift guard bounds `held - wrote`, and `arm >= wrote`, so what it bounds
+from above is `held - arm` — the arm landing EARLY. The other direction is
+unbounded: an arm landing late leaves the tail arriving while the prefix is
+still live. The marker is then never split at the decoder at all - the
 whole sequence decodes as one paste, `IsPaste()` holds, and the helper
 returns true having exercised nothing.
 
@@ -382,8 +383,8 @@ escape timeouts, i.e. exactly the behaviour the mutation was supposed to have
 removed.
 
 The split is deliberate: the `input` tests cannot see whether the *loop* ever
-asks for the final pass, and the `term` test cannot see which byte sequences the
-decoder is allowed to hold. Neither substitutes for the other.
+asks for the final pass, and the `term` tests cannot see which byte sequences
+the decoder is allowed to hold. Neither substitutes for the other.
 
 `TestFinalDecodeResolvesTheTypedMarkerPrefix` asserts the grace still holds for
 the FIRST timeout before asserting the second resolves it, so a fix that removed
@@ -392,8 +393,8 @@ liveness check in the file.
 
 `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` lives in `term` for the
 reason its neighbour `TestEscBeforeAMouseReportDoesNotStrandTheDecoder` gives: only the loop can show
-that a decoding contract strands live input, and only a real tty makes the loop
-the thing under test. Here the **gap is the fixture** — the three bytes must
+that violating a decoding contract strands live input, and only a real tty makes
+the loop the thing under test. Here the **gap is the fixture** — the three bytes must
 arrive in their own read with nothing after them for two timeouts, which is what
 a keyboard does and what no single `Write` can fake.
 

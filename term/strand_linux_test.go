@@ -91,8 +91,8 @@ func TestEscBeforeAMouseReportDoesNotStrandTheDecoder(t *testing.T) {
 // PasteMarkerGrace is the fix: the grace is bounded rather than removed,
 // and the pass after it withdraws the exception (input.DecodeFinal).
 // Here rather than in input for the reason the test above gives — only
-// the loop can show that a decoding contract stranding live input, and
-// only a real tty makes the loop the thing under test. In particular the
+// the loop can show that violating a decoding contract strands live
+// input, and only a real tty makes the loop the thing under test. In particular the
 // GAP is the fixture: these bytes have to arrive in their own read and
 // then nothing for two timeouts, which is exactly what a keyboard does
 // and what a single Write in one test cannot fake.
@@ -359,15 +359,25 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// direction alone and its sibling asserted the early one, which is
 	// the drift the spec already had right at "either side".
 	//
-	// THIS HELPER'S BUDGET DEPENDS ON THE LATE DIRECTION ONLY. It
-	// requires the event after the close to arrive inside EscTimeout of
-	// `held`, so an arm EARLIER than `held` only widens the real margin;
-	// an arm LATER is what could let a timer-delivered Esc measure as
-	// inside the budget. That needs a drift of 2*EscTimeout, not "most of
-	// a timeout" as this said: while `held < arm + 2*EscTimeout` the
-	// close still wins the race and the Esc genuinely comes from the
-	// close path, so the verdict is right whatever the elapsed reads.
-	// Raised in review of #445.
+	// THIS HELPER'S BUDGET DEPENDS ON THE LATE DIRECTION ONLY — held
+	// late, which is the arm EARLY. It requires the event after the close
+	// to arrive inside EscTimeout of `held`, and a timer-delivered Esc
+	// lands at arm + 2*EscTimeout, so the elapsed this helper measures is
+	// 2*EscTimeout minus the drift. An arm LATER than `held` subtracts a
+	// negative and only widens the real margin; an arm EARLIER is what
+	// shrinks the elapsed until a timer-delivered Esc measures as inside
+	// the budget. That needs a drift of 2*EscTimeout, not "most of a
+	// timeout" as this said: while `held < arm + 2*EscTimeout` the close
+	// still wins the race and the Esc genuinely comes from the close
+	// path, so the verdict is right whatever the elapsed reads.
+	//
+	// THE TWO LABELS WERE SWAPPED HERE, and swapped against this
+	// paragraph's own heading, against the `held < arm + 2*EscTimeout`
+	// condition it goes on to state, and against the guard below, whose
+	// arithmetic sentence has always been right. A reader deciding
+	// whether the EscTimeout/4 guard is still needed would have read
+	// this and concluded it defends the direction that is already
+	// conservative. Raised in review of #445, twice.
 	held := time.Now()
 	// AND THE DRIFT IS MEASURED, the way splitMarkerAttempt measures it
 	// below. Sampling `held` after a receive on a BUFFERED channel is
@@ -472,10 +482,17 @@ func next(t *testing.T, evs <-chan input.Event, msg string) input.Event {
 // So this is #419 itself, end to end: a real paste whose opening marker
 // straddles a read must still arrive as ONE PasteEvent.
 func TestASplitPasteMarkerStillPastes(t *testing.T) {
-	// FORTY, not twenty, for the reason the sleep above gives: the margin
-	// this attempt needs is scheduler headroom, and doubling the draws is
-	// the half of that which costs nothing and weakens nothing. Raised in
-	// review of #445.
+	// FORTY, not twenty, for the reason the sleep in splitMarkerAttempt
+	// gives: the margin this attempt needs is scheduler headroom, and
+	// doubling the draws is the half of that which costs nothing and
+	// weakens nothing.
+	//
+	// NAMED, NOT POINTED AT. This said "the sleep above" for a sleep 104
+	// lines BELOW — the same class as the "seventy lines below" this
+	// branch already removed, and inconsistent with its own neighbour
+	// upstream, which names splitMarkerAttempt outright. A name cannot
+	// drift; a direction does, every time something moves between the
+	// two. Raised in review of #445.
 	const attempts = 40
 	for i := range attempts {
 		if splitMarkerAttempt(t) {

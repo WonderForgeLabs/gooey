@@ -14,21 +14,29 @@ import (
 // behaviour at all, and a buffer that waits under idle FOREVER looked
 // exactly like one that waits correctly for one timeout.
 //
-// DecodeFinal is the second timeout expressed as an API. Under it the
+// DecodeFinal is "nothing more can arrive" expressed as an API. Under it the
 // exception list shrinks from "split paste marker, or open paste" to
 // "open paste", and that is the whole of the difference — pinned here in
 // both directions, because a fix that removed the grace instead of
 // bounding it would pass every liveness assertion in this file while
 // reintroducing #419.
+//
+// NOT "THE SECOND TIMEOUT", which is what this file said in three
+// places. deadlineFinal has two callers and only one of them counts
+// timeouts: the tty-close path reaches drainFinal with ZERO elapsed
+// (input/decode.go, and DecodeFinal's own doc). The two below are
+// FAILURE MESSAGES — the sentence somebody reads while debugging — so
+// naming the timer there sends them at a clock for a failure that may
+// have come through the close. Raised in review of #445.
 
 func assertFinalProgress(t *testing.T, b []byte) {
 	t.Helper()
 	_, n, ok := DecodeFinal(b)
 	if n == 0 && !ok {
-		t.Fatalf("DecodeFinal(%q) consumed nothing and produced nothing: two "+
-			"escape timeouts have gone by with this buffer unchanged, so no "+
-			"byte is coming that could resolve it and the drain loop stops "+
-			"here permanently", b)
+		t.Fatalf("DecodeFinal(%q) consumed nothing and produced nothing: it is "+
+			"called when nothing more can arrive — a second escape timeout, or "+
+			"a closed tty — so no byte is coming that could resolve it and the "+
+			"drain loop stops here permanently", b)
 	}
 }
 
@@ -160,9 +168,10 @@ func TestFinalDecodeHoldsNoMarkerPrefix(t *testing.T) {
 			return
 		}
 		if _, n, ok := DecodeFinal(b); n == 0 && !ok {
-			t.Errorf("DecodeFinal(%q) waits for more bytes. Two escape timeouts "+
-				"have already gone by unchanged, so nothing can arrive to resolve "+
-				"it and every later keystroke strands behind it", b)
+			t.Errorf("DecodeFinal(%q) waits for more bytes. It is called when "+
+				"nothing more can arrive — a second escape timeout, or a closed "+
+				"tty — so nothing will resolve it and every later keystroke "+
+				"strands behind it", b)
 		}
 		// Only parameter bytes keep decodeCSI in the arm that can wait.
 		for c := 0x30; c < 0x40; c++ {
