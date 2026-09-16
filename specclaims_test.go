@@ -1,8 +1,6 @@
 package gooey
 
 import (
-	goparser "go/parser"
-	gotoken "go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -476,27 +474,17 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 // classify it.
 func goCitations(t *testing.T, path string) []citation {
 	t.Helper()
-	src, err := os.ReadFile(path)
+	c, err := goCommentIndex()
 	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	fset := gotoken.NewFileSet()
-	f, err := goparser.ParseFile(fset, path, src, goparser.ParseComments)
-	if err != nil {
-		return nil // the compiler owns this one
+		t.Fatalf("indexing Go comments: %v", err)
 	}
 	var out []citation
-	for _, cg := range f.Comments {
-		for _, c := range cg.List {
-			at := fset.Position(c.Slash).Line
-			for i, l := range strings.Split(c.Text, "\n") {
-				for _, m := range citedTestName.FindAllStringSubmatch(l, -1) {
-					out = append(out, citation{
-						file: path, line: at + i,
-						pkg: m[1], name: m[2], text: strings.TrimSpace(l),
-					})
-				}
-			}
+	for _, l := range c.files[path].lines {
+		for _, m := range citedTestName.FindAllStringSubmatch(l.text, -1) {
+			out = append(out, citation{
+				file: path, line: l.line,
+				pkg: m[1], name: m[2], text: strings.TrimSpace(l.text),
+			})
 		}
 	}
 	return out

@@ -1126,7 +1126,7 @@ ctx.Dir = dir
 
 `fs.FS` cannot answer this — `os.DirFS(dir)` offers no way back to `dir`, and `chdir`/`open` do not take an `fs.FS`. An empty `Context.Dir` falls back to the process's working directory.
 
-**This holds at any depth.** `Context.Dir` is among the fields a UserControl or Include inherits from its parent, so a `<Companion>` inside a control file resolves `Dir=`/`Log=` against the same directory the page does. It did not until [#314](https://github.com/WonderForgeLabs/gooey/issues/314), where an uninherited `Dir` was empty and `hostPath` fell back to the process's working directory — silently, since nothing restricts `<Companion>` to page level.
+**A control inherits it when it leaves it nil.** `Context.Dir` is among the fields a UserControl or Include inherits from its parent on that condition, so a `<Companion>` inside a control file resolves `Dir=`/`Log=` against the same directory the page does — unless its setup returns a `Context` carrying a `Dir` of its own, which it then keeps. This paragraph said "holds at any depth", which reads as unconditional and is the one thing it is not; the same overstatement was corrected in `Context.Dir`'s own doc comment in review of #490. It did not until [#314](https://github.com/WonderForgeLabs/gooey/issues/314), where an uninherited `Dir` was empty and `hostPath` fell back to the process's working directory — silently, since nothing restricts `<Companion>` to page level.
 
 **Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic). A requested stop does **not** run `Exited`.
 

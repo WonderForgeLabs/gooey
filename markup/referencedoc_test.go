@@ -177,3 +177,63 @@ func TestTheReferencePartitionMatchesTheCode(t *testing.T) {
 func isExportedField(name string) bool {
 	return name != "" && name[0] >= 'A' && name[0] <= 'Z'
 }
+
+// TestTheCompanionSectionStatesTheInheritanceCondition guards the
+// sentence the "at every depth" correction reached last.
+//
+// Context.Dir's own doc comment and markup/companion.go both had the
+// overstatement fixed in review of #490, and the reference's <Companion>
+// section — the surface more readers land on when they want <Companion>
+// behaviour — kept it for another round. The partition paragraph 480
+// lines below has always been right, and the guard above reads only
+// that one, so nothing could see it.
+//
+// A REQUIRED WORD, not a forbidden one. "The page must not say 'at any
+// depth'" fails open the moment the claim returns in other words, which
+// is the shape of guard this branch is about removing. Requiring the
+// condition fails CLOSED: a rewrite that drops it goes red, however it
+// is phrased.
+//
+// The expectation comes from boundaryPartition, so the day Dir stops
+// inheriting this reports that the paragraph is wrong in the OTHER
+// direction rather than passing on a sentence about a rule that no
+// longer exists. Raised in review of #490.
+func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
+	const path = "../docs/markup-reference.md"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	const anchor = "`Context.Dir` is among the fields a UserControl or Include inherits"
+	para := ""
+	lines := strings.Split(string(b), "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, anchor) {
+			continue
+		}
+		for _, l := range lines[i:] {
+			if strings.TrimSpace(l) == "" {
+				break
+			}
+			para += l + " "
+		}
+		break
+	}
+	if para == "" {
+		t.Fatalf("%s no longer carries a paragraph saying %q. Either it was "+
+			"reworded — in which case this guard has to follow it — or the "+
+			"<Companion> section says nothing about where Dir comes from, "+
+			"which is the state #314 was filed from", path, anchor)
+	}
+	if !boundaryPartition["Dir"].inherit {
+		t.Fatalf("boundaryPartition says Dir no longer crosses the control "+
+			"boundary, and the reference still says it is inherited:\n\t%s", para)
+	}
+	if !strings.Contains(para, "nil") {
+		t.Errorf("the <Companion> section states Dir's inheritance without its "+
+			"condition — a setup returning a Context with its own Dir keeps "+
+			"that one (markup/usercontrol.go), so an unconditional sentence "+
+			"here tells a control author the opposite of what the loader "+
+			"does:\n\t%s", para)
+	}
+}

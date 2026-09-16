@@ -78,24 +78,36 @@ func TestEveryBindableAttributeReallyBinds(t *testing.T) {
 // TestALiteralOnlyAttributeIsNotSilentlyBindable is the other direction,
 // and it is the one that found more than #314 reported.
 //
-// BindsLiteral means the value is used VERBATIM. Thirteen attributes
+// BindsLiteral means the value is used VERBATIM, and a set of attributes
 // declared it while the loader took a `{{...}}` without complaint —
 // StatusBar's three because they genuinely bind (the spec was wrong, now
-// fixed), and TEN because the binding was accepted and DROPPED.
+// fixed), and the rest because the binding never arrives as a value.
 //
-// Measured, and the measurement is what separates the two cases:
-// `<HStack Gap="7">` renders differently from `<HStack>`, and
-// `<HStack Gap="{{.I}}">` with I bound to 7 renders IDENTICALLY to
-// `<HStack>`. The value never arrives. Same for Text.Bold, and for Name
-// the element registers under the literal string "{{.I}}", so
-// markup.Find and PatchMarkup cannot reach it afterwards.
+// THE ENTRIES BELOW ARE THE COUNT. This paragraph used to give one in
+// prose — thirteen, ten, eleven, a twelfth — and to teach the defect
+// with <HStack Gap="{{.I}}">, Text.Bold and Name. All three were fixed
+// by #470, which this branch merged, so the teaching examples described
+// attributes that refuse a binding now and the counts were a sample
+// taken before that merge. It is the same rule the Verify section of
+// CLAUDE.md states for module counts, and the same one the rest of this
+// PR applies to usercontrol.go and to the boundary partition: a number
+// in prose is a sample, and the list is the thing that is true.
+// unseedable's own comment already reads this way.
+//
+// Measured, on an entry that is still in the list: <ButtonBar> renders
+// differently with Separator set than without it, and with
+// Separator="{{.S}}" it renders as NEITHER — the template text reaches
+// the consumer verbatim. Validate.Pattern is the same shape. That is
+// what "the binding is not honoured" means here, and
+// TestABoundValueActuallyArrives is where each entry's evidence lives,
+// derived from the same list rather than hardcoded beside it.
 //
 // That class is issue #488 and is NOT fixed here: refusing a binding at
-// load time is a behaviour change across eleven attributes and belongs
-// in its own commit. What this test does is stop the LIST growing —
-// every remaining offender is named in silentlyBindable below, so a
-// twelfth cannot arrive quietly, and closing #488 means deleting entries
-// rather than discovering them.
+// load time is a behaviour change across every remaining entry and
+// belongs in its own commit. What this test does is stop the LIST
+// growing — every remaining offender is named in silentlyBindable below,
+// so a new one cannot arrive quietly, and closing #488 means deleting
+// entries rather than discovering them.
 func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 	known := map[string]bool{}
 	for _, s := range silentlyBindable {

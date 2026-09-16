@@ -1778,7 +1778,7 @@ const symbolForeignMarker = "<!-- symbols: not-go -->"
 // is for.
 func TestEveryCitedSymbolResolves(t *testing.T) {
 	declared := declaredByPackage(t)
-	foreign := vendoredByPackage(t)
+	foreign, haveVendor := vendoredByPackage(t)
 	if len(declared["markup"]) == 0 || len(declared["render"]) == 0 {
 		t.Fatalf("the declaration index found %d markup symbols and %d render "+
 			"symbols, so the walk is looking somewhere else and every citation "+
@@ -1787,15 +1787,23 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 	}
 
 	checked, fromGo := 0, 0
+	// rescued counts citations the vendor index cleared, and
+	// unadjudicable counts the ones a missing vendor/ leaves undecided —
+	// the two halves of the same question, so that whichever
+	// configuration this run is in, the answer is reported rather than
+	// assumed. See the floor below for what each is worth.
+	rescued, unadjudicable := 0, 0
 	docs := symbolDocs(t)
 	for _, doc := range append(docs, goCommentSources(t)...) {
-		b, err := os.ReadFile(doc)
-		if err != nil {
-			t.Fatalf("reading %s: %v", doc, err)
-		}
-		text := string(b)
+		var text string
 		if strings.HasSuffix(doc, ".go") {
-			text = goComments(t, doc, b)
+			text = goComments(t, doc)
+		} else {
+			b, err := os.ReadFile(doc)
+			if err != nil {
+				t.Fatalf("reading %s: %v", doc, err)
+			}
+			text = string(b)
 		}
 		// PER LINE, not per document, and the line is what the marker
 		// attaches to. A citation cannot straddle a newline — both
@@ -1851,6 +1859,19 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 					// does, so the page is citing the dependency. See
 					// vendoredByPackage for why this is asked in that order
 					// and not the other.
+					rescued++
+					continue
+				}
+				if !syms[name] && !haveVendor {
+					// UNADJUDICABLE, NOT CLEARED. With no vendor/ there
+					// is no way to tell a dependency's symbol from a
+					// rename of ours, and this is the exact set where
+					// the two are confusable: our package of that name
+					// exists and does not declare the symbol. Everything
+					// else on this page is still checked, which is the
+					// whole point of not skipping the test — see
+					// vendoredByPackage.
+					unadjudicable++
 					continue
 				}
 				checked++
@@ -1889,6 +1910,29 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 	// walk that stopped returning .go files, or a parse that started
 	// failing silently, has to be its own failure rather than a dent in
 	// a three-digit total. Raised in review of #490.
+	// AND THE VENDOR ARM IS NOT ALLOWED TO GO QUIET. It is the only
+	// mechanism standing between a page citing a dependency's symbol and
+	// an error telling the author to rename their own — and with vendor/
+	// present nothing else exercises it on real documents
+	// (TestAVendoredCollisionIsNotOurStaleCitation drives the decision
+	// on a fixture). If it rescues nothing, the standalone arm above is
+	// exempting nothing either, and both should go rather than sit here
+	// looking like coverage. Raised in review of #490.
+	if haveVendor && rescued == 0 {
+		t.Error("the vendor index cleared no citation, so nothing in the tree " +
+			"cites a dependency's symbol under a package name we also use. " +
+			"Either those citations were reworded — in which case the vendor " +
+			"index, vendoredIndex, and the unadjudicable arm beside it are all " +
+			"dead code — or the vendor walk is looking somewhere else")
+	}
+	if !haveVendor && unadjudicable != 0 {
+		// Reported, not failed: this configuration is legitimate, and
+		// the number is what a reader needs to know the guard ran
+		// narrower than usual rather than not at all.
+		t.Logf("vendor/ is absent, so %d citation(s) naming one of our packages "+
+			"and a symbol it does not declare were left undecided; the other %d "+
+			"were checked", unadjudicable, checked)
+	}
 	if fromGo == 0 {
 		t.Error("no symbol citation was resolved from a Go comment, so the half " +
 			"of this guard that #490 added covers nothing. Either goComments is " +
@@ -2012,7 +2056,57 @@ func buildDeclaredByPackage() (map[string]map[string]bool, error) {
 // here resolves it. Three of #490's six conversions are of that shape.
 func goCommentSources(t *testing.T) []string {
 	t.Helper()
-	var out []string
+	c, err := goCommentIndex()
+	if err != nil {
+		t.Fatalf("walking for Go sources: %v", err)
+	}
+	return c.paths
+}
+
+// goCommentCorpus is every Go file in the tree with its comments, walked
+// and parsed ONCE.
+//
+// Memoized for the reason declaredIndex gives, at a larger magnitude and
+// in the commit that gave it. Two guards read this corpus —
+// TestEveryCitedSymbolResolves through goComments and
+// TestEveryCitedTestNameResolves through goCitations — and each used to
+// do its own WalkDir and its own goparser.ParseFile(…, ParseComments)
+// over the same files, for 2.48s and 2.24s of a 25.7s root suite with
+// roughly half of it duplicate. The memo changes nothing either test
+// asserts: the walk is over files on disk, which no test here writes.
+// Raised in review of #490.
+//
+// TWO PRODUCTS FROM ONE PARSE, because the two readers want different
+// shapes of the same thing and neither may be approximated by the other.
+// A prose scan wants the comment TEXT with its markers stripped, which
+// is what CommentGroup.Text() gives; a citation wants the raw line and
+// the file line it is on, so a failure can name a place. Deriving either
+// from the other would move a line number or change what a pattern sees.
+type goCommentCorpus struct {
+	// paths is every .go file, in walk order, so both guards read the
+	// same corpus in the same order.
+	paths []string
+	files map[string]goCommentFile
+}
+
+type goCommentFile struct {
+	// text is every comment group's Text(), concatenated — the form a
+	// prose pattern runs over.
+	text string
+	// lines is one entry per raw comment LINE, with the line of the file
+	// it sits on.
+	lines []goCommentLine
+}
+
+type goCommentLine struct {
+	line int
+	text string
+}
+
+var goCommentIndex = sync.OnceValues(buildGoCommentIndex)
+
+func buildGoCommentIndex() (*goCommentCorpus, error) {
+	c := &goCommentCorpus{files: map[string]goCommentFile{}}
 	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -2024,33 +2118,57 @@ func goCommentSources(t *testing.T) []string {
 			return nil
 		}
 		if strings.HasSuffix(p, ".go") {
-			out = append(out, filepath.ToSlash(p))
+			c.paths = append(c.paths, filepath.ToSlash(p))
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walking for Go sources: %v", err)
+		return nil, err
 	}
-	return out
+	for _, p := range c.paths {
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		fset := gotoken.NewFileSet()
+		f, err := goparser.ParseFile(fset, p, src, goparser.ParseComments)
+		if err != nil {
+			// The compiler owns this one — an unparseable file has no
+			// comments as far as either guard is concerned, which is
+			// what both of them did on their own.
+			c.files[p] = goCommentFile{}
+			continue
+		}
+		var b strings.Builder
+		var lines []goCommentLine
+		for _, cg := range f.Comments {
+			b.WriteString(cg.Text())
+			b.WriteByte('\n')
+			for _, com := range cg.List {
+				at := fset.Position(com.Slash).Line
+				for i, l := range strings.Split(com.Text, "\n") {
+					lines = append(lines, goCommentLine{line: at + i, text: l})
+				}
+			}
+		}
+		c.files[p] = goCommentFile{text: b.String(), lines: lines}
+	}
+	return c, nil
 }
 
 // goComments is every comment in one file, concatenated — so the caller
 // runs the same pattern over Go comments that it runs over markdown, and
 // a `pkg.Name` in a string literal or an identifier is not mistaken for
 // prose about one.
-func goComments(t *testing.T, path string, src []byte) string {
+//
+// It reads the shared index rather than parsing; see goCommentCorpus.
+func goComments(t *testing.T, path string) string {
 	t.Helper()
-	fset := gotoken.NewFileSet()
-	f, err := goparser.ParseFile(fset, path, src, goparser.ParseComments)
+	c, err := goCommentIndex()
 	if err != nil {
-		return "" // the compiler owns this one
+		t.Fatalf("indexing Go comments: %v", err)
 	}
-	var b strings.Builder
-	for _, cg := range f.Comments {
-		b.WriteString(cg.Text())
-		b.WriteByte('\n')
-	}
-	return b.String()
+	return c.files[path].text
 }
 
 // TestAVendoredCollisionIsNotOurStaleCitation drives the three-way
@@ -2065,7 +2183,14 @@ func goComments(t *testing.T, path string, src []byte) string {
 // Raised in review of #490.
 func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 	declared := declaredByPackage(t)
-	foreign := vendoredByPackage(t)
+	foreign, haveVendor := vendoredByPackage(t)
+	if !haveVendor {
+		// THIS test's subject really is the vendor index, so with no
+		// vendor/ there is nothing for it to decide. Its sibling keeps
+		// running — see vendoredByPackage.
+		t.Skip("vendor/ is absent (this module consumed standalone), so there is " +
+			"nothing vendored to collide with")
+	}
 
 	// NON-VACUITY FIRST. Every arm below is "and the other index says
 	// X"; an empty foreign index makes the middle arm unreachable and
@@ -2175,30 +2300,28 @@ var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
 	return buildVendoredByPackage(declared)
 })
 
-func vendoredByPackage(t *testing.T) map[string]map[string]bool {
+// The bool is whether there IS an index, and it is what the callers
+// branch on — this function no longer decides for them.
+//
+// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
+// condition justifies. t.Skip from a helper stops the caller, so a
+// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
+// whole — every one of the hundred-plus citations its own floor insists
+// on, silenced by a two-citation problem in this file's doc comment. The
+// skip replaced a silent empty map, which was worse in the other
+// direction (the empty map turned those two citations into errors about
+// the wrong thing); the answer to both is to report the condition and
+// let each caller narrow. Raised in review of #490, twice.
+func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
 	t.Helper()
-	// A SKIP, NOT A SILENT EMPTY MAP. This returned `out` with a comment
-	// promising graceful degradation when vendor/ is absent, and there
-	// is none: this file's own doc deliberately backticks `workflow.Now`
-	// and `term.IsTerminal` as LIVE fixtures, so with the vendor walk
-	// empty the exemption they rely on is gone too and
-	// TestEveryCitedSymbolResolves errors on this file's explanatory
-	// prose, while TestAVendoredCollisionIsNotOurStaleCitation fails
-	// separately on its own non-vacuity Fatal. Two confusing failures in
-	// the shape the early return existed to avoid — a comment standing
-	// in for evidence, in the file whose argument is that it must not.
-	// Raised in review of #490.
 	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
-		t.Skip("vendor/ is absent (this module consumed standalone), so there is " +
-			"nothing vendored to collide with — and the two citations this file's " +
-			"own doc comment makes to vendored symbols would have nothing to " +
-			"resolve against either")
+		return nil, false
 	}
 	out, err := vendoredIndex()
 	if err != nil {
 		t.Fatalf("walking vendor for declarations: %v", err)
 	}
-	return out
+	return out, true
 }
 
 func buildVendoredByPackage(collidesWith map[string]map[string]bool) (map[string]map[string]bool, error) {
