@@ -180,6 +180,13 @@ func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	kept := keepPopup(t, m)
 	gooey.LayoutOf(tb).Visibility = gooey.Hidden
 	c.Frame()
+	// TWO FRAMES BEFORE THE POINTER IS READ, at the bottom. The drop this
+	// test is named for is self-healing WITHIN a frame today, so one
+	// frame is the whole window it can see: a sweep that deferred
+	// orphaned() to the next layout pass would rebuild the popup on frame
+	// two and this would read it as survival. The second frame costs
+	// nothing and is also where the settled damage count is taken.
+	// Raised in review of #498.
 	// BOTH SIDES, and the second clause is the finding. Asserting only
 	// that the filler came back is blind to the regression this test's
 	// frozen sibling exists for: a persistent adornment arranged at its
@@ -189,19 +196,23 @@ func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	// " required ####################", and Contains("####") passes
 	// straight over it because the message is shorter than the filler,
 	// so the FROZEN test reddens and this one does not. The two-sided
-	// form is what TestValidationLoopDamage already uses. Raised in
-	// review of #498, which also corrected the frozen sibling's comment
-	// claiming this assertion was already making the stronger claim.
+	// form is what TestValidationLoopDamage already uses.
 	if got := row(c.Cells(), 1); !strings.Contains(got, "####") ||
 		strings.Contains(got, "required") {
 		t.Fatalf("row 1 = %q, want the filler restored AND the message gone while "+
 			"the field is hidden", got)
 	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("the frame after the anchor was hidden repainted %d "+
+			"component(s), want a settled page: the hide is one damage event, "+
+			"not a loop", painted)
+	}
 	if m.pop != kept {
 		t.Fatal("hiding the anchor REPLACED the persistent marker's popup " +
 			"instead of keeping it — the layer dropped it and the same " +
 			"frame's ensurePlaced built a fresh one, which is the drop " +
-			"AdornmentPersists opts out of")
+			"AdornmentPersists opts out of. Read after a SECOND frame, so a " +
+			"rebuild deferred to the next layout pass is caught too")
 	}
 
 	gooey.LayoutOf(tb).Visibility = gooey.Visible
@@ -412,9 +423,28 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 	root := &VStack{Children: []gooey.Component{frozen, layer}}
 	c := gooey.NewComposer(root, 30, 5)
 	c.Frame()
+	// AND THAT ASSUMPTION IS NOW CHECKED. `prechecked` was `active != nil`
+	// and the message below claims the first frame was UNFROZEN — true of
+	// every caller today and of nothing in the code. A
+	// frozenMarkerPage(t, prop.NewSource(true)) has a FROZEN first frame,
+	// so the precondition would be measuring placement-while-frozen and
+	// would report the flagship test's own regression as "a page that
+	// never had a marker" — the misreport this branch removed one layer
+	// out, one caller in. Fataling rather than deriving `prechecked` from
+	// the value, because no caller wants that fixture: the frozen-first
+	// case is what a nil Active already is. Active.Get() here is a plain
+	// read — helper code runs outside any evaluation — so it records no
+	// dependency. Raised in review of #498.
+	if active != nil && active.Get() {
+		t.Fatal("frozenMarkerPage was handed an Active that is already true, so " +
+			"its first frame is FROZEN and the precondition below would be " +
+			"measuring placement-while-frozen. Pass a handle starting false " +
+			"and flip it, or pass nil for a page frozen from the first frame")
+	}
 	// THE PRECONDITION, AND ONLY FOR A CALLER WHOSE FIRST FRAME IS
-	// UNFROZEN. A caller passing a handle starts with Active false, so an
-	// empty layer here really does mean the fixture is broken. A nil
+	// UNFROZEN. A caller passing a handle starts with Active false — the
+	// fatal above is what makes that a fact rather than a convention — so
+	// an empty layer here really does mean the fixture is broken. A nil
 	// Active is a plain <Frozen> — AllowNone from this very frame — so
 	// placement-while-frozen is what the frame above MEASURES, and
 	// fataling on it reports the flagship test's own regression as a
@@ -435,9 +465,16 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *Val
 	// with nothing keeping the two in step: a caller switching from a
 	// handle to nil and forgetting the literal got a fatal telling the
 	// reader the opposite of the truth. That is the defect this branch
-	// fixed one layer out and reintroduced one layer in. Binding it here
-	// also retires the helper's hardcoded row 1, which is this fixture's
-	// geometry and not any composer's.
+	// fixed one layer out and reintroduced one layer in.
+	//
+	// THE HARDCODED ROW 1 STAYS. An earlier wording here said binding the
+	// assertion "retires" it; it does not — assertFrozenMarkerShows still
+	// reads row(c.Cells(), 1). What changed is who can reach it: the row
+	// is this fixture's geometry, and returning the assertion bound to
+	// the fixture is what stops another page calling the helper against
+	// a row that means nothing there. A comment asserting a removal that
+	// did not happen costs more than no comment, which is the rule this
+	// file applies elsewhere. Raised in review of #498.
 	return tb, m, c, func(when string) {
 		t.Helper()
 		assertFrozenMarkerShows(t, c, layer, m, prechecked, when)
@@ -602,13 +639,35 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	kept := keepPopup(t, m)
 
 	active.Set(true)
-	c.Frame()
+	// THE COUNT, because this is the frame the test is named for and no
+	// other assertion here can see it. evictFrozen clears hover, captor,
+	// prev and lastClick on the flip; a re-sync that grew into a
+	// full-page repaint would leave IsShown, the layer count, the cell
+	// plane AND the pointer below all green, and CLAUDE.md is explicit
+	// that the damage count is the only pin for a repaint claim.
+	// Measured on this fixture: the flip paints one component and the
+	// next frame settles at zero. Raised in review of #498.
+	if _, painted := c.Frame(); painted != 1 {
+		t.Errorf("the freeze flip repainted %d component(s), want 1 — the "+
+			"frozen host is what changed, and a wider repaint means the "+
+			"re-sync is rebuilding more of the page than the flip touched",
+			painted)
+	}
 	if c.Focus().SetFocus(tb) {
 		t.Fatal("the TextBox still took focus after Active flipped to true, " +
 			"so the freeze did not take effect and the assertion below is " +
 			"about an unfrozen tree")
 	}
 	shows("after the freeze turned on")
+	// A SECOND FRAME BEFORE THE POINTER, for the reason
+	// TestMarkerPersistsThroughHiddenAnchor gives: the drop is
+	// self-healing within a frame, so one frame is the whole window the
+	// identity check can see. It is also where the settled count is
+	// taken.
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("the frame after the freeze flip repainted %d component(s), "+
+			"want a settled page", painted)
+	}
 	// IDENTITY, because the three observables above cannot see the
 	// failure this test is named for. The table in
 	// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden measured it:
@@ -676,7 +735,14 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	shows("while frozen, before the anchor was hidden")
 	kept := keepPopup(t, m)
 	gooey.LayoutOf(tb).Visibility = gooey.Hidden
-	c.Frame()
+	// THE COUNT, for the reason the flip test gives. Measured on this
+	// fixture: hiding the anchor paints three — the field, the adornment
+	// and the stack that has to re-fill the vacated cells — and the next
+	// frame settles at zero. A hide that repainted the whole page would
+	// leave every assertion below green. Raised in review of #498.
+	if _, painted := c.Frame(); painted != 3 {
+		t.Errorf("hiding the frozen field repainted %d component(s), want 3", painted)
+	}
 	// THE CELLS TOO, not the pointer alone. Identity is what
 	// AdornmentPersists changes and it is why this test exists — but a
 	// regression that keeps the popup alive and arranges it at a full
@@ -691,6 +757,12 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	if got := row(c.Cells(), 1); got != "" {
 		t.Errorf("row 1 = %q while the frozen field is hidden, want it vacated: "+
 			"the message is still painting over cells its anchor has given up", got)
+	}
+	// A SECOND FRAME BEFORE THE POINTER, and the settled count with it —
+	// see TestMarkerPersistsThroughHiddenAnchor.
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("the frame after the hide repainted %d component(s), want a "+
+			"settled page", painted)
 	}
 	if m.pop != kept {
 		t.Error("hiding the frozen field's anchor REPLACED the marker's popup " +
