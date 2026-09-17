@@ -1485,6 +1485,42 @@ func attachAll(e Element, w gooey.Component, attach []gooey.Component) error {
 	return nil
 }
 
+// noBuild is the error for a registered element with no Build, and it
+// exists because the alternative was a SEGV.
+//
+// A PSEUDO-ELEMENT'S NATURAL HOST DECLARATION HAS NO Build. ParsedBy
+// means "declared here, read there", so a host registering a <Row> its
+// <Table> parses has nothing to put in the field — and every builtin
+// pseudo-element carries one only because it is a placement refusal,
+// not because it builds anything. Reaching this call at all means the
+// document put the element somewhere that builds its children, and
+// `d.Build(e, ctx)` on a nil field panicked with a nil dereference
+// inside a load. Measured while reproducing #486's finding 1:
+// `<VStack><Row Label="a"/></VStack>` against a host <Row> with
+// ParsedBy and no Build took the process down.
+//
+// It is also what makes checkAttrs' placement stand-down honest. That
+// gate defers to "the element's own Build, which is about to say
+// something more useful"; for a host pseudo-element there was no Build
+// to defer TO, so the deferral handed a misplaced document to a panic
+// rather than to a diagnosis. The sentence below is the one the gate
+// promises, phrased from the catalog: the reader, and the placement
+// that follows from it.
+func noBuild(e Element, ctx *Context) error {
+	reader := ""
+	if spec, ok := ctx.spec(e.Name); ok {
+		reader = spec.ParsedBy
+		if reader == "" {
+			reader = namingParent(spec.Name, ctx)
+		}
+	}
+	if reader == "" {
+		return fmt.Errorf("markup: <%s> builds no component of its own — Context.Elements[%q] declares no Build", e.Name, e.Name)
+	}
+	return fmt.Errorf("markup: <%s> builds no component of its own — <%s> reads <%s> as data, so a <%s> is only valid where <%s> parses one",
+		e.Name, reader, e.Name, e.Name, reader)
+}
+
 func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 	// A host DECLARATION outranks a host builder, and a name in both is
 	// refused rather than resolved. Two registrations for one element
@@ -1494,6 +1530,9 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 	if d, ok := ctx.Elements[e.Name]; ok {
 		if _, dup := ctx.Components[e.Name]; dup {
 			return nil, fmt.Errorf("markup: <%s> is registered in both Context.Elements and Context.Components; one of them is unreachable, so declare it once", e.Name)
+		}
+		if d.Build == nil {
+			return nil, noBuild(e, ctx)
 		}
 		w, err := d.Build(e, ctx)
 		return named(e, ctx, w, err)

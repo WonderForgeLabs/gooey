@@ -61,7 +61,7 @@ func checkAttrs(e Element, ctx *Context) error {
 	// acceptedByParent, whose comment records why it cannot ask
 	// spec.Nested for the answer.
 	if ok && spec.Pseudo {
-		if !acceptedByParent(e, ctx) {
+		if !acceptedByParent(e, spec, ctx) {
 			// THE DEFERRAL COVERS THE EXHAUSTIVE CHECK TOO, and it
 			// reached only <Tab> when it did not. <Menu> and <MenuItem>
 			// are AttrsKnown, so standing down from the universal
@@ -349,8 +349,9 @@ func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
 	// several — it is the only one that answers the question asked.
 	//
 	// Both callers run after acceptedByParent (attrcheck.go:64) has
-	// established that e.parent is a ModeRestricted container naming
-	// e.Name. That IS the reader. namingParent discards it and searches
+	// established that e.parent is the container the catalog says reads
+	// e.Name. That IS the reader, and it is read back through the same
+	// readerOf so the two cannot disagree. namingParent discards it and searches
 	// the catalog for the FIRST element naming this one, and
 	// definedElements sorts by name — so "first" means alphabetically
 	// first, not the container this element is inside. One more builtin
@@ -361,16 +362,16 @@ func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
 	// 2's finding 6 was filed to remove, reintroduced by the search.
 	// Reading e.parent also drops a whole catalog assembly per refusal.
 	// Raised in review of #486.
-	if p, ok := ctx.spec(e.parent); ok && namesChild(p, spec.Name) {
-		return fmt.Sprintf("<%s> reads <%s> as data, ", p.Name, spec.Name)
+	if p, ok := readerOf(e, spec, ctx); ok {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
 	}
 	// EVERYTHING BELOW IS UNREACHABLE FROM A PARSED DOCUMENT, and that
 	// is a property to state rather than a gap to leave implied.
 	//
 	// Both callers run inside `if ok && spec.Pseudo { if
-	// !acceptedByParent(e, ctx) { return nil } … }`, and acceptedByParent
-	// IS the branch above: ctx.spec(e.parent) resolving and
-	// namesChild(parent, …). markup.go stamps parent on every element the
+	// !acceptedByParent(e, spec, ctx) { return nil } … }`, and
+	// acceptedByParent IS the branch above — both are readerOf, which is
+	// why it is one function. markup.go stamps parent on every element the
 	// parser produces, and the parser is the only thing in this package
 	// that constructs one. So for any document a user can write, the
 	// branch above answers and none of these run.
@@ -507,16 +508,62 @@ func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 		return ""
 	case ModeRestricted:
 		for _, n := range spec.Children.Only {
-			// An unresolvable name is treated as accepting: the remedy
-			// is advice, and withholding it on a catalog gap is the
-			// worse failure of the two.
-			if s, ok := ctx.spec(n); !ok || !s.Pseudo {
+			if acceptsInside(ctx, n, spec.Name, name) {
 				return contentRemedy
 			}
 		}
 		return ""
 	}
 	return contentRemedy
+}
+
+// acceptsInside reports whether child, sitting inside parent, would
+// accept name — the claim "put it on the content inside" makes.
+//
+// PER ATTRIBUTE, NOT PER ELEMENT, and that is the finding. The
+// predicate here was !Pseudo, which reads as "the content builds a
+// component, so a universal lands on it" — true of the universal set
+// only where the content HAS a Layout. <Timer>, <KeyBinding>,
+// <Tooltip>, <Validate>, <TypeAhead>, <ValidationMarker> and
+// <Companion> all build components and all take Name, and none of them
+// takes a layout row. Measured on a host <Panel> restricted to <Timer>:
+//
+//	<Deck><Panel Margin="2"/></Deck>
+//	  -> … no component for Margin to apply to; put it on the content
+//	     inside instead
+//	<VStack><Timer Margin="2" Interval="1s"/></VStack>
+//	  -> no such attribute; this element takes Enabled, Interval, Name,
+//	     Tick
+//
+// which is the walk-from-one-refusal-to-another the remedy discipline
+// exists to stop, arriving through the one axis the element-level
+// predicate cannot see. Name on the same <Panel> is a real instruction,
+// so the answer genuinely differs by attribute. Raised in review of
+// #486.
+//
+// ctx.vocabulary IS the acceptance rule, asked with this pseudo-element
+// as the destination's parent — the same call checkAttrs makes on the
+// prescribed document, so the advice is checked against the gate that
+// will judge it rather than against a model of that gate.
+//
+// Behaviors and Resources are not attributes and are in no vocabulary;
+// propElements accepts them on every element that builds one, which is
+// what !Pseudo answers for. An unresolvable name is treated as
+// accepting: the remedy is advice, and withholding it on a catalog gap
+// is the worse failure of the two.
+func acceptsInside(ctx *Context, child, parent, name string) bool {
+	s, ok := ctx.spec(child)
+	if !ok {
+		return true
+	}
+	if s.Pseudo {
+		return false
+	}
+	if name == "Behaviors" || name == "Resources" {
+		return true
+	}
+	allowed, _ := ctx.vocabulary(s, parent)
+	return allowed[name]
 }
 
 // contentRemedy is the prescription itself, named so the guard over it
@@ -720,9 +767,55 @@ func isUniversalAttr(name string) bool {
 // unfixed with every test green. Measured, not reasoned about. If a
 // later reader wants the field here, the fix is to make ctx.spec derive
 // it — not to assume it is set.
-func acceptedByParent(e Element, ctx *Context) bool {
+func acceptedByParent(e Element, spec ElementSpec, ctx *Context) bool {
+	_, ok := readerOf(e, spec, ctx)
+	return ok
+}
+
+// readerOf names the container that reads this element as data, when
+// the element's own parent IS that container. It is the one question
+// the stand-down above and readsAsData's reason clause both ask, and
+// they ask it of the same function so the refusal cannot name a reader
+// the gate did not accept.
+//
+// TWO ROUTES, BECAUSE namesChild CANNOT ANSWER FOR A CONTAINER THAT
+// NAMES NOTHING. It is ModeRestricted by definition, so a host whose
+// container is ModeMany — the ordinary shape for one that builds its
+// children through BuildChildren — had every correctly-placed
+// pseudo-child read as MISPLACED, and the stand-down dropped the
+// exhaustive unknown-attribute gate along with the universal refusal.
+// Measured on a host <Table Children:ModeMany> holding a <Row
+// ParsedBy:"Table", Known:true, Attrs:[Label]>:
+//
+//	<Table><Row Label="a" Bogus="x"/></Table>   -> <nil>
+//	<Table><Row Label="a" Name="n"/></Table>    -> <nil>
+//
+// origin/main refused both — "no such attribute; this element takes
+// Label" — so the stand-down reintroduced #461's silent-drop class for
+// exactly the elements #461 was filed about, one registration tier
+// over. Raised in review of #486.
+//
+// ParsedBy IS the declaration namesChild would have been, from the
+// element's own side: it names the element whose Build consumes this
+// one, and catalogen checks it against the code that reads it, so it is
+// not a hint. It is consulted ONLY where the parent restricts nothing,
+// because where the parent does restrict its children that list is the
+// placement rule and a miss is a genuine misplacement —
+// <MenuBar><MenuItem Name="x"/> must keep deferring to defMenuItem's
+// "only valid directly inside <Menu>" even though MenuItem.ParsedBy is
+// <MenuBar>.
+func readerOf(e Element, spec ElementSpec, ctx *Context) (string, bool) {
 	parent, ok := ctx.spec(e.parent)
-	return ok && namesChild(parent, e.Name)
+	if !ok {
+		return "", false
+	}
+	if namesChild(parent, spec.Name) {
+		return parent.Name, true
+	}
+	if parent.Children.Mode != ModeRestricted && spec.ParsedBy == parent.Name {
+		return parent.Name, true
+	}
+	return "", false
 }
 
 // namesChild is the relation every pseudo-element rule is phrased in
