@@ -392,8 +392,23 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// right and the stated reason pointed at a branch that cannot fire,
 	// in a file whose comments other arms reason from. Raised in review
 	// of #522.
+	//
+	// AND THE ELEMENT NAME DECIDES WHICH REFUSAL, which this guard did
+	// not ask: it tested only the namespace, so <x:Foo/> as a whole file
+	// was called "a dependency property declaration, not a document" —
+	// and the advice that follows is then actively wrong, because an
+	// author who moves it under a <Gooey> root lands on the editor's own
+	// alien refusal, which
+	// TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer
+	// pins. bareDeclWhy asks n.Elem != "Property" first for exactly this
+	// reason; the open path is the one site added after alienDecls and
+	// alienDeclMsg were written for it. Raised in review of #522.
 	if n.Space == markup.XNamespace && n.Elem != "Gooey" {
 		prefix, bound := declBinding(n.Attrs)
+		if n.Elem != "Property" {
+			ed.status.Set("✗ " + rel + ": " + alienDeclMsg([]*node{n}, prefix, bound))
+			return
+		}
 		if !bound {
 			prefix = "x"
 		}

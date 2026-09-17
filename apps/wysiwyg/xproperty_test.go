@@ -578,6 +578,22 @@ func TestADeclaredNameDoesNotOutliveItsDocument(t *testing.T) {
 // of them. Seeding over one would point the menus at a string source,
 // and retiring it on the next open would then unbind them outright, in
 // a session whose user had only opened a file.
+//
+// AND THE STATUS SAYS SO, which is the half this test was missing. The
+// skip is right and it is INVISIBLE: the binding resolves, the tree
+// builds, the status said "✓ builds" — and the handle is the IDE's
+// *prop.Property[int] region enum, so Default="zzz" never appears, the
+// declared Type="string" is not what the binding resolved to, and a
+// <Text>{{.Region}}</Text> in the user's document renders "0". An
+// editor implementation detail, shown inside the document, under a
+// green status. The author's only other route to the diagnosis is to
+// know menuValues' list, which is not in their file.
+//
+// THE SECOND HALF IS THE RETIREMENT, and it is a separate claim: the
+// note is derived from a slice that outlives one rebuild, so a document
+// that shadows nothing must clear it. Opening plain.gooey takes
+// seedDeclared's early return, which is exactly where a note left over
+// from the previous document would survive. Raised in review of #522.
 func TestADeclarationDoesNotCaptureAnEditorBinding(t *testing.T) {
 	const shadows = `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
 		`  <x:Property Name="Region" Type="string" Default="zzz"/>` + "\n" +
@@ -607,10 +623,19 @@ func TestADeclarationDoesNotCaptureAnEditorBinding(t *testing.T) {
 		t.Errorf("opening a document that declares Region replaced the editor's "+
 			"binding with %T", got)
 	}
+	if got := ed.status.Get(); !strings.Contains(got, "Region") {
+		t.Errorf("the status reads %q after opening a document whose declaration "+
+			"the editor silently kept out of the vocabulary; the preview is "+
+			"showing the editor's own value for Region and nothing says so", got)
+	}
 	ed.openWorkspaceFile("plain.gooey")
 	if got := ed.docCtx.Values["Region"]; got != any(ed.region) {
 		t.Errorf("closing that document left Region as %v — a name the editor "+
 			"owns was retired with the document that shadowed it", got)
+	}
+	if got := ed.status.Get(); strings.Contains(got, "Region") {
+		t.Errorf("the status still reads %q with a document open that declares "+
+			"nothing; the note outlived the document it was about", got)
 	}
 }
 
@@ -861,6 +886,20 @@ func TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved(t *testing.T)
 			name: "as the whole file",
 			doc:  `<p:Property xmlns:p="` + markup.XNamespace + `" Name="T" Type="string"/>` + "\n",
 			want: "is a dependency property declaration, not a document",
+		},
+		{
+			// AN ALIEN ELEMENT IS NOT A DECLARATION, and the arm above
+			// cannot see the difference: the root-position guard tested
+			// only the namespace, so this file was called a declaration
+			// too — and then told to move it under a <Gooey> root, which
+			// is where the editor's own alien refusal is waiting for it
+			// (TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer).
+			// bareDeclWhy has asked the element name first since round
+			// 5; this is the one site added after it. Raised in review
+			// of #522.
+			name: "an alien element as the whole file",
+			doc:  `<p:Foo xmlns:p="` + markup.XNamespace + `" Name="T"/>` + "\n",
+			want: "<p:Foo> is an unknown language element",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
