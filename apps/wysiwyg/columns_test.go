@@ -71,6 +71,20 @@ func TestThePropertyPadAnswersInColumns(t *testing.T) {
 		{wideWord, 6},
 		{"◂ " + wideWord + " ▸", 8},
 		{strings.Repeat(wideCell, 5), 4},
+		// AN ODD BUDGET AGAINST WIDE GLYPHS, which is the only shape
+		// that reaches pad's documented reason for filling AFTER the
+		// clip rather than instead of it: ClipCols stops BEFORE a glyph
+		// that would straddle the edge, so five two-column glyphs in
+		// five columns come back as four and the fill owes one.
+		// Measured: a pad that returns ClipCols(s, w) whenever the
+		// input is wide enough was SILENT over the three rows above —
+		// the two short inputs never reach the clip, and the even
+		// budget clips to exactly 4. The consequence is the one the doc
+		// gives: these surfaces float over the page, so a row one
+		// column short leaves the page's own cell showing through, and
+		// it belongs to a clean node that will not repaint. Raised in
+		// review of #524.
+		{strings.Repeat(wideCell, 5), 5},
 	} {
 		got := pad(tc.in, tc.w)
 		if n := render.StringWidth(got); n != tc.w {
@@ -86,12 +100,24 @@ func TestThePropertyPadAnswersInColumns(t *testing.T) {
 // not fit the rect it asked for.
 func TestAChipMeasuresItsAddressInColumns(t *testing.T) {
 	c := &addrChip{label: wideWord, addr: "127.0.0.1:1"}
-	want := 2 + render.StringWidth(c.idleText())
+	// THE NUMBER IS WRITTEN OUT, for the reason
+	// TestAStyleListIsSizedInColumns states below: a want computed with
+	// render.StringWidth is chipWidth's body character for character,
+	// so it is the rule under test restated. It does catch the rune
+	// mutation — the fixture is wide enough that the two rules differ —
+	// but it is the weaker of two available pins standing where this
+	// file's own argument asks for the stronger. Raised in review of
+	// #524.
+	//
+	// 18: 世界 is 4 columns, a space, 127.0.0.1:1 is 11, and the dot and
+	// its space are two more. A rune count answers 16.
+	const want, byRunes = 18, 16
 	if got := c.chipWidth(); got != want {
 		t.Errorf("a chip labelled %q measures %d cells, want %d: its text %q is %d runes "+
-			"and %d columns, and the dot and its space are two more",
+			"and %d columns, and the dot and its space are two more. %d is what a "+
+			"rune count answers",
 			wideWord, got, want, c.idleText(),
-			len([]rune(c.idleText())), render.StringWidth(c.idleText()))
+			len([]rune(c.idleText())), render.StringWidth(c.idleText()), byRunes)
 	}
 }
 
@@ -172,16 +198,15 @@ func TestAFileRowFitsTheBudgetTheBrowserGaveIt(t *testing.T) {
 func TestTheContextMenuIsSizedForItsWidestItem(t *testing.T) {
 	s := bareStrip(testGrpc)
 	s.items = []components.MenuItem{{Text: "copy"}, {Text: strings.Repeat(wideWord, 4)}}
-	widest := 0
-	for _, it := range s.items {
-		if n := render.StringWidth(it.Text); n > widest {
-			widest = n
-		}
-	}
-	if got := s.menuRect().W; got < widest+4 {
-		t.Errorf("the menu is %d columns wide for an item of %d columns (%d runes): the "+
-			"box, its padding and the item need %d",
-			got, widest, len([]rune(s.items[1].Text)), widest+4)
+	// WRITTEN OUT rather than computed with the rule under test, for the
+	// reason TestAStyleListIsSizedInColumns states below. 20: the widest
+	// item is 世界 four times — 8 runes, 16 columns — plus 4 of box and
+	// padding. A rune count answers 12. Raised in review of #524.
+	const want, byRunes = 20, 12
+	if got := s.menuRect().W; got < want {
+		t.Errorf("the menu is %d columns wide for an item of 16 columns (%d runes): the "+
+			"box, its padding and the item need %d, and %d is what a rune count "+
+			"answers", got, len([]rune(s.items[1].Text)), want, byRunes)
 	}
 }
 
