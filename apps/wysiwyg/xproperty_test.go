@@ -325,6 +325,23 @@ func TestTheRootCountRefusalSaysWhatItCounted(t *testing.T) {
 			want: []string{"its 1 <Property> declaration is not a root element"},
 			not:  []string{"<x:Property>"},
 		},
+		{
+			// THE BINDING ON THE DECLARATION ITSELF, which is the
+			// placement declPrefix was written for and this branch's
+			// save path already handles. declBinding reads the ENVELOPE
+			// only, so it reported the file as containing <Property> —
+			// and that spelling is not neutral, because bareDeclMsg in
+			// this same editor tells an author that a bare <Property>
+			// means they forgot the namespace. A correctly namespaced
+			// document was described with the one spelling the editor
+			// elsewhere calls a typo. Raised in review of #522.
+			name: "the binding is on the declaration, not the envelope",
+			doc: `<Gooey>` + "\n" +
+				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`</Gooey>` + "\n",
+			want: []string{"found 0", "its 1 <p:Property> declaration is not a root element"},
+			not:  []string{"<x:Property>", "<Property>", "are not root elements"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := workspaceFixture(t)
@@ -796,6 +813,23 @@ func TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer(t *testing.T)
 			elem:   "<x:Foo>",
 			absent: "x2",
 		},
+		{
+			// AND THE BINDING ON THE ELEMENT ITSELF, which is the
+			// placement declPrefix exists for and the one this arm was
+			// reading past. Both call sites hand alienDeclMsg the
+			// ENVELOPE's binding, so a file that binds x: on the
+			// envelope and writes <d:Foo> with its own binding was
+			// refused as <x:Foo> — worse than the unbound case above,
+			// because x: IS bound here, so the message reads as a quote
+			// from the document and the author searches for an x:Foo
+			// nobody wrote. The question is per-element, so the answer
+			// has to be. Raised in review of #522.
+			name: "bound on the element itself, under an envelope that also binds x",
+			doc: `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+				`  <d:Foo xmlns:d="` + markup.XNamespace + `" Name="Title"/>` + "\n</Gooey>\n",
+			elem:   "<d:Foo>",
+			absent: "<x:Foo>",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := markupRefuses(t, tc.doc, "unknown language element", "<x:Foo>")
@@ -918,11 +952,27 @@ func TestPastingABareDeclarationSaysWhatItIs(t *testing.T) {
 	for _, tc := range []struct {
 		name, src string
 		want      []string
+		absent    []string
 	}{
 		{
 			name: "prefixed, no envelope",
 			src:  `<x:Property xmlns:x="` + markup.XNamespace + `" Name="Title" Type="string"/>`,
 			want: []string{"<x:Property>", "declaration"},
+		},
+		{
+			// THE AUTHOR'S OWN PREFIX, and the arm above cannot see the
+			// difference because its fixture agrees with the bug: it
+			// binds x:, so a hardcoded "x" and a read binding print the
+			// same string. The alien arm one case up in bareDeclWhy was
+			// moved onto declBinding in round 4 and this one was not, so
+			// pasting a p:-bound declaration reported <x:Property> — a
+			// prefix the clipboard does not hold, and one that is
+			// actively wrong if the open document binds x: elsewhere.
+			// Raised in review of #522.
+			name:   "prefixed with something other than x, no envelope",
+			src:    `<p:Property xmlns:p="` + markup.XNamespace + `" Name="Title" Type="string"/>`,
+			want:   []string{"<p:Property>", "declaration"},
+			absent: []string{"<x:Property>"},
 		},
 		{
 			name: "unprefixed, no envelope",
@@ -947,6 +997,13 @@ func TestPastingABareDeclarationSaysWhatItIs(t *testing.T) {
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Errorf("the refusal reads %q and does not mention %q", got, want)
+				}
+			}
+			for _, bad := range tc.absent {
+				if strings.Contains(got, bad) {
+					t.Errorf("the refusal reads %q and names %q, a prefix the "+
+						"clipboard does not hold — and one that is actively wrong "+
+						"if the open document binds it to something else", got, bad)
 				}
 			}
 		})

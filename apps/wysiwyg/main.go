@@ -1140,11 +1140,11 @@ func splitDecls(n *node) (decls, kids, bare []*node) {
 // not contain and calling a thing markup rejects outright a declaration.
 // That is the defect this branch exists to remove, one arm over. Raised
 // in review of #522.
-func alienDecls(decls []*node) []string {
-	var out []string
+func alienDecls(decls []*node) []*node {
+	var out []*node
 	for _, d := range decls {
 		if d.Elem != "Property" {
-			out = append(out, d.Elem)
+			out = append(out, d)
 		}
 	}
 	return out
@@ -1172,13 +1172,34 @@ func alienDecls(decls []*node) []string {
 // There used to be an `if prefix == "" { prefix = "x" }` here, which
 // could not fire — declBinding never returns "" — and read as the
 // handling that was in fact absent. Raised in review of #522.
-func alienDeclMsg(names []string, prefix string, bound bool) string {
+//
+// AND THE PREFIX IS A PER-ELEMENT QUESTION, which is why this takes the
+// nodes rather than their names. Both call sites hand it the ENVELOPE's
+// binding, and XML scoping lets the binding sit on the element: a file
+// binding xmlns:x on the envelope and writing <d:Foo> with its own
+// xmlns:d was refused as <x:Foo>. That is worse than the unbound case
+// above rather than the same size — x: IS bound in that file, so the
+// message reads as a quote from the document and the author goes looking
+// for an x:Foo nobody wrote. The element's own binding wins; the
+// envelope's is the fallback, and markup's literal "x" the fallback for
+// that. Raised in review of #522.
+//
+// THE TAIL STAYS ON THE ENVELOPE'S PREFIX, deliberately: "the …
+// namespace declares <x:Property> only" is a statement about what the
+// namespace offers, not about what this element is called, and the
+// spelling an author would write a Property under is the document's
+// binding rather than the alien element's.
+func alienDeclMsg(alien []*node, prefix string, bound bool) string {
 	if !bound {
 		prefix = "x"
 	}
-	elems := make([]string, len(names))
-	for i, n := range names {
-		elems[i] = "<" + prefix + ":" + n + ">"
+	elems := make([]string, len(alien))
+	for i, d := range alien {
+		p := prefix
+		if own, ok := declBinding(d.Attrs); ok {
+			p = own
+		}
+		elems[i] = "<" + p + ":" + d.Elem + ">"
 	}
 	verb := "is an unknown language element"
 	if len(elems) > 1 {

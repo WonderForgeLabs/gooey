@@ -450,7 +450,18 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// makes every remaining decl a Property — this reads
 				// decls[0].Elem anyway, so the two cannot drift apart
 				// again. Raised in review of #522.
-				prefix, bound := declBinding(n.Attrs)
+				// AND THE BINDING IS NOT ONLY THE ENVELOPE'S.
+				// declBinding reads n.Attrs, which is the envelope; XML
+				// scoping lets the binding sit on the <x:Property>
+				// element itself, and declPrefix — written in this same
+				// change for the save path — answers both placements.
+				// Reading the envelope alone reported a correctly
+				// namespaced <p:Property> document as containing
+				// <Property>, which bareDeclMsg in this same editor
+				// defines as the missing-namespace typo: an author
+				// acting on it would have edited a namespace that was
+				// already right. Raised in review of #522.
+				prefix, bound := declPrefix(n.Attrs, decls)
 				elem := "<" + decls[0].Elem + ">"
 				if bound {
 					elem = "<" + prefix + ":" + decls[0].Elem + ">"
