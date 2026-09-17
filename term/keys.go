@@ -34,8 +34,16 @@ const EscTimeout = 40 * time.Millisecond
 // for the rest of the process's life (#440).
 //
 // TWO, so the buffer survives one timeout and the window is 80ms. Lower
-// is not available — at one the FIRST timeout resolves, which is what
-// "idle" already means, and the grace would not exist. Higher buys a
+// is not available, and the two values below it fail DIFFERENTLY. At one
+// the FIRST timeout resolves, which is what "idle" already means, and
+// the grace would not exist. At ZERO the re-arm condition below
+// (`stalls < PasteMarkerGrace`) is false on the very first iteration, so
+// timer.Reset is never reached and the one arming time.NewTimer did is
+// consumed by the Stop above it: the escape timeout stops existing
+// altogether, and a lone Esc, a truncated ESC O and a half-written CSI
+// are all held for the life of the process. That is worse than one and
+// arrives by a different route, so it is named here rather than left to
+// the reader to derive. Raised in review of #445. Higher buys a
 // paste marker split across a slower link at the price of the Esc key
 // taking that long to arrive, and of the deaf window being that much
 // wider if something new lands in this shape. What is NOT on this scale

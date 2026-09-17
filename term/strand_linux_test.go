@@ -690,12 +690,207 @@ func splitMarkerAttempt(t *testing.T) bool {
 	return true
 }
 
+// The counter's reset on the CHUNKS branch, which this PR's conditional
+// re-arm turned from bookkeeping into liveness.
+//
+// Before the re-arm was made conditional, `stalls` decided only which
+// drain a timeout ran, and losing its reset cost nothing an app could
+// see. Now `len(pend) > 0 && stalls < PasteMarkerGrace` decides whether
+// the escape timer is armed AT ALL, which makes stalls-at-the-ceiling an
+// ABSORBING state: the only other reset (`len(pend) != before`) lives
+// inside the timer branch and so needs the timer already armed. The one
+// line standing between the loop and that state is `stalls = 0` on the
+// chunks branch — and deleting it leaves term, input and the root suite
+// entirely green.
+//
+// What that green ships: any paste that takes longer than
+// PasteMarkerGrace*EscTimeout to finish — 80ms, which a 40KB paste
+// spends routinely — drives stalls to the ceiling, completes through the
+// chunks branch without clearing it, and from that moment the escape
+// timer is never armed again. A lone Esc is held for the life of the
+// process. That is #440's own symptom in a new shape, reached by an
+// ordinary paste rather than by typed bytes. Raised in review of #445.
+//
+// No window to hit and no retry discipline: the open paste is resolved
+// by its TAIL, not by a deadline, so the assertions below hold however
+// the machine is scheduled. Sleeping longer than the grace only makes
+// the precondition (stalls at its ceiling) more firmly true.
+func TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable(t *testing.T) {
+	master, slave := openPTY(t)
+	s := FromFile(slave)
+	if err := s.Raw(); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	evs := s.Events(16)
+
+	// The handshake byte the tests above use: reading it back proves the
+	// decoder consumed a read, so what follows is measured against a
+	// decoder known to be alive.
+	if _, err := master.Write([]byte("b")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the decoder never delivered a keystroke, so this test "+
+		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
+		t.Fatalf("got %#v, want the 'b' we typed", ev)
+	}
+
+	// An OPEN paste: marker complete, payload's end not yet on the wire.
+	// input.DecodeFinal wedges on this deliberately — delivering it early
+	// truncates the paste — so it is the one buffer that survives the
+	// last-chance pass, and therefore the one that drives stalls to the
+	// ceiling without being consumed.
+	if _, err := master.Write([]byte("\x1b[200~hello")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	// Past the whole grace, with a timeout to spare. This is not a window
+	// to land inside: overshooting it cannot weaken the precondition.
+	time.Sleep(PasteMarkerGrace*EscTimeout + EscTimeout)
+
+	// The tail, arriving on the chunks branch — the branch whose reset is
+	// the subject.
+	if _, err := master.Write([]byte("\x1b[201~")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	ev := next(t, evs, "the paste never completed")
+	if !ev.IsPaste() {
+		t.Fatalf("got %#v, want the PasteEvent for the completed paste", ev)
+	}
+	if got := ev.Paste.Text; got != "hello" {
+		t.Fatalf("paste payload = %q, want %q", got, "hello")
+	}
+
+	// THE SUBJECT. Everything above passes with the reset deleted; only
+	// this does not. The paste is delivered, pend is empty, and the next
+	// byte is an ordinary Esc — which needs a timeout to resolve, which
+	// needs the timer to be armed.
+	if _, err := master.Write([]byte("\x1b")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the Esc typed after a paste that outlasted the grace "+
+		"never arrived. stalls is at its ceiling and nothing cleared it when "+
+		"the paste completed, so len(pend) > 0 && stalls < PasteMarkerGrace is "+
+		"permanently false, the escape timer is never re-armed, and every "+
+		"incomplete sequence from here on is held for the life of the "+
+		"process. DecoderDone cannot see this — the goroutine never "+
+		"returns."); !ev.IsKey() || ev.Key.Key != input.KeyEsc {
+		t.Fatalf("got %#v, want the Esc key", ev)
+	}
+}
+
+// The ORDINARY timeout pass, which every other test here is blind to.
+//
+// keys.go runs drainIdle on each timeout and escalates to drainFinal on
+// the PasteMarkerGrace'th. The tests above all measure the ESCALATION —
+// a split marker that must survive the first pass, a typed prefix that
+// must not survive the last — and none of them can tell whether the
+// first pass resolves anything at all. Changing `d := drainIdle` to
+// `d := drainLive` leaves term, input and the root suite green while
+// every Esc, and every other truncated sequence, takes
+// PasteMarkerGrace*EscTimeout to arrive instead of EscTimeout: the 40ms
+// docs/architecture.md attributes to EscTimeout, silently doubled, on
+// every keypress. Raised in review of #445.
+//
+// This one does need a window, so it takes closedTtyAttempt's
+// inconclusive-and-retry discipline rather than asserting on a schedule.
+func TestALoneEscResolvesOnTheFirstTimeout(t *testing.T) {
+	const attempts = 20
+	for i := range attempts {
+		if loneEscAttempt(t) {
+			return
+		}
+		t.Logf("attempt %d could not measure the Esc's arrival inside the "+
+			"budget; retrying", i+1)
+	}
+	// BOTH CAUSES NAMED. An exhausted loop here is either a machine that
+	// cannot be measured or a first pass that no longer resolves
+	// anything — the mutation this test exists to catch produces exactly
+	// this exit, because its Esc is late on EVERY attempt rather than
+	// absent. Reporting only the runner would send the next reader to
+	// the wrong place.
+	t.Fatalf("in %d attempts the Esc never arrived inside one escape timeout of "+
+		"the write. Either this machine is too loaded to distinguish the first "+
+		"idle pass from the escalated one, or the first pass has stopped "+
+		"resolving anything (keys.go's `d := drainIdle`) and every Esc now "+
+		"costs PasteMarkerGrace*EscTimeout", attempts)
+}
+
+// loneEscAttempt returns false when the attempt could not be made inside the
+// window, never a pass — the same discipline splitMarkerAttempt and
+// closedTtyAttempt use, so a stalled runner cannot turn "we never measured
+// it" into green.
+func loneEscAttempt(t *testing.T) bool {
+	t.Helper()
+	master, slave := openPTY(t)
+	s := FromFile(slave)
+	if err := s.Raw(); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	defer func() {
+		s.Restore()
+		master.Close()
+	}()
+	evs := s.Events(16)
+
+	// Handshake and Esc in ONE write, so `wrote` is a clock provably not
+	// after the arm — the decoder cannot arm a timer for bytes it has
+	// not read. The budget below is measured from it for that reason,
+	// the same way splitMarkerAttempt's is.
+	wrote := time.Now()
+	if _, err := master.Write([]byte("b\x1b")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the decoder never delivered a keystroke, so this test "+
+		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
+		t.Fatalf("got %#v, want the 'b' we typed", ev)
+	}
+	held := time.Now()
+	// The same early bail splitMarkerAttempt takes, for the same reason:
+	// an attempt already a quarter-timeout behind at the handshake has
+	// spent the budget's margin before the Esc can even be read.
+	if held.Sub(wrote) > EscTimeout/4 {
+		return false // attribute nothing to the decoder
+	}
+
+	// ONE AND A HALF TIMEOUTS from `wrote`, which is what separates the
+	// two passes. A healthy decoder emits the Esc at arm+EscTimeout, and
+	// arm is within EscTimeout/4 of `wrote` by the bail above, so it
+	// lands by wrote+50ms. The mutation cannot emit before
+	// arm+PasteMarkerGrace*EscTimeout, i.e. wrote+80ms at the earliest.
+	// 60ms sits between them with 10ms of slack on the side that must
+	// not flake and 20ms of margin on the side that must not pass.
+	ev, got := nextOrNone(evs, EscTimeout+EscTimeout/2-time.Since(wrote))
+	if !got {
+		return false // late; it may be the machine, and a retry is expected to say
+	}
+	if !ev.IsKey() || ev.Key.Key != input.KeyEsc {
+		t.Fatalf("first event after a lone Esc was %#v, want the Esc key", ev)
+	}
+	return true
+}
+
 // The cheap deterministic backstop for the same property. The pty test above
 // is the real pin — it fails on the BEHAVIOUR — but it needs a pty and a
 // window, and this one needs neither, so a machine that cannot run the first
 // still cannot lower the constant unnoticed.
 func TestPasteMarkerGraceHasAFloor(t *testing.T) {
 	if PasteMarkerGrace < 2 {
+		// TWO CONSEQUENCES, NAMED SEPARATELY, because 1 and 0 break
+		// different things and a reader who lands on 0 needs the one
+		// that describes what they actually did. This message used to
+		// state only the value-1 story, next to a term suite that would
+		// also be failing on timeouts — sending them looking for a
+		// stranded paste marker when what they removed was the escape
+		// timeout. Raised in review of #445.
+		if PasteMarkerGrace < 1 {
+			t.Fatalf("PasteMarkerGrace is %d. At 0 the re-arm condition in "+
+				"DecodeEvents (`stalls < PasteMarkerGrace`) is false on the "+
+				"first iteration, so timer.Reset is never reached and the one "+
+				"arming time.NewTimer did is consumed by the Stop above it: "+
+				"the escape timeout stops existing, and a lone Esc, a "+
+				"truncated ESC O and a half-written CSI are held for the life "+
+				"of the process. That is not the value-1 failure below; it is "+
+				"worse, and it has a different cause.", PasteMarkerGrace)
+		}
 		t.Fatalf("PasteMarkerGrace is %d. Below 2 the FIRST idle timeout "+
 			"resolves a split paste marker to Esc — which is exactly what "+
 			"`idle` already means, so the grace stops existing and #419 "+

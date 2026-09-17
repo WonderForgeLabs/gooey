@@ -176,15 +176,31 @@ also burns a wakeup every 40ms.
 That clause is **not independently pinned**, and saying so is better than
 implying otherwise: the only buffer that reaches it is the open paste, whose
 wedge is by design, so the difference is a timer that fires pointlessly versus
-one that does not. Nothing observable to the app changes. It is included because
-it is the other half of the same sentence in the report, not because a test
-demanded it.
+one that does not. Nothing observable to the app changes *by removing the
+condition*. It is included because it is the other half of the same sentence in
+the report, not because a test demanded it.
+
+**What it does change is somebody else's line.** This paragraph originally
+stopped at "nothing observable", and that was honest about the wrong half. The
+re-arm's own effect is unobservable; its effect on the stall counter is not.
+Gating the re-arm on `stalls < PasteMarkerGrace` makes the counter at its
+ceiling an **absorbing state** — the reset inside the timer branch
+(`len(pend) != before`) needs the timer already armed, so the only way out is
+`stalls = 0` on the chunks branch, a line that meant nothing before this change
+and now decides whether the escape timer is ever armed again. Delete it and any
+paste taking longer than `PasteMarkerGrace * EscTimeout` to finish leaves the
+decoder unable to resolve a lone Esc for the life of the process: #440's
+symptom, reached by an ordinary paste. `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable`
+pins it. Raised in review of #445.
 
 ## Verification
 
-`input/decodefinal_test.go`, and four new tests in `term/strand_linux_test.go`
-— one per route to the last-chance pass, one for the constant's behaviour and a
-deterministic floor under it.
+`input/decodefinal_test.go`, and new tests in `term/strand_linux_test.go` —
+one per route to the last-chance pass, one for the constant's behaviour, a
+deterministic floor under it, one for the stall counter's reset on the chunks
+branch, and one for the ordinary first-timeout pass. (A count stood here and
+was wrong the moment the last two were added; the table below is the list that
+cannot go stale without a mutation disagreeing with it.)
 
 **Every clause but one is pinned**, and the exception is named in the table
 rather than glossed: the conditional re-arm turns nothing red. An earlier
@@ -201,6 +217,9 @@ trusting the prose. Mutation-tested, each mutation turning its own tests red:
 | the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
 | `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
 | the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
+| `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` |
+| the first timeout's pass is neutered (`d := drainIdle` -> `drainLive`) | `TestALoneEscResolvesOnTheFirstTimeout` |
+| `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages |
 
 **Every row is re-derived by running its mutation**, never edited by hand, and
 the difference is not cosmetic. Earlier versions said "the term strand test" -
