@@ -272,16 +272,44 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// needs nothing from the issue tracker: the day the row reads
 	// correctly, this fails and says to delete the skip. Raised in
 	// review of #520.
-	v := prop.NewSource("世界")
-	tb := &TextBox{Text: v}
-	tb.SetFocused(true)
-	tb.setCaret(len([]rune("世界")))
-	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-
-	if render.SpanText(f.Cells, 0, 0, 10) == "世界█     " {
-		t.Fatal("#519 looks fixed — this row reads correctly now, so delete the " +
-			"skip below and let this fixture assert. The skip is what has to " +
-			"die with the fix, and nothing outside this file can make it")
+	//
+	// ALL THREE SHAPES, and a tripwire on each. The first version
+	// composed only the focused caret row, while the table below
+	// tabulates three renders — so a reader took the tripwire to be
+	// watching #519 and it was watching one assertion. A fix that
+	// corrected the unfocused path and left the caret column wrong would
+	// have kept this file dark behind a green check, which is the
+	// outcome this paragraph exists to prevent. The three are the
+	// table's three, so the comment and the code now describe the same
+	// set. Raised in review of #520.
+	const (
+		wantCaret = "世界█     "
+		wantPlain = "世界      "
+		wantMixed = "a世b      "
+	)
+	compose := func(text string, focused bool) string {
+		tb := &TextBox{Text: prop.NewSource(text)}
+		tb.SetFocused(focused)
+		if focused {
+			tb.setCaret(len([]rune(text)))
+		}
+		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+		return render.SpanText(f.Cells, 0, 0, 10)
+	}
+	caret := compose("世界", true)
+	plain := compose("世界", false)
+	mixed := compose("a世b", false)
+	for _, tw := range []struct{ got, want, shape string }{
+		{caret, wantCaret, "the focused row with the caret after both glyphs"},
+		{plain, wantPlain, "the unfocused row"},
+		{mixed, wantMixed, "the unfocused mixed-width row"},
+	} {
+		if tw.got == tw.want {
+			t.Fatalf("#519 looks fixed — %s reads correctly now (%q). Delete the "+
+				"skip below and let this fixture assert. The skip is what has to "+
+				"die with the fix, and nothing outside this file can make it",
+				tw.shape, tw.got)
+		}
 	}
 	t.Skip("TextBox blanks wide glyphs — https://github.com/WonderForgeLabs/gooey/issues/519")
 
@@ -306,8 +334,17 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// assigning Cells directly. An assertion that cannot fail measures
 	// nothing, and a second one beside a real pin reads as corroboration
 	// it is not supplying. Raised in review of #520.
-	if got, want := render.SpanText(f.Cells, 0, 0, 10), "世界█     "; got != want {
+	if got, want := caret, wantCaret; got != want {
 		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
 			"the caret belongs in column 4", got, want)
+	}
+	if got, want := plain, wantPlain; got != want {
+		t.Errorf("unfocused, rendered %q, want %q — the glyphs occupy their own "+
+			"columns with no caret to make room for", got, want)
+	}
+	if got, want := mixed, wantMixed; got != want {
+		t.Errorf("unfocused, rendered %q, want %q — a narrow glyph either side "+
+			"of a wide one is the arrangement a per-rune advance loses in the "+
+			"middle rather than at the end", got, want)
 	}
 }

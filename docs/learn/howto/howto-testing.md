@@ -20,15 +20,13 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// lineAt reads w cells of row y as a string — the assertion primitive.
-func lineAt(f *gooey.Frame, y, x, w int) string {
-	var sb strings.Builder
-	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
-	}
-	return strings.TrimRight(sb.String(), " ")
+// lineAt reads w cells from (x, y) as a string — the assertion
+// primitive. x before y, the order Buffer.At and SpanText both take.
+func lineAt(f *gooey.Frame, x, y, w int) string {
+	return strings.TrimRight(render.SpanText(f.Cells, x, y, w), " ")
 }
 
 func TestRendersAndDamages(t *testing.T) {
@@ -65,6 +63,18 @@ asserting this way:
 
 - **Text and layout** — read a row, or read `f.Cells.At(x, y).Style` to
   assert color, bold, or reverse video.
+
+  **Never hand-roll the reader.** `render.SpanText` and `render.RowText`
+  exist because writing `Cell.Rune` per column puts `render.Continuation`
+  — the marker that holds a wide glyph's second column — into the string
+  as a literal rune, so `"世界"` reads back as something no assertion
+  matches and the file cannot hold a wide-glyph fixture at all. Six
+  packages' row helpers had that bug at once, which is what
+  [#358](https://github.com/WonderForgeLabs/gooey/issues/358) found and
+  [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is
+  finishing. `lineAt` above is a thin wrapper over `SpanText` rather than
+  a loop for that reason, and it takes **x before y**, the order
+  `Buffer.At` and `SpanText` both use.
 - **Damage counts** — the `painted` return. Treat these as contract
   tests: if a one-property change starts repainting the page, that is a
   regression, not an implementation detail.

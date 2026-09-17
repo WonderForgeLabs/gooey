@@ -30,10 +30,22 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 // render.SpanText — a rune-per-cell read puts the continuation marker in
 // the row, which is what kept a wide-glyph label out of this file's
 // fixtures. See #516.
-func menuRows(f *gooey.Frame, b gooey.Rect) string {
+//
+// THE WINDOW IS THE FRAME, derived from f.Cells rather than written
+// down. This read a fixed 40x14 from bar.Bounds().Y, which is the exact
+// trap SpanText's own doc names — "every converted reader here reads a
+// FIXED extent … a dropdown that moves down the screen, or a composer
+// resized in a later edit, turns the tail of one of these reads into
+// phantom blanks" — and this helper is the reader that paragraph is
+// about. It also took a gooey.Rect it barely used: only b.Y, never b.X,
+// so the window was never bounds-relative in the axis its callers'
+// diagnostics claimed, and the 40 had to agree with a composer width
+// written separately in each test. Both constants are gone rather than
+// explained. Raised in review of #520.
+func menuRows(f *gooey.Frame) string {
 	var sb strings.Builder
-	for y := b.Y; y < b.Y+14; y++ {
-		sb.WriteString(render.SpanText(f.Cells, 0, y, 40))
+	for y := 0; y < f.Cells.H; y++ {
+		sb.WriteString(render.SpanText(f.Cells, 0, y, f.Cells.W))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -48,14 +60,14 @@ func TestACheckItemDrawsItsBox(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f, bar.Bounds())
+	got := menuRows(f)
 	if !strings.Contains(got, "[ ] Wrap") {
 		t.Errorf("an unchecked item does not draw an empty box:\n%s", got)
 	}
 
 	on.Set(true)
 	f, _ = c.Frame()
-	got = menuRows(f, bar.Bounds())
+	got = menuRows(f)
 	if !strings.Contains(got, "[x] Wrap") {
 		t.Errorf("after checking, the item does not draw a checked box:\n%s", got)
 	}
@@ -72,7 +84,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(menuRows(f, bar.Bounds()), "\n")
+	rows := strings.Split(menuRows(f), "\n")
 	var wrapAt, plainAt int = -1, -1
 	for _, r := range rows {
 		if i := strings.Index(r, "Wrap"); i >= 0 {
@@ -104,7 +116,7 @@ func TestAMenuWithNoCheckItemsKeepsItsOldSpacing(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f, bar.Bounds())
+	got := menuRows(f)
 	if strings.Contains(got, "[ ]") || strings.Contains(got, "[x]") {
 		t.Errorf("a menu with no check items drew a check column:\n%s", got)
 	}
@@ -202,9 +214,14 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// right of the cell it names — which is how the first version of this
 	// assertion read column 7 of the row below and reported a perfectly
 	// correct underline as misplaced.
-	b := bar.Bounds()
-	rows := strings.Split(menuRows(f, b), "\n")
-	for dy, r := range rows {
+	// THE ROW INDEX IS THE ROW, now that menuRows reads the frame from
+	// its top rather than from bar.Bounds().Y. This was `b.Y + dy` and
+	// it was right for the old window; it is right for this one only
+	// because a MenuBar sits at y=0 in this fixture, which is exactly
+	// the kind of accidental agreement a moved fixture breaks silently.
+	// Raised in review of #520.
+	rows := strings.Split(menuRows(f), "\n")
+	for y, r := range rows {
 		bytesAt := strings.Index(r, "[x] Wrap")
 		if bytesAt < 0 {
 			continue
@@ -216,10 +233,10 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 		// does not leave an underlined '[' behind — it overwrites the '['
 		// WITH the accelerator letter.
 		want := at + len([]rune("[x] "))
-		cell := f.Cells.At(want, b.Y+dy)
+		cell := f.Cells.At(want, y)
 		if !cell.Style.Underline || cell.Rune != 'W' {
 			t.Errorf("column %d of row %d is %q (underline=%v); the accelerator underline "+
-				"is not on the label's first letter", want, b.Y+dy, cell.Rune, cell.Style.Underline)
+				"is not on the label's first letter", want, y, cell.Rune, cell.Style.Underline)
 		}
 		return
 	}
@@ -264,12 +281,18 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(menuRows(f, bar.Bounds()), "\n")
-	var got string
-	var found bool
-	for _, r := range rows {
+	rows := strings.Split(menuRows(f), "\n")
+	// EVERY MATCH, not the last one. This was `got, found = …` inside
+	// the loop with no break, so a second row containing "Wrap" — a
+	// second item, a status line echoing the label, a scrolled duplicate
+	// — was resolved by iteration order and the other became invisible.
+	// This test's whole claim is about a BORDER POSITION, so two
+	// candidate rows is a fault to name rather than a choice to make.
+	// Raised in review of #520.
+	var at []int
+	for y, r := range rows {
 		if strings.Contains(r, "Wrap") {
-			got, found = strings.TrimRight(r, " "), true
+			at = append(at, y)
 		}
 	}
 	// "NO ROW MATCHED" AND "THE ROW IS WRONG" ARE DIFFERENT FAULTS, and
@@ -281,16 +304,31 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 	// SpanText's own doc calls out: a read that has drifted off the
 	// surface comes back as blanks rather than going short, so going
 	// short is not the signal either. Raised in review of #520.
-	if !found {
+	if len(at) == 0 {
 		// len(rows)-1: menuRows TERMINATES each line with a newline, so
 		// Split hands back a trailing empty element that is not a row of
 		// the window. This message exists to name the window, so the
 		// number in it has to BE the window. Raised in review of #520.
-		t.Fatalf("none of the %d rows menuRows read holds %q. The dropdown is "+
-			"outside the reader's window (a fixed 40 columns from bar.Bounds), "+
-			"which is a different fault from the row being mis-sized:\n%s",
-			len(rows)-1, "Wrap", strings.Join(rows, "\n"))
+		//
+		// AND THE WINDOW IS NOW THE FRAME. This said "a fixed 40 columns
+		// from bar.Bounds", which named neither axis correctly: the read
+		// started at column 0 and never touched b.X, and the likelier way
+		// to miss a dropdown was the fixed 14-row HEIGHT, which is the
+		// axis a menu moves along. Both constants are gone — menuRows
+		// reads f.Cells.W by f.Cells.H — so a missing row now means the
+		// dropdown is not on the frame at all. Raised in review of #520.
+		t.Fatalf("none of the %d rows of the %dx%d frame holds %q, so the "+
+			"dropdown did not paint — a different fault from the row being "+
+			"mis-sized:\n%s",
+			len(rows)-1, f.Cells.W, f.Cells.H, "Wrap", strings.Join(rows, "\n"))
 	}
+	if len(at) > 1 {
+		t.Fatalf("%q appears on rows %v. This test asserts one row against an "+
+			"exact border position, and picking one of two by iteration order "+
+			"would hide whichever it did not pick:\n%s",
+			"Wrap", at, strings.Join(rows, "\n"))
+	}
+	got := strings.TrimRight(rows[at[0]], " ")
 	if want := "│[x] Wrap 世界 │"; got != want {
 		t.Errorf("the wide label's row reads %q, want %q. A box narrower than "+
 			"its own text is the menu measuring runes where it owes columns; a "+
