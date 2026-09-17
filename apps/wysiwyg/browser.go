@@ -486,7 +486,10 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// file's snapshots stay in the stack and ctrl+z restores ITS tree
 	// under THIS file's envelope, with openPath still naming this file —
 	// see history.reset for the measurement. Raised in review of #501.
-	ed.history().reset(ed.root)
+	// selPath is read AFTER ed.sel is set above: the baseline has to name
+	// the selection the open just made, or the first undo drops it.
+	sel, hasSel := ed.selPath()
+	ed.history().reset(ed.root, sel, hasSel)
 	ed.rebuild()
 }
 

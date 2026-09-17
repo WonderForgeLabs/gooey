@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1147,6 +1148,73 @@ func between(t *testing.T, s, after, before string) string {
 	return rest[:j]
 }
 
+// TestAPrefixedElementIsRefusedLikeAPrefixedAttribute closes the one
+// shape nodeOf accepted, and the FOUR negative arms are the point of the
+// table rather than padding.
+//
+// The defect: nodeOf built `&node{Elem: t.Name.Local}`, so
+// `<t:Thing Name="x"/>` became a node called `Thing` with nothing said,
+// while a prefixed ATTRIBUTE was refused by name two lines further on.
+// The model cannot write either back out. carryDeclarations makes it
+// consequential — the envelope keeps `xmlns:t` and a paste produces
+// `<Thing xmlns:t="urn:a"/>`, the declaration preserved and the prefix
+// it scoped discarded — and once the two-roots refusal is lifted,
+// `<x:Property>` round-trips to `<Property>`, which markup refuses.
+//
+// THE OBVIOUS FIX IS WRONG, and the negatives are what say so.
+// encoding/xml resolves a name to its URI and hands back no prefix, so
+// under `xmlns="wonderforge.io/gooey/2026"` — which every document this
+// editor writes carries — Gooey, Canvas and Button ALL have a non-empty
+// Name.Space. `t.Name.Space != ""` would refuse every real document.
+// The discriminator is a difference from the default in scope, which is
+// why nodeOf carries a stack of defaults; arms 2-5 are each a state that
+// rule has to get right and the naive one does not.
+//
+// Arm 6 is the residue, asserted as a PASS rather than left unstated: a
+// prefix bound to the same URI as the default is the same element name
+// by XML namespaces, so rewriting `<g:Canvas/>` to `<Canvas/>` preserves
+// meaning. Raised in review of #501.
+func TestAPrefixedElementIsRefusedLikeAPrefixedAttribute(t *testing.T) {
+	const gooeyNS = `wonderforge.io/gooey/2026`
+	for _, tc := range []struct {
+		name, doc string
+		refuse    string // the element spelling the refusal must name, or "" to accept
+	}{
+		{"a declared prefix on a child", `<Gooey xmlns:t="urn:a"><t:Thing Name="x"/></Gooey>`, `{urn:a}Thing`},
+		{"an UNdeclared prefix", `<Gooey xmlns="` + gooeyNS + `"><x:Property Name="P"/></Gooey>`, `{x}Property`},
+		{"a prefix on the ROOT", `<t:Gooey xmlns:t="urn:a"><Canvas Name="R"/></t:Gooey>`, `{urn:a}Gooey`},
+
+		{"the default namespace every document carries", `<Gooey xmlns="` + gooeyNS + `"><Canvas Name="R"><Button Name="B"/></Canvas></Gooey>`, ""},
+		{"a default alongside an unused prefix declaration", `<Gooey xmlns="` + gooeyNS + `" xmlns:x="urn:x"><Canvas Name="R"/></Gooey>`, ""},
+		{"no namespace at all", `<Gooey><Canvas Name="R"/></Gooey>`, ""},
+		{"a child REDECLARING the default", `<Gooey xmlns="urn:u"><Canvas xmlns="urn:v" Name="R"/></Gooey>`, ""},
+		{"a prefix bound to the default's own URI", `<Gooey xmlns="urn:u" xmlns:g="urn:u"><g:Canvas Name="R"/></Gooey>`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := nodeOf(tc.doc)
+			if tc.refuse == "" {
+				if err != nil {
+					t.Fatalf("nodeOf refused a document with no prefixed element: %v\n%s", err, tc.doc)
+				}
+				return
+			}
+			if err == nil {
+				got := "<" + n.Elem + ">"
+				for _, k := range n.Kids {
+					got += " <" + k.Elem + ">"
+				}
+				t.Fatalf("nodeOf accepted a prefixed element and built %s — the "+
+					"prefix is gone and the model cannot put it back:\n%s", got, tc.doc)
+			}
+			if !strings.Contains(err.Error(), tc.refuse) {
+				t.Errorf("the refusal does not name the element as %q, so the "+
+					"author cannot tell WHICH prefix is the problem: %v",
+					tc.refuse, err)
+			}
+		})
+	}
+}
+
 // TestCollectNamespacesReadsEveryWalkInOneOrder is the slot half of a
 // finding whose attribute half was fixed a round earlier, and the two
 // walks are the same claim: "last wins" is a statement about ORDER, and
@@ -1259,6 +1327,79 @@ func TestUndoDoesNotReachBackPastAnOpen(t *testing.T) {
 	if got := ed.openPath.Get(); got != "second.gooey" {
 		t.Errorf("undo moved openPath to %q; it names the file a save writes to "+
 			"and no undo should change it", got)
+	}
+}
+
+// TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade is the other half of
+// the re-baseline above, and it broke in the commit that added it.
+//
+// history.reset took root alone, so the baseline it wrote carried no
+// selection. record's sel-refresh does not repair that: it is guarded on
+// the path still RESOLVING in the state being left, and after an ADD the
+// new node's path does not exist there, so the snapshot pushed for the
+// paste keeps the base's hasSel — false. restore then runs
+// `ed.sel = nil` unconditionally. Measured before the fix, through the
+// file browser:
+//
+//	after open:    ed.sel != nil, base.hasSel = false, base.sel = []
+//	after paste:   undo depth 1, top hasSel = false
+//	after undo:    ed.sel == nil
+//
+// The document is intact and nothing is selected — the properties pane
+// empties and ctrl+n is the only way back. Raised in review of #501.
+//
+// THE ASSERTION IS ON WHAT ed.sel NAMES, not on the pointer, because
+// restore clones: the selection is "the node the open selected" only in
+// the sense that it resolves to the same element of an equivalent tree.
+func TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="wonderforge.io/gooey/2026">` + "\n" +
+		`  <Canvas Name="Root"><Button Name="B" Content="x"/></Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "sel.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("sel.gooey")
+	opened := ed.sel
+	if opened == nil {
+		t.Fatal("the open selected nothing, so there is no selection for the undo to lose")
+	}
+
+	ed.insertSubtree(&node{Elem: "Button", Attrs: map[string]string{"Content": "hi"}}, "pasted")
+	// NON-VACUITY, both halves. A refused paste (a <Text Text="…"> was
+	// the first attempt here, and <Text> takes no Text attribute) pushes
+	// nothing, and then the undo below is a no-op that passes for the
+	// wrong reason.
+	if got := ed.status.Get(); !strings.HasPrefix(got, "pasted") {
+		t.Fatalf("the paste did not happen, so the undo has nothing to undo: %q", got)
+	}
+	if n := len(ed.history().undo); n != 1 {
+		t.Fatalf("undo depth %d after the paste, want 1", n)
+	}
+
+	ed.undo()
+	if ed.sel == nil {
+		t.Fatalf("undo after an open deselected everything. The document is "+
+			"still there (%s) — it is the SELECTION that was dropped, because "+
+			"history.reset baselined without one and restore clears ed.sel "+
+			"whenever the snapshot says hasSel is false", ed.source.Get())
+	}
+	if got, want := ed.sel.Elem, opened.Elem; got != want {
+		t.Errorf("undo left <%s> selected; the open selected <%s>", got, want)
+	}
+	if got, want := ed.sel.Attrs["Name"], opened.Attrs["Name"]; got != want {
+		t.Errorf("undo left Name=%q selected; the open selected Name=%q", got, want)
+	}
+	// AND IT NAMES A NODE OF THE RESTORED TREE, not a stranded pointer
+	// into the one restore replaced — which is the shape a fix that
+	// carried ed.sel across instead of re-resolving the path would leave.
+	if _, ok := pathTo(ed.root, ed.sel); !ok {
+		t.Error("ed.sel is not reachable from ed.root: the selection points " +
+			"into the tree restore threw away")
 	}
 }
 
@@ -1512,7 +1653,22 @@ func sortedNames(set map[string]bool) []string {
 // over the fourth site's most likely form. Same class as the
 // FuncDecl-body hole closed in TestOnlyOneFunctionWritesADocumentEnvelope
 // one commit earlier. Raised in review of #501.
-func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
+//
+// AND THE WHOLE DECLARATION, NOT fn.Body — the same hole, one round
+// later, in the guard that was widened as the example. This took
+// `d.(*ast.FuncDecl)` and skipped everything else, so
+//
+//	var reopen = func(ed *editor) { ed.envAttrs = nil }
+//
+// at package scope was invisible. Invisible on BOTH sides, which is why
+// it is silent rather than loud: the two sets stay equal and the guard
+// passes over exactly the fourth site it exists to catch. Measured — a
+// probe file carrying that literal left this green. Package scope is
+// attributed to a name no caller can produce, the way the sibling guard
+// does it.
+//
+// `field` is what makes the receiver question answerable. See onEd.
+func assignedIn(t *testing.T, field string, writes func(ast.Expr, map[string]bool) bool) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
@@ -1525,23 +1681,55 @@ func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files {
 			for _, d := range f.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Body == nil {
-					continue
+				owner := assignPkgScope
+				if fn, ok := d.(*ast.FuncDecl); ok {
+					if fn.Body == nil {
+						continue
+					}
+					owner = fn.Name.Name
 				}
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
+				eds := editorIdents(d)
+				// LOUD WHERE IT USED TO BE SILENT. A write to the
+				// watched field through a base this walk cannot show is
+				// an editor is reported rather than skipped, because
+				// skipping it removes the site from BOTH sets at once
+				// and leaves them equal. That is the whole failure mode
+				// of a receiver-name narrowing, and it is why onEd's
+				// "a spurious site fails loudly" argument does not cover
+				// this direction on its own.
+				suspect := func(e ast.Expr) {
+					ast.Inspect(e, func(n ast.Node) bool {
+						se, ok := n.(*ast.SelectorExpr)
+						if !ok || se.Sel.Name != field {
+							return true
+						}
+						if id, ok := se.X.(*ast.Ident); ok && eds[id.Name] {
+							return true
+						}
+						t.Errorf("%s writes .%s through a base this walk cannot "+
+							"identify as an *editor (%s). Either it IS one and "+
+							"editorIdents has to learn the binding, or it is not "+
+							"and the field belongs to something else — but it "+
+							"must not be dropped: a dropped site leaves both "+
+							"sets equal and this guard green",
+							owner, field, types.ExprString(se.X))
+						return true
+					})
+				}
+				ast.Inspect(d, func(n ast.Node) bool {
 					switch n := n.(type) {
 					case *ast.AssignStmt:
 						for _, lhs := range n.Lhs {
 							// The field itself, or a slot in it:
 							// `m[k] = v` writes m without naming it on
 							// the left.
-							if writes(lhs) {
-								seen[fn.Name.Name] = true
+							if writes(lhs, eds) {
+								seen[owner] = true
 							}
-							if ix, ok := lhs.(*ast.IndexExpr); ok && writes(ix.X) {
-								seen[fn.Name.Name] = true
+							if ix, ok := lhs.(*ast.IndexExpr); ok && writes(ix.X, eds) {
+								seen[owner] = true
 							}
+							suspect(lhs)
 						}
 					case *ast.CallExpr:
 						// clear and delete are the in-place empties, and
@@ -1553,9 +1741,13 @@ func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
 						if !ok || len(n.Args) == 0 {
 							return true
 						}
-						if (id.Name == "clear" || id.Name == "delete") && writes(n.Args[0]) {
-							seen[fn.Name.Name] = true
+						if id.Name != "clear" && id.Name != "delete" {
+							return true
 						}
+						if writes(n.Args[0], eds) {
+							seen[owner] = true
+						}
+						suspect(n.Args[0])
 					}
 					return true
 				})
@@ -1578,29 +1770,178 @@ func selects(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
 	return se, true
 }
 
-// onEd is selects with the RECEIVER checked. `ed` is the editor in every
-// method in this package, and the guard below is about the editor's two
-// fields specifically — a bare `selects(e, "root")` counts any
+// assignPkgScope is what a write outside any function is attributed to.
+// It cannot collide with a function name, so nothing can exempt it: the
+// answer to a document field written at package scope is always to move
+// the write into a function, not to name it here.
+const assignPkgScope = "package scope"
+
+// onEd is selects with the base checked against the identifiers this
+// declaration BINDS to *editor. The guard below is about the editor's
+// two fields specifically — a bare `selects(e, "root")` counts any
 // assignment whose final field is `root`, so `s.root = …` or
 // `h.base.root = …` inside undo.go would be read as a
 // document-replacement site.
 //
 // Latent rather than live: `grep '\.root = '` over the package's
 // non-test sources returns only undo.go's `ed.root = s.root.clone()`.
-// And loud rather than silent — a spurious site makes the two sets
-// differ and the guard fails naming it — which is why the widening that
-// introduced it was right and this is a narrowing rather than a fix.
+//
+// IT USED TO HARDCODE THE IDENTIFIER `ed`, and that is a false-NEGATIVE
+// narrowing rather than a false-positive one — the opposite direction
+// from the "a spurious site fails loudly" argument that justified adding
+// it. A method spelled `func (e *editor) …` writing `e.envAttrs`
+// disappeared from BOTH sets, so the sets stayed equal and the guard
+// stayed green; measured with a probe file carrying one. The receiver
+// name is derived per declaration now, and — the half a bare fn.Recv
+// would still miss — so are parameters and locals, because two of the
+// package's *editor values are neither receivers nor parameters
+// (`ed := newEditor(root)` and `ed := &editor{…}`, both in main.go).
+//
+// The residue is handled rather than narrowed away: a base this cannot
+// identify is REPORTED by assignedIn instead of skipped. See there.
 // Raised in review of #501.
-func onEd(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
+func onEd(e ast.Expr, name string, eds map[string]bool) (*ast.SelectorExpr, bool) {
 	se, ok := selects(e, name)
 	if !ok {
 		return nil, false
 	}
 	id, ok := se.X.(*ast.Ident)
-	if !ok || id.Name != "ed" {
+	if !ok || !eds[id.Name] {
 		return nil, false
 	}
 	return se, true
+}
+
+// editorIdents is every identifier the declaration d binds to *editor:
+// a method receiver, a parameter of any func type inside it (including
+// a package-level func literal's, which is the shape that made the
+// hardcoded `ed` a silent hole), and a short variable declaration
+// initialised from `&editor{…}` or newEditor.
+//
+// DERIVED, NOT LISTED, for the reason CLAUDE.md's Verify section gives
+// about counts and names in prose: `ed` is the spelling everywhere in
+// this package today, and a guard that depends on that fact goes quietly
+// blind the first time somebody writes `e`.
+//
+// It is a syntactic answer to a question types would answer exactly, and
+// it is allowed to be incomplete only because incompleteness is loud
+// here: assignedIn reports a write through a base this does not
+// recognise. A new way of getting hold of an editor therefore fails the
+// guard with the expression printed, rather than vanishing from it.
+func editorIdents(d ast.Node) map[string]bool {
+	out := map[string]bool{}
+	isEditorPtr := func(e ast.Expr) bool {
+		st, ok := e.(*ast.StarExpr)
+		if !ok {
+			return false
+		}
+		id, ok := st.X.(*ast.Ident)
+		return ok && id.Name == "editor"
+	}
+	fromNew := func(e ast.Expr) bool {
+		if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.AND {
+			if cl, ok := u.X.(*ast.CompositeLit); ok {
+				id, ok := cl.Type.(*ast.Ident)
+				return ok && id.Name == "editor"
+			}
+			return false
+		}
+		call, ok := e.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		id, ok := call.Fun.(*ast.Ident)
+		return ok && id.Name == "newEditor"
+	}
+	add := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			if !isEditorPtr(f.Type) {
+				continue
+			}
+			for _, n := range f.Names {
+				out[n.Name] = true
+			}
+		}
+	}
+	if fn, ok := d.(*ast.FuncDecl); ok {
+		add(fn.Recv)
+	}
+	ast.Inspect(d, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncType:
+			add(n.Params)
+		case *ast.AssignStmt:
+			if n.Tok != token.DEFINE {
+				return true
+			}
+			for i, lhs := range n.Lhs {
+				id, ok := lhs.(*ast.Ident)
+				if !ok || i >= len(n.Rhs) {
+					continue
+				}
+				if fromNew(n.Rhs[i]) {
+					out[id.Name] = true
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// TestTheEditorIdentWalkFindsEveryBindingThisPackageUses is the guard on
+// the guard, and it exists because editorIdents is a SYNTACTIC answer to
+// a question only types answer exactly.
+//
+// The three forms are not hypothetical — each is in this package's
+// non-test sources today, and the fourth arm is the one the hardcoded
+// `ed` could not see at all:
+//
+//	func (ed *editor) …            receiver
+//	func writeX(ed *editor, …)     parameter, incl. a package-level literal
+//	ed := newEditor(root)          main.go:348
+//	ed := &editor{…}               main.go:1512
+//
+// The NEGATIVE arm is the one that keeps this from being a tautology: a
+// binding of some other type must NOT be collected, or onEd stops
+// excluding `s.root` and `h.base.root` and the narrowing it exists for
+// is gone. Raised in review of #501.
+func TestTheEditorIdentWalkFindsEveryBindingThisPackageUses(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      []string
+	}{
+		{"a receiver", `func (e *editor) m() {}`, []string{"e"}},
+		{"a parameter", `func f(target *editor, s string) {}`, []string{"target"}},
+		{"a package-level func literal's parameter",
+			`var reopen = func(who *editor) { who.envAttrs = nil }`, []string{"who"}},
+		{"a local from the constructor", `func f() { x := newEditor(nil) ; _ = x }`, []string{"x"}},
+		{"a local from a composite literal", `func f() { y := &editor{} ; _ = y }`, []string{"y"}},
+		{"two at once", `func (ed *editor) m(other *editor) {}`, []string{"ed", "other"}},
+		{"nothing of the type", `func f(h *history, s snapshot) { _ = h ; _ = s }`, nil},
+		{"a VALUE, not a pointer", `func f(ed editor) {}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := parser.ParseFile(token.NewFileSet(), "x.go",
+				"package main\n"+tc.src+"\n", 0)
+			if err != nil {
+				t.Fatalf("parsing the fixture: %v", err)
+			}
+			if len(f.Decls) != 1 {
+				t.Fatalf("the fixture has %d declarations, want 1", len(f.Decls))
+			}
+			got := sortedNames(editorIdents(f.Decls[0]))
+			if len(got) == 0 {
+				got = nil
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("editorIdents found %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 // TestEnvAttrsIsAssignedWhereTheDocumentIs turns an invariant three
@@ -1619,8 +1960,8 @@ func onEd(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
 // particular wrong value: it is the separation of the two fields that is
 // the bug, whatever either is set to.
 func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
-	envAttrs := assignedIn(t, func(e ast.Expr) bool {
-		_, ok := onEd(e, "envAttrs")
+	envAttrs := assignedIn(t, "envAttrs", func(e ast.Expr, eds map[string]bool) bool {
+		_, ok := onEd(e, "envAttrs", eds)
 		return ok
 	})
 	// TWO SPELLINGS OF REPLACING THE DOCUMENT, because matching one of
@@ -1631,12 +1972,12 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	// to a matcher that only knew the first — so the guard reported the
 	// package clean while holding a live example of the arrangement its
 	// own message describes. Raised in review of #501.
-	kids := assignedIn(t, func(e ast.Expr) bool {
+	kids := assignedIn(t, "root", func(e ast.Expr, eds map[string]bool) bool {
 		if se, ok := selects(e, "Kids"); ok {
-			_, ok = onEd(se.X, "root")
+			_, ok = onEd(se.X, "root", eds)
 			return ok
 		}
-		_, ok := onEd(e, "root")
+		_, ok := onEd(e, "root", eds)
 		return ok
 	})
 	// AND ONE OF THEM IS ALLOWED TO, with the reason stated rather than

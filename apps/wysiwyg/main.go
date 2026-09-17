@@ -1194,6 +1194,10 @@ func bareDeclMsg(n int) string {
 func nodeOf(src string) (*node, error) {
 	dec := xml.NewDecoder(strings.NewReader(src))
 	var stack []*node
+	// The DEFAULT namespace in scope, one entry per open element. It is
+	// what makes the prefixed-element refusal below possible at all: see
+	// there.
+	defaults := []string{""}
 	var root *node
 	for {
 		tok, err := dec.Token()
@@ -1205,6 +1209,68 @@ func nodeOf(src string) (*node, error) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			// Read BEFORE the element's own name is judged, because a
+			// default declared on an element applies to that element:
+			// `<Gooey xmlns="U">` gives Gooey itself Space "U".
+			def := defaults[len(defaults)-1]
+			for _, a := range t.Attr {
+				if a.Name.Local == "xmlns" && a.Name.Space == "" {
+					def = a.Value
+				}
+			}
+			defaults = append(defaults, def)
+			// A PREFIXED ELEMENT IS REFUSED, the way a prefixed
+			// attribute is twenty lines down, and the asymmetry was the
+			// one shape that got accepted anyway under a different name:
+			// `<t:Thing/>` became a node called `Thing`, measured, with
+			// nothing said. The model cannot write a prefix back out
+			// either way — node.markup writes n.Elem — so accepting one
+			// is the silent drop this whole reader exists to delete.
+			// What made it consequential rather than theoretical is
+			// carryDeclarations: it now KEEPS `xmlns:x` on the envelope,
+			// so a paste produced `<Thing xmlns:t="urn:a"/>` — the
+			// declaration preserved and the prefix it scoped discarded.
+			// Raised in review of #501, where the argument ended
+			// "and once #517 lifts the two-roots refusal, an
+			// <x:Property> read through here becomes a node named
+			// Property". THAT IS THIS BRANCH, and it is why the
+			// x-namespace is exempt below rather than refused.
+			//
+			// THE TEST IS NOT `t.Name.Space != ""`, and that is the
+			// whole reason this needs a scope stack. encoding/xml
+			// RESOLVES a name to its URI and hands back no prefix, so
+			// under a default declaration every element carries one:
+			// `<Gooey xmlns="wonderforge.io/gooey/2026">` gives Gooey,
+			// Canvas and Button all Space "wonderforge.io/gooey/2026" —
+			// measured, and refusing on non-empty Space would turn away
+			// every document this editor has ever opened. A prefix is
+			// visible only as a DIFFERENCE from the default in scope.
+			//
+			// The residue: a prefix bound to the same URI as the default
+			// (`xmlns:g="U"` under `xmlns="U"`, then `<g:Canvas/>`)
+			// passes and is written back as `<Canvas/>`. That is not a
+			// gap being tolerated — by XML namespaces the two ARE the
+			// same element name, so the rewrite preserves meaning. It is
+			// only the spelling that moves, and no spelling survives a
+			// document model that holds none.
+			// ONE NAMESPACE IS EXEMPT, and it is the one this branch
+			// exists for. The refusal's premise is that the model
+			// cannot hold the namespace, so writing the element back
+			// out renames it. node.Space holds markup.XNamespace, and
+			// the envelope re-derives the prefix from the xmlns the
+			// document declares (declPrefix), so an <x:Property> makes
+			// the round trip under the author's own prefix — that is
+			// the whole of #517. The premise does not hold for it, so
+			// neither does the refusal.
+			//
+			// NOT WIDENED TO "any namespace node.Space can hold", which
+			// is every namespace: Space is set on every element and
+			// DROPPED on write for everything but a declaration, which
+			// node.Space's own doc records. Holding the URI is not the
+			// same as writing it back.
+			if t.Name.Space != def && t.Name.Space != markup.XNamespace {
+				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
+			}
 			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
 				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
@@ -1304,6 +1370,9 @@ func nodeOf(src string) (*node, error) {
 				stack[len(stack)-1].Body += string(t)
 			}
 		case xml.EndElement:
+			if len(defaults) > 1 {
+				defaults = defaults[:len(defaults)-1]
+			}
 			if len(stack) == 0 {
 				return nil, fmt.Errorf("unbalanced </%s>", t.Name.Local)
 			}
@@ -1348,6 +1417,13 @@ func nodeOf(src string) (*node, error) {
 // namespacedAttrName spells a namespaced attribute the way
 // markup.namespacedAttrError does, so the designer and the loader name
 // the same attribute the same way in their refusals.
+//
+// nodeOf's prefixed-ELEMENT refusal calls it too, for the same spelling
+// rather than a second one. The `xml:` arm cannot fire from there — the
+// XML namespace is bound to attributes, and no element of this
+// vocabulary is in it — so that call always takes the {uri}local path.
+// The guard below pins the attribute halves, which are the ones markup
+// has an opinion about.
 //
 // A SECOND COPY OF ONE RULE, deliberately: the markup package does not
 // export it, and apps/wysiwyg is a nested module that cannot reach into
