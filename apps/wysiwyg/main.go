@@ -721,11 +721,19 @@ func nodeOf(src string) (*node, error) {
 				return nil, fmt.Errorf("seed has an unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
-			// retains nothing: stack is a LOCAL parse stack whose last
-			// reference dies with this function. The high-water mark it
-			// leaves behind is freed with the slice itself at return, so
-			// there is nothing for a clear to release — unlike the
-			// reused FIELDS this guard is about. Raised in review of #456.
+			// stack is a LOCAL parse stack whose last reference dies
+			// with this function. The high-water mark it leaves behind
+			// is freed with the slice itself at return, so there is
+			// nothing for a clear to release — unlike the reused FIELDS
+			// this guard is about.
+			//
+			// NOT SPELLED AS THE `retains nothing:` ESCAPE: the guard
+			// skips a local before it reads an escape, so the marker
+			// was inert here — measured in review of #456, where
+			// replacing its text left the guard green. An inert marker
+			// with semantics is worse than none, because it arrives
+			// already-exempt the day the slice becomes a field.
+			// Raised in review of #456.
 			stack = stack[:len(stack)-1]
 			// The SAME body rule the loader applies, called through the
 			// package that owns it rather than restated here. A seed's

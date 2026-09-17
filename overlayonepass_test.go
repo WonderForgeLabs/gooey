@@ -911,6 +911,7 @@ func toZero()    { clear(x[:0]) }
 func otherCap()  { clear(x[:cap(y)]) }
 func offsetTail(){ clear(x[2:cap(x)]) }
 func foreignLen(){ clear(x[len(y):cap(x)]) }
+func cappedMax() { x = clearToCap(x[:0:0]) }
 func notAClear() { copy(x[:cap(x)], y) }
 `
 	fset := token.NewFileSet()
@@ -942,6 +943,11 @@ func notAClear() { copy(x[:cap(x)], y) }
 		{"otherCap", false, false},
 		{"offsetTail", false, false},
 		{"foreignLen", false, false},
+		// THE HEAD IS NOT ENOUGH: Low is nil here and cap(x[:0:0]) is
+		// zero, so the call clears nothing while exempting the reset it
+		// is written beside. Nothing in the tree spells it this way,
+		// which is why the arm is here rather than in the corpus.
+		{"cappedMax", false, false},
 		{"notAClear", false, false},
 	} {
 		var decl *ast.FuncDecl
@@ -1301,9 +1307,21 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSi
 		// the Low. The sentence that stood here said the High check
 		// alone made the whole tail the thing being cleared "whatever
 		// Low is", and an offset Low is exactly the counterexample.
+		//
+		// AND MAX, FOR THE SAME REASON ONE STEP ON. The head is
+		// necessary and not sufficient: a three-index slice caps the
+		// result independently, so `clearToCap(x[:0:0])` has Low == nil
+		// and cap 0 — it clears nothing while exempting the reset below
+		// it. resetBase bails on Max at all three of its own slice
+		// reads and this arm did not, which is two halves of one
+		// matcher disagreeing. Nothing in the tree writes the spelling,
+		// so the pin is the cappedMax fixture arm rather than the
+		// corpus. The `clear` arm is unaffected: clear(s) covers
+		// len(s), which is High-Low, and Max does not change it.
+		// Raised in review of #456.
 		ordered := false
 		if sliced {
-			if id.Name == "clearToCap" && sl.Low != nil {
+			if id.Name == "clearToCap" && (sl.Low != nil || sl.Max != nil) {
 				return true
 			}
 			// A LOW THAT IS NOT THE HEAD makes the spelling relative to
@@ -1320,8 +1338,45 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSi
 	return found
 }
 
+// localScope is where one declaration of a name is live: from the
+// declaration itself to the end of the construct that opened its scope.
+type localScope struct{ from, to token.Pos }
+
+// inScope reports whether a reset at `at` is covered by one of a name's
+// declarations.
+func inScope(ss []localScope, at token.Pos) bool {
+	for _, sc := range ss {
+		if at > sc.from && at < sc.to {
+			return true
+		}
+	}
+	return false
+}
+
 // localSlices is every name fn DECLARES in its own body — `var x []T`
-// and `x := …` alike.
+// and `x := …` alike — AND WHERE EACH DECLARATION IS LIVE.
+//
+// THE SCOPE IS THE HALF THAT MAKES IT SAFE, and this was a bare set of
+// names until #456's review. The consumer matches on the reset's own
+// base text, so a package-level slice shadowed anywhere in the function
+// — a closure, an `if` init, a `for` body — made every reset of the
+// OUTER one look local and be skipped:
+//
+//	var evalStack []*node      // package level
+//	func f() {
+//	    if cond { evalStack := scratch(); _ = evalStack }
+//	    evalStack = evalStack[:len(evalStack)-1]   // skipped
+//	}
+//
+// prop.evalStack is this function's own named example of the shape the
+// skip must not reach, and nothing in the tree is shadowed that way
+// today — which is the condition under which this file supplies a
+// synthetic arm rather than trusting the corpus.
+//
+// THE SCOPE OPENERS ARE LISTED rather than taken as "the enclosing
+// block", because an `if x := …; cond` declares into the IfStmt and not
+// into the block around it. Taking the block would over-scope, and
+// over-scoping is the fail-open direction.
 //
 // It exists because this guard's subject is a REUSED FIELD, and a bare
 // identifier reset inside a function is not one: the backing array a
@@ -1342,13 +1397,51 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSi
 // A SELECTOR IS NEVER SKIPPED here, whatever names collide: the check
 // is on the reset's own base text, so `c.kids` is a field even in a
 // function that also declares a local `kids`.
-func localSlices(fn *ast.FuncDecl) map[string]bool {
-	out := map[string]bool{}
+//
+// THE SKIP RUNS BEFORE THE ESCAPE IS READ, which decides where a
+// `retains nothing:` marker means anything: on a local it is
+// decoration, because the reset never reaches retainsNothingAbove.
+// Three in this tree were written that way and measured inert — the
+// guard stayed green with their text replaced — so they say the same
+// thing in prose without the token. Which sites the guard actually
+// CONSUMES is derivable rather than listed: grep the marker, drop the
+// ones whose reset base is a bare identifier declared in the function.
+// Raised in review of #456.
+func localSlices(fn *ast.FuncDecl) map[string][]localScope {
+	out := map[string][]localScope{}
+	// One entry per node visited, so the nil the walk hands back on the
+	// way out pops exactly what its node pushed; only scope openers carry
+	// a node.
+	var stack []ast.Node
+	innermost := func() ast.Node {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i] != nil {
+				return stack[i]
+			}
+		}
+		return fn.Body
+	}
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		switch n.(type) {
+		case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause,
+			*ast.IfStmt, *ast.ForStmt, *ast.RangeStmt,
+			*ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt,
+			*ast.FuncLit:
+			stack = append(stack, n)
+		default:
+			stack = append(stack, nil)
+		}
+		add := func(name string, from token.Pos) {
+			out[name] = append(out[name], localScope{from: from, to: innermost().End()})
+		}
 		switch d := n.(type) {
 		case *ast.ValueSpec:
 			for _, nm := range d.Names {
-				out[nm.Name] = true
+				add(nm.Name, d.End())
 			}
 		case *ast.AssignStmt:
 			if d.Tok != token.DEFINE {
@@ -1356,7 +1449,7 @@ func localSlices(fn *ast.FuncDecl) map[string]bool {
 			}
 			for _, lhs := range d.Lhs {
 				if id, ok := lhs.(*ast.Ident); ok {
-					out[id.Name] = true
+					add(id.Name, d.End())
 				}
 			}
 		}
@@ -1371,6 +1464,12 @@ func localSlices(fn *ast.FuncDecl) map[string]bool {
 // `para = para[:0]`, and para is a `var`. Nothing in the tree resets a
 // `:=` local, so that arm is unexercised by the corpus and a mutation
 // of it is silent — which is the shape a fixture test is for.
+//
+// THE SHADOW ARM IS THE ONE THAT FAILS OPEN, and it is the reason this
+// fixture asks WHERE rather than WHETHER. A package-level slice
+// shadowed in a nested scope had every reset of the outer one skipped
+// as a local; nothing in the tree is shaped that way, so only a
+// synthetic arm can hold it. Raised in review of #456.
 func TestALocalIsSeenHoweverItIsDeclared(t *testing.T) {
 	const src = `package p
 
@@ -1380,6 +1479,10 @@ func f(param []int) {
 	var declared []int
 	short := []int{}
 	pair, _ := g()
+	if cond {
+		shadow := []int{}
+		_ = shadow
+	}
 	_, _, _, _ = declared, short, pair, param
 }
 `
@@ -1398,20 +1501,46 @@ func f(param []int) {
 		t.Fatal("the fixture has no func f")
 	}
 	got := localSlices(fn)
+	// AT THE END OF THE BODY, which is where the guard asks: a reset
+	// sits after the declarations it might be covered by, and the
+	// shadow arm below is only a shadow from there.
+	at := fn.Body.End() - 1
 	for _, name := range []string{"declared", "short", "pair"} {
-		if !got[name] {
-			t.Errorf("localSlices does not see %q. A reset on it would be "+
-				"classified as a reused field, and the element type that "+
-				"answers for it is whatever else in the directory carries "+
-				"that name", name)
+		if !inScope(got[name], at) {
+			t.Errorf("localSlices does not see %q as live at the end of the "+
+				"body. A reset on it would be classified as a reused field, "+
+				"and the element type that answers for it is whatever else "+
+				"in the directory carries that name", name)
 		}
 	}
-	for _, name := range []string{"pkgLevel", "param"} {
-		if got[name] {
-			t.Errorf("localSlices sees %q, which fn does not declare. A "+
-				"package-level slice reset in this function would be skipped "+
-				"as a local — and prop.evalStack is exactly that shape", name)
-		}
+	if inScope(got["pkgLevel"], at) {
+		t.Error("localSlices sees pkgLevel, which fn does not declare. A " +
+			"package-level slice reset in this function would be skipped as " +
+			"a local — and prop.evalStack is exactly that shape")
+	}
+	if inScope(got["param"], at) {
+		t.Error("localSlices sees param, which is a PARAMETER rather than a " +
+			"declaration in the body. It is excluded for its own reason and " +
+			"not pkgLevel's: truncating a parameter header retains nothing " +
+			"new, because the caller still holds its own. Including it would " +
+			"be harmless; what is not harmless is the other direction, where " +
+			"param = param[:0] is resolved against whatever struct field in " +
+			"the directory happens to share the name")
+	}
+	if inScope(got["shadow"], at) {
+		t.Error("localSlices reports shadow live at the end of the body, " +
+			"where the only declaration of it is inside an if. A " +
+			"package-level slice shadowed in ANY nested scope then has its " +
+			"own resets skipped as local, which is prop.evalStack's shape " +
+			"and the fail-open direction")
+	}
+	// The `_ = shadow` line: inside the if, after the declaration, which
+	// is the only window the declaration covers.
+	inside := fn.Body.List[3].(*ast.IfStmt).Body.List[1].Pos()
+	if !inScope(got["shadow"], inside) {
+		t.Error("localSlices does not report shadow live inside the if that " +
+			"declares it, so the scoping is refusing the declaration rather " +
+			"than bounding it — the arm above would pass for the wrong reason")
 	}
 }
 
@@ -1482,8 +1611,11 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 					if base == "" {
 						continue
 					}
-					// A LOCAL IS NOT A REUSED FIELD — see localSlices.
-					if !strings.Contains(base, ".") && locals[base] {
+					// A LOCAL IS NOT A REUSED FIELD — see localSlices,
+					// which answers WHERE each declaration is live, so
+					// a shadow cannot exempt the package-level slice it
+					// shadows.
+					if !strings.Contains(base, ".") && inScope(locals[base], as.Pos()) {
 						continue
 					}
 					// The element type is looked up by the LAST segment:
