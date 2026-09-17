@@ -394,10 +394,29 @@ func scrollFor(runes []rune, cur, caret, avail int) int {
 // vocabulary has is a four-person ZWJ family, seven runes. The residual
 // is a SINGLE cluster longer than this, where the re-synchronising walk
 // can still begin inside it and report that fragment's start as the
-// cluster's — cosmetic, bounded, and the only thing a fixed lookback
-// can be wrong about now that windowFloor expands until it can prove it
-// has gone far enough. Raised in review of #521.
+// cluster's — cosmetic and bounded.
+//
+// THAT IS NOT THE WHOLE RESIDUAL, AND THE MISSING HALF IS NOT ABOUT
+// LENGTH. A regional-indicator boundary is decided by the PARITY of the
+// whole run in front of it (UAX #29 GB12/GB13), not by anything local,
+// so a segmenter restarted mid-run inherits the wrong parity however
+// generous the lookback is. Measured before the fix below, on a value of
+// 40 US flags: with the caret at rune 65 the walk reported the cluster
+// starting at 65 where it starts at 64, the field painted "🇸🇺🇸🇺🇸🇺" — a
+// flag sequence the value does not contain, the halves re-paired — and a
+// click on column 0 answered rune 64. eachClusterFrom now walks back off
+// a regional-indicator run before it starts, which is the one category
+// where the premise above fails. Raised in review of #521.
 const clusterSlack = 64
+
+// regionalIndicator reports the code points whose cluster boundaries are
+// decided by a PARITY rather than by their neighbours: a pair of them is
+// one flag, so whether rune k joins the one before it depends on how
+// many regional indicators precede it, all the way back to the start of
+// the run. It is the one thing a fixed lookback cannot re-synchronise
+// on, which is why eachClusterFrom treats it specially. Raised in review
+// of #521.
+func regionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
 
 // eachClusterFrom walks the clusters of runes[from:to], calling fn with
 // each cluster's start index, rune count and COLUMN width.
@@ -418,6 +437,18 @@ func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 	lo := from - clusterSlack
 	if lo < 0 {
 		lo = 0
+	}
+	// AND OFF A REGIONAL-INDICATOR RUN, which is the one boundary a
+	// fixed lookback cannot re-synchronise on: start inside a run of
+	// flags and every pair from there is offset by one. Walking to the
+	// run's own start restores the parity. Only when `lo` landed IN a
+	// run — landing just after one is already a true boundary — so this
+	// costs nothing on the values that have no flags in them, which is
+	// nearly all of them. Raised in review of #521.
+	if lo > 0 && regionalIndicator(runes[lo]) {
+		for lo > 0 && regionalIndicator(runes[lo-1]) {
+			lo--
+		}
 	}
 	idx := lo
 	first := true
@@ -959,62 +990,54 @@ func (t *TextBox) indexAt(x int) int {
 	// six drags to column -2 over a 6-column field left the selection at
 	// [21,24) where walking gives [9,24)). Found in the review of #521.
 	//
-	// The walk is from the START OF THE VALUE rather than from the
-	// window, because a cluster boundary is a property of the text in
-	// front of it and because a click costs one pass either way — this
-	// is not the paint path.
-	var (
-		starts  []int // rune index of each cluster
-		cols    []int // the column each cluster opens at
-		total   int
-		startAt = -1
-	)
-	eachRuneCluster(runes, func(i, _ int, _ string, w int) bool {
-		if i <= start {
-			startAt = len(starts)
+	// THE WALK IS FROM THE WINDOW, NOT FROM THE START OF THE VALUE, and
+	// the comment here used to say the opposite: "a click costs one pass
+	// either way — this is not the paint path". True of a click; false
+	// of a DRAG, which is the caller three lines up in this same file.
+	// HandleMouseMove calls this on every motion event, on the UI
+	// goroutine, and motion arrives in bursts. Measured on the version
+	// this replaces — a full `string(runes)` copy plus two []int with an
+	// entry per cluster, per call: 202µs at 1,000 runes, 1.95ms at
+	// 10,000, 27.3ms at 100,000, 51.6ms at 200,000. That is the same
+	// O(len) shape this branch already took OUT of scrollFor, relocated
+	// to the input path.
+	//
+	// Render establishes that the answer only ever needs the clusters
+	// between the window and the click, so the walk is bounded by the
+	// OFFSET rather than by the value: forward from the window for a
+	// non-negative column, backward one cluster at a time for a negative
+	// one. Both are allocation-free, and the backward half is the
+	// drag-left behaviour the paragraph above insists on.
+	// Raised in review of #521.
+	start = clusterStartAt(runes, start)
+	off := x - t.Bounds().X - promptW
+	if off < 0 {
+		// A column left of the window. Each step is at least one column,
+		// so this is bounded by how far past the edge the pointer is.
+		i := start
+		for need := -off; i > 0 && need > 0; {
+			p := clusterStartAt(runes, i-1)
+			need -= caretCols(runes, p)
+			i = p
 		}
-		starts = append(starts, i)
-		cols = append(cols, total)
-		total += w
+		return i
+	}
+	col, last := 0, start
+	eachClusterFrom(runes, start, len(runes), func(at, n, w int) bool {
+		if col > off {
+			return false
+		}
+		last = at
+		col += w
 		return true
 	})
-	if startAt < 0 {
-		return 0
-	}
-	target := cols[startAt] + (x - t.Bounds().X - promptW)
-	if target < 0 {
-		return 0
-	}
-	if target >= total {
+	// PAST THE END OF THE TEXT, which is a click in the empty part of the
+	// field and puts the caret at the end. Distinguished from "stopped on
+	// a cluster" by col: the walk only runs out with col <= off.
+	if col <= off {
 		return len(runes)
 	}
-	k := startAt
-	for k+1 < len(starts) && cols[k+1] <= target {
-		k++
-	}
-	for k > 0 && cols[k] > target {
-		k--
-	}
-	return clamp(starts[k], 0, len(runes))
-}
-
-// eachRuneCluster walks the grapheme clusters of runes, reporting each
-// one's RUNE index, its rune length, its text and its COLUMN width.
-//
-// render.EachCluster is the segmentation every writer in render uses and
-// it reports byte offsets, which is the right unit for a string and the
-// wrong one for a TextBox: the caret, the scroll position and both ends
-// of a selection are rune indices, and they are the API. This converts
-// once, in one place, rather than at each of the four call sites that
-// would otherwise do it differently. Found in the review of #521.
-func eachRuneCluster(runes []rune, fn func(i, n int, cluster string, w int) bool) {
-	i := 0
-	render.EachCluster(string(runes), func(cluster string, _, _, w int) bool {
-		n := len([]rune(cluster))
-		ok := fn(i, n, cluster, w)
-		i += n
-		return ok
-	})
+	return clamp(last, 0, len(runes))
 }
 
 // selectWord selects the run of like characters around the caret: a
