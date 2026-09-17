@@ -66,10 +66,10 @@ func rowText(c *gooey.Composer, y, x, w int) string {
 }
 
 // TestRowTextReadsThroughAWideGlyph is this package's half of the pair
-// the helper's own doc says "are not allowed to differ" — and until
-// #502's review it was the unpinned half, free to drift into exactly
-// the state that paragraph forbids while its twin in apps/wysiwyg
-// carried the only test.
+// the helper's own doc says "are not allowed to differ". A copy with no
+// test of its own is free to drift into exactly the state that
+// paragraph forbids, while its twin in apps/wysiwyg carries the only
+// assertion and stays green.
 //
 // Reverting BOTH copies to WriteRune(….Rune) left the whole tree green,
 // measured: every fixture in either package is ASCII, and an ASCII row
@@ -83,11 +83,18 @@ func TestRowTextReadsThroughAWideGlyph(t *testing.T) {
 	t.Cleanup(c.Close)
 	c.Frame()
 
+	// THE COUNTEREXAMPLE IS READ, NOT SPELLED: a literal for it is a
+	// second answer about the same eight cells, free to disagree with
+	// `want`. Raised in review of #502.
+	var runeRead strings.Builder
+	for x := 0; x < 8; x++ {
+		runeRead.WriteRune(c.Cells().At(x, 0).Rune)
+	}
 	if got, want := rowText(c, 0, 0, 8), wide+"    "; got != want {
 		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
-			"read this is %q — the continuation marker written out as a literal "+
-			"rune — and a trimmed read drops the four blanks the span asked for",
-			got, wide, want, "世\uFFFD界\uFFFD  ")
+			"read the same eight cells are %q — the continuation marker written "+
+			"out as a literal rune — and a trimmed read drops the four blanks the "+
+			"span asked for", got, wide, want, runeRead.String())
 	}
 }
 

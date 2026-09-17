@@ -328,12 +328,9 @@ func TestTheCheckBoxFollowsTheSelection(t *testing.T) {
 // anyone else's. The label is where it gets in: editorItemText renders
 // `$EDITOR (env)` today and the assertions match only the constant
 // `$EDITOR` prefix, so what an inherited value changes is exactly what
-// a failure PRINTS. That was written as a second bullet and conceded in
-// its own last clause that it was the first one from the other side —
-// two justifications where there is one, which is one more thing for
-// somebody to decide is redundant and remove. Present tense on purpose:
-// the interpolation ships today, and #477 does not ask for a label
-// change. Raised in review of #502, twice.
+// a failure PRINTS. Present tense on purpose: the interpolation ships
+// today, and #477 does not ask for a label change. Raised in review of
+// #502.
 //
 // resolveEditor reads only EDITOR (no VISUAL fallback), so the one
 // variable pins the label. `/usr/bin/env -i` is the value the sibling
@@ -401,21 +398,18 @@ func dropdownRow(t fataler, rows []string, want string) string {
 		}
 	}
 	if len(hits) != 1 {
-		// "of the open menu" is what this said, and the signature is
-		// `rows []string` precisely so a test can hand it a synthetic
-		// fixture with no menu and no frame — which
-		// TestTheCheckBoxIsReadPastAWideGlyph and
-		// TestTheFourCellsInFrontAreNotTheFourRunes both do. A message
+		// THE MESSAGE NAMES NO RENDER. The signature is `rows []string`
+		// precisely so a caller can hand it a synthetic fixture with no
+		// menu and no frame — two tests in this file do — and a message
 		// naming a render that was never involved sends the reader to
 		// the wrong place on the day the fixture changes shape.
 		//
-		// The name cited here was
-		// TestTheCheckBoxIsReadPastAWideGlyphAfterTheLabel, renamed in
-		// 7e876fe and not followed — so the comment written to keep this
-		// Fatalf pointing at the right place pointed at nothing, and a
-		// reader grepping for it got the comment back.
-		// gooey.TestEveryCitedTestNameResolves guards this class for
-		// CLAUDE.md only. Raised in review of #502.
+		// AND IT NAMES NO TEST. A test name inside a diagnostic is a
+		// citation nothing checks: a rename leaves it pointing at
+		// nothing, and a reader who greps for it gets this comment back
+		// rather than a test. gooey.TestEveryCitedTestNameResolves
+		// guards that class for CLAUDE.md only. Raised in review of
+		// #502.
 		t.Fatalf("%d of the %d rows given contain %q, want exactly 1:\n%s",
 			len(hits), len(rows), want, strings.Join(rows, "\n"))
 	}
@@ -641,13 +635,6 @@ func TestBoxBeforeRefusesTheTwoRowsItCannotAnswerFor(t *testing.T) {
 // The arm that discriminates is
 // TestTheFourCellsInFrontAreNotTheFourRunes, below, whose row is not a
 // menu row at all.
-//
-// This paragraph claimed the in-front arm discriminated, and sat in a
-// block fused to the next test's — no blank line, so godoc read all of
-// it as that test's doc and left this one undocumented, while the
-// sentences landed on a test they are false about. render/width.go
-// records the identical defect being fixed in review of #425. Both
-// corrected in review of #502.
 func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -665,16 +652,24 @@ func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			box, row := boxBefore(t, tc.rows, tc.label)
+			// THE GUARD ESTABLISHES THE ROW, NOT THE ARM. A row whose
+			// columns and runes agree is an ASCII one, and an ASCII row
+			// would make this arm a duplicate of the boxBefore fixtures
+			// the file already has. It does NOT make the arm
+			// discriminating — the doc above measures that neither arm
+			// is — and a guard that implied otherwise would be the
+			// totals-for-a-position substitution boxBefore exists
+			// without. Raised in review of #502.
 			if cols, runes := render.StringWidth(row), len([]rune(row)); cols == runes {
 				t.Fatalf("the fixture row %q measures %d columns and %d runes — equal, "+
-					"so it cannot tell a column answer from a rune one and this arm "+
-					"guards nothing", row, cols, runes)
+					"so it is an ASCII row and this arm repeats one the file already "+
+					"has", row, cols, runes)
 			}
 			if want := "[x] "; box != want {
-				t.Errorf("boxBefore read %q in front of %q on %q, want %q — %q is "+
-					"%d columns and %d runes, so the two rules disagree about where "+
-					"the four cells start", box, tc.label, row, want, row,
-					render.StringWidth(row), len([]rune(row)))
+				t.Errorf("boxBefore read %q in front of %q on %q, want %q. The glyph "+
+					"moves no cell the helper reads, so what can fail here is a "+
+					"reader that refuses a CJK row or slices it by the wrong unit",
+					box, tc.label, row, want)
 			}
 		})
 	}
