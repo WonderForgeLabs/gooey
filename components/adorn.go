@@ -328,9 +328,16 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 //
 // Every adornment in this repo decides the same way, and that is now a
 // CHECK rather than a grep: TestEveryAdornmentIsHitTestTransparent reads
-// this package's source for the types declaring both Anchor and Place —
-// which is what an Adornment is — and fails on one that does not also
-// declare HitTestTransparent. A fourth adornment comes under it on the
+// this package's source for the types whose METHOD SET holds both Anchor
+// and Place — which is what an Adornment is — and fails on one that
+// neither declares nor inherits HitTestTransparent. Declared OR embedded,
+// in both halves: the scan promotes an embedded struct field's methods to
+// a fixed point, so `type badge struct{ DragGhost }` is INSIDE the check
+// and an embedder that inherits the method PASSES. This paragraph said
+// "declaring" and "declare", which answers a different question and got
+// both of those backwards — the fourth instance of the
+// doc-says-declare/code-means-method-set shape the same commit fixed in
+// the test's own doc. Raised in review of #458. A fourth adornment comes under it on the
 // commit that adds it, where the sentence this replaces ("the grep to
 // run rather than a count to trust here") asked the reader to do the
 // walk by hand and would have gone on reading true while a new one

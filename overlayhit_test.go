@@ -136,7 +136,8 @@ func TestAHiddenComponentRendersNoContentAndIsNotHit(t *testing.T) {
 // TestAHiddenLeafStillWritesItsOwnCells is the arm the test above could
 // not be: it reads the CELLS.
 //
-// The gate's justification said "a Hidden component paints nothing".
+// The gate's justification used to say "a Hidden component paints
+// nothing", a wording now retired.
 // True of Render, false of the node's cells — Composer.build pre-clears
 // every LEAF's bounds before any paintable test and marks it covered, so
 // a hidden leaf writes its rect last and a visible sibling underneath it

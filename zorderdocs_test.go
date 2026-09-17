@@ -2974,3 +2974,86 @@ func TestNamingTheHitWalkNoLongerExemptsALine(t *testing.T) {
 			"comment about this walk becomes unwritable.")
 	}
 }
+
+// THE THIRD PLANE: the Visibility contract's own wording.
+//
+// #465 made Hidden a user-visible INPUT change and #508 made "paints
+// nothing" measurably false of the cell plane, and this PR states both in
+// docs/architecture.md, docs/markup-reference.md and CLAUDE.md. Nothing
+// checked the rest of the tree, and the rest of the tree was still
+// teaching the old contract in four places — including layout.go's own
+// const block, which is the declaration every other site quotes, and
+// docs/learn/02-layout.md Step 5, which is the page a reader goes to in
+// order to MAKE the choice. Neither is reached by the two planes above:
+// deepestClaim and hitContractClaim scan for statements of the HIT
+// contract, and these sites state the VISIBILITY contract, which no guard
+// here modelled. That is the sweep's own headline finding restated — the
+// issue's table was a grep for the phrasings already in the table.
+//
+// Raised in review of #458.
+var retiredHiddenWording = []*regexp.Regexp{
+	// Hidden, then the retired predicate, within one CLAUSE. The span
+	// stops at a sentence boundary so "…Hidden. Collapsed paints
+	// nothing" — which is TRUE of Collapsed, whose bounds are zero — is
+	// not a hit, and at an EM DASH because this file's own prose uses one
+	// to change subject: "Hidden is two claims — … — and a fixture that
+	// paints nothing can only see the first" is about the FIXTURE, and
+	// was the pattern's one false positive over the tree. Measured, not
+	// guessed: the first draft reported it.
+	regexp.MustCompile(`(?i)hidden[^.;:|—]{0,120}?(does ?n[o']t paint|paints? nothing|never paints)`),
+	regexp.MustCompile(`(?i)(does ?n[o']t paint|paints? nothing|never paints)[^.;:|—]{0,60}?hidden`),
+}
+
+func statesTheRetiredHiddenWording(line string) bool {
+	return matchesAny(line, retiredHiddenWording)
+}
+
+// hiddenPrefilterWords is one word, because the pattern already requires
+// it: a file that never says "hidden" cannot state this rule, and any
+// wider list would only cost the walk time. It goes through
+// prefilterText like the others, so an emphasized `**Hidden**` still
+// reaches the loop.
+var hiddenPrefilterWords = []string{"hidden"}
+
+var hiddenQualifierRes = epitaphRes
+
+var supersededOfHidden = regexp.MustCompile(`(?i)visibility|hidden|#508`)
+
+func TestNoFileTeachesTheRetiredHiddenWording(t *testing.T) {
+	scanForRetiredRule(t, statesTheRetiredHiddenWording, hiddenPrefilterWords,
+		hiddenQualifierRes, supersededOfHidden,
+		"Hidden renders NO CONTENT and is NOT HIT-TESTED. \"Does not "+
+			"paint\" is wrong in both halves: a hidden LEAF still "+
+			"pre-clears its own bounds and so erases a visible sibling "+
+			"it overlaps (#508), and since #465 the hit walk skips a "+
+			"hidden NODE, so a press lands on whatever is beneath it. "+
+			"Say \"renders no content\" and say the node is not "+
+			"hit-tested, the way layout.go, docs/architecture.md and "+
+			"docs/markup-reference.md do; or mark the sentence as "+
+			"history with one of the markers in epitaphRes.")
+}
+
+// TestTheRetiredHiddenGuardCanActuallyFire is the honesty arm the two
+// planes above each carry: a negative assertion driven only by a clean
+// tree cannot tell "nothing to find" from "switched off".
+func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"the wording layout.go carried", "Hidden // occupies space, does not paint", true},
+		{"the tutorial's bullet", "- **Hidden** measures and arranges normally but paints nothing.", true},
+		{"the quoted form dock.go carried",
+			`which the framework defines as "occupies space, does not paint".`, false},
+		{"reversed", "paints nothing, which is what Hidden means", true},
+		{"the current wording", "Hidden occupies space and renders no content", false},
+		{"Collapsed, for which it is true",
+			"Hidden keeps its space. Collapsed paints nothing at all.", false},
+	} {
+		if got := statesTheRetiredHiddenWording(tc.line); got != tc.want {
+			t.Errorf("%s: statesTheRetiredHiddenWording(%q) = %v, want %v",
+				tc.name, tc.line, got, tc.want)
+		}
+	}
+}

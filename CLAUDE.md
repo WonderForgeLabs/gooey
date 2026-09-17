@@ -303,7 +303,7 @@ change repaints exactly the components that read it.
 `ArrangeChild`.** The interface is `Container { ChildComponents() []Component }`
 (`component.go:39`) — the framework walks children, never the container.
 Parents never call `child.Measure`/`child.Arrange`; `MeasureChild`
-(`layout.go:283`) and `ArrangeChild` (`layout.go:340`) apply the
+(`layout.go:292`) and `ArrangeChild` (`layout.go:349`) apply the
 margin/size/align/visibility sandwich, and skipping them silently drops all
 four. A component calling `Base.Arrange(b)` on *itself* is fine and common.
 A cycle no longer kills the process, and the fix is bigger than the issue

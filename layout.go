@@ -31,10 +31,19 @@ const (
 
 type Visibility uint8
 
+// Hidden renders no content and is NOT HIT-TESTED, rather than "does not
+// paint", which is what this said and is wrong in both halves. A hidden
+// LEAF still pre-clears its own bounds, so it erases a visible sibling it
+// overlaps (#508); and since #465 FocusManager.HitTest skips a hidden
+// NODE, so a press over a hidden button lands on whatever is beneath it.
+// Only the node — a Visible child of a Hidden parent is still hittable.
+// This is the declaration every other site quotes, and apps/wysiwyg's
+// dock.go quoted it verbatim and in quotation marks. Raised in review of
+// #458.
 const (
 	Visible   Visibility = iota
-	Hidden               // occupies space, does not paint
-	Collapsed            // occupies nothing
+	Hidden               // occupies space, renders no content, not hit-tested
+	Collapsed            // occupies nothing, subtree skipped entirely
 )
 
 // Layout is the per-element layout state — the XAML FrameworkElement
