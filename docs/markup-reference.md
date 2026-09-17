@@ -1206,7 +1206,16 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource` in `markup/markup.go`) is:
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1966`) is:
+
+<!-- The line number stays. This file is in claudemd_test.go's citedDocs,
+     so TestCLAUDEMDCitationsResolve reads every `file:line` here and
+     checks that the line HOLDS the named symbol — this citation is the
+     one that reaches that check, and dropping the number removed the
+     file from the guard's population entirely. Review of #501 asked for
+     it by symbol on the grounds that nothing checks it; measured, the
+     opposite is true, and the guard is what caught the change. -->
+
 
 | Handle | Plain value | Rendered as |
 |---|---|---|
