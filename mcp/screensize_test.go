@@ -49,9 +49,11 @@ const screenSizeRootMarkup = `<Gooey>
 // Service.Tree roots a scoped snapshot at the island and walk emits
 // bounds from the same Bounds() call islandBounds makes, so the root
 // bound IS screen_size's cols/rows/x/y —
-// TestATreeSnapshotBoundIsAlreadyAbsolute below fatals if they ever
-// diverge, which makes this file's header a claim its own test
-// contradicts. What the inference does not supply is that the root it
+// TestATreeSnapshotBoundIsAlreadyAbsolute below fatals if any of the
+// four ever diverges, which makes this file's header a claim its own
+// test contradicts. Four, because it compared y alone until review of
+// #504: x was pinned indirectly by the corner round-trip and the extent
+// was not pinned at all. What the inference does not supply is that the root it
 // read was the island rather than the screen. Raised in review of #504,
 // and it is the same shape as the claim this test retires: a rationale
 // written from reasoning instead of measurement.
@@ -484,6 +486,7 @@ func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
 
 	sz := guest.json("screen_size", nil)
 	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
+	cols, rows := int(sz["cols"].(float64)), int(sz["rows"].(float64))
 	if y0 == 0 {
 		t.Fatalf("the island reports origin y=0, so this fixture cannot tell an "+
 			"already-absolute bound from a converted one; sz=%v", sz)
@@ -498,11 +501,32 @@ func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
 		t.Fatalf("the island node carries no bounds: %v", node)
 	}
 	bx, by := int(b["x"].(float64)), int(b["y"].(float64))
-	bh := int(b["h"].(float64))
-	if by != y0 {
-		t.Fatalf("the snapshot reports the island at y=%d and screen_size reports "+
-			"origin y=%d; if these ever diverge the advice in screenSizeSchema is "+
-			"wrong in a way no client can detect", by, y0)
+	bw, bh := int(b["w"].(float64)), int(b["h"].(float64))
+
+	// ALL FOUR NUMBERS, because the claim this test is cited for is that
+	// the snapshot's bound IS screen_size's rect — and it asserted one of
+	// them. x was pinned only indirectly, by the corner round-trip below,
+	// and the EXTENT was not pinned at all: under-reporting cols and rows
+	// by one cell each, clamped so a collapsed island still answers 0x0,
+	// left the whole tree green. Measured in review of #504. An island's
+	// content rect is exactly one Border's chrome away from its arranged
+	// rect, so that is not a hypothetical substitution.
+	for _, c := range []struct {
+		name      string
+		got, want int
+	}{
+		{"x", bx, x0},
+		{"y", by, y0},
+		{"w", bw, cols},
+		{"h", bh, rows},
+	} {
+		if c.got != c.want {
+			t.Fatalf("the snapshot reports the island's %s as %d and screen_size "+
+				"reports %d; the two are documented as the same rect, so if they "+
+				"diverge the advice in screenSizeSchema is wrong in a way no "+
+				"client can detect. bounds=%v screen_size=%v",
+				c.name, c.got, c.want, b, sz)
+		}
 	}
 
 	// THE LAST ROW OF THE ISLAND, not the first. A double conversion of

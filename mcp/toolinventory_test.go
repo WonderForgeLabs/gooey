@@ -172,15 +172,16 @@ const toolTableHeader = "| MCP tool | args | RPC | notes |"
 // tableToolRe reads the tool name out of a table row's first column.
 //
 // THE SAME NAME SHAPE isIdentByte USES, which is the point rather than
-// a coincidence: this PR widened that one to uppercase and digits on the
-// ground that "a rule that is correct only for the names that happen to
-// exist is the kind that stops being correct silently", and left this
-// copy of the same rule at [a-z_]. A tool named screen_size2 would
-// capture screen_size, hit a digit where the closing backtick was
-// demanded, and be dropped from the column — so the guard would report a
-// missing row for a table that has one. It fails red rather than green,
-// which makes it a false alarm rather than a hole, and it is still the
-// class the PR just closed one function over. Raised in review of #504.
+// a coincidence. This sat at [a-z_] until review of #504, while
+// isIdentByte was being widened to uppercase and digits on the ground
+// that "a rule that is correct only for the names that happen to exist
+// is the kind that stops being correct silently" — the same argument,
+// not applied to the copy. A tool named screen_size2 captured
+// screen_size, hit a digit where the closing backtick was demanded, and
+// dropped out of the column, so the guard reported a missing row for a
+// table that has one: red rather than green, a false alarm rather than a
+// hole, and one function away from the rule it contradicted.
+// TestTheInventoryReadsAreNarrowerThanThePage holds both classes now.
 var tableToolRe = regexp.MustCompile("^\\|\\s*`([A-Za-z0-9_]+)`\\s*\\|")
 
 // isIdentByte is what separates `screen_size` from a longer name that
