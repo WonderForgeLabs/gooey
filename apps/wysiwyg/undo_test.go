@@ -14,6 +14,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/apps/wysiwyg/components/preview"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // UNDO AND REDO, and the two things that silently pass are the BOUND and
@@ -912,6 +913,7 @@ func TestEqualSeesEveryFieldThatReachesTheFile(t *testing.T) {
 		mut   func(n *node)
 	}{
 		{"Elem", func(n *node) { n.Elem = "VStack" }},
+		{"Space", func(n *node) { n.Space = markup.XNamespace }},
 		{"Body", func(n *node) { n.Body = "now has one" }},
 		{"Attrs value", func(n *node) { n.Attrs["Name"] = "other" }},
 		{"Attrs added", func(n *node) { n.Attrs["Canvas.Left"] = "3" }},
@@ -1725,4 +1727,127 @@ func TestTheUndoTableNamesEveryMutatorInTheSource(t *testing.T) {
 				"in this package", name)
 		}
 	}
+}
+
+// TestEveryNodeFieldIsCarriedByEveryCopyAndSeenByEqual is the derived
+// half of the two hand-written tests above, and it exists because the
+// hand-written halves went stale the first time a field was added.
+//
+// `node` gained Space for #517 and NONE of the four functions learned
+// about it: deepCopy, (*node).clone and duplicate's clone all dropped
+// it, and equal was blind to it — so a copied declaration came back as a
+// content kid, and an edit that changed only a namespace recorded no
+// undo step. `TestEqualSeesEveryFieldThatReachesTheFile`'s doc says "one
+// case per field of node", which was true when it was written and is
+// exactly the claim a list cannot keep. Raised in review of #522.
+//
+// THE FIELD SET IS READ FROM THE SOURCE, not spelled here, for the
+// reason CLAUDE.md's Verify section gives about written-down sets: a
+// list in a test is stale the first time somebody adds a row, and the
+// failure is silent because the loop still runs, just over less.
+//
+// The check is presence of the field NAME in the function's body, which
+// is coarse on purpose — it cannot tell a copy from a comparison, and it
+// is not trying to. What it catches is the whole class that actually
+// happens: a new field that no copy mentions at all.
+func TestEveryNodeFieldIsCarriedByEveryCopyAndSeenByEqual(t *testing.T) {
+	fields := nodeFieldNames(t)
+	if len(fields) < 5 {
+		t.Fatalf("read %d fields off `node`, which is fewer than it has — the "+
+			"walk found the wrong struct and every assertion below would pass "+
+			"over nothing: %v", len(fields), fields)
+	}
+	for _, fn := range []struct{ file, name string }{
+		{"clipboard.go", "deepCopy"},
+		{"undo.go", "clone"},
+		{"undo.go", "equal"},
+		{"duplicate.go", "clone"},
+	} {
+		idents := identsInFunc(t, fn.file, fn.name)
+		if len(idents) == 0 {
+			t.Errorf("%s: %s was not found, so this guard covers one function "+
+				"fewer than it claims", fn.file, fn.name)
+			continue
+		}
+		for _, f := range fields {
+			if !idents[f] {
+				t.Errorf("%s: %s never mentions node.%s — a copy that drops a "+
+					"field returns a document that differs from its original, "+
+					"and an equal that cannot see one records no history for it",
+					fn.file, fn.name, f)
+			}
+		}
+	}
+}
+
+// nodeFieldNames reads the field names off the `node` struct declaration.
+func nodeFieldNames(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, file := range goFilesHere(t) {
+		f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != "node" {
+				return true
+			}
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok {
+				return true
+			}
+			for _, fld := range st.Fields.List {
+				for _, nm := range fld.Names {
+					out = append(out, nm.Name)
+				}
+			}
+			return false
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+// identsInFunc is every identifier appearing in one function's body,
+// including method receivers' field selectors. An empty map means the
+// function was not found, which the caller reports rather than passing.
+func identsInFunc(t *testing.T, file, name string) map[string]bool {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != name || fd.Body == nil {
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				out[id.Name] = true
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// goFilesHere is the package's own .go files, test files included —
+// `node` is declared in main.go today and nothing pins that.
+func goFilesHere(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
 }

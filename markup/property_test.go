@@ -589,7 +589,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 
 	// Default is the value, and a type with no Default — Required or
 	// not — is the type's zero, never an error.
-	title, err := by["Title"].NewValue()
+	title, err := by["Title"].AbsentValue()
 	if err != nil {
 		t.Fatalf("Title: %v", err)
 	}
@@ -600,7 +600,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	if got := p.Get(); got != "hi" {
 		t.Errorf("Title = %q, want %q — Default is what an absent attribute resolves to", got, "hi")
 	}
-	count, err := by["Count"].NewValue()
+	count, err := by["Count"].AbsentValue()
 	if err != nil {
 		t.Fatalf("Count: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	// is deliberately not an error: Required is a contract with an
 	// instantiation site, and a caller holding the definition alone has
 	// not broken it.
-	who, err := by["Who"].NewValue()
+	who, err := by["Who"].AbsentValue()
 	if err != nil {
 		t.Fatalf("Who is Required, and NewValue must not treat that as a breach: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	}
 	// Bind-only follows the same rule it already follows for an absent
 	// attribute: the zero handle, not a refusal.
-	tint, err := by["Tint"].NewValue()
+	tint, err := by["Tint"].AbsentValue()
 	if err != nil {
 		t.Fatalf("Tint: %v", err)
 	}
@@ -632,8 +632,8 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	// PER CALL, not per declaration. Two hosts previewing the same
 	// control file must not write through each other's handle, which is
 	// the rule resolve states for two <Card/> elements.
-	a, _ := by["Title"].NewValue()
-	b, _ := by["Title"].NewValue()
+	a, _ := by["Title"].AbsentValue()
+	b, _ := by["Title"].AbsentValue()
 	if a == b {
 		t.Error("two NewValue calls returned the same handle; a declaration's value is per-instance")
 	}
@@ -641,7 +641,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	// A Declaration the caller built themselves names a Type and
 	// carries no row for it. Refused by name rather than panicking on a
 	// nil closure inside this package.
-	if _, err := (Declaration{Name: "Made", Type: "string"}).NewValue(); err == nil {
+	if _, err := (Declaration{Name: "Made", Type: "string"}).AbsentValue(); err == nil {
 		t.Error("a Declaration that never came from a parse must not resolve")
 	} else if !strings.Contains(err.Error(), "Made") || !strings.Contains(err.Error(), "type table row") {
 		t.Errorf("error is %q, want it to name the property and say why", err)
@@ -680,7 +680,7 @@ func TestSeedingDeclaredDefaultsBuildsTheDefiningDocument(t *testing.T) {
 	}
 	ctx := &Context{Values: map[string]any{}}
 	for _, d := range decls {
-		v, err := d.NewValue()
+		v, err := d.AbsentValue()
 		if err != nil {
 			t.Fatalf("%s: %v", d.Name, err)
 		}

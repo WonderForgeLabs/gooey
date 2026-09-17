@@ -126,3 +126,50 @@ complete per-control schema — name, type, required, default — so the
 remote-behavior layer can serialize a control's surface without a Go
 type, and `gooey gen` can emit a typed constructor from the same source.
 Nothing reads it that way yet.
+
+## The fourth case: no instantiation site (2026-09-17)
+
+The record above states the resolution rule as **three** cases at an
+instantiation site — bound, literal, absent. A tool that holds the
+control file *itself* has no site at all, and none of the three applies:
+`declarations.instantiate` runs from the page that writes
+`<Card Title="…"/>`, so a wysiwyg editor previewing `card.gooey` never
+reaches it, the declared names never land in `Context.Values`, and the
+control's own `{{.Title}}` is refused with `"Title" not found in
+context`. That is [#517](https://github.com/WonderForgeLabs/gooey/issues/517),
+and it is a gap in the rule rather than a bug in the editor.
+
+`Declaration.AbsentValue` answers it with the third case's handle: a
+fresh per-call source carrying `Default`, exactly what `resolve` makes
+for an absent optional attribute, read off the same `propKinds` row. A
+`Required` declaration gets its type's **zero** rather than the load
+error — `Required` is a contract with a site, a caller that has none is
+not in breach of it, and the zero is also what a site that forgot the
+attribute would show. A fourth table keyed by the `Type` spellings was
+the alternative, and `propKinds`' own doc already names two that drift
+for exactly that reason.
+
+**It is not called `NewValue`.** `ValueProvider.NewValue(*Call)` is
+already exported from `markup` (`markup/values.go`), and
+[the value-namespaces spec](2026-08-12-value-namespaces.md) records the
+plan to key *that* one against `propKinds` — this method's table. Two
+exported methods sharing a name in one package, one of them slated to be
+defined against the other's table, is the same drift in the identifier;
+the name says which case it answers. Raised in review of
+[PR #522](https://github.com/WonderForgeLabs/gooey/pull/522).
+
+**The editor's half is local preview only.** `rebuild` returns on the
+remote path before it seeds, so under `-attach` a control's defining
+document still reports the *target's* `"Title" not found in context`.
+That is deliberate — the target's context is the authority on whether
+the document loads there, and a name the editor invented locally would
+make the preview agree with itself about a document that does not load —
+and `TestSeedingDoesNotRunOnTheRemotePath` is what keeps it stated.
+
+Seeding goes into the editor's one binding map, which the gRPC and MCP
+servers are also handed, so a declared name is briefly in the control
+plane's vocabulary: the binding pickers offer `{{.Title}}` while the
+declaring document is open, and a client's `set_value` against one is
+discarded on the next rebuild.
+`TestASeededNameIsVisibleToTheControlPlaneAndIsTransient` measures both
+halves.

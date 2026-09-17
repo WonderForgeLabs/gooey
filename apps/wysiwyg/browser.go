@@ -380,9 +380,21 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// then requires one visual kid; this editor counted n.Kids and
 		// told the author a file markup loads has "2 root elements" —
 		// advice whose only reading is to delete the declaration. #517.
-		var kids []*node
-		decls, kids = splitDecls(n)
+		var kids, bare []*node
+		decls, kids, bare = splitDecls(n)
 		n.Kids = kids
+		// THE MISNAMESPACED DECLARATION IS ITS OWN FAULT, and it is
+		// reported before the count because the count cannot see it.
+		// An unprefixed <Property> is a declaration the author forgot
+		// to namespace, and neither route reached markup's advice: with
+		// a content root beside it the editor called it a second root,
+		// and alone it was unwrapped and built inside the surface,
+		// where markup answers "unknown element <Property>". Both were
+		// measured. Raised in review of #522.
+		if len(bare) > 0 {
+			ed.status.Set("✗ " + rel + ": " + bareDeclMsg(len(bare)))
+			return
+		}
 		if len(n.Kids) != 1 {
 			// NAMING THE DECLARATIONS SEPARATELY, so the count the
 			// author is given is the one they can act on. "found 2" for

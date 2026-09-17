@@ -963,15 +963,55 @@ func gooeyOpen(attrs map[string]string) string {
 // a copy of the split each. markup refuses any <x:Foo> that is not
 // Property, so the day that predicate moves the editor would otherwise
 // have two places to follow it to. Raised in review of #522.
-func splitDecls(n *node) (decls, kids []*node) {
+//
+// THREE WAYS OUT, BECAUSE markup'S SWITCH HAS THREE ARMS. The editor
+// kept only two of them, and the missing one is the likely typo: a
+// <Property> with no namespace at all. markup diagnoses it by name —
+// "write it as <x:Property> and add xmlns:x=… to the <Gooey> root
+// element" — and the editor counted it as a root element, so
+// <Gooey><Property …/><Canvas/></Gooey> was refused with "needs exactly
+// one root element, found 2" and the author was told to delete a root
+// that was never there. That is #517's own shape, one case over.
+//
+// The one-kid spelling is no better, and the review that raised this
+// assumed it was: <Gooey><Property …/></Gooey> passes the count, gets
+// unwrapped, and the Build that follows sees the declaration INSIDE the
+// editor's surface rather than on a root, so it answers "markup:
+// unknown element <Property>". Measured both ways before this arm
+// existed. Neither spelling reached markup's advice, so the editor has
+// to give it. Raised in review of #522.
+func splitDecls(n *node) (decls, kids, bare []*node) {
 	for _, k := range n.Kids {
-		if k.Space == markup.XNamespace {
+		switch {
+		case k.Space == markup.XNamespace:
 			decls = append(decls, k)
-			continue
+		case k.Elem == "Property":
+			bare = append(bare, k)
+		default:
+			kids = append(kids, k)
 		}
-		kids = append(kids, k)
 	}
-	return decls, kids
+	return decls, kids, bare
+}
+
+// bareDeclMsg is what markup's splitDeclarations says about an
+// unprefixed <Property>, said by the editor because the editor is where
+// the author is looking.
+//
+// DERIVED FROM markup.XNamespace rather than spelled, so the URI cannot
+// drift from the one the loader compares against;
+// TestTheEditorSaysWhatMarkupWouldAboutABareProperty pins the rest of
+// the sentence against markup's own error for the same document rather
+// than against a copy of it.
+func bareDeclMsg(n int) string {
+	if n == 1 {
+		return "<Property> is a dependency property declaration; write it as " +
+			"<x:Property> and add xmlns:x=\"" + markup.XNamespace +
+			"\" to the <Gooey> root element"
+	}
+	return "these " + strconv.Itoa(n) + " <Property> elements are dependency " +
+		"property declarations; write them as <x:Property> and add xmlns:x=\"" +
+		markup.XNamespace + "\" to the <Gooey> root element"
 }
 
 // nodeOf parses markup into the editor's document model — a palette
@@ -2703,6 +2743,16 @@ func (ed *editor) rebuild() {
 		// Driving another app: the target's live binding context is the
 		// only authority on whether this document loads, so validate
 		// against IT rather than against the editor's own context.
+		//
+		// SO seedDeclared DOES NOT RUN HERE, and that exclusion is the
+		// scope of #517's build half: under -attach, opening a control's
+		// own defining document still reports the target's `"Title" not
+		// found in context`. It is the right call for the same reason
+		// the branch exists — the editor cannot seed a context it does
+		// not own, and a name it invented locally would make the preview
+		// disagree with the app — but seedDeclared's doc reads as
+		// unconditional, so the exclusion is stated at the branch that
+		// causes it. Raised in review of #522.
 		ed.pushRemote(src)
 		return
 	}
@@ -2711,7 +2761,9 @@ func (ed *editor) rebuild() {
 	// built against, and only the editor can put them there — see
 	// seedDeclared. Before the Build, because that is what consumes
 	// them.
-	ed.seedDeclared(full)
+	if !ed.seedDeclared(full) {
+		return
+	}
 
 	// Built against the DOCUMENT vocabulary, so a document can never
 	// contain the editor's own chrome. FULL, not src: the preview is the
@@ -2780,9 +2832,32 @@ func (ed *editor) rebuild() {
 // bound to nothing, in a session that had merely opened a file.
 // markup.Seeded's placeholders are safe by spelling (<Name>_<Attr>) and
 // these are not.
-func (ed *editor) seedDeclared(src string) {
+//
+// THE SHARED MAP HAS A SECOND CONSEQUENCE, and it reaches further than
+// menuValues. ed.docCtx.Values IS ed.ctx.Values, and both the gRPC and
+// the MCP server are handed ed.ctx (see the comment at their start), so
+// the open document's declared names are in the vocabulary the CONTROL
+// PLANE validates and patches against. Two halves, one wanted and one
+// not:
+//
+//   - the binding pickers see them, which is why typedBindings and
+//     commandBindings (editors.go) offer {{.Title}} while the declaring
+//     document is open — the reason this is not simply filtered out;
+//   - a client's set_value against a seeded name takes, and is then
+//     DISCARDED on the next rebuild, because the loop above installs a
+//     fresh handle from Default every time.
+//
+// Transient by construction, in other words, and the transience is the
+// part a client cannot see. It is recorded rather than removed because
+// removing it costs the first half.
+// TestASeededNameIsVisibleToTheControlPlaneAndIsTransient measures both.
+//
+// LOCAL PREVIEW ONLY. rebuild returns on the remote path before it
+// reaches this, so none of the above is true under -attach; the comment
+// at that branch carries the reasoning.
+func (ed *editor) seedDeclared(src string) bool {
 	if len(ed.envDecls) == 0 && len(ed.seededDecls) == 0 {
-		return
+		return true
 	}
 	for _, name := range ed.seededDecls {
 		delete(ed.docCtx.Values, name)
@@ -2793,19 +2868,32 @@ func (ed *editor) seedDeclared(src string) {
 		// The build this precedes reports it, with the same message and
 		// in the place the user is already looking. Parsing twice is
 		// what needing the declarations BEFORE the build costs.
-		return
+		return true
 	}
 	for _, d := range decls {
 		if _, taken := ed.docCtx.Values[d.Name]; taken {
 			continue
 		}
-		v, err := d.NewValue()
+		v, err := d.AbsentValue()
 		if err != nil {
-			continue
+			// SAID, NOT SWALLOWED, and the caller stops. A `continue`
+			// here left the name unbound and the Build that follows
+			// then failed with `"Title" not found in context` — the
+			// exact pre-#517 error, reported as though nothing had been
+			// attempted, about the one document this whole function
+			// exists to make load. The arm is unreachable today (a
+			// Declaration from Declarations always carries a type-table
+			// row, and Default was coerced at parse time), which is the
+			// argument for reporting it rather than for hiding it:
+			// nothing will ever have seen this message, so it must
+			// carry its own cause. Raised in review of #522.
+			ed.status.Set("✗ " + err.Error())
+			return false
 		}
 		ed.docCtx.Values[d.Name] = v
 		ed.seededDecls = append(ed.seededDecls, d.Name)
 	}
+	return true
 }
 
 func (ed *editor) outline() string {
