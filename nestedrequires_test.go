@@ -202,7 +202,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// scheduled bump or a distance-from-main check, neither of which is
 	// this guard — so it is #515 rather than a caveat with no owner.
 	// Raised in review of #497.
-	newest, behind, tagged := skewFrom(seen)
+	newest, newestRev, behind, tagged := skewFrom(seen)
 	// REPORTED, NOT CHECKED. A require naming a plain tag is legitimate
 	// and is also the one shape this guard cannot compare without
 	// resolving it, so the count of what it skipped is the honest
@@ -259,7 +259,6 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			"it can claim to cover them:\n\t%s",
 			len(tagged), strings.Join(tagged, "\n\t"))
 	}
-	newestRev, _ := revisionOf(newest)
 	for _, g := range behind {
 		// THE REVISION IS THE REMEDY, NOT A VERSION STRING. skewFrom keys
 		// on the commit and keeps ONE representative spelling per
@@ -271,16 +270,33 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 		// it shares, and each require now carries its own string in the
 		// list above so the reader can see which is which. Raised in
 		// review of #497.
+		// TWO REMEDIES, AND WHICH IS RIGHT DEPENDS ON WHO IS READING.
+		// This offered one — move the laggards up — which is correct for
+		// the defect the guard was written from (core three weeks behind
+		// its siblings) and is the expensive answer to the shape it will
+		// meet most often once it lands: somebody adds a module, pins it
+		// to a current origin/main commit, and every existing require in
+		// the tree is suddenly "behind", so the message tells them to
+		// rewrite every one of them when pinning the newcomer back
+		// restores the invariant in one line. This guard checks
+		// CONSISTENCY, not currency — its own doc says so — so the
+		// consistency-restoring direction is as valid as the other and
+		// the message has to name both. The count in the report is what
+		// tells them apart: many behind and one ahead is a newcomer.
+		// Raised in review of #497.
 		t.Errorf("%d requires name commit %s while the newest in the tree is %s "+
 			"(%s) — one repository, one push, so two revisions is skew rather "+
-			"than a choice. Behind:\n\t%s\nMove them up to commit %s, in each "+
-			"module's own spelling of it — a pseudo-version off a tag reads "+
+			"than a choice. Behind:\n\t%s\nEither move them up to commit %s, in "+
+			"each module's own spelling of it — a pseudo-version off a tag reads "+
 			"v0.1.1-0.<stamp>-%s and one off an untagged path reads "+
-			"v0.0.0-<stamp>-%s. A module requiring an OLDER core than its "+
-			"siblings builds in this workspace and fails for anyone who "+
-			"`go get`s it.",
+			"v0.0.0-<stamp>-%s — or, if the newest is a single module you just "+
+			"added or bumped, pin THAT one back to %s, which is what the rest of "+
+			"the tree names. This guard is about one revision across the tree, "+
+			"not about which revision, so either direction closes it. A module "+
+			"requiring an OLDER core than its siblings builds in this workspace "+
+			"and fails for anyone who `go get`s it.",
 			len(g.at), g.rev, newestRev, newest, strings.Join(g.at, "\n\t"),
-			newestRev, newestRev, newestRev)
+			newestRev, newestRev, newestRev, g.rev)
 	}
 }
 
@@ -335,7 +351,7 @@ type skewGroup struct {
 // named a different culprit run to run. A pseudo-version embeds its
 // timestamp, so the newest is both correct and deterministic. Raised in
 // review of #497.
-func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []string) {
+func skewFrom(seen []ownRequire) (newest, newestRev string, behind []skewGroup, tagged []string) {
 	byRev := map[string][]string{}
 	version := map[string]string{}
 	for _, r := range seen {
@@ -359,9 +375,8 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []st
 	// the list was unsorted. Raised in review of #497.
 	sort.Strings(tagged)
 	if len(byRev) < 2 {
-		return "", nil, tagged
+		return "", "", nil, tagged
 	}
-	var newestRev string
 	for rev := range byRev {
 		if newestRev == "" || laterThan(version[rev], version[newestRev]) {
 			newestRev = rev
@@ -378,7 +393,7 @@ func skewFrom(seen []ownRequire) (newest string, behind []skewGroup, tagged []st
 	for _, rev := range revs {
 		behind = append(behind, skewGroup{rev: rev, version: version[rev], at: byRev[rev]})
 	}
-	return newest, behind, tagged
+	return newest, newestRev, behind, tagged
 }
 
 // revisionOf is the commit a version names — the trailing 12-character
@@ -520,7 +535,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 
 	// ONE COMMIT, TWO STRINGS: no skew. A string-keyed check reported
 	// two groups here, on a tree nobody had broken.
-	if newest, behind, _ := skewFrom([]ownRequire{
+	if newest, _, behind, _ := skewFrom([]ownRequire{
 		{"apps/introdeck", "github.com/WonderForgeLabs/gooey", newer},
 		{"apps/introdeck", "github.com/WonderForgeLabs/gooey/paint", tagged},
 	}); len(behind) != 0 {
@@ -531,7 +546,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	}
 
 	// ONE AHEAD, MANY BEHIND: the one that moved is the reference.
-	newest, behind, _ := skewFrom([]ownRequire{
+	newest, newestRev, behind, _ := skewFrom([]ownRequire{
 		{"mcp", "github.com/WonderForgeLabs/gooey", newer},
 		{"grpc", "github.com/WonderForgeLabs/gooey", old},
 		{"paint", "github.com/WonderForgeLabs/gooey", old},
@@ -549,6 +564,21 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	if behind[0].version != old {
 		t.Errorf("the group behind names %s, want %s", behind[0].version, old)
 	}
+	// THE REVISION COMES BACK TOO, rather than the caller re-deriving it
+	// from `newest` with the ok dropped. skewFrom already picked the
+	// newest BY revision, so handing back the string and making the
+	// caller parse it again was a fact reconstructed from a representative
+	// spelling — the same shape as the tagged-spelling bug two arms down.
+	// It was correct only because `newest` is always a string revisionOf
+	// has already accepted; the day that stops holding, the dropped ok
+	// leaves an empty revision and the remedy prints "move them up to
+	// commit " naming nothing, in the failure path. Raised in review of
+	// #497.
+	if want := newer[len(newer)-12:]; newestRev != want {
+		t.Errorf("skewFrom reports the newest revision as %q, want %q — the "+
+			"remedy is printed from this, so an empty or wrong one is a failure "+
+			"message that names no commit", newestRev, want)
+	}
 
 	// THE TAGGED SPELLING AT THE OLDER COMMIT, which is the arm that
 	// discriminates. With no stamp laterThan falls back to a string
@@ -557,7 +587,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// the whole tree told to move backwards. Putting the tag on the
 	// NEWER commit proves nothing: both rules agree there.
 	const taggedOld = "v0.1.1-0.20260822101500-aaaaaaaaaaaa"
-	if newest, behind, _ := skewFrom([]ownRequire{
+	if newest, _, behind, _ := skewFrom([]ownRequire{
 		{"paint", "github.com/WonderForgeLabs/gooey/paint", taggedOld},
 		{"mcp", "github.com/WonderForgeLabs/gooey", newer},
 	}); newest != newer || len(behind) != 1 {
@@ -575,7 +605,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// move to a version that does not exist for it. rev is the fact both
 	// spellings share, and `at` is where the reader sees which module
 	// holds which. Raised in review of #497.
-	if _, behind, _ := skewFrom([]ownRequire{
+	if _, _, behind, _ := skewFrom([]ownRequire{
 		{"mcp", "github.com/WonderForgeLabs/gooey", newer},
 		{"paint", "github.com/WonderForgeLabs/gooey", old},
 		{"grpc", "github.com/WonderForgeLabs/gooey/paint", taggedOld},
@@ -591,7 +621,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 
 	// A PLAIN TAG IS REPORTED, NOT GROUPED. It names a commit only to
 	// something that can resolve it, which this suite cannot.
-	if newest, behind, skipped := skewFrom([]ownRequire{
+	if newest, _, behind, skipped := skewFrom([]ownRequire{
 		{"apps/introdeck", "github.com/WonderForgeLabs/gooey", newer},
 		{"apps/introdeck", "github.com/WonderForgeLabs/gooey/paint", "v0.1.0"},
 	}); len(behind) != 0 || len(skipped) != 1 {
@@ -614,11 +644,11 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		{"mcp", "github.com/WonderForgeLabs/gooey", "v0.1.0"},
 		{"grpc", "github.com/WonderForgeLabs/gooey", "v0.1.0"},
 	}
-	if _, behind, skipped := skewFrom(allTags); len(behind) != 0 || len(skipped) != 2 {
+	if _, _, behind, skipped := skewFrom(allTags); len(behind) != 0 || len(skipped) != 2 {
 		t.Errorf("a tree of plain tags reports behind=%v skipped=%v; want no "+
 			"skew and both skipped", behind, skipped)
 	}
-	if _, _, skipped := skewFrom(allTags); !comparedNothing(allTags, skipped) {
+	if _, _, _, skipped := skewFrom(allTags); !comparedNothing(allTags, skipped) {
 		t.Error("the compared-nothing guard does not fire on a tree whose every " +
 			"require names a plain tag, so that tree passes having checked nothing")
 	}
@@ -628,7 +658,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// two paths that actually print this list (the caller's log and the
 	// compared-nothing error) were the two it never reached. Raised in
 	// review of #497.
-	if _, _, skipped := skewFrom(allTags); !sort.StringsAreSorted(skipped) {
+	if _, _, _, skipped := skewFrom(allTags); !sort.StringsAreSorted(skipped) {
 		t.Errorf("the skipped-require report comes back unsorted (%v) for an "+
 			"all-tags tree, so it reorders itself run to run in exactly the "+
 			"case it exists for", skipped)
@@ -644,7 +674,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// was green while the caller was wrong: it restated the condition
 	// instead of calling it. Raised in review of #497.
 	partly := []ownRequire{allTags[0], {"paint", "github.com/WonderForgeLabs/gooey", newer}}
-	if _, _, skipped := skewFrom(partly); comparedNothing(partly, skipped) {
+	if _, _, _, skipped := skewFrom(partly); comparedNothing(partly, skipped) {
 		t.Errorf("the compared-nothing guard fires on a tree with one tag and one "+
 			"pseudo-version (skipped=%v). One revision across every pin IS the "+
 			"invariant here, so this reds a healthy tree the day the first "+
@@ -701,7 +731,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// the defect the tag keys a SECOND bucket, which is two revisions,
 	// which is skew: `behind` fills and the tag is not skipped. Both
 	// observables move, and in opposite directions.
-	if got, behind, skipped := skewFrom(hexTag); got != "" || len(behind) != 0 ||
+	if got, _, behind, skipped := skewFrom(hexTag); got != "" || len(behind) != 0 ||
 		len(skipped) != 1 {
 		t.Errorf("skewFrom with a hex-tailed prerelease tag beside a "+
 			"pseudo-version reports newest=%q behind=%v skipped=%v; want no skew "+
