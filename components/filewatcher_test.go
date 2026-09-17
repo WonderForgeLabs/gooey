@@ -462,9 +462,22 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 	base := c.n.Load()
 	budget := 2*time.Second + time.Duration(n)*50*time.Millisecond
 	deadline := time.Now().Add(budget)
+	// HOISTED, so the failure below quotes what was OBSERVED. The loop
+	// exits because the last in-loop check saw `got < n`, and the poll
+	// goroutine can post between that check and the format — so a second
+	// load prints posts whose closures never ran, the same overclaim the
+	// return path forbids ten lines down. Worse for the reader than for
+	// the assertion: the re-loaded count can have reached n, printing
+	// "posted 3 times in 2.15s, want 3", which reads as a contradiction
+	// and sends the next person to look at the comparison instead of at
+	// the stalled goroutine. Reachable in precisely the scenario this
+	// helper exists for — a runner that gives the goroutine no slot for
+	// the whole budget and then schedules it in a burst at the boundary.
+	// Raised in review of #511.
+	var got int64
 	for time.Now().Before(deadline) {
 		disp.Drain()
-		if got := c.n.Load() - base; got >= n {
+		if got = c.n.Load() - base; got >= n {
 			// `got`, NOT A SECOND LOAD. countingPost.Post increments
 			// AFTER it enqueues and Dispatcher.Drain takes the whole
 			// queue, so every one of `got` was on the queue when the
@@ -480,7 +493,7 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 	}
 	t.Fatalf("the watcher posted %d times in %s, want %d — the poll goroutine is "+
 		"not running, so nothing below is measuring what it claims to",
-		c.n.Load()-base, budget, n)
+		got, budget, n)
 	return 0
 }
 
@@ -520,6 +533,44 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 			"t.Fatalf quoting that number would claim scans the watcher has not "+
 			"made, which is the overclaim the return value exists to remove",
 			got, ran)
+	}
+}
+
+// TestCountingPostEnqueuesBeforeItCounts pins the order the comment on
+// Post calls the whole contract.
+//
+// Nothing else could, and that is the point: every post in this file's
+// fixtures completes on one goroutine before the next Load, so swapping
+// the two statements is unobservable there — measured, the components
+// suite stays green at -count=10 with the increment moved first. An
+// invariant asserted in prose and enforced by nothing is the shape this
+// branch is removing elsewhere in the same file.
+//
+// THE SAMPLE IS TAKEN AT ENQUEUE TIME, from inside the func Post
+// delegates to, which is the one instant between the two statements. The
+// drain afterwards is not decoration: without it a `post` that enqueued
+// nothing would satisfy the counter assertions and the fixture would pin
+// the order of a post that never happened. Raised in review of #511.
+func TestCountingPostEnqueuesBeforeItCounts(t *testing.T) {
+	d := gooey.NewDispatcher()
+	c := &countingPost{}
+	seen, ran := int64(-1), 0
+	c.post = func(f func()) {
+		seen = c.n.Load()
+		d.Post(f)
+	}
+	c.Post(func() { ran++ })
+	if seen != 0 || c.n.Load() != 1 {
+		t.Fatalf("Post observed the counter at %d and left it at %d; it must enqueue "+
+			"before it increments, or a waiter released by the count can Drain an "+
+			"empty queue and proceed as though the watcher had been round",
+			seen, c.n.Load())
+	}
+	d.Drain()
+	if ran != 1 {
+		t.Fatalf("the counted post ran %d closures, want 1: the order above is a "+
+			"claim about an enqueue, so a post that enqueues nothing satisfies it "+
+			"vacuously", ran)
 	}
 }
 
