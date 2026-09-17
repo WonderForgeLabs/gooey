@@ -84,7 +84,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 		return path == core || strings.HasPrefix(path, core+"/")
 	}
 
-	mods := discoverModules(t)
+	mods := modulesIncludingTheRoot(t)
 	if len(mods) == 0 {
 		t.Fatal("no nested modules found; the walk is wrong, not the tree")
 	}
@@ -286,8 +286,36 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 		// the message has to name both. The count in the report is what
 		// tells them apart: many behind and one ahead is a newcomer.
 		// Raised in review of #497.
-		t.Error(skewMsg(g, newestRev))
+		//
+		// THE GROUP COUNT GOES WITH IT, because the second remedy is
+		// true of exactly one shape. The caller renders ONE message PER
+		// GROUP, so at three revisions the reader got two messages each
+		// naming its own commit as "what the rest of the tree names" —
+		// following either leaves two revisions and this test red — and
+		// each said "two revisions" where there were three. Round 9 made
+		// the remedy correct per group while the guard can emit several.
+		// Raised in review of #497.
+		t.Error(skewMsg(g, newestRev, len(behind)+1))
 	}
+}
+
+// modulesIncludingTheRoot is discoverModules plus the ROOT module, and
+// the addition is this guard's comment being made true.
+//
+// discoverModules filters `d.Name() == "go.mod" && p != "go.mod"` —
+// deliberately, because every caller of it is about the NESTED modules
+// the `./...` loop skips. This guard's own doc says "EVERY MODULE IN
+// THIS TREE", and the root was the one module outside the walk.
+//
+// Nothing is missed today: the root requires only uniseg, x/image,
+// x/term and yaml.v3, none of them own-module. But the root is the one
+// module that could acquire a require of a `packs/*` module without
+// creating a cycle — `packs/*` require nothing of core — and that
+// require would be read outside this workspace exactly like every other
+// one here. Raised in review of #497.
+func modulesIncludingTheRoot(t *testing.T) []string {
+	t.Helper()
+	return append([]string{"."}, discoverModules(t)...)
 }
 
 // comparedNothing reports whether the skew check above reached no
@@ -327,20 +355,36 @@ type ownRequire struct{ dir, path, version string }
 //
 // The commit is the fact every spelling shares; the remedy already
 // spells BOTH shapes off it. Raised in review of #497.
-func skewMsg(g skewGroup, newestRev string) string {
+// revisions is how many distinct commits the tree names, this group's
+// included. It decides the SECOND remedy, which is true only at two:
+// "pin the newcomer back to what the rest of the tree names" presupposes
+// that the rest of the tree names one thing. Raised in review of #497.
+func skewMsg(g skewGroup, newestRev string, revisions int) string {
+	// The pin-back remedy, and the clause that counts. At three or more
+	// there is no single newcomer — every group below has to move up —
+	// and saying so is the difference between a remedy a reader can
+	// follow and two contradicting each other in the same run.
+	remedy := fmt.Sprintf(" — or, if the newest is a single module you just "+
+		"added or bumped, pin THAT one back to %s, which is what the rest of "+
+		"the tree names", g.rev)
+	count := "two revisions is"
+	if revisions > 2 {
+		remedy = fmt.Sprintf(". With %d revisions in the tree there is no single "+
+			"newcomer to pin back: this group and every other one below the "+
+			"newest have to move up", revisions)
+		count = fmt.Sprintf("%d revisions are", revisions)
+	}
 	return fmt.Sprintf("%d requires name commit %s while the newest in the tree "+
-		"is commit %s — one repository, one push, so two revisions is skew "+
+		"is commit %s — one repository, one push, so %s skew "+
 		"rather than a choice. Behind:\n\t%s\nEither move them up to commit %s, "+
 		"in each module's own spelling of it — a pseudo-version off a tag reads "+
 		"v0.1.1-0.<stamp>-%s and one off an untagged path reads "+
-		"v0.0.0-<stamp>-%s — or, if the newest is a single module you just "+
-		"added or bumped, pin THAT one back to %s, which is what the rest of "+
-		"the tree names. This guard is about one revision across the tree, "+
+		"v0.0.0-<stamp>-%s%s. This guard is about one revision across the tree, "+
 		"not about which revision, so either direction closes it. A module "+
 		"requiring an OLDER core than its siblings builds in this workspace "+
 		"and fails for anyone who `go get`s it.",
-		len(g.at), g.rev, newestRev, strings.Join(g.at, "\n\t"),
-		newestRev, newestRev, newestRev, g.rev)
+		len(g.at), g.rev, newestRev, count, strings.Join(g.at, "\n\t"),
+		newestRev, newestRev, newestRev, remedy)
 }
 
 type skewGroup struct {
@@ -628,7 +672,7 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	if len(mixedBehind) != 1 {
 		t.Fatalf("mixedBehind = %v, want one group", mixedBehind)
 	}
-	if msg := skewMsg(mixedBehind[0], mixedRev); strings.Contains(msg, tagged) {
+	if msg := skewMsg(mixedBehind[0], mixedRev, len(mixedBehind)+1); strings.Contains(msg, tagged) {
 		t.Errorf("the skew message names %s, a spelling of the newest commit "+
 			"that belongs to whichever path won the tie-break — a reader who "+
 			"copies the first version string they are shown into `go mod edit "+
@@ -649,6 +693,63 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 					want, msg)
 			}
 		}
+	}
+
+	// THREE REVISIONS, WHICH IS WHERE THE SECOND REMEDY STOPS BEING
+	// TRUE. The caller renders one message PER GROUP, and round 9's
+	// "pin THAT one back to <this group's commit>, which is what the
+	// rest of the tree names" presupposes the rest of the tree names one
+	// thing. At three revisions the reader gets two messages sending
+	// them to two different commits, each claiming to be the consensus,
+	// and following either leaves the tree at two revisions and this
+	// test still red. The clause that counts was wrong in the same
+	// breath: "so two revisions is skew" over a tree holding three.
+	//
+	// Reachable by the shape this guard's own comment says it will meet
+	// most often — somebody bumps module A, somebody else later bumps
+	// module B. No arm before this one ever RENDERED a message for a
+	// multi-group tree: every one asserts len(behind) is 0 or 1. Raised
+	// in review of #497.
+	const older = "v0.0.0-20260801000000-aaaaaaaaaaaa"
+	const middle = "v0.0.0-20260901000000-bbbbbbbbbbbb"
+	_, threeRev, threeBehind, _ := skewFrom([]ownRequire{
+		{"paint", "github.com/WonderForgeLabs/gooey/paint", older},
+		{"grpc", "github.com/WonderForgeLabs/gooey", middle},
+		{"mcp", "github.com/WonderForgeLabs/gooey", newer},
+	})
+	if len(threeBehind) != 2 {
+		t.Fatalf("threeBehind = %v, want two groups — this arm is about what the "+
+			"reader is handed when the guard emits more than one message",
+			threeBehind)
+	}
+	for _, g := range threeBehind {
+		msg := skewMsg(g, threeRev, len(threeBehind)+1)
+		if strings.Contains(msg, "pin THAT one back") {
+			t.Errorf("with three revisions in the tree the message still offers "+
+				"the pin-the-newcomer-back remedy, which names THIS group's "+
+				"commit as \"what the rest of the tree names\" while a second "+
+				"message names another:\n\t%s", msg)
+		}
+		if strings.Contains(msg, "two revisions") {
+			t.Errorf("the message counts two revisions in a tree holding three:"+
+				"\n\t%s", msg)
+		}
+		if !strings.Contains(msg, "3 revisions") {
+			t.Errorf("the message does not say how many revisions there are, so "+
+				"the arms above pass over one that simply dropped the clause:"+
+				"\n\t%s", msg)
+		}
+		// The FIRST remedy has to survive, or a message with no remedy
+		// at all satisfies both arms above.
+		if !strings.Contains(msg, "move them up to commit "+threeRev) {
+			t.Errorf("the message names no way forward:\n\t%s", msg)
+		}
+	}
+	// AND THE TWO-REVISION MESSAGE KEEPS IT, or this is a deletion
+	// wearing a condition's hat.
+	if msg := skewMsg(threeBehind[0], threeRev, 2); !strings.Contains(msg, "pin THAT one back") {
+		t.Errorf("at two revisions the pin-the-newcomer-back remedy is correct "+
+			"and is gone:\n\t%s", msg)
 	}
 
 	// THE TAGGED SPELLING AT THE OLDER COMMIT, which is the arm that
@@ -864,5 +965,136 @@ func TestTwoCommitsInOneSecondReachTheStringFallback(t *testing.T) {
 			"reference by scanning a map, and an order that answers the same "+
 			"way both ways round makes which module it met first decide",
 			laterThan(a, b), laterThan(b, a))
+	}
+}
+
+// TestEveryOwnModulePinNamesACommitThisRepositoryPublished is the half
+// the shape and skew checks cannot reach: whether the commit a pin names
+// is a commit at all.
+//
+// The whole argument of the guard above is that these lines are read
+// OUTSIDE the workspace, by somebody's `go get`, where an unservable
+// revision fails. `v0.0.0` and the canonical `v0.0.0-00010101000000-…`
+// are caught by shape. A pin to a commit no proxy can serve is not: a
+// hash transposed by hand, a commit that only lived on a branch that was
+// force-pushed away, or one taken from a worktree's unmerged head. The
+// skew check catches the ONE-module typo, because it disagrees with its
+// siblings — but these 36 pins get rewritten by a `sed` across the tree,
+// and a uniform edit is indistinguishable from a correct one to every
+// check that compares pins against each other.
+//
+// NO NETWORK IS NEEDED, because the repository IS the module. git
+// answers both halves: the object exists, and it is an ancestor of
+// origin/main rather than something that only ever existed here.
+//
+// THE STAMP IS CHECKED TOO, and it comes free from the same command. A
+// pseudo-version's 14 digits are the commit's committer date in UTC, and
+// `go mod edit -require` writes literally what it is handed — so a pin
+// whose stamp does not match its own commit is a real hazard the shape
+// check cannot see, and `go get` rejects it.
+//
+// A SHALLOW CLONE IS SAID, NOT PASSED OVER. actions/checkout defaults to
+// fetch-depth 1, so in CI the commit is usually absent and `cat-file -e`
+// would report every pin as unpublished. `git rev-parse
+// --is-shallow-repository` is the discriminator, and the honest
+// behaviour is the one the tagged-require path above already takes:
+// report what was skipped rather than pass silently. Raised in review of
+// #497.
+func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
+	const core = "github.com/WonderForgeLabs/gooey"
+	own := func(path string) bool {
+		return path == core || strings.HasPrefix(path, core+"/")
+	}
+
+	git := func(args ...string) (string, error) {
+		out, err := exec.Command("git", args...).Output()
+		return strings.TrimSpace(string(out)), err
+	}
+
+	if shallow, err := git("rev-parse", "--is-shallow-repository"); err != nil {
+		t.Skipf("git is not answering here (%v), so this check cannot run; the "+
+			"shape and skew checks above still did", err)
+	} else if shallow == "true" {
+		t.Skipf("this is a SHALLOW clone (actions/checkout's default is " +
+			"fetch-depth: 1), so the commits these pins name are not objects " +
+			"here and their absence would say nothing. Run with a full clone " +
+			"— fetch-depth: 0 — to check that every pin names a published " +
+			"commit; the shape and skew checks above ran either way")
+	}
+	if _, err := git("rev-parse", "--verify", "origin/main"); err != nil {
+		t.Skipf("no origin/main in this checkout (%v), so reachability cannot "+
+			"be asked; the shape and skew checks above still ran", err)
+	}
+
+	// One entry per distinct revision, with a representative pin so the
+	// failure names a file rather than a hash.
+	at := map[string]string{}
+	for _, dir := range modulesIncludingTheRoot(t) {
+		cmd := exec.Command("go", "mod", "edit", "-json")
+		cmd.Dir = dir
+		body, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: go mod edit -json: %v", dir, err)
+		}
+		var mf struct {
+			Require []struct{ Path, Version string }
+		}
+		if err := json.Unmarshal(body, &mf); err != nil {
+			t.Fatalf("%s: parsing go mod edit -json: %v", dir, err)
+		}
+		for _, r := range mf.Require {
+			if !own(r.Path) {
+				continue
+			}
+			rev, ok := revisionOf(r.Version)
+			if !ok {
+				continue // a plain tag; the guard above reports those
+			}
+			if _, seen := at[rev]; !seen {
+				at[rev] = dir + " → " + r.Path + " " + r.Version
+			}
+		}
+	}
+	if len(at) == 0 {
+		t.Skip("no own-module require names a pseudo-version, so there is no " +
+			"commit to look for — the guard above reports that state")
+	}
+
+	for rev, where := range at {
+		if _, err := git("cat-file", "-e", rev+"^{commit}"); err != nil {
+			t.Errorf("%s pins commit %s, which is not a commit in this "+
+				"repository. `go get` of that module fails with \"unknown "+
+				"revision\" for everybody outside this workspace, and every "+
+				"check that compares pins against each other passes a "+
+				"tree-wide typo — `sed` is how these get rewritten", where, rev)
+			continue
+		}
+		if _, err := git("merge-base", "--is-ancestor", rev, "origin/main"); err != nil {
+			t.Errorf("%s pins commit %s, which exists here but is NOT an "+
+				"ancestor of origin/main — a branch commit, or one taken from "+
+				"an unmerged worktree head. A proxy can only serve what the "+
+				"published history contains", where, rev)
+			continue
+		}
+		// The stamp is the same commit's committer date, in UTC.
+		// `format-local` means "in TZ", so TZ is set on THIS command
+		// rather than for the process — the rest of this package's tests
+		// share a runtime with it.
+		utc := exec.Command("git", "show", "-s",
+			"--date=format-local:%Y%m%d%H%M%S", "--format=%cd", rev)
+		utc.Env = append(utc.Environ(), "TZ=UTC")
+		stamp, err := utc.Output()
+		if err != nil {
+			t.Errorf("reading %s's committer date: %v", rev, err)
+			continue
+		}
+		want := strings.TrimSpace(string(stamp))
+		if !strings.Contains(where, "-"+want+"-"+rev) {
+			t.Errorf("%s names commit %s with a stamp that is not that commit's "+
+				"committer date in UTC (%s). `go mod edit -require` writes "+
+				"literally what it is handed, so a hand-built pseudo-version "+
+				"can carry the wrong 14 digits and be refused by `go get` while "+
+				"passing every shape check here", where, rev, want)
+		}
 	}
 }
