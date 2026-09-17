@@ -6,7 +6,9 @@ import (
 	goparser "go/parser"
 	gotoken "go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -88,9 +90,14 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 		// and the guard's own t.Logf already reported a different number
 		// on the same branch, because the bounds moved under it. A count
 		// in prose is a sample taken once — CLAUDE.md's Verify section
-		// says so — and this one is DERIVED on every run a few hundred
-		// lines down, which is the reader's source. Raised in review of
-		// #503.
+		// says so — and this one is DERIVED a few hundred lines down, by
+		// the t.Logf at the end of the walk. `go test -v` is the reader's
+		// source, and naming the flag is the whole correction: t.Log on a
+		// PASSING test prints nothing, so a plain `go test ./...` — which
+		// is what CLAUDE.md's Verify section runs — sends the reader this
+		// paragraph redirects to a channel that is silent exactly when
+		// the guard is green. Raised in review of #503, corrected in the
+		// round after.
 		if ast.IsGenerated(f) {
 			continue
 		}
@@ -127,6 +134,22 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	t.Logf("examined %d doc comments across %d files", examined, files)
 }
 
+// generatedMarkerPattern is the ERE the !ruled arm below hands the
+// reader, written here rather than in the message so that the
+// instruction and the check that runs it cannot drift.
+//
+// THE ANCHORS ARE THE INSTRUCTION. The walk decides generated-ness with
+// ast.IsGenerated, which wants the marker on a line of its own before
+// the package clause; an unanchored `grep -rL "Code generated .* DO NOT
+// EDIT"` excludes a file holding that text anywhere at all, including
+// quoted inside a string. This file carries such a string, so the
+// unanchored version dropped the most hand-written file in the tree from
+// a list defined as "files that are NOT generated" — and it was the
+// reader's only next step. TestTheRemediationGrepAgreesWithTheRule is
+// what keeps the two answers identical over the real tree. Raised in
+// review of #503.
+const generatedMarkerPattern = `^// Code generated .* DO NOT EDIT\.$`
+
 // moduleFloorFaults is the floor itself, and it is a function so that a
 // fixture can drive it.
 //
@@ -151,6 +174,24 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 // what can see that; a count cannot.
 func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []string {
 	var faults []string
+	// A FILE NO MODULE CLAIMS, checked ahead of the loop because the
+	// loop structurally cannot see it: "" is not a module of this tree,
+	// so it appears in no entry of `modules` and the coverage recorded
+	// against it is iterated by nothing. owningModule answers "" only
+	// when the module set holds no "." — the root module is the fallback
+	// owner for every file no nested module contains — which is the
+	// shape a walk that yielded the nested go.mod files and not the
+	// root's produces. Measured before this arm existed: with that walk,
+	// the whole root suite stayed green while the root module, the one
+	// holding this guard, left the derived floor without a word. Raised
+	// in review of #503.
+	if reached[""] {
+		faults = append(faults, "the walk parsed a .go file that no module in this "+
+			"tree claims, so its coverage is recorded under the empty module name, "+
+			"which no entry below iterates: the module set is missing the root "+
+			"module, whose directory \".\" is the fallback owner for every file no "+
+			"nested module contains")
+	}
 	for _, mod := range modules {
 		switch {
 		case !reached[mod]:
@@ -158,16 +199,22 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 				"which is a module of this tree: a guard that stops at a module boundary "+
 				"reports green for code it never read", mod))
 		case !ruled[mod]:
-			faults = append(faults, fmt.Sprintf("every .go file under %q was skipped — it "+
+			faults = append(faults, fmt.Sprintf("every .go file under %[1]q was skipped — it "+
 				"did not parse, or it is generated — so this guard read the module and "+
 				"ruled on none of it. That is not the prune the case above is about, and "+
 				"it is not coverage either. Check which: `go vet ./...` in that module "+
-				"answers the parse half, and `grep -rL \"Code generated .* DO NOT EDIT\" "+
-				"--include=\"*.go\" %s` names any file that is NOT generated and was "+
-				"therefore skipped for the other reason. There is deliberately no way to "+
+				"answers the parse half, and `grep -rLE '%s' --include='*.go' %s` names "+
+				"any file that is NOT generated and was therefore skipped for the other "+
+				"reason. The anchors in that pattern are the instruction and not "+
+				"decoration: the walk asks ast.IsGenerated, which wants the marker on a "+
+				"line of its own before the package clause, and an unanchored pattern "+
+				"also matches one quoted inside a string. Two caveats the command cannot "+
+				"carry: for the root module that path is \".\", which sweeps every "+
+				"nested module and vendor/ as well, and the walk prunes both. There is "+
+				"deliberately no way to "+
 				"mark a module exempt: an all-generated module is a real answer, and it "+
 				"is one a reader should have to give rather than a flag that outlives "+
-				"the first hand-written file added to it", mod, mod))
+				"the first hand-written file added to it", mod, generatedMarkerPattern, mod))
 		}
 	}
 	return faults
@@ -181,6 +228,7 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 	const (
 		unreached = "yielded no .go file"
 		unruled   = "was skipped"
+		unowned   = "no module in this"
 	)
 	for _, tc := range []struct {
 		name           string
@@ -201,6 +249,17 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 			ruled:   map[string]bool{".": true},
 			modules: []string{".", "mcp"},
 			want:    unruled,
+		},
+		{
+			// A SET WITH NO ROOT MODULE IN IT, which is the only way
+			// owningModule answers "". The two arms below iterate
+			// `modules`, and "" is in no module set, so this fault has
+			// to be found before the loop or not at all.
+			name:    "a file no module in the set claims",
+			reached: map[string]bool{"": true, "apps/gitui": true, "mcp": true},
+			ruled:   map[string]bool{"": true, "apps/gitui": true, "mcp": true},
+			modules: []string{"apps/gitui", "mcp"},
+			want:    unowned,
 		},
 		{
 			name:    "a module covered both ways",
@@ -228,6 +287,60 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 					"that is", got[0], tc.want)
 			}
 		})
+	}
+}
+
+// TestTheRemediationGrepAgreesWithTheRule runs the !ruled arm's advice
+// instead of reading it.
+//
+// An error message's remedy is a behavioural claim, and this one is the
+// reader's whole next step: the arm says the command names the files
+// that are NOT generated, and "generated" is whatever ast.IsGenerated
+// says. Nothing compared the two until this test, and the version before
+// it disagreed — on doccomment_test.go, the most hand-written file in
+// the tree, which carries the marker inside a string literal. The
+// comparison is over the real tree rather than a fixture because the
+// disagreement was a property of a file that exists, not of a shape
+// somebody imagined. Raised in review of #503.
+func TestTheRemediationGrepAgreesWithTheRule(t *testing.T) {
+	paths, _ := treeWalk(t)
+	// (?m) is what makes ^ and $ the line anchors grep -E gives them;
+	// without it they anchor the whole file and the pattern matches only
+	// a one-line file.
+	re := regexp.MustCompile("(?m)" + generatedMarkerPattern)
+	generated := 0
+	for _, path := range paths {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		f, err := goparser.ParseFile(gotoken.NewFileSet(), path, src, goparser.ParseComments)
+		if err != nil {
+			continue // as the walk does: a file that does not parse is not this rule's business
+		}
+		if rule, grep := ast.IsGenerated(f), re.Match(src); rule != grep {
+			t.Errorf("%s: ast.IsGenerated says %v and the arm's grep says %v, so the "+
+				"remediation this floor prints names a different set of files than "+
+				"the walk skipped, and the reader is sent past the file they are "+
+				"looking for", path, rule, grep)
+		} else if rule {
+			generated++
+		}
+	}
+	// A FLOOR, because two empty sets agree with each other. A tree with
+	// no generated file in it makes this test pass against any pattern
+	// at all, including one that matches nothing.
+	if generated == 0 {
+		t.Fatalf("the walk found no generated file among %d, so this comparison "+
+			"holds between two empty sets and would pass against any pattern",
+			len(paths))
+	}
+	// GUARDED, because the sentence is a claim about the run it is in:
+	// a t.Logf after t.Errorf prints alongside the failure it contradicts.
+	if !t.Failed() {
+		t.Logf("%d of %d parsed files are generated, and the arm's grep agrees on "+
+			"every one (`go test -v` prints this; a passing `go test` does not)",
+			generated, len(paths))
 	}
 }
 
@@ -292,6 +405,32 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 	if len(moduleDirs) == 0 {
 		t.Fatal("found no go.mod at all, not even the root module's: the module floor " +
 			"would pass vacuously")
+	}
+	// AND THE ROOT MODULE BY NAME, because the check above fires on a
+	// shape no prune of this tree produces. The reachable mistake is a
+	// walk that yields the nested go.mod files and not the root's —
+	// `path != "go.mod"`, the one edit a reader unifying this with
+	// discoverModules would make — and nothing else notices it:
+	// discoverModules excludes the root deliberately, and
+	// TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery filters "."
+	// out of its own side to match, so the root module's membership in
+	// the floor was asserted by no test at all. Measured with that edit
+	// and without this fatal: the whole root suite green, and the module
+	// holding this guard out of the derived floor in silence. Raised in
+	// review of #503.
+	rooted := false
+	for _, m := range moduleDirs {
+		if m == "." {
+			rooted = true
+			break
+		}
+	}
+	if !rooted {
+		t.Fatalf("the walk found %d go.mod files and none of them is the root "+
+			"module's: owningModule's fallback is the root module, so every file no "+
+			"nested module claims would attribute to no module at all, and the floor "+
+			"iterates the module set — the root module would leave it in silence",
+			len(moduleDirs))
 	}
 	return files, moduleDirs
 }
@@ -1422,6 +1561,24 @@ func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 	if got := owningModule("apps/gitui/plugin/cmd", nested); got != "apps/gitui/plugin" {
 		t.Errorf("a file in a module nested inside another is attributed to %q, so "+
 			"the parent's floor entry is satisfied by its child's files", got)
+	}
+
+	// A MODULE SET WITH NO ROOT IN IT. owningModule has no fallback
+	// then and answers "", and "" is not a module of this tree — so the
+	// floor's loop, which iterates the module set, never looks at it.
+	// Both halves are asserted because either alone is satisfied by a
+	// guard that sees nothing: the first pins WHERE the coverage went,
+	// the second pins that somebody says so. Raised in review of #503.
+	rootless := []string{"apps/gitui", "mcp"}
+	if got := owningModule("input", rootless); got != "" {
+		t.Errorf("a root-module file in a set holding no root module is attributed "+
+			"to %q; the fallback IS the root module and there is not one here", got)
+	}
+	covered := map[string]bool{"": true, "apps/gitui": true, "mcp": true}
+	if got := moduleFloorFaults(covered, covered, rootless); len(got) != 1 ||
+		!strings.Contains(got[0], "no module in this") {
+		t.Errorf("a set whose coverage went to the empty module name reports %v, so "+
+			"the root module can leave the derived floor without a word", got)
 	}
 
 	// THE HINT. `go doc` cannot answer for a _test.go file, and much of
