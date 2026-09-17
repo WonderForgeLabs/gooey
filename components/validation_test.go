@@ -392,7 +392,8 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 	}
 }
 
-// frozenMarkerPage is the tree all three frozen-marker tests need: a
+// frozenMarkerPage is the tree every frozen-marker test in this file
+// needs: a
 // TextBox with a required validator, a ValidationMarker attached to it,
 // the pair inside a <Frozen>, and the AdornmentLayer that places the
 // popup beside them. A nil active gives a plain <Frozen> — AllowNone
@@ -410,9 +411,17 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 // not place" message in this file blames Frozen — that is what these
 // tests are about — and a fixture whose AdornmentLayer never hosted
 // anything produces exactly the same symptom from a cause that has
-// nothing to do with freezing. Without the layer in hand, three tests
-// would report a broken fixture as a Frozen gating bug.
-func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *prop.Property[string], *ValidationMarker, *gooey.Composer, func(when string), func()) {
+// nothing to do with freezing. Without the layer in hand, a caller would
+// report a broken fixture as a Frozen gating bug.
+//
+// NO COUNT IN EITHER SENTENCE. Both said "three" and there were four:
+// TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen arrived after them
+// and the prose did not move with it — the counted-in-prose failure
+// CLAUDE.md's Verify section is explicit about, in the one file whose
+// review history is entirely about claims outrunning what is enforced.
+// The next caller would have made it wrong again. Raised in review of
+// #498.
+func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *prop.Property[string], *ValidationMarker, *gooey.Composer, func(when string), func() int) {
 	t.Helper()
 	name := prop.NewSource("")
 	tb := &TextBox{Text: name, Error: validate.Field(name, validate.Required("required"))}
@@ -427,17 +436,14 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 	root := &VStack{Children: []gooey.Component{frozen, layer}}
 	c := gooey.NewComposer(root, 30, 5)
 	c.Frame()
-	// AND THAT ASSUMPTION IS NOW CHECKED. `prechecked` was `active != nil`
-	// and the message below claims the first frame was UNFROZEN — true of
-	// every caller today and of nothing in the code. A
-	// frozenMarkerPage(t, prop.NewSource(true)) has a FROZEN first frame,
-	// so the precondition would be measuring placement-while-frozen and
-	// would report the flagship test's own regression as "a page that
-	// never had a marker". Fataling rather than deriving `prechecked`
-	// from the value, because no caller wants that fixture: the
-	// frozen-first case is what a nil Active already is. Active.Get()
-	// here is a plain read — helper code runs outside any evaluation —
-	// so it records no dependency.
+	// THE PRECONDITION BELOW CLAIMS AN UNFROZEN FIRST FRAME, so a handle
+	// that arrives already true is refused rather than accommodated: that
+	// fixture would have the precondition measuring
+	// placement-while-frozen and reporting the flagship test's own
+	// regression as "a page that never had a marker". No caller wants it
+	// — the frozen-first case is what a nil Active already is.
+	// Active.Get() here is a plain read, helper code running outside any
+	// evaluation, so it records no dependency.
 	if active != nil && active.Get() {
 		t.Fatal("frozenMarkerPage was handed an Active that is already true, so " +
 			"its first frame is FROZEN and the precondition below would be " +
@@ -462,12 +468,10 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 			"never had a marker")
 	}
 	// THE ASSERTION COMES BACK BOUND TO THE FIXTURE, rather than the
-	// layer and a bool coming back for every caller to re-pair by hand.
-	// `prechecked` IS `active != nil` — the same condition three lines
-	// up — and it was passed as a positional literal at four call sites
-	// with nothing keeping the two in step: a caller switching from a
-	// handle to nil and forgetting the literal got a fatal telling the
-	// reader the opposite of the truth.
+	// layer and a bool coming back for every caller to re-pair by hand:
+	// `prechecked` IS `active != nil`, the same condition three lines up,
+	// so a caller who could pass it separately could pass it wrongly and
+	// get a fatal telling the reader the opposite of the truth.
 	//
 	// THE HARDCODED ROW 1 STAYS. The assertion still reads
 	// row(c.Cells(), 1), and that row is this fixture's geometry rather
@@ -482,16 +486,11 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 	// reach it, and the set proves the marker arrives and survives under
 	// a freeze while saying nothing about it staying correct.
 	// THE ASSERTION IS THIS CLOSURE'S OWN BODY, and that is the whole of
-	// the binding. It used to call a package-level assertFrozenMarkerShows
-	// taking (c, layer, m, prechecked, when), and the comment above claimed
-	// that handing the closure back "stops another page calling the helper".
-	// It did not: the symbol was still there, still took a composer, and
-	// formPage's — where row 1 is the "####…" filler rather than the message
-	// — would have fataled about a frozen marker on a page with no <Frozen>
-	// in it. The pairing made the bound form natural and left the unbound
-	// form reachable, which is a claim outrunning what is enforced, and this
-	// file has now been corrected for that shape three times. Inlining
-	// removes the symbol, so the unbound form does not exist to be called.
+	// the binding: there is no package-level symbol, so no second page can
+	// call it. A callable helper taking (c, layer, m, prechecked, when)
+	// would be reachable from formPage — where row 1 is the "####…"
+	// filler rather than the message — and would fatal about a frozen
+	// marker on a page with no <Frozen> in it.
 	//
 	// WHAT IT ASSERTS is both halves of "the user can see it", and the
 	// second half is the finding. IsShown() is `m.pop != nil &&
@@ -505,13 +504,20 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 	//
 	// THE SECOND STEP IS THE FLIP, for the same reason. Two tests below
 	// opened with a character-identical five-line prologue — build with a
-	// false handle, Set(true), an uncounted Frame, then the focus refusal —
-	// differing only in the tail of the fatal, which is exactly the drift
-	// this fixture's own comment argues against for the tree. Nothing kept
-	// the two messages in step and the next test that needed a frozen page
-	// would have written a third. TestAValidationMarkerSurvivesAFreezeTurningOn
-	// does NOT use it: that test owns the painted==1 claim on the flip
-	// frame, so its Frame() has to be counted.
+	// false handle, Set(true), a Frame, then the focus refusal — differing
+	// only in the tail of the fatal, which is exactly the drift this
+	// fixture's own comment argues against for the tree. Nothing kept the
+	// two messages in step and the next test that needed a frozen page
+	// would have written a third.
+	//
+	// IT RETURNS THE FLIP FRAME'S PAINTED COUNT, which is what lets
+	// TestAValidationMarkerSurvivesAFreezeTurningOn use it. That test
+	// owns the painted==1 claim, so the first version left it
+	// hand-writing the prologue — and therefore left the second copy of
+	// the refusal message the extraction existed to remove. Handing the
+	// count back collapses both: one prologue, one message, and the flip
+	// test keeps its claim. Callers with no count to make ignore it.
+	// Raised in review of #498.
 	return tb, name, m, c, func(when string) {
 			t.Helper()
 			if !m.IsShown() {
@@ -563,7 +569,7 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 					"the user experiences as the form refusing to say what is wrong",
 					when, got)
 			}
-		}, func() {
+		}, func() int {
 			t.Helper()
 			if active == nil {
 				t.Fatal("freeze() was called on a page whose Active is nil. A plain " +
@@ -571,16 +577,16 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 					"to make and the refusal below would pass without measuring one")
 			}
 			active.Set(true)
-			// UNCOUNTED, deliberately. The flip's damage is
-			// TestAValidationMarkerSurvivesAFreezeTurningOn's claim and it is the
-			// only test that may read it; here the frame exists to let evictFrozen
-			// run before anything is asserted.
-			c.Frame()
+			// THE FLIP FRAME, and its count goes back to the caller. It
+			// exists so evictFrozen runs before anything is asserted;
+			// only the test named for the flip's damage reads the number.
+			_, painted := c.Frame()
 			if c.Focus().SetFocus(tb) {
 				t.Fatal("the TextBox took focus after Active flipped to true, so the " +
 					"subtree is not frozen: whatever the caller asserts next is about " +
 					"an ordinary field, and the unfrozen sibling test already covers it")
 			}
+			return painted
 		}
 }
 
@@ -669,7 +675,7 @@ func keepPopup(t *testing.T, m *ValidationMarker) *markerPopup {
 // causes behind one name cannot be told apart from a red run.
 func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	active := prop.NewSource(false)
-	tb, _, m, c, shows, _ := frozenMarkerPage(t, active)
+	tb, _, m, c, shows, freeze := frozenMarkerPage(t, active)
 	if !c.Focus().SetFocus(tb) {
 		t.Fatal("the TextBox refused focus while Active is false, so the " +
 			"freeze is already on and the flip below is not the thing " +
@@ -678,7 +684,13 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	shows("before the freeze turned on")
 	kept := keepPopup(t, m)
 
-	active.Set(true)
+	// THROUGH THE HELPER, WITH ITS COUNT. This test hand-wrote the flip
+	// prologue so it could count the frame, which left the second copy of
+	// the focus-refusal fatal that freeze() was extracted to remove —
+	// the drift the fixture's own comment argues against, surviving
+	// inside the fix for it. freeze() hands the count back now. Raised in
+	// review of #498.
+	//
 	// THE COUNT, because this is the frame the test is named for and no
 	// other assertion here can see it. evictFrozen clears hover, captor,
 	// prev and lastClick on the flip; a re-sync that grew into a
@@ -687,16 +699,11 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	// that the damage count is the only pin for a repaint claim.
 	// Measured on this fixture: the flip paints one component and the
 	// next frame settles at zero.
-	if _, painted := c.Frame(); painted != 1 {
+	if painted := freeze(); painted != 1 {
 		t.Errorf("the freeze flip repainted %d component(s), want 1 — the "+
 			"frozen host is what changed, and a wider repaint means the "+
 			"re-sync is rebuilding more of the page than the flip touched",
 			painted)
-	}
-	if c.Focus().SetFocus(tb) {
-		t.Fatal("the TextBox still took focus after Active flipped to true, " +
-			"so the freeze did not take effect and the assertion below is " +
-			"about an unfrozen tree")
 	}
 	shows("after the freeze turned on")
 	// A SECOND FRAME BEFORE THE POINTER, for the reason
@@ -843,6 +850,29 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	active := prop.NewSource(false)
 	tb, name, m, c, shows, freeze := frozenMarkerPage(t, active)
 	freeze()
+	// THE FREEZE AGAIN, at the END, and registered here so it runs even
+	// when an assertion below fatals. freeze() established it once,
+	// before anything moved, and every assertion in this test reads
+	// identically on a tree that stopped being frozen somewhere in the
+	// frames it drives — which would make "WhileFrozen" in the name a
+	// claim held only at the first line. The window is not hypothetical
+	// in kind: the input tree re-syncs per frame and evictFrozen runs off
+	// a property read, which is the machinery the two tests above are
+	// named for. Same discriminator, second reading.
+	//
+	// IN A CLEANUP RATHER THAN AS THE LAST STATEMENT, because that is
+	// what lets the error legs below use shows(), which FATALS. Written
+	// last, it was unreachable from any failing assertion — so the leg
+	// most likely to be failing was the one that never got the second
+	// reading. Raised in review of #498.
+	t.Cleanup(func() {
+		if c.Focus().SetFocus(tb) {
+			t.Error("the TextBox took focus at the END of the test, so the " +
+				"subtree stopped being frozen somewhere in the error changes " +
+				"above. Every assertion between here and freeze() was taken " +
+				"on an ordinary field, and reads the same either way")
+		}
+	})
 	// THE HELPER, for the reason its siblings give: an empty layer here
 	// cannot be the page's fault, and its third arm is the one a hand
 	// copy leaves out.
@@ -876,31 +906,18 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 		t.Errorf("the value going INVALID again under a freeze repainted %d "+
 			"component(s), want 2", painted)
 	}
-	if !m.IsShown() {
-		t.Error("the marker did not come back when the frozen field's value " +
-			"became invalid again. Frozen gates INPUT; it does not freeze the " +
-			"message's subscription to the error it is about")
-	}
-	if got := row(c.Cells(), 1); !strings.Contains(got, "required") {
-		t.Errorf("row 1 = %q after the frozen field became invalid again, want "+
-			"the message back", got)
-	}
+	// THE HELPER HERE TOO, which the comment at the top of this test
+	// asked for and the code did not do: this was `!m.IsShown()` plus a
+	// row-1 Contains, a hand copy of two of shows()' three arms whose
+	// message named neither conjunct. A marker that failed to come back
+	// reported "the marker did not come back" instead of the three-arm
+	// diagnosis — empty layer / this popup nil / placed-but-empty-Error —
+	// that the first line of this test paid for. The Fatal that made the
+	// hand copy look necessary is handled by the cleanup above. Raised in
+	// review of #498.
+	shows("after the error returned")
 	if _, painted := c.Frame(); painted != 0 {
 		t.Errorf("the frame after the error returned repainted %d component(s), "+
 			"want a settled page", painted)
-	}
-	// THE FREEZE AGAIN, at the END. freeze() established it once, before
-	// anything moved, and every assertion above reads identically on a tree
-	// that stopped being frozen somewhere in the frames this test drives —
-	// which would make "WhileFrozen" in the name a claim held only at the
-	// first line. The window is not hypothetical in kind: the input tree
-	// re-syncs per frame and evictFrozen runs off a property read, which is
-	// the machinery the two tests above are named for. Same discriminator,
-	// second reading.
-	if c.Focus().SetFocus(tb) {
-		t.Fatal("the TextBox took focus at the END of the test, so the subtree " +
-			"stopped being frozen somewhere in the error changes above. Every " +
-			"assertion between here and freeze() was taken on an ordinary " +
-			"field, and reads the same either way")
 	}
 }
