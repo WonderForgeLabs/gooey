@@ -245,7 +245,7 @@ func buildTabs(e Element, ctx *Context) (gooey.Component, error) {
 		// report the silent class at all. Issue #461, split out of the
 		// review of #454, which closed this for <Menu>/<MenuItem> and
 		// left <Tab> open by name.
-		if err := checkAttrs(c, ctx); err != nil {
+		if err := checkAttrs(c, ctx, true); err != nil {
 			return nil, err
 		}
 		if _, ok := c.Attrs["Header"]; !ok {

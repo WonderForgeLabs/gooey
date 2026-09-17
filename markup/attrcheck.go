@@ -34,7 +34,12 @@ import (
 
 // checkAttrs rejects attributes the element cannot accept. It runs
 // beside checkProps, which does the same job for property elements.
-func checkAttrs(e Element, ctx *Context) error {
+// asData says the caller is the element's READER — buildMenuBar or
+// buildTabs, consuming it as data — rather than build(), which is about
+// to build it. It is the whole of the pseudo-element gate below, and the
+// reason it is a parameter instead of a property of the spec is that
+// ElementSpec.Pseudo cannot answer it. See the comment on that gate.
+func checkAttrs(e Element, ctx *Context, asData bool) error {
 	spec, ok := ctx.spec(e.Name)
 
 	// THE UNIVERSAL SET IS NOT PART OF ANY ELEMENT'S OWN VOCABULARY, so
@@ -60,8 +65,52 @@ func checkAttrs(e Element, ctx *Context) error {
 	// catalog, so it is deferred to rather than raced. See
 	// acceptedByParent, whose comment records why it cannot ask
 	// spec.Nested for the answer.
-	if ok && spec.Pseudo {
-		if !acceptedByParent(e, spec, ctx) {
+	// PSEUDO IS NOT "BUILDS NO COMPONENT", and the two refusals below
+	// rest on that claim, so they run only where it is true. Pseudo is
+	// derived as `Proto == nil && (Opaque != "" || ParsedBy != "")`
+	// (elementdef.go) and says NOTHING about Build — a host
+	// Context.Elements def may carry ParsedBy and a real Build at once,
+	// and buildComponent then calls named() on what it returns and
+	// attachAll on its attachments. Measured on such a def:
+	//
+	//	<Deck><Panel Label="a"><Panel.Behaviors><Tooltip Text="x"/>
+	//	  </Panel.Behaviors><Text>y</Text></Panel></Deck>
+	//	  before: Panel.Build ran, one attachment applied
+	//	  after:  markup: <Panel.Behaviors>: … builds no component for
+	//	          Behaviors to apply to
+	//
+	// A page that loaded stopped loading, and the reason given was
+	// false. This is the hazard refuseComponentAttr's own doc names for
+	// !TakesLayout — refusing off an absent-by-default signal breaks
+	// working apps — arriving through ParsedBy instead.
+	//
+	// THE DISCRIMINATING QUESTION IS THE CALL SITE, not the spec. An
+	// element consumed as DATA is one its reader walked out of
+	// e.Children: buildTabs reads a <Tab>'s Header itself, buildMenuBar
+	// reads a <Menu>'s Title, and nothing downstream will ever call
+	// named() or applyLayout() with it — which is exactly the argument
+	// the refusal rests on. An element reaching build() is about to be
+	// built, whatever the catalog says about who declared it. Raised in
+	// review of #486.
+	if ok && spec.Pseudo && asData {
+		if err := refuseComponentAttr(e, spec, ctx); err != nil {
+			return err
+		}
+		// THE PROPERTY-ELEMENT SPELLING OF THE SAME THING, which was
+		// silently accepted while the attribute spelling was refused.
+		// <Tab.Name>, <Tab.Margin>, <Menu.Name> and <MenuItem.Name> all
+		// loaded, were dropped and reported nothing. Measured through
+		// Build before the fix, all four. Raised in review of #486.
+		//
+		// The comment here used to argue that "a pseudo-element never
+		// reaches build()", which is what the gate above is now about:
+		// a host's does.
+		if err := refusePropElement(e, spec, ctx); err != nil {
+			return err
+		}
+	}
+	if ok && spec.Pseudo && !asData {
+		if misplaced(e, spec, ctx) {
 			// THE DEFERRAL COVERS THE EXHAUSTIVE CHECK TOO, and it
 			// reached only <Tab> when it did not. <Menu> and <MenuItem>
 			// are AttrsKnown, so standing down from the universal
@@ -77,19 +126,6 @@ func checkAttrs(e Element, ctx *Context) error {
 			// review of #486 round 2, which is round 1's finding 1 one
 			// gate over.
 			return nil
-		}
-		if err := refuseComponentAttr(e, spec, ctx); err != nil {
-			return err
-		}
-		// THE PROPERTY-ELEMENT SPELLING OF THE SAME THING, which was
-		// silently accepted while the attribute spelling was refused.
-		// checkProps runs from build() alone, and a pseudo-element never
-		// reaches build() — its parent's builder consumes it as data — so
-		// <Tab.Name>, <Tab.Margin>, <Menu.Name> and <MenuItem.Name> all
-		// loaded, were dropped and reported nothing. Measured through
-		// Build before the fix, all four. Raised in review of #486.
-		if err := refusePropElement(e, spec, ctx); err != nil {
-			return err
 		}
 	}
 
@@ -108,7 +144,7 @@ func checkAttrs(e Element, ctx *Context) error {
 		// it.
 		return nil
 	}
-	allowed, attached := ctx.vocabulary(spec, e.parent)
+	allowed, attached := ctx.vocabulary(spec, e.parent, !asData)
 
 	names := make([]string, 0, len(e.Attrs))
 	for name := range e.Attrs {
@@ -243,7 +279,7 @@ func refuseComponentAttr(e Element, spec ElementSpec, ctx *Context) error {
 		// to put it instead.
 		return fmt.Errorf("markup: <%s %s=%q>: %sso it builds no component for %s to apply to%s",
 			e.Name, name, e.Attrs[name],
-			readsAsData(e, spec, ctx), name, pseudoRemedy(spec, ctx, name))
+			readsAsData(e, spec, ctx), name, pseudoRemedy(e, spec, ctx, name))
 	}
 	return nil
 }
@@ -298,7 +334,7 @@ func refusePropElement(e Element, spec ElementSpec, ctx *Context) error {
 	sort.Strings(names)
 	name := names[0]
 	return fmt.Errorf("markup: <%s.%s>: %sso it builds no component for %s to apply to%s",
-		e.Name, name, readsAsData(e, spec, ctx), name, propRemedy(spec, ctx, name))
+		e.Name, name, readsAsData(e, spec, ctx), name, propRemedy(e, spec, ctx, name))
 }
 
 // readsAsData is the reason clause of the message above: who consumes
@@ -348,10 +384,10 @@ func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
 	// THE DOCUMENT'S OWN PARENT FIRST, and it is not one source among
 	// several — it is the only one that answers the question asked.
 	//
-	// Both callers run after acceptedByParent (attrcheck.go:64) has
-	// established that e.parent is the container the catalog says reads
-	// e.Name. That IS the reader, and it is read back through the same
-	// readerOf so the two cannot disagree. namingParent discards it and searches
+	// Both callers run from the READER — buildMenuBar and buildTabs,
+	// which walk their own e.Children — so e.parent is the container
+	// that consumed this element. That IS the reader. namingParent
+	// discards it and searches
 	// the catalog for the FIRST element naming this one, and
 	// definedElements sorts by name — so "first" means alphabetically
 	// first, not the container this element is inside. One more builtin
@@ -362,16 +398,16 @@ func readsAsData(e Element, spec ElementSpec, ctx *Context) string {
 	// 2's finding 6 was filed to remove, reintroduced by the search.
 	// Reading e.parent also drops a whole catalog assembly per refusal.
 	// Raised in review of #486.
-	if p, ok := readerOf(e, spec, ctx); ok {
-		return fmt.Sprintf("<%s> reads <%s> as data, ", p, spec.Name)
+	if p, ok := ctx.spec(e.parent); ok && namesChild(p, spec.Name) {
+		return fmt.Sprintf("<%s> reads <%s> as data, ", p.Name, spec.Name)
 	}
 	// EVERYTHING BELOW IS UNREACHABLE FROM A PARSED DOCUMENT, and that
 	// is a property to state rather than a gap to leave implied.
 	//
-	// Both callers run inside `if ok && spec.Pseudo { if
-	// !acceptedByParent(e, spec, ctx) { return nil } … }`, and
-	// acceptedByParent IS the branch above — both are readerOf, which is
-	// why it is one function. markup.go stamps parent on every element the
+	// Both callers run under `spec.Pseudo && asData`, and asData is
+	// passed by the two readers alone — each of which is the
+	// ModeRestricted container that names this element, so the branch
+	// above answers. markup.go stamps parent on every element the
 	// parser produces, and the parser is the only thing in this package
 	// that constructs one. So for any document a user can write, the
 	// branch above answers and none of these run.
@@ -462,7 +498,7 @@ func namingParent(name string, ctx *Context) string {
 // contentRemedy and left this function and reservedOnContent
 // undocumented — the same thing that happened to splitPasteMarker's
 // neighbours in #445. Raised in review of #486.
-func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
+func pseudoRemedy(e Element, spec ElementSpec, ctx *Context, name string) string {
 	if why, ok := reservedOnContent[spec.Name][name]; ok {
 		return why
 	}
@@ -514,7 +550,31 @@ func pseudoRemedy(spec ElementSpec, ctx *Context, name string) string {
 		}
 		return ""
 	}
-	return contentRemedy
+	// EVERYTHING ELSE ASKS THE DOCUMENT, and that is the arm this
+	// function shipped without. ModeUnknown is <Tab>'s, and <Tab> is the
+	// one pseudo-element whose content is actually PRESENT — an
+	// arbitrary subtree <Tabs> builds as a page — so the element with a
+	// real destination to name was the one whose destination was never
+	// consulted. Reachable on the builtins alone:
+	//
+	//	<Tabs><Tab Header="a" Margin="2"><Timer Interval="1s"/></Tab></Tabs>
+	//	  -> … no component for Margin to apply to; put it on the
+	//	     content inside instead
+	//	<VStack><Timer Interval="1s" Margin="2"/></VStack>
+	//	  -> no such attribute; this element takes Enabled, Interval,
+	//	     Name, Tick
+	//
+	// The catalog cannot answer for ModeUnknown/ModeMany/ModeOne and
+	// does not have to: what is inside is a fact of THIS document, and
+	// e.Children is it. An element with nothing inside gets no remedy,
+	// which is the same answer ModeLeaf gets and for the same reason.
+	// Raised in review of #486.
+	for _, c := range e.Children {
+		if acceptsInside(ctx, c.Name, spec.Name, name) {
+			return contentRemedy
+		}
+	}
+	return ""
 }
 
 // acceptsInside reports whether child, sitting inside parent, would
@@ -562,7 +622,7 @@ func acceptsInside(ctx *Context, child, parent, name string) bool {
 	if name == "Behaviors" || name == "Resources" {
 		return true
 	}
-	allowed, _ := ctx.vocabulary(s, parent)
+	allowed, _ := ctx.vocabulary(s, parent, true)
 	return allowed[name]
 }
 
@@ -625,8 +685,8 @@ var reservedOnContent = map[string]map[string]string{
 // for those the destination is known; for anything else nothing here can
 // say the move lands, and saying nothing is the honest answer. Raised in
 // review of #486.
-func propRemedy(spec ElementSpec, ctx *Context, name string) string {
-	r := pseudoRemedy(spec, ctx, name)
+func propRemedy(e Element, spec ElementSpec, ctx *Context, name string) string {
+	r := pseudoRemedy(e, spec, ctx, name)
 	switch {
 	case name == "Behaviors" || name == "Resources":
 		// The two property elements every element accepts: the spelling
@@ -746,76 +806,58 @@ func isUniversalAttr(name string) bool {
 	return false
 }
 
-// acceptedByParent reports that this element sits in a container that
-// names it, which is the precondition for its ATTRIBUTES being the
-// interesting fault. Where it is false the element's own Build is about
-// to say something more useful — "<Tab> is only valid directly inside
-// <Tabs>" — and checkAttrs, which runs first, must not talk over it.
+// misplaced reports that the catalog states a home for this element and
+// the document did not put it there, which is the precondition for
+// standing down: where it holds, the element's own Build is about to say
+// something more useful — "<Tab> is only valid directly inside <Tabs>" —
+// and checkAttrs, which runs first, must not talk over it.
+//
+// THREE ANSWERS, AND THE THIRD IS WHY THIS IS NOT acceptedByParent. The
+// first two are the ones that function had: the parent names this
+// element among its children, or the catalog says the home is somewhere
+// else. The third is a catalog that says NOTHING about where the element
+// belongs — a host def stating its reason with Opaque, under a container
+// that enumerates nothing. There is no placement diagnosis to defer to
+// there, so standing down bought silence: measured on a <Table>
+// (ModeMany, BuildChildren) holding an Opaque-declared <ORow>,
+//
+//	<Table><ORow Label="a" Bogus="x"/></Table>
+//	  origin/main:  no such attribute; this element takes Label
+//	  before this:  <nil>
+//
+// which is #461's own silent-drop class, with Opaque substituted for the
+// ParsedBy the previous round covered. Deferring requires a destination;
+// "the catalog knows no home" is not one. Raised in review of #486.
 //
 // ASKED OF THE PARENT, NOT OF spec.Nested, and that distinction is the
 // whole reason this function is not two lines shorter. Nested says
-// exactly what is wanted here — "builds nothing AND some container
-// names it" — but it is DERIVED BY markNested OVER THE ASSEMBLED
-// CATALOG, and ctx.spec returns a per-def spec that markNested has
-// never touched. So ctx.spec("Tab").Nested is false for the one element
-// the field was added for, while ctx.Catalog()'s entry for the same
-// name is true.
-//
-// The first version of this check read spec.Nested and was therefore
-// dead: it returned false for every element, the refusal fired
-// regardless of placement, and the finding it was written for was
-// unfixed with every test green. Measured, not reasoned about. If a
-// later reader wants the field here, the fix is to make ctx.spec derive
-// it — not to assume it is set.
-func acceptedByParent(e Element, spec ElementSpec, ctx *Context) bool {
-	_, ok := readerOf(e, spec, ctx)
-	return ok
+// exactly what the first branch wants — "builds nothing AND some
+// container names it" — but it is DERIVED BY markNested OVER THE
+// ASSEMBLED CATALOG, and ctx.spec returns a per-def spec that markNested
+// has never touched. So ctx.spec("Tab").Nested is false for the one
+// element the field was added for, while ctx.Catalog()'s entry for the
+// same name is true. The first version of this check read spec.Nested
+// and was therefore dead: it returned false for every element, the
+// refusal fired regardless of placement, and the finding it was written
+// for was unfixed with every test green. Measured, not reasoned about.
+func misplaced(e Element, spec ElementSpec, ctx *Context) bool {
+	if p, ok := ctx.spec(e.parent); ok && namesChild(p, spec.Name) {
+		return false
+	}
+	home := declaredHome(spec, ctx)
+	return home != "" && home != e.parent
 }
 
-// readerOf names the container that reads this element as data, when
-// the element's own parent IS that container. It is the one question
-// the stand-down above and readsAsData's reason clause both ask, and
-// they ask it of the same function so the refusal cannot name a reader
-// the gate did not accept.
-//
-// TWO ROUTES, BECAUSE namesChild CANNOT ANSWER FOR A CONTAINER THAT
-// NAMES NOTHING. It is ModeRestricted by definition, so a host whose
-// container is ModeMany — the ordinary shape for one that builds its
-// children through BuildChildren — had every correctly-placed
-// pseudo-child read as MISPLACED, and the stand-down dropped the
-// exhaustive unknown-attribute gate along with the universal refusal.
-// Measured on a host <Table Children:ModeMany> holding a <Row
-// ParsedBy:"Table", Known:true, Attrs:[Label]>:
-//
-//	<Table><Row Label="a" Bogus="x"/></Table>   -> <nil>
-//	<Table><Row Label="a" Name="n"/></Table>    -> <nil>
-//
-// origin/main refused both — "no such attribute; this element takes
-// Label" — so the stand-down reintroduced #461's silent-drop class for
-// exactly the elements #461 was filed about, one registration tier
-// over. Raised in review of #486.
-//
-// ParsedBy IS the declaration namesChild would have been, from the
-// element's own side: it names the element whose Build consumes this
-// one, and catalogen checks it against the code that reads it, so it is
-// not a hint. It is consulted ONLY where the parent restricts nothing,
-// because where the parent does restrict its children that list is the
-// placement rule and a miss is a genuine misplacement —
-// <MenuBar><MenuItem Name="x"/> must keep deferring to defMenuItem's
-// "only valid directly inside <Menu>" even though MenuItem.ParsedBy is
-// <MenuBar>.
-func readerOf(e Element, spec ElementSpec, ctx *Context) (string, bool) {
-	parent, ok := ctx.spec(e.parent)
-	if !ok {
-		return "", false
+// declaredHome is the element the catalog says reads this one: its own
+// ParsedBy, or the ModeRestricted container naming it. Empty means the
+// catalog states no placement rule at all, which is a different answer
+// from "somewhere else" and the two are not interchangeable — see
+// misplaced.
+func declaredHome(spec ElementSpec, ctx *Context) string {
+	if spec.ParsedBy != "" {
+		return spec.ParsedBy
 	}
-	if namesChild(parent, spec.Name) {
-		return parent.Name, true
-	}
-	if parent.Children.Mode != ModeRestricted && spec.ParsedBy == parent.Name {
-		return parent.Name, true
-	}
-	return "", false
+	return namingParent(spec.Name, ctx)
 }
 
 // namesChild is the relation every pseudo-element rule is phrased in
@@ -868,7 +910,10 @@ func describeParent(parent string) string {
 // properties its actual parent contributes. It also returns every OTHER
 // attached property, keyed by the parent that would contribute it, so a
 // misplaced one can be reported as misplaced rather than as unknown.
-func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map[string]bool, attached map[string]string) {
+// builds says the element is about to be BUILT rather than consumed as
+// data, which is the only thing that decides whether Name is in its
+// vocabulary. See the Name paragraph below.
+func (ctx *Context) vocabulary(spec ElementSpec, parentName string, builds bool) (allowed map[string]bool, attached map[string]string) {
 	allowed = make(map[string]bool, len(spec.Attrs)+len(universalAttrs)+4)
 	// NAME IS UNIVERSAL EXCEPT WHERE THERE IS NOTHING TO ADDRESS —
 	// hoisted above the TakesLayout gate because every element that
@@ -885,7 +930,15 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string) (allowed map
 	// just started refusing it. Every other write here is a bare
 	// `= true`, so the contract held implicitly until this line asked a
 	// question whose answer could be false.
-	if !spec.Pseudo {
+	//
+	// AND "BUILDS ONE" IS THE CALL SITE, NOT Pseudo. A host's
+	// Context.Elements def may carry ParsedBy and a real Build at once,
+	// and buildComponent calls named() on what that Build returns — so
+	// withholding Name off the derivation alone refused an attribute
+	// that addresses something real. checkAttrs passes !asData here for
+	// the same reason it gates the two pseudo refusals on it. Raised in
+	// review of #486.
+	if builds || !spec.Pseudo {
 		allowed["Name"] = true
 	}
 	for _, a := range spec.Attrs {

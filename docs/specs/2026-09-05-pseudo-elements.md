@@ -401,6 +401,47 @@ attribute and restates the rule over `ElementSpec` rather than calling
 `ctx.vocabulary`, because a helper that calls the implementation cannot
 disagree with it.
 
+**And the repair above was itself phrased over one of three
+spellings.** `Pseudo` is `Proto == nil && (Opaque != "" || ParsedBy !=
+"")`, so it is true two ways, and `readerOf`'s second route asked only
+about `ParsedBy`. An `Opaque`-declared host pseudo-element under a
+`ModeMany` container matched neither route, stood down, and lost the
+same gate — #461's silent-drop class with one field substituted for the
+other. `misplaced` replaces it with a rule that has three answers rather
+than two: the parent names this element, the catalog names a *different*
+home, or the catalog names **no** home at all. Only the middle one is a
+misplacement, and only a misplacement has a placement diagnosis worth
+deferring to; "the catalog knows no home" is not a destination.
+
+**`Pseudo` is not "builds no component", and two refusals rested on
+that.** The derivation says nothing about `Build`. A host
+`Context.Elements` def may carry `ParsedBy` *and* a real `Build`, and
+then `buildComponent` calls `named()` on what it returns and `attachAll`
+on its attachments — so refusing `Name` and every `<X.Foo>` on it broke
+a page that loaded, with a reason that was false. The discriminating
+question is the CALL SITE: an element reaching `checkAttrs` from
+`buildTabs` or `buildMenuBar` was walked out of `e.Children` and is
+consumed as data; one reaching it from `build()` is about to be built,
+whatever the catalog says about who declared it. `checkAttrs` takes that
+as a parameter now, and it is also what decides whether `Name` is in the
+element's vocabulary.
+
+The suite had encoded the false claim: the previous round's fixtures both
+gave their pseudo def a real `Build` and then required `Name` on it to be
+a load error. The fixture now carries all three spellings — `ParsedBy`
+with a `Build`, `Opaque`, and `ParsedBy` with none — and derives its
+assertions from them.
+
+**The remedy's default arm never asked the content, and it is `<Tab>`'s
+live path.** `pseudoRemedy` consulted `acceptsInside` on the
+`ModeRestricted` arm and answered unconditionally everywhere else.
+`<Tab>` is `ModeUnknown`, so the one pseudo-element whose content is
+actually present in the document was the one whose content was never
+consulted: `<Tabs><Tab Header="a" Margin="2"><Timer Interval="1s"/></Tab></Tabs>`
+was told to put the `Margin` on a `<Timer>` that refuses it. For
+`ModeUnknown`/`ModeMany`/`ModeOne` the content is a fact of the
+document, so the function takes the `Element` and asks `e.Children`.
+
 **A registered element with no `Build` was a SEGV.** Reproducing the
 first of these turned it up: `buildComponent` called `d.Build` without
 asking whether there was one, and a pseudo-element's natural host
@@ -427,9 +468,9 @@ test go red.
 | `Pseudo` blocks the mis-pairing | `TestThePointerCannotReachAMenuItem` |
 | `checkAttrs` on `<Menu>` / `<MenuItem>` / a separator item | `TestAnUnknownMenuAttributeIsALoadError` |
 | an undeclared read off a child element | `TestDeclaredVocabularyMatchesTheCode` (via `checkPseudoPool`) |
-| a host pseudo-element under a non-`ModeRestricted` reader | `TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs` |
-| the content remedy decided per attribute (both directions, advice followed) | `TestTheContentRemedyIsDecidedPerAttribute` |
-| a registered element with no `Build` | `TestARegisteredElementWithNoBuildIsALoadError` |
+| a host pseudo-element under a non-`ModeRestricted` reader, all three ways `Pseudo` is true, and the no-`Build` shape | `TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs` |
+| a host pseudo-element that BUILDS keeps its `Name` and its attachments | `TestAHostPseudoElementThatBuildsKeepsWhatItBuildsWith` |
+| the content remedy decided per attribute, asked of the document's own children | `TestTheContentRemedyIsDecidedPerAttribute` |
 | `markNested` drops the `Pseudo` conjunct | `TestARestrictedContainerDoesNotHideARealElement` |
 | `markNested` sets instead of assigning | `TestMarkNestedIsIdempotent` |
 | `pairAgrees` asks the catalog per node | `TestARebuildDoesNotRebuildTheCatalogPerNode` |

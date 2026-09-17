@@ -1155,6 +1155,10 @@ Every **visual** element (all built-ins whose component embeds `gooey.Base`, and
 
 **The pseudo-elements reject them too**, and they are a second class rather than more of the first: `<Tab>`, `<Menu>` and `<MenuItem>` are data their parent reads, so they build no component to lay out, to address, or to instruct a container about. That covers this table's own `Grid.Row`, `Grid.Col`, `Grid.RowSpan`, `Grid.ColSpan`, `Canvas.Left` and `Canvas.Top` rows as well as the framework attributes above them. It is a breaking change; see the [Tabs](#tabs) and [MenuBar](#menubar) sections for what moves where.
 
+**A host's own registration is judged by what it BUILDS, not by what it declares.** `Context.Elements` lets a host declare the same "read by my parent" relationship the three built-ins have — `ParsedBy`, naming the element whose `Build` consumes this one, or `Opaque`, stating that its surface is not enumerable — and the rules above are phrased over elements that build no component at all. A registered def may carry one of those *and* a real `Build`, and then it does build one: `named()` runs on what it returns and its `<X.Behaviors>` attach to it, so `Name` and the property elements are accepted there exactly as on any other element. The refusals in this section apply where the element is genuinely consumed as data by its parent's builder.
+
+What a host declaration **does** get is the ordinary unknown-attribute gate, under the container the catalog says reads it — which need not be `ModeRestricted`, since a host container that hands its children to `markup.BuildChildren` enumerates nothing. `<Table><Row Label="a" Bogus="x"/></Table>` is refused with `<Row>`'s own vocabulary. Where the catalog *does* state a home and the document is somewhere else, the attribute check stands down so the element's own `Build` can report the placement — the larger fault, and the one whose remedy fixes the file. Both halves were regressions found in review of [#486](https://github.com/WonderForgeLabs/gooey/pull/486).
+
 | Attribute | Values | Meaning |
 |---|---|---|
 | `Width`, `Height` | integer cells | Explicit size; 0/absent = auto. |

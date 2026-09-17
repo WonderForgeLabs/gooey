@@ -148,7 +148,10 @@ func TestNoPseudoElementAcceptsAUniversalAttribute(t *testing.T) {
 				parent: legalParent(t, s),
 				Attrs:  map[string]string{u.Name: "x"},
 			}
-			err := checkAttrs(e, ctx)
+			// asData: this is the READER's call — the position
+			// buildTabs and buildMenuBar occupy — and it is the only
+			// one the refusal applies to. See checkAttrs' gate.
+			err := checkAttrs(e, ctx, true)
 			if err == nil {
 				t.Errorf("<%s %s=\"x\"> is accepted and honoured by nothing: "+
 					"%s builds no component, so the attribute reaches neither "+
@@ -1688,7 +1691,7 @@ func TestNoRemedyPrescribesASpellingTheAttributeGateRefuses(t *testing.T) {
 		}
 		for _, name := range names {
 			checked++
-			r := propRemedy(sp, ctx, name)
+			r := propRemedy(withContent(sp), sp, ctx, name)
 			if !strings.Contains(r, "write it as an attribute on this element") {
 				continue
 			}
@@ -1725,12 +1728,17 @@ func TestAContentRemedySurvivesForThePropertyElements(t *testing.T) {
 		if !ok {
 			t.Fatal("<Tab> is not in the catalog")
 		}
-		if got := propRemedy(sp, ctx, name); got == "" {
+		if got := propRemedy(withContent(sp), sp, ctx, name); got == "" {
 			t.Errorf("<Tab.%s> is refused with no remedy. Every element accepts %s, so "+
 				"the content inside a <Tab> is a destination this code can name — which "+
 				"is the whole condition the content move needs", name, name)
 		}
-		doc := fmt.Sprintf(`<Gooey><Tabs><Tab Header="a"><Tab.%s/></Tab></Tabs></Gooey>`, name)
+		// WITH CONTENT INSIDE, because that is what the remedy names.
+		// A <Tab> holding only the property element has nothing to move
+		// it onto, and pseudoRemedy now says so rather than prescribing
+		// a destination that is not there — which is the round-7
+		// finding one arm over. Raised in review of #486.
+		doc := fmt.Sprintf(`<Gooey><Tabs><Tab Header="a"><Tab.%s/><Text>x</Text></Tab></Tabs></Gooey>`, name)
 		_, err := Build([]byte(doc), ctx)
 		if err == nil {
 			t.Fatalf("%s is accepted, so there is no refusal to carry a remedy", doc)
@@ -1819,7 +1827,7 @@ func TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped(t *testing.T) {
 		if !sp.Pseudo {
 			continue
 		}
-		r := propRemedy(sp, ctx, name)
+		r := propRemedy(withContent(sp), sp, ctx, name)
 		if !strings.Contains(r, "write it as an attribute on this element") {
 			continue
 		}
@@ -1857,22 +1865,35 @@ func TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped(t *testing.T) {
 	}
 }
 
-// hostTableCtx is a host's own pseudo-element and the container that
-// reads it, in the shape a host actually writes one.
+// hostTableCtx is a host's own pseudo-elements and the container that
+// reads them, in the three shapes a host actually writes one.
 //
-// THE CONTAINER IS ModeMany, and that is the whole fixture. A host
+// THE CONTAINER IS ModeMany, and that is half the fixture. A host
 // registering a container declares what it BUILDS, and a container that
 // hands its children to BuildChildren takes many of them — nothing
-// obliges it to enumerate their names, and Grant/Children.Only is about
-// a restricted vocabulary rather than about a builder. So the ordinary
-// host shape is a ModeMany parent holding a ParsedBy child, which is
-// the one shape no builtin has: all three builtin pseudo-elements sit
-// under a ModeRestricted container.
+// obliges it to enumerate their names. So the ordinary host shape is a
+// ModeMany parent holding a declared child, which is the one shape no
+// builtin has: all three builtin pseudo-elements sit under a
+// ModeRestricted container.
 //
-// Row's Build refuses its own placement the way defTab's does, so the
-// misplaced arm has a real diagnosis to defer TO and the test is about
-// the stand-down rather than about the absence of a builder.
+// THE OTHER HALF IS THAT Pseudo IS TRUE THREE WAYS, and the three
+// children here are exactly those ways. <Row> states its reason with
+// ParsedBy and carries a Build; <ORow> states it with Opaque; <Bare>
+// states it with ParsedBy and has NO Build, which is a
+// pseudo-element's natural host declaration — "declared here, read
+// there" leaves nothing to put in the field. The first two were the two
+// routes the previous round's repair covered and missed; the third is
+// the only one of the three that genuinely builds no component.
+//
+// <Row>'s Build refuses its own placement the way defTab's does, so the
+// misplaced arm has a real diagnosis to defer TO.
 func hostTableCtx() *Context {
+	build := func(e Element, ctx *Context) (gooey.Component, error) {
+		if e.parent != "Table" {
+			return nil, fmt.Errorf("markup: <%s> is only valid directly inside <Table>", e.Name)
+		}
+		return &components.Text{}, nil
+	}
 	return &Context{Elements: map[string]*ElementDef{
 		"Table": {
 			Name:     "Table",
@@ -1893,81 +1914,110 @@ func hostTableCtx() *Context {
 			ParsedBy: "Table",
 			Attrs:    []AttrSpec{{Name: "Label"}},
 			Children: ChildSpec{Mode: ModeNone},
-			Build: func(e Element, ctx *Context) (gooey.Component, error) {
-				if e.parent != "Table" {
-					return nil, fmt.Errorf("markup: <Row> is only valid directly inside <Table>")
-				}
-				return &components.Text{}, nil
-			},
+			Build:    build,
+		},
+		"ORow": {
+			Name:     "ORow",
+			Known:    true,
+			Opaque:   "a pseudo-element: <Table> parses an <ORow> itself",
+			Attrs:    []AttrSpec{{Name: "Label"}},
+			Children: ChildSpec{Mode: ModeNone},
+			Build:    build,
+		},
+		"Bare": {
+			Name:     "Bare",
+			Known:    true,
+			ParsedBy: "Table",
+			Attrs:    []AttrSpec{{Name: "Label"}},
+			Children: ChildSpec{Mode: ModeNone},
 		},
 	}}
 }
 
-// TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs is the
-// blocking finding of #486's round 6, and it is #461 reintroduced one
-// registration tier over.
+// TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs is #461's
+// silent-drop class in the host-registration tier, and it took two
+// rounds to state because the first repair was phrased over one of the
+// three ways Pseudo can be true.
 //
-// The placement stand-down asks acceptedByParent, which asked
-// namesChild, which is ModeRestricted BY DEFINITION. A host container
-// that does not enumerate its children therefore made every
-// correctly-placed pseudo-child read as misplaced, and the stand-down
-// drops the exhaustive unknown-attribute gate as well as the universal
-// refusal. Measured on this fixture before the fix:
+// The stand-down that defers to a misplaced element's own Build asked
+// whether the parent is a ModeRestricted container naming this element.
+// A host container that enumerates nothing is not, so every
+// correctly-placed declared child under it read as MISPLACED and the
+// exhaustive unknown-attribute gate went with the universal refusal.
+// Measured against a clean origin/main worktree, which refuses all
+// three:
 //
-//	<Table><Row Label="a" Bogus="x"/></Table>  -> <nil>
-//	<Table><Row Label="a" Name="n"/></Table>   -> <nil>
+//	<Table><Row  Label="a" Bogus="x"/></Table>  -> <nil>
+//	<Table><ORow Label="a" Bogus="x"/></Table>  -> <nil>
+//	<Table><Bare Label="a" Bogus="x"/></Table>  -> <nil>
 //
-// against origin/main, which refused both — so the branch that exists
-// to make a pseudo-element's attributes visible had made a host's
-// invisible.
-//
-// THREE ARMS, because any two pass against a wrong fix. The unknown
-// attribute must be refused with the element's vocabulary; the
-// universal must be refused with the pseudo sentence naming the reader;
-// and the MISPLACED row must still defer to Row's own placement error,
-// which is the round-2 finding a blanket "always check" would undo.
+// ALL THREE PSEUDO SPELLINGS, derived from the fixture rather than
+// listed, because the first repair covered ParsedBy and left Opaque
+// open — the identical defect one FIELD over, which the ParsedBy-only
+// fixture could not see.
 func TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs(t *testing.T) {
 	ctx := hostTableCtx()
-	row, ok := ctx.spec("Row")
 	table, okT := ctx.spec("Table")
-	if !ok || !okT || !row.Pseudo || !row.AttrsKnown || table.Children.Mode == ModeRestricted {
-		t.Fatalf("the fixture is not the discriminating shape — it needs a "+
-			"Pseudo/AttrsKnown child under a parent that is NOT ModeRestricted, "+
-			"and is %v/%v/%v under %v, so namesChild would answer and this test "+
-			"could not see the gap",
-			ok, row.Pseudo, row.AttrsKnown, table.Children.Mode)
+	if !okT || table.Children.Mode == ModeRestricted {
+		t.Fatalf("the fixture's container is %v — a ModeRestricted one is "+
+			"answered by namesChild and this test could not see the gap",
+			table.Children.Mode)
+	}
+	var checked int
+	for _, name := range []string{"Row", "ORow", "Bare"} {
+		sp, ok := ctx.spec(name)
+		if !ok || !sp.Pseudo || !sp.AttrsKnown {
+			t.Errorf("<%s> is %v/%v, not the Pseudo+AttrsKnown shape this test "+
+				"is about", name, sp.Pseudo, sp.AttrsKnown)
+			continue
+		}
+		checked++
+		doc := `<Gooey><Table><` + name + ` Label="a" Bogus="x"/></Table></Gooey>`
+		_, err := Build([]byte(doc), hostTableCtx())
+		if err == nil {
+			t.Errorf("<%s> accepted an attribute it does not declare, inside the "+
+				"very container the catalog says reads it — accepted, dropped, "+
+				"and visible nowhere, which is the #461 class this branch closed "+
+				"for the builtins", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "Bogus") || !strings.Contains(err.Error(), "Label") {
+			t.Errorf("<%s>'s refusal should name the attribute and the vocabulary "+
+				"it is missing from: %v", name, err)
+		}
+	}
+	if checked != 3 {
+		t.Fatalf("checked %d of the three ways Pseudo can be true; the fixture "+
+			"is what this test derives them from", checked)
 	}
 
-	_, err := Build([]byte(`<Gooey><Table><Row Label="a" Bogus="x"/></Table></Gooey>`), hostTableCtx())
-	if err == nil {
-		t.Fatal("a host's pseudo-element accepted an attribute it does not " +
-			"declare, inside the very container its ParsedBy names — accepted, " +
-			"dropped, and visible nowhere, which is the #461 class this branch " +
-			"closed for the builtins")
-	}
-	if !strings.Contains(err.Error(), "Bogus") || !strings.Contains(err.Error(), "Label") {
-		t.Errorf("the refusal should name the attribute and the vocabulary it "+
-			"is missing from: %v", err)
+	// A NAME ON AN ELEMENT THAT BUILDS ONE IS APPLIED, NOT REFUSED, and
+	// the previous round's version of this test asserted the opposite.
+	// <Row> carries ParsedBy AND a Build; buildComponent calls named()
+	// on what that Build returns, so the attribute addresses something
+	// real. Pseudo says nothing about Build — that is round 7's finding
+	// 1, and this arm is where the suite was pinning the false claim.
+	if _, err := Build([]byte(`<Gooey><Table><Row Label="a" Name="n"/></Table></Gooey>`), ctx); err != nil {
+		t.Errorf("a host element with a real Build was refused Name: %v", err)
+	} else if ctx.Named["n"] == nil {
+		t.Errorf("Name was accepted and dropped: ctx.Named holds %d entries",
+			len(ctx.Named))
 	}
 
-	_, err = Build([]byte(`<Gooey><Table><Row Label="a" Name="n"/></Table></Gooey>`), hostTableCtx())
+	// AND THE ONE WITH NO Build IS A LOAD ERROR RATHER THAN A SEGV, in
+	// the same position. <Bare> is the shape whose declaration really
+	// does build nothing.
+	_, err := Build([]byte(`<Gooey><Table><Bare Label="a"/></Table></Gooey>`), hostTableCtx())
 	if err == nil {
-		t.Fatal("<Row Name=…> was accepted inside <Table>, so a name typed on a " +
-			"host's pseudo-element is dropped and ctx.Named never sees it")
-	}
-	if !strings.Contains(err.Error(), "no component for Name") ||
-		!strings.Contains(err.Error(), "<Table>") {
-		t.Errorf("the universal refusal should say Name goes nowhere and name "+
-			"<Table> as the reader that consumed the element: %v", err)
-	}
-	if advertises(err.Error(), "Name") {
-		t.Errorf("the refusal offers Name in the vocabulary it advertises, "+
-			"which is the wording refuseComponentAttr exists to replace: %v", err)
+		t.Error("a registered element with no Build produced a component")
+	} else if !strings.Contains(err.Error(), "<Bare>") || !strings.Contains(err.Error(), "<Table>") {
+		t.Errorf("the no-Build error should name the element and the reader the "+
+			"catalog says consumes it: %v", err)
 	}
 
 	// THE DEFERRAL MUST SURVIVE. A fix that simply checked every
-	// pseudo-element would satisfy both arms above and undo round 2's
-	// finding: the document's fault here is the PLACEMENT, and Row's own
+	// pseudo-element would satisfy every arm above and undo round 2's
+	// finding: this document's fault is the PLACEMENT, and <Row>'s own
 	// Build is the only thing that can say so.
 	_, err = Build([]byte(`<Gooey><VStack><Row Label="a" Bogus="x"/></VStack></Gooey>`), hostTableCtx())
 	if err == nil {
@@ -1981,14 +2031,9 @@ func TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs(t *testing.T) {
 	}
 }
 
-// hostDeckCtx is a pseudo-element whose declared content builds a real
-// component that takes SOME of the universal set.
-//
-// <Timer> is the destination and it is not an arbitrary pick: it takes
-// Name and carries no Layout, so the same content accepts one universal
-// and refuses another. That is the axis an element-level predicate
-// cannot represent, and no builtin pseudo-element has it — <Menu>'s
-// only content is <MenuItem>, which refuses everything.
+// hostDeckCtx is a host pseudo-element that BUILDS a component and
+// hosts attachments, which is the shape ElementSpec.Pseudo cannot
+// describe.
 func hostDeckCtx() *Context {
 	return &Context{Elements: map[string]*ElementDef{
 		"Deck": {
@@ -2009,7 +2054,7 @@ func hostDeckCtx() *Context {
 			Known:    true,
 			ParsedBy: "Deck",
 			Attrs:    []AttrSpec{{Name: "Label"}},
-			Children: ChildSpec{Mode: ModeRestricted, Only: []string{"Timer"}},
+			Children: ChildSpec{Mode: ModeMany},
 			Build: func(e Element, ctx *Context) (gooey.Component, error) {
 				kids, attach, err := BuildChildren(e, ctx)
 				if err != nil {
@@ -2022,125 +2067,154 @@ func hostDeckCtx() *Context {
 	}}
 }
 
-// TestTheContentRemedyIsDecidedPerAttribute is #486 round 6's second
-// finding, and it is the third time the same shape has been found in
-// this one sentence: a remedy that walks the author into a second load
-// error.
+// TestAHostPseudoElementThatBuildsKeepsWhatItBuildsWith is round 7's
+// finding 1, and the defect is a refusal resting on a claim the
+// derivation does not make.
 //
-// pseudoRemedy asked whether the content inside was a pseudo-element,
-// which reads as "does the content build a component a universal can
-// land on". It does not follow. <Timer>, <KeyBinding>, <Tooltip>,
-// <Validate>, <TypeAhead>, <ValidationMarker> and <Companion> all build
-// one and all take Name, and not one of them carries a Layout, so the
-// layout rows are refused there exactly as they were on the
-// pseudo-element. Measured before the fix:
+// Pseudo is `Proto == nil && (Opaque != "" || ParsedBy != "")`
+// (elementdef.go) and says nothing about Build. refuseComponentAttr's
+// doc rests on the opposite — "it means 'this builds no component of its
+// own'" — and refusePropElement refuses EVERY <X.Foo> on that basis. A
+// host def carrying ParsedBy and a real Build is both at once, and the
+// consequence was a page that stopped loading:
 //
-//	<Deck><Panel Margin="2"/></Deck>
-//	  -> …no component for Margin to apply to; put it on the content
-//	     inside instead
-//	<VStack><Timer Margin="2" Interval="1s"/></VStack>
-//	  -> no such attribute; this element takes Enabled, Interval, Name,
-//	     Tick
+//	<Deck><Panel Label="a"><Panel.Behaviors><Tooltip Text="x"/>
+//	  </Panel.Behaviors><Text>y</Text></Panel></Deck>
+//	  origin/main: loads, Panel.Build runs, one attachment applied
+//	  before:      markup: <Panel.Behaviors>: … builds no component for
+//	               Behaviors to apply to
 //
-// BOTH DIRECTIONS ON ONE ELEMENT, which is what makes this about the
-// attribute rather than about <Panel>: Name IS accepted inside, so
-// withholding the remedy for it would be the opposite defect. And the
-// prescribing arm RUNS THE ADVICE — a remedy is a behavioural claim,
-// and the only way to know it survives being followed is to follow it.
-func TestTheContentRemedyIsDecidedPerAttribute(t *testing.T) {
-	panel, ok := hostDeckCtx().spec("Panel")
-	timer, okT := hostDeckCtx().spec("Timer")
-	if !ok || !okT || !panel.Pseudo || timer.Pseudo || TakesLayout(timer) {
-		t.Fatalf("the fixture is not the discriminating shape — the content "+
-			"must build a component (so the old predicate says yes) and carry "+
-			"no Layout (so the layout rows are refused there), and <Timer> is "+
-			"%v/%v", timer.Pseudo, TakesLayout(timer))
+// with a reason that is false: Panel.Build runs and attachAll applied
+// that behaviour.
+//
+// THE ATTACHMENT IS ASSERTED, NOT THE LOAD. "It loads again" passes for
+// a build that accepted the property element and dropped it, which is
+// the class this whole branch is about.
+func TestAHostPseudoElementThatBuildsKeepsWhatItBuildsWith(t *testing.T) {
+	ctx := hostDeckCtx()
+	sp, ok := ctx.spec("Panel")
+	if !ok || !sp.Pseudo {
+		t.Fatalf("<Panel> is not Pseudo (%v/%v), so the refusal under test would "+
+			"not fire on it either way", ok, sp.Pseudo)
 	}
-
-	// THE TEST HELPER IS PINNED HERE TOO. acceptsAUniversal is the
-	// independent statement of this rule that
-	// TestARefusalPrescribesOnlyAPlaceThatExists checks the production
-	// answer against, and it had the identical element-level predicate —
-	// so that test agreed with the bug by construction and no builtin
-	// pseudo-element can tell the two apart. This is the shape that can.
-	if acceptsAUniversal(t, panel, "Margin") {
-		t.Error("the test's own acceptance rule says <Panel>'s content takes " +
-			"Margin; <Timer> carries no Layout, so it does not")
+	root, err := Build([]byte(
+		`<Gooey><Deck><Panel Label="a"><Panel.Behaviors><Tooltip Text="x"/>`+
+			`</Panel.Behaviors><Text Name="y">y</Text></Panel></Deck></Gooey>`), ctx)
+	if err != nil {
+		t.Fatalf("a host element with a real Build was refused a property "+
+			"element every element accepts: %v", err)
 	}
-	if !acceptsAUniversal(t, panel, "Name") {
-		t.Error("the test's own acceptance rule says <Panel>'s content refuses " +
-			"Name; <Timer> builds a component, so it takes one")
+	if root == nil {
+		t.Fatal("Build returned no root")
 	}
-
-	_, err := Build([]byte(`<Gooey><Deck><Panel Margin="2"/></Deck></Gooey>`), hostDeckCtx())
-	if err == nil {
-		t.Fatal("<Panel Margin=…> was not refused at all")
+	// The behaviour reached the component Panel.Build returned.
+	var found bool
+	var walk func(c gooey.Component)
+	walk = func(c gooey.Component) {
+		if a, ok := c.(gooey.Attacher); ok {
+			for _, x := range a.Attachments() {
+				if _, isTip := x.(*components.Tooltip); isTip {
+					found = true
+				}
+			}
+		}
+		if cont, ok := c.(gooey.Container); ok {
+			for _, k := range cont.ChildComponents() {
+				walk(k)
+			}
+		}
 	}
-	if strings.Contains(err.Error(), contentRemedy) {
-		t.Errorf("nothing <Panel> may contain takes Margin, and its refusal "+
-			"tells the author to put it on the content inside — a destination "+
-			"that refuses it for the same reason:\n\t%v", err)
-	}
-
-	_, err = Build([]byte(`<Gooey><Deck><Panel Name="p"/></Deck></Gooey>`), hostDeckCtx())
-	if err == nil {
-		t.Fatal("<Panel Name=…> was not refused at all")
-	}
-	if !strings.Contains(err.Error(), contentRemedy) {
-		t.Errorf("<Panel>'s content takes Name, and its refusal prescribes "+
-			"nowhere to put it — withholding the remedy per ELEMENT is the "+
-			"same defect as prescribing it per element, one direction "+
-			"over:\n\t%v", err)
-	}
-
-	// THE ADVICE, FOLLOWED. The sentence above is a claim about what
-	// loads, so the test loads it.
-	if _, err := Build([]byte(
-		`<Gooey><Deck><Panel><Timer Name="p" Interval="1s"/></Panel></Deck></Gooey>`,
-	), hostDeckCtx()); err != nil {
-		t.Errorf("the prescribed document does not load, so the remedy walks "+
-			"the author from one refusal to another: %v", err)
+	walk(root)
+	if !found {
+		t.Error("<Panel.Behaviors> loaded and its <Tooltip> attached to nothing — " +
+			"accepted and dropped, which is what asserting the load alone would " +
+			"have passed over")
 	}
 }
 
-// TestARegisteredElementWithNoBuildIsALoadError is the third thing
-// round 6's finding 1 turned up, and it was a SEGV rather than a
-// finding.
+// TestTheContentRemedyIsDecidedPerAttribute is the fourth appearance of
+// one class — a remedy that walks the author into a second load error —
+// and the arm it had never reached is the one that matters most.
 //
-// buildComponent called d.Build on a registered def without asking
-// whether there was one, and a pseudo-element's natural host
-// declaration has none: ParsedBy means "declared here, read there", so
-// there is nothing for the field to hold. Every builtin pseudo-element
-// carries a Build only because it is a placement refusal.
+// pseudoRemedy asked the CATALOG on its ModeRestricted arm and answered
+// unconditionally everywhere else. ModeUnknown is <Tab>'s, and <Tab> is
+// the one pseudo-element whose content is actually present in the
+// document, so the element with a real destination to name was the one
+// whose destination was never consulted. Reachable on the builtins
+// alone, which is why this test needs no host registration:
 //
-// It is the stand-down's own precondition. checkAttrs defers to "the
-// element's own Build, which is about to say something more useful" —
-// and for this shape the something more useful was a nil dereference
-// inside a load.
-func TestARegisteredElementWithNoBuildIsALoadError(t *testing.T) {
-	ctx := func() *Context {
-		return &Context{Elements: map[string]*ElementDef{
-			"Row": {
-				Name:     "Row",
-				Known:    true,
-				ParsedBy: "Table",
-				Attrs:    []AttrSpec{{Name: "Label"}},
-				Children: ChildSpec{Mode: ModeNone},
-			},
-		}}
+//	<Tabs><Tab Header="a" Margin="2"><Timer Interval="1s"/></Tab></Tabs>
+//	  -> … no component for Margin to apply to; put it on the content
+//	     inside instead
+//	<VStack><Timer Interval="1s" Margin="2"/></VStack>
+//	  -> no such attribute; this element takes Enabled, Interval, Name,
+//	     Tick
+//
+// <Timer> is the destination and it is not an arbitrary pick: it builds
+// a component and carries no Layout, so one content element accepts
+// Name and refuses Margin. That is the axis an answer about the ELEMENT
+// cannot represent.
+//
+// BOTH DIRECTIONS, because withholding always is the opposite defect,
+// and the prescribing arm RUNS THE ADVICE — a remedy is a behavioural
+// claim, and the only way to know it survives being followed is to
+// follow it.
+func TestTheContentRemedyIsDecidedPerAttribute(t *testing.T) {
+	ctx := &Context{}
+	timer, okT := ctx.spec("Timer")
+	tab, okTab := ctx.spec("Tab")
+	if !okT || !okTab || timer.Pseudo || TakesLayout(timer) || tab.Children.Mode == ModeRestricted {
+		t.Fatalf("the fixture is not the discriminating shape — the content must "+
+			"build a component (so an answer about the element says yes) and carry "+
+			"no Layout (so the layout rows are refused there), and <Timer> is "+
+			"%v/%v inside a %v <Tab>",
+			timer.Pseudo, TakesLayout(timer), tab.Children.Mode)
 	}
-	if d := ctx().Elements["Row"]; d.Build != nil {
-		t.Fatal("the fixture declares a Build, so it is not the shape this " +
-			"test is about")
-	}
-	_, err := Build([]byte(`<Gooey><VStack><Row Label="a"/></VStack></Gooey>`), ctx())
+
+	withheld := `<Gooey><Tabs><Tab Header="a" Margin="2"><Timer Interval="1s"/></Tab></Tabs></Gooey>`
+	_, err := Build([]byte(withheld), &Context{})
 	if err == nil {
-		t.Fatal("a registered element with no Build produced a component")
+		t.Fatal("<Tab Margin=…> was not refused at all")
 	}
-	for _, want := range []string{"<Row>", "<Table>"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the error should name the element and the reader the "+
-				"catalog says consumes it, and does not name %s: %v", want, err)
-		}
+	if strings.Contains(err.Error(), contentRemedy) {
+		t.Errorf("nothing inside this <Tab> takes Margin, and its refusal tells "+
+			"the author to put it on the content inside — a destination that "+
+			"refuses it for the same reason:\n\t%v", err)
+	}
+
+	prescribed := `<Gooey><Tabs><Tab Header="a" Margin="2"><Text Name="t">x</Text></Tab></Tabs></Gooey>`
+	_, err = Build([]byte(prescribed), &Context{})
+	if err == nil {
+		t.Fatal("<Tab Margin=…> was not refused at all with a <Text> inside")
+	}
+	if !strings.Contains(err.Error(), contentRemedy) {
+		t.Errorf("this <Tab>'s content takes Margin, and its refusal prescribes "+
+			"nowhere to put it — withholding the remedy is the same defect as "+
+			"prescribing it, one direction over:\n\t%v", err)
+	}
+
+	// THE ADVICE, FOLLOWED.
+	if _, err := Build([]byte(
+		`<Gooey><Tabs><Tab Header="a"><Text Name="t" Margin="2">x</Text></Tab></Tabs></Gooey>`,
+	), &Context{}); err != nil {
+		t.Errorf("the prescribed document does not load, so the remedy walks the "+
+			"author from one refusal to another: %v", err)
+	}
+}
+
+// withContent is a pseudo-element as a document would spell it, with
+// one ordinary component inside.
+//
+// pseudoRemedy asks e.Children on every arm the catalog cannot answer
+// for — ModeUnknown is <Tab>'s, and what is inside a <Tab> is a fact of
+// the document rather than of the vocabulary — so a hand-built Element
+// with no children is a <Tab> with nothing inside, which correctly gets
+// no content remedy at all. Every direct call below is about the
+// ordinary case, so it passes the ordinary shape.
+func withContent(sp ElementSpec) Element {
+	return Element{
+		Name:     sp.Name,
+		parent:   namingParent(sp.Name, &Context{}),
+		Children: []Element{{Name: "Text"}},
 	}
 }

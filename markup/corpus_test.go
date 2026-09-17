@@ -65,7 +65,7 @@ func TestEveryGooeyFileInTheRepoHasValidAttributes(t *testing.T) {
 		var walk func(e Element)
 		walk = func(e Element) {
 			checked++
-			if err := checkAttrs(e, ctx); err != nil {
+			if err := checkAttrs(e, ctx, false); err != nil {
 				t.Errorf("%s: %v", rel, err)
 			}
 			for _, c := range e.Children {

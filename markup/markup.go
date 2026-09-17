@@ -1097,7 +1097,7 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 	}
 	defer pop()
 
-	if err := checkAttrs(e, ctx); err != nil {
+	if err := checkAttrs(e, ctx, false); err != nil {
 		return nil, err
 	}
 	w, err := buildComponent(e, ctx)
@@ -1607,7 +1607,7 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		// ordinary way"; that sentence was false for exactly these two
 		// elements until now, which left them the only elements in the
 		// vocabulary with NEITHER direction guarded.
-		if err := checkAttrs(c, ctx); err != nil {
+		if err := checkAttrs(c, ctx, true); err != nil {
 			return nil, err
 		}
 		title := strings.TrimSpace(c.Attrs["Title"])
@@ -1621,7 +1621,7 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			}
 			// Before the Separator short-circuit, so a typo on a
 			// separator is reported rather than skipped past.
-			if err := checkAttrs(ic, ctx); err != nil {
+			if err := checkAttrs(ic, ctx, true); err != nil {
 				return nil, err
 			}
 			// litBool, NOT == "true". The string compare is the idiom #470
