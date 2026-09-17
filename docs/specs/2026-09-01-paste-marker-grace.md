@@ -250,7 +250,7 @@ happening again. Mutation-tested, each mutation turning its own tests red:
 | the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
 | `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestPartialProgressGivesTheRemainderItsOwnGrace` (BEHAVIOURAL and deterministic - it fails on attempt 1 in ~0.04s at its PREMISE, three runs of three, naming the constant: "An Alt-modified Esc means the first pass was already the escalated one"); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
 | the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
-| `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` |
+| `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` (three runs of three, but see the residue below - a deschedule spanning the sleep makes the attempt vacuous and the mutation green) |
 | the first timeout's pass is neutered (`d := drainIdle` -> `drainLive`) | `TestALoneEscResolvesOnTheFirstTimeout` |
 | the partial-progress reset in the timer branch is deleted | `TestPartialProgressGivesTheRemainderItsOwnGrace` (three runs of three; the remainder resolves to Esc on the very next timeout) |
 | `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages. `TestPartialProgressGivesTheRemainderItsOwnGrace` reddens too, but by EXHAUSTING its 40 attempts in ~2.5s rather than by asserting - so it is listed with that caveat: its terminal message names the constant as a third cause alongside a loaded runner and a deleted reset, because a test that dies through its inconclusive path has not measured what its name says. `TestASplitPasteMarkerStillPastes` and `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` stay green |
@@ -382,6 +382,23 @@ emits no earlier than `arm + 2*EscTimeout >= wrote + 80ms`, outside this budget
 however the arm drifted. So the residue here is a red suite on a loaded
 machine, never a vacuous green. The helper's comment claimed the bound until
 round sixteen; corrected in review of #445.
+
+`TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` is the fourth,
+and it is the one that claimed it had no residue at all — "the assertions
+below hold however the machine is scheduled". They do; that is not the
+question. Its precondition is not elapsed time but that the DECODER read
+`ESC [ 200 ~ hello` and then saw `PasteMarkerGrace` timeouts with nothing
+new on the wire, and the test has no observable for it: an open paste
+emits nothing, which is exactly the property that makes it the buffer
+able to drive `stalls` to the ceiling, and the handshake byte is read
+back before the paste is written. A deschedule of the decoder spanning
+the sleep lands both writes in one read; the paste completes at once,
+`stalls` never leaves 0, and the test is green with the chunks branch's
+`stalls = 0` deleted — the mutation it is the sole pin for. Like
+`loneEscAttempt`'s the residue runs one way only, but the other way
+round: never a red suite, and a vacuous green instead. Stating it is the
+whole remedy available — there is nothing to bound, because there is
+nothing to measure. Raised in review of #445, round seventeen.
 
 **And the sentence that followed this is retired, by a test the same branch
 wrote.** It said there is no cheap observable for "the first idle timeout

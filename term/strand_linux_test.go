@@ -712,9 +712,27 @@ func splitMarkerAttempt(t *testing.T) bool {
 // ordinary paste rather than by typed bytes. Raised in review of #445.
 //
 // No window to hit and no retry discipline: the open paste is resolved
-// by its TAIL, not by a deadline, so the assertions below hold however
-// the machine is scheduled. Sleeping longer than the grace only makes
-// the precondition (stalls at its ceiling) more firmly true.
+// by its TAIL, not by a deadline, so no assertion below can fail for a
+// scheduling reason, and sleeping past the grace only makes the intended
+// precondition more firmly true.
+//
+// THE RESIDUE IS A VACUOUS PASS, and this is the fourth helper in this
+// file rather than the exception to the other three. The precondition
+// is not "120ms elapsed": it is that the decoder READ
+// `ESC [ 200 ~ hello` and then saw PasteMarkerGrace timeouts with
+// nothing new on the wire, and nothing here observes that. There is no
+// observable at stalls = 2 — an open paste emits nothing, which is the
+// very property that makes it the buffer that drives the counter — and
+// the handshake byte is read back BEFORE the paste write, so it bounds
+// the decoder's progress only up to that point. A deschedule of the
+// decoder spanning the sleep means both writes come back in one read:
+// the paste completes at once, stalls never leaves 0, and every
+// assertion below passes with the chunks branch's `stalls = 0` deleted
+// — the mutation this test is the sole pin for. It cannot go the other
+// way, so what the residue costs is a silent hole on a loaded machine
+// rather than a flake. The spec states it beside splitMarkerAttempt's,
+// partialProgressAttempt's and loneEscAttempt's. Raised in review of
+// #445.
 func TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable(t *testing.T) {
 	master, slave := openPTY(t)
 	s := FromFile(slave)
@@ -865,7 +883,7 @@ func loneEscAttempt(t *testing.T) bool {
 	// deschedule in between puts the arm arbitrarily far after `held`
 	// and after `wrote` with the bail seeing none of it. `arm >= wrote`
 	// is derivable and is the LOWER bound; the budget's soundness needs
-	// the upper one. splitMarkerAttempt:566 and partialProgressAttempt
+	// the upper one. splitMarkerAttempt and partialProgressAttempt
 	// both say exactly this about their own clocks; this was the third
 	// instance and the only one still asserting the magnitude.
 	//

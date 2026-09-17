@@ -59,9 +59,18 @@ func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 // exhaustive check over every 1- and 2-byte input true by construction
 // rather than by review.
 //
-// What waiting costs, stated as plainly as the wedge above: a genuinely
-// truncated CSI — an F9 whose "~" never arrives — is held instead of
-// being delivered as Esc.
+// What waiting costs, stated as plainly as the wedge on decodePaste
+// below: a genuinely truncated CSI — an F9 whose "~" never arrives — is
+// held instead of being delivered as Esc.
+//
+// THAT POINTER SAID "above" UNTIL ROUND SEVENTEEN, and this branch is
+// what moved the thing it points at. The wedge paragraph was the block
+// immediately above here on origin/main; the godoc misattribution fixed
+// at the foot of decodePaste's doc moved it below, and the direction
+// stayed. The same comment already says "on decodePaste below" thirteen
+// lines down, so one doc gave both directions for one paragraph. Naming
+// the site is the form this branch settled on for "the sleep above" and
+// "seventy lines below". Raised in review of #445.
 //
 // THAT COST WAS UNDERSTATED HERE, and the sentence that follows replaces
 // one claiming the hold "is not stranded, because the next byte from the

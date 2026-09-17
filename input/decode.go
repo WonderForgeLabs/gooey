@@ -171,8 +171,16 @@ const (
 	deadlineFinal // nothing more can arrive: a second timeout, or a closed tty
 )
 
-// idle reports whether the escape timeout has fired at least once, which
-// is the only question every arm but the paste one asks.
+// idle reports whether the live deadline has passed — whether more bytes
+// may still be arriving — which is the only question every arm but the
+// paste one asks. True for deadlineFinal too, including on the tty-close
+// path, where nothing more can arrive and no timeout has fired.
+//
+// NOT "whether the escape timeout has fired at least once", which is the
+// correction deadlineFinal's own comment makes eight lines up, DecodeFinal's
+// doc makes again, and two failure messages in decodefinal_test.go make a
+// third time. The accessor every arm actually calls was the one place the
+// branch did not apply it. Raised in review of #445.
 func (d deadline) idle() bool { return d != deadlineLive }
 
 func decode(b []byte, d deadline) (Event, int, bool) {
