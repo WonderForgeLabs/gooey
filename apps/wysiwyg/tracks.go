@@ -378,6 +378,12 @@ func (ed *editor) removeTrack() {
 	}
 	at := ed.cursor.index
 	specs = append(specs[:at], specs[at+1:]...)
+	// The removed spec's string stays in the vacated slot otherwise, and
+	// this slice is handed to writeTracks rather than dropped. One line
+	// rather than an exemption comment, because "elements are safe to
+	// keep" is not true of a string. Raised in review of #456, where the
+	// reset matcher learned to read the splice.
+	clear(specs[len(specs):cap(specs)])
 	ed.writeTracks(n, ed.cursor.axis, specs)
 	if at >= len(specs) {
 		at = len(specs) - 1

@@ -175,6 +175,16 @@ func (l *AdornmentLayer) ChildComponents() []gooey.Component {
 }
 
 // Adornments is what the layer is currently showing, in z-order.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT LAYOUT PASS, and this is the same
+// claim FocusManager.Order carries for the same reason. Arrange rebuilds
+// l.adorns in place and then clears what the rebuild did not reach, and
+// Remove clears the slot its splice vacates. A stashed return keeps its
+// OLD length, so everything past the new one now reads nil — a nil deref
+// on any method call, where before this change it read a stale-but-live
+// adornment. Copy what you need, or take a fresh Adornments() after the
+// change. The live slots are never nil: both clears are placed after the
+// writes that fill them. Raised in review of #456.
 func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 
 // Add puts an adornment up. UI goroutine only, like everything that
@@ -192,6 +202,12 @@ func (l *AdornmentLayer) Remove(a Adornment) {
 	for i, x := range l.adorns {
 		if x == a {
 			l.adorns = append(l.adorns[:i], l.adorns[i+1:]...)
+			// Not relying on Arrange's tail clear to catch up. It does,
+			// today, because Arrange runs unconditionally — but that is
+			// an accident of scheduling standing in for an invariant,
+			// which is what this PR argues against everywhere else.
+			// Raised in review of #456.
+			clear(l.adorns[len(l.adorns):cap(l.adorns)])
 			if l.structure != nil {
 				l.structure()
 			}

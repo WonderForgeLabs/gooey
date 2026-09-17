@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -952,11 +953,145 @@ func notAClear() { copy(x[:cap(x)], y) }
 	}
 }
 
+// The same fixture arm for the OTHER half of the pair. The reset
+// matcher is a negative assertion over a tree that now satisfies it, so
+// scanning the repo proves nothing about what it can SEE — and the
+// spelling it could not see was live in three files. Raised in review
+// of #456.
+func TestTheResetMatcherSeesTheDeleteSplice(t *testing.T) {
+	const src = `package p
+
+func truncate()  { x = x[:0] }
+func splice()    { x = append(x[:i], x[i+1:]...) }
+func field()     { c.kids = append(c.kids[:i], c.kids[i+1:]...) }
+func spliceHead(){ x = append(x[:i], x[j:]...) }
+func otherBase() { x = append(x[:i], y[i+1:]...) }
+func rebuild()   { x = append(x[:0], y...) }
+func compact()   { x = x[:n] }
+func grow()      { x = append(x, v) }
+func lowBound()  { x = x[1:0] }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	text := func(e ast.Expr) string {
+		return src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset]
+	}
+
+	for _, tc := range []struct {
+		fn   string
+		want string
+		why  string
+	}{
+		{"truncate", "x", "the plain truncation, which this guard has always read"},
+		{"splice", "x", "the delete-splice: len drops, the old last element stays in " +
+			"the vacated slot, and the high-water mark is what the array holds"},
+		{"field", "c.kids", "the base is the whole selector, so two different " +
+			"structs' kids do not collide"},
+		{"spliceHead", "x", "the indices are not the point — any append of a slice " +
+			"of x onto a prefix of x shortens x and leaves its tail"},
+		{"otherBase", "", "appending a slice of y onto a prefix of x is not a reset " +
+			"of either; it is a build"},
+		{"rebuild", "", "append(x[:0], y...) REPLACES the contents rather than " +
+			"shortening them, and needs its own reasoning rather than this one"},
+		{"compact", "", "a compaction to a non-literal length: out of scope, and " +
+			"said so in resetBase's doc rather than left in the AST"},
+		{"grow", "", "growing is not resetting"},
+		{"lowBound", "", "a Low bound means it is not the reset spelling"},
+	} {
+		var decl *ast.FuncDecl
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == tc.fn {
+				decl = fd
+			}
+		}
+		if decl == nil {
+			t.Fatalf("the fixture has no func %s", tc.fn)
+		}
+		var got string
+		ast.Inspect(decl.Body, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok || len(as.Rhs) != 1 {
+				return true
+			}
+			got = resetBase(as.Rhs[0], text)
+			return false
+		})
+		if got != tc.want {
+			t.Errorf("%s: resetBase = %q, want %q — %s", tc.fn, got, tc.want, tc.why)
+		}
+	}
+}
+
 // clearsToCapIn is every slice base that fn clears ALL THE WAY TO CAP,
 // keyed by source text. It is the exemption the reset guard below reads:
 // a `x = x[:0]` is accepted when the same function clears x's whole
 // backing array.
 //
+// resetBase names the field a statement's right side resets, or "" when
+// the statement is not a reset this guard recognises.
+//
+// TWO SPELLINGS, and the second is why this function exists. `x = x[:0]`
+// is the obvious one. `x = append(x[:i], x[i+1:]...)` is the canonical
+// Go removal idiom, it retains IDENTICALLY — len drops, the old last
+// element stays in the vacated slot, and the high-water mark is what
+// the backing array holds — and it was invisible here because its right
+// side is a call rather than a slice expression.
+//
+// NOT HYPOTHETICAL, and not a fixture: ToastHost.Dismiss
+// (components/toast.go) and AdornmentLayer.Remove (components/adorn.go)
+// both used it, both on a field of components, and this guard reported
+// a clean tree over them. adorn.go is the sharper of the two — the same
+// file gained a tail clear in Arrange one screen below, so the splice
+// was safe only because Arrange happens to run every frame. Raised in
+// review of #456.
+//
+// The append form is matched structurally rather than by text: two
+// slice expressions over the same base, the second spread with `...`.
+// The indices are not checked, because `append(x[:i], x[j:]...)` for
+// any i and j shortens x and leaves the tail where it was — which is
+// the property this guard is about, not deletion specifically.
+//
+// STILL NARROWER THAN WHAT RETAINS: a compaction `x = x[:n]` whose High
+// is not a literal 0 is invisible to both arms, and so is
+// `x = append(x[:0], …)` — a one-argument append with no spread, which
+// is a REBUILD rather than a reset and would need its own reasoning.
+// Neither appears on a reused field in the tree today. Scope, not a
+// live miss, and written here rather than left in the AST.
+func resetBase(rhs ast.Expr, text func(ast.Expr) string) string {
+	switch e := rhs.(type) {
+	case *ast.SliceExpr:
+		if e.Low != nil || e.Max != nil || e.High == nil {
+			return ""
+		}
+		if hi, ok := e.High.(*ast.BasicLit); !ok || hi.Value != "0" {
+			return ""
+		}
+		return text(e.X)
+	case *ast.CallExpr:
+		id, ok := e.Fun.(*ast.Ident)
+		if !ok || id.Name != "append" || len(e.Args) != 2 || e.Ellipsis == token.NoPos {
+			return ""
+		}
+		head, ok := e.Args[0].(*ast.SliceExpr)
+		if !ok || head.Low != nil || head.Max != nil {
+			return ""
+		}
+		tail, ok := e.Args[1].(*ast.SliceExpr)
+		if !ok || tail.Max != nil {
+			return ""
+		}
+		base := text(head.X)
+		if base == "" || base != text(tail.X) {
+			return ""
+		}
+		return base
+	}
+	return ""
+}
+
 // THE SPELLING HAS TO REACH CAP, and this used to accept three that do
 // not. Stripping any slice expression off the argument meant `clear(x)`,
 // `clear(x[:len(x)])` and `clear(x[:0])` all exempted a subsequent
@@ -973,18 +1108,15 @@ func notAClear() { copy(x[:cap(x)], y) }
 // text renders an expression back to source, which is how two different
 // `c.kids` compare equal and a `c.kids` and a `d.kids` do not.
 //
-// WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and the guard
-// below says so only here. It matches an assignment whose right side is
-// a slice expression with the literal 0 as its High — `x = x[:0]`. Two
-// spellings retain identically and are invisible to it: a compaction
-// `x = x[:n]`, whose High is not a literal, and `x = append(x[:0], …)`,
-// whose right side is a call. Measured across the tree in review of
-// #456: neither appears on a REUSED FIELD today (the two `x = x[:n]`
-// sites, apps/introdeck/sysmon.go and cmd/finder/main.go, are locals
-// handed back to the caller), so this is scope rather than a live miss —
-// but a guard CLAUDE.md calls "what enforces it" should not leave the
-// reader to derive its own reach from the AST. Raised in review of #456,
-// round two.
+// WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and that scope
+// now lives on resetBase above, where the matching happens, rather than
+// on this function. The version of this paragraph that stood here named
+// the delete-splice's sibling `x = append(x[:0], …)` and not the splice
+// itself, and called the omission scope rather than a live miss — which
+// was true of the spellings it listed and false of the one it did not:
+// three fields were spliced and retaining while this guard reported a
+// clean tree. Raised in review of #456, round two, and corrected in the
+// round that found them.
 func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 	found := map[string]bool{}
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -1072,15 +1204,10 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 					return true
 				}
 				for i, rhs := range as.Rhs {
-					sl, ok := rhs.(*ast.SliceExpr)
-					if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
+					base := resetBase(rhs, text)
+					if base == "" {
 						continue
 					}
-					hi, ok := sl.High.(*ast.BasicLit)
-					if !ok || hi.Value != "0" {
-						continue
-					}
-					base := text(sl.X)
 					// The element type is looked up by the LAST segment:
 					// c.gonePlacements is the gonePlacements field.
 					name := base
@@ -1097,11 +1224,11 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 						cleared++
 						continue
 					}
-					pos := p.fset.Position(sl.Pos())
+					pos := p.fset.Position(rhs.Pos())
 					if retainsNothingAbove(lines, pos.Line) {
 						continue
 					}
-					t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
+					t.Errorf("%s:%d resets %s, and its elements can hold a "+
 						"reference (%s). That truncates len and leaves the backing array "+
 						"holding everything past it — for a list that shrinks and stays "+
 						"small, until nothing. Clear to cap (clearToCap here, "+
@@ -1279,6 +1406,50 @@ func importDirs(f *ast.File) map[string]string {
 	return out
 }
 
+// A THREE-DECLARATION SEQUENCE, which is the ordering the conflict
+// marker used to lose.
+//
+// The repo scan cannot pin this: every `kids []` in components/ is
+// []gooey.Component today, so the classifier never reaches its own
+// conflict branch and a test over the tree would pass with the bug
+// present. The fixture supplies the sequence directly — value, pointer,
+// value again, in one directory — and requires the name to stay
+// unresolved after the third. With the marker forgotten it resolves
+// back to `int`, holdsAReference answers false, and every reset on
+// `kids` in that directory is waved through. Raised in review of #456.
+func TestAnAmbiguousFieldStaysAmbiguous(t *testing.T) {
+	srcs := []string{
+		"package p\n\ntype a struct{ kids []int }\n",
+		"package p\n\ntype b struct{ kids []*int }\n",
+		"package p\n\ntype c struct{ kids []int }\n",
+	}
+	var files []goFile
+	for i, src := range srcs {
+		fset := token.NewFileSet()
+		path := filepath.Join("dir", "f"+strconv.Itoa(i)+".go")
+		f, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("the fixture does not parse: %v", err)
+		}
+		files = append(files, goFile{path: path, src: []byte(src), fset: fset, file: f})
+	}
+
+	// THE PREMISE FIRST: two declarations must already disagree, or the
+	// third proves nothing.
+	if got := sliceFieldsByDir(files[:2])["dir"]["kids"]; got != nil {
+		t.Fatalf("two conflicting declarations resolved kids to %v, want "+
+			"unresolved — the fixture is not exercising the conflict branch", got)
+	}
+	if got := sliceFieldsByDir(files)["dir"]["kids"]; got != nil {
+		t.Errorf("after a third declaration matching the FIRST shape, kids "+
+			"resolved to %v again. The conflict was recorded in out[dir] and "+
+			"not in the shape map, so the scan forgot a decision it had "+
+			"already made — and a value-typed resurrection makes "+
+			"holdsAReference answer false for every reset on this name in "+
+			"the directory", got)
+	}
+}
+
 // sliceFieldsByDir maps a directory to the slice ELEMENT type of every
 // name declared in it — struct fields and package-level vars alike.
 //
@@ -1290,6 +1461,22 @@ func importDirs(f *ast.File) map[string]string {
 func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 	out := map[string]map[string]ast.Expr{}
 	shape := map[string]string{}
+	// A CONFLICT IS PERMANENT, and it was not. The conflict branch below
+	// used to return without touching `shape`, so the key kept the FIRST
+	// declaration's shape — and a third declaration of the same name
+	// matching that first shape took the normal path and wrote a
+	// concrete element type back over the nil, resurrecting a resolution
+	// for a name this scan had already decided was ambiguous. If the
+	// surviving resolution is a value type, holdsAReference answers
+	// false and every reset on that name in the directory is waved
+	// through, including the one whose elements are gooey.Component.
+	//
+	// That is the one place this classifier failed OPEN — everywhere
+	// else "unresolvable" means the strict reading — and it did it by
+	// forgetting a decision it had made, with the outcome depending on
+	// file-walk order. Not reachable today; the shape is the defect.
+	// Raised in review of #456.
+	conflicted := map[string]bool{}
 	for _, p := range files {
 		dir := filepath.Dir(p.path)
 		if out[dir] == nil {
@@ -1302,7 +1489,12 @@ func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 			}
 			s := string(p.src[p.fset.Position(arr.Elt.Pos()).Offset:p.fset.Position(arr.Elt.End()).Offset])
 			key := dir + " " + name
+			if conflicted[key] {
+				out[dir][name] = nil
+				return
+			}
 			if was, seen := shape[key]; seen && was != s {
+				conflicted[key] = true
 				out[dir][name] = nil
 				return
 			}
@@ -1311,9 +1503,30 @@ func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 		}
 		ast.Inspect(p.file, func(n ast.Node) bool {
 			switch d := n.(type) {
-			case *ast.Field:
-				for _, nm := range d.Names {
-					record(nm.Name, d.Type)
+			case *ast.StructType:
+				// STRUCT FIELDS, not every *ast.Field. An ast.Field is
+				// also a function PARAMETER, a result and an interface
+				// method, and collecting those put `func offsets(sizes
+				// []int, …)` in components/grid.go into the same bucket
+				// as ButtonBar's `sizes []gooey.Size`. That is not an
+				// ambiguity about a field; it is two unrelated names.
+				//
+				// It was invisible while the conflict marker could be
+				// undone: the grid.go parameter conflicted, the next
+				// file's `[]gooey.Size` matched the retained shape and
+				// resurrected it, and four resets were classified safe
+				// through a resolution the scan had already rejected.
+				// Making the conflict permanent is what surfaced it, and
+				// the two fixes belong together — the marker without
+				// this one reports four sites that are genuinely fine.
+				// Raised in review of #456.
+				if d.Fields == nil {
+					return true
+				}
+				for _, f := range d.Fields.List {
+					for _, nm := range f.Names {
+						record(nm.Name, f.Type)
+					}
 				}
 			case *ast.ValueSpec:
 				if d.Type == nil {

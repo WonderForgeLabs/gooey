@@ -496,7 +496,13 @@ TRUNCATED.** `x = x[:0]` moves `len` and leaves the backing array holding
 every element past it, so a list that shrinks — a container that loses a
 child, a computed whose dependency set narrows, a filter that drops an
 adornment — keeps the dropped components, property nodes or closures
-alive for as long as the owner is. Nothing reports it: the tree renders
+alive for as long as the owner is. **The removal idiom
+`x = append(x[:i], x[i+1:]...)` is the same rule**, and it is the one
+that hides: it reads as "remove", not as "truncate", and it leaves the
+old last element in the vacated slot. Three live sites spelled it that
+way — `ToastHost.Dismiss`, `AdornmentLayer.Remove`, and wysiwyg's
+`unlink` — with the guard reporting a clean tree over all three, until
+review of #456 taught the matcher to read it. Nothing reports it: the tree renders
 correctly, the tests pass, and the only symptom is a heap that does not
 come back down. Write `clearToCap(x)` in the root package, or
 `clear(x[len(x):cap(x)])` **after** the refill elsewhere (the after-the-
@@ -514,7 +520,11 @@ PUBLISHES — `ChildComponents()`'s return, or `FocusManager.Order()`'s —
 so those are the sites where the after-form is not merely cheaper.
 
 `TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
-it, and where that test LIVES is the half worth knowing: it walks every
+it — over both spellings above, and not over a compaction
+`x = x[:n]`, whose length is not a literal and which no reused field in
+the tree uses today (`resetBase` carries that scope, and a fixture arm
+pins what the matcher can see). Where that test LIVES is the other half
+worth knowing: it walks every
 non-test Go file in the whole tree, **nested modules included**, from the
 ROOT module's suite. So a reset added in `packs/temporal-workflow` reddens
 `go test ./...` at the repo root while that module's own `go test ./...`

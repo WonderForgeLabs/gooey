@@ -36,6 +36,13 @@ func unlink(p, n *node) int {
 		return -1
 	}
 	p.Kids = append(p.Kids[:i], p.Kids[i+1:]...)
+	// The splice shortens len and leaves the old last child in the
+	// vacated slot, so a subtree the user deleted stays reachable from
+	// its former parent for the document's lifetime — and in this editor
+	// a *node reaches a whole markup subtree. insertAt re-grows the slice
+	// immediately on a MOVE, which is what made this invisible; a delete
+	// does not. Found by the widened reset matcher in review of #456.
+	clear(p.Kids[len(p.Kids):cap(p.Kids)])
 	return i
 }
 

@@ -144,6 +144,16 @@ type Overlay interface{ OverlaysPage() }
 // belongs. Higher is nearer the viewer; an Overlay that does not
 // implement this is rank 0, which is the floor.
 //
+// A RANK BELOW OverlayRankPopup READS AS THE FLOOR. Returning a negative
+// number does not buy a band under the popups — it is clamped, silently,
+// and the component paints among them. This sentence is here rather than
+// only on the unexported helper that does the clamping because the one
+// reader who can trip it is an app author implementing this interface in
+// their own package, and what they read is `go doc gooey.OverlayRanker`,
+// which shows neither an unexported comment nor a spec. Why negative
+// ranks were not simply defined is in
+// docs/specs/2026-09-05-overlay-ranks.md. Raised in review of #456.
+//
 // WHY A RANK AND NOT DECLARATION ORDER. #437 lifted overlays into one
 // layer and left order within it to the document, documenting that as a
 // limit. It stopped being tenable the moment more than one KIND of
