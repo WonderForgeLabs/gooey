@@ -50,14 +50,33 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 // literal marker in the row. CLAUDE.md names that helper shape as the
 // reason no fixture in six packages could hold a wide glyph and be
 // asserted on, so a second copy reading .Rune reopens exactly that.
-// This package and apps/wysiwyg/components/panel are converted; twelve
-// others are not, and the fixtures they cannot hold are #516.
+// This package and apps/wysiwyg/components/panel are converted; the
+// rest are not, and the fixtures they cannot hold are #516.
 // HOW MANY READERS THERE ARE is deliberately not written: a count in
 // prose is a sample taken once, and this one cannot even be taken
 // cleanly, because whether a whole-plane reader and a helper that slices
 // a row by index count as span readers is an argument a number invites
-// and cannot settle. Derive the current set with a grep for `Cells.At(`
-// under apps/wysiwyg.
+// and cannot settle. The sentence above said "twelve others are not"
+// while saying that — a number #516 exists to change, so every
+// conversion that landed would have made it wrong with nothing red.
+// Raised in review of #502.
+//
+// Derive the current set with
+//
+//	grep -rlE 'Cells(\(\))?\.At\(' --include='*_test.go' apps/wysiwyg
+//
+// NOT `Cells.At(`, which was the pattern here: the unescaped dot allows
+// exactly one character, so it matches `f.Cells.At(` and misses
+// `c.Cells().At(` — which is how the panel package reads its plane,
+// including the copy of THIS helper named two lines up.
+//
+// AND NOT THE BRE `Cells()\?\.At(` either, which was the prescribed
+// repair and is wrong in the other direction: in a basic regexp `\?`
+// applies to the single preceding character, so `()\?` is a literal `(`
+// followed by an OPTIONAL `)`. The parenthesised call becomes mandatory
+// and the four files the old pattern did find drop out — measured, two
+// files against six. The alternation has to be a group, so the pattern
+// has to be extended. Raised in review of #502.
 //
 // W IS A COLUMN COUNT. A caller with a string in hand wants
 // render.StringWidth of it, not len([]rune(…)) — those differ by one
@@ -78,17 +97,24 @@ func rowText(f *gooey.Frame, y, x, w int) string {
 	return sb.String()
 }
 
+// wideLabel is two glyphs and FOUR columns — the discriminating shape,
+// since a rune count answers 2 and a column count answers 4.
+//
+// ABOVE the next doc comment, not between it and its function. It sat
+// there, so godoc read the test's whole paragraph as this const's and
+// the test itself had no doc at all — measured with go/parser, and it
+// is the identical fusion defect this PR fixes at menus_test.go and
+// cites from render/width.go. Raised in review of #502.
+const wideLabel = "世界"
+
 // TestRowTextReturnsTheWholeSpan is the contract above, pinned. Every
 // other caller reads a span it expects to be full, so none of them can
 // tell a reader that returns the blanks from one that eats them — the
 // difference only shows where the span is WIDER than what was drawn into
 // it, which is why this fixture is eight cells holding two.
-// wideLabel is two glyphs and FOUR columns — the discriminating shape,
-// since a rune count answers 2 and a column count answers 4.
-const wideLabel = "世界"
-
 func TestRowTextReturnsTheWholeSpan(t *testing.T) {
 	c := gooey.NewComposer(&components.Text{Content: components.Str("hi")}, 8, 1)
+	t.Cleanup(c.Close)
 	f, _ := c.Frame()
 	if got, want := rowText(f, 0, 0, 8), "hi      "; got != want {
 		t.Errorf("rowText read %q across eight cells holding %q, want %q. A span "+
@@ -107,8 +133,14 @@ func TestRowTextReturnsTheWholeSpan(t *testing.T) {
 	// whose column count and rune count differ, in a span wider than
 	// what was drawn into it, so the trim rule and the continuation rule
 	// are pinned by one read. Raised in review of #502.
-	c = gooey.NewComposer(&components.Text{Content: components.Str(wideLabel)}, 8, 1)
-	f, _ = c.Frame()
+	// CLOSED, like every other Composer in this package. Nothing leaks
+	// today — Close is stopAll and a bare Text registers no Startable —
+	// which is exactly why nothing was red, and why the divergence is
+	// worth closing while the pair is being written. Raised in review of
+	// #502.
+	c2 := gooey.NewComposer(&components.Text{Content: components.Str(wideLabel)}, 8, 1)
+	t.Cleanup(c2.Close)
+	f, _ = c2.Frame()
 	if got, want := rowText(f, 0, 0, 8), wideLabel+"    "; got != want {
 		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
 			"read this is %q — the continuation marker rendered as a literal "+

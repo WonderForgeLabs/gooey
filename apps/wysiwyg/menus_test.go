@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -391,7 +392,7 @@ func viewMenuRows(t *testing.T, which int) []string {
 // returns, "EDITOR" without the dollar hits exactly 1. The dollar is
 // kept because it is the label a user reads, not because anything
 // depends on it. Raised in review of #502.
-func dropdownRow(t *testing.T, rows []string, want string) string {
+func dropdownRow(t fataler, rows []string, want string) string {
 	t.Helper()
 	var hits []string
 	for _, r := range rows {
@@ -403,10 +404,18 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 		// "of the open menu" is what this said, and the signature is
 		// `rows []string` precisely so a test can hand it a synthetic
 		// fixture with no menu and no frame — which
-		// TestTheCheckBoxIsReadPastAWideGlyphAfterTheLabel does. A
-		// message naming a render that was never involved sends the
-		// reader to the wrong place on the day the fixture changes
-		// shape. Raised in review of #502.
+		// TestTheCheckBoxIsReadPastAWideGlyph and
+		// TestTheFourCellsInFrontAreNotTheFourRunes both do. A message
+		// naming a render that was never involved sends the reader to
+		// the wrong place on the day the fixture changes shape.
+		//
+		// The name cited here was
+		// TestTheCheckBoxIsReadPastAWideGlyphAfterTheLabel, renamed in
+		// 7e876fe and not followed — so the comment written to keep this
+		// Fatalf pointing at the right place pointed at nothing, and a
+		// reader grepping for it got the comment back.
+		// gooey.TestEveryCitedTestNameResolves guards this class for
+		// CLAUDE.md only. Raised in review of #502.
 		t.Fatalf("%d of the %d rows given contain %q, want exactly 1:\n%s",
 			len(hits), len(rows), want, strings.Join(rows, "\n"))
 	}
@@ -449,7 +458,7 @@ func dropdownRow(t *testing.T, rows []string, want string) string {
 // clean. Asserted rather than documented as out of scope, because the
 // uniqueness argument one helper up is the reason the omission is
 // conspicuous. Raised in review of #502.
-func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
+func boxBefore(t fataler, rows []string, want string) (box, row string) {
 	t.Helper()
 	row = dropdownRow(t, rows, want)
 	at := strings.Index(row, want)
@@ -500,6 +509,119 @@ func boxBefore(t *testing.T, rows []string, want string) (box, row string) {
 			prefix, total-4, want)
 	}
 	return prefix[cut:], row
+}
+
+// fataler is *testing.T's failure surface, narrowed to what these two
+// helpers use — which is what lets a test OBSERVE a Fatalf instead of
+// dying of it.
+//
+// testing.TB cannot be implemented outside the testing package (it has
+// an unexported method), and a t.Run subtest that fails on purpose is
+// still a failing subtest. A two-method interface is the smallest thing
+// that makes a guard's own message assertable, and *testing.T satisfies
+// it, so every real call site is unchanged. Raised in review of #502.
+type fataler interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
+
+// caughtFatal stands in for *testing.T and records the first Fatalf.
+//
+// It PANICS with itself rather than returning, because a Fatalf that
+// returns is not a Fatalf: the helpers under test carry on past their
+// guards and produce a second, misleading failure. runtime.Goexit is
+// what the real one does; a panic recovered by fatalFrom is the closest
+// thing available to a caller that wants to keep running.
+type caughtFatal struct{ msg string }
+
+func (c *caughtFatal) Helper() {}
+
+func (c *caughtFatal) Fatalf(format string, args ...any) {
+	c.msg = fmt.Sprintf(format, args...)
+	panic(c)
+}
+
+// fatalFrom runs fn with a stand-in T and returns the Fatalf message it
+// raised. A run that does NOT fatal is itself a failure — a guard that
+// no longer fires is the state these fixtures exist to detect, and
+// returning "" for it would let every Contains below pass vacuously.
+func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
+	t.Helper()
+	c := &caughtFatal{}
+	// NAMED RETURN, set here. A panic recovered in a deferred function
+	// leaves an UNNAMED result at its zero value, so the first version
+	// of this returned "" for every guard that fired correctly — and
+	// every Contains below then failed with an empty message, which
+	// reads as the guard not firing. The opposite mistake to the one
+	// the t.Fatal below catches, and just as quiet.
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if r != any(c) {
+			panic(r)
+		}
+		msg = c.msg
+	}()
+	fn(c)
+	t.Fatal("the helper returned without raising a Fatalf; the guard this " +
+		"arm is about did not fire, so asserting on its message would pass " +
+		"over a guard that has stopped guarding")
+	return ""
+}
+
+// TestBoxBeforeRefusesTheTwoRowsItCannotAnswerFor covers the two Fatal
+// branches that had no fixture.
+//
+// Both are reachable, and the second is reachable from the REAL menus
+// rather than only synthetically: `total < 4` is what fires if the
+// dropdown ever loses its two-column indent. It is a Fatal raised from
+// TestTheCheckBoxIsDrawn's FIRST assertion, so in that regression the
+// $EDITOR and "Next Pane" arms below it never run and the failure
+// reports one row of a three-row story — which is why the message is
+// worth pinning rather than left to be read once.
+//
+// The within-row uniqueness guard is the other: boxBefore's doc argues
+// it is "the within-row half of dropdownRow's guarantee, asserted rather
+// than documented as out of scope", and no fixture put a label twice on
+// one row, so the arm had never run. dropdownRow takes `rows []string`
+// precisely to make a fixture like this cheap. Raised in review of #502.
+func TestBoxBeforeRefusesTheTwoRowsItCannotAnswerFor(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rows  []string
+		label string
+		want  []string
+	}{
+		{
+			// The leftmost copy wins strings.Index, so the box in front
+			// of it is reported as "the" answer while a second copy —
+			// a label echoed into the accelerator column — sits
+			// unexamined on the same row.
+			name:  "the label appears twice on one row",
+			rows:  []string{"  [x] Wrap  Wrap", "  ( ) Other"},
+			label: "Wrap",
+			want:  []string{"appears at byte", "and again at", "not the answer"},
+		},
+		{
+			// dropdownRow is satisfied — exactly one row contains it —
+			// and there is still no box to read.
+			name:  "the label starts within four columns of the row",
+			rows:  []string{"[x]Wrap", "  ( ) Other"},
+			label: "Wrap",
+			want:  []string{"starts at column 3", "no room for a check box"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := fatalFrom(t, func(f fataler) { boxBefore(f, tc.rows, tc.label) })
+			for _, w := range tc.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("the refusal reads %q and does not mention %q", msg, w)
+				}
+			}
+		})
+	}
 }
 
 // TestTheCheckBoxIsReadPastAWideGlyph is the half a passing suite cannot
