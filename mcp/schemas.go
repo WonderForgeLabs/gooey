@@ -212,6 +212,28 @@ const (
 // number nobody took. App.caps' backfill is the second site and fires
 // only where the first did not. Raised in review of #504, one round
 // after the direction was.
+// pointerFrameRule is the ONE statement of what send_mouse's x and y are
+// measured against, and it sits here rather than inline for the reason
+// cellProbeRule gives: the caller reads the tool it is about to call,
+// not the tool beside it.
+//
+// originTail already tells a screen_size caller to convert. Nothing told
+// a send_mouse caller there was anything to convert FROM — the arguments
+// read "Column, 0-based", with no statement of what 0 is. So a scoped
+// agent calls screen_text, gets three lines for an island arranged at
+// y=1, sends y=0 for the first of them, and is refused with "element …
+// is outside this session's island" for a row it can see in its own
+// screenshot. Everything else on this branch moved: the description, the
+// schema tails, the instructions, the tutorial, both spec records, both
+// workflow prompts. The tool that CONSUMES the coordinate did not, which
+// is the one surface the agent reads immediately before committing it.
+// Raised in review of #504.
+const pointerFrameRule = ", 0-based, in ABSOLUTE screen cells — the host's screen, " +
+	"not the island. For a scoped session add screen_size's %s to a position read " +
+	"off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
+	"ALREADY absolute and must not be converted twice. Unscoped the two spaces " +
+	"coincide and there is nothing to add."
+
 const cellProbeRule = "0 MEANS the host never probed the terminal — branch on that " +
 	"rather than dividing by it. The converse does not hold, at two separate " +
 	"sites: the probe itself substitutes a default whenever the terminal did not " +

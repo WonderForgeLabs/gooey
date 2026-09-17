@@ -466,9 +466,13 @@ func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
 // direction the tool exists to fix.
 //
 // A scoped session has TWO coordinate sources and they do not agree.
-// screen_text is homed at (0,0) deliberately — a guest's screen dump is
-// not a set of absolute cursor moves that betray where on the host's
-// page its island sits — so a position read off it is what x/y converts.
+// screen_text is homed at (0,0) deliberately — a fresh buffer of the
+// island's size IS a screen, and a screen starts at its own origin, so
+// the stream is not a set of absolute cursor moves into somebody else's
+// page — and a position read off it is what x/y converts. NOT
+// confidentiality: this sentence carried that reason until review of
+// #504, and screen_size hands the origin over outright, so the reason it
+// gave was one the tool beside it had already retired.
 // tree_snapshot emits Bounds() from the live tree, which are already
 // absolute even when the snapshot is rooted at the island. An agent that
 // obeys screen_size unconditionally adds y0 to a bound that already
@@ -625,5 +629,77 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 		if _, ok := props[name]; !ok {
 			t.Errorf("required names %q, which is not a published property", name)
 		}
+	}
+}
+
+// TestNoPublishedToolSchemaShipsFmtResidue is the check above widened to
+// every tool, because the hazard is not screen_size's.
+//
+// The test above was written for four rendered descriptions in one
+// schema. send_mouse's x and y became the fifth and sixth in the round
+// after — they render pointerFrameRule, for the same reason the origin
+// tails render, and a guard scoped to one function would not have
+// covered them. A tail that grows a literal %, or a second verb added
+// for one axis, ships %!s(MISSING) into a published JSON Schema with
+// gofmt, vet, -race and every inventory guard green; whose schema it is
+// makes no difference to the client reading it. Raised in review of
+// #504.
+func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
+	s := &Server{}
+	tools := s.v1Tools()
+	if len(tools) == 0 {
+		t.Fatal("v1Tools published nothing, so this sweep would rule on no schema at all")
+	}
+	described := 0
+	for _, tl := range tools {
+		if tl.Description == "" {
+			t.Errorf("%s publishes no description", tl.Name)
+		}
+		if strings.Contains(tl.Description, "%!") {
+			t.Errorf("%s's description carries fmt residue: %q", tl.Name, tl.Description)
+		}
+		// BOTH SCHEMAS. screen_size — the tool whose rendered
+		// descriptions this sweep was generalized from — publishes
+		// screenSizeSchema as its OUTPUT schema, so a sweep over
+		// Schema alone reads past it and reports green while the
+		// residue ships. Measured: emptying one of its argument
+		// descriptions left an arguments-only version of this test ok.
+		for _, sch := range []struct {
+			kind string
+			m    map[string]any
+		}{{"argument", tl.Schema}, {"result field", tl.OutputSchema}} {
+			props, _ := sch.m["properties"].(map[string]any)
+			for name, v := range props {
+				m, _ := v.(map[string]any)
+				// A $ref CARRIES ITS REFERENT'S DESCRIPTION, so a
+				// property that is only a $ref is documented where the
+				// definition is and has nothing of its own to render.
+				// tree_snapshot's "tree" is the one in this inventory;
+				// asserting a description on it would be asserting a
+				// second copy of the node schema's.
+				if _, isRef := m["$ref"]; isRef {
+					continue
+				}
+				d, _ := m["description"].(string)
+				if d == "" {
+					t.Errorf("%s's %q %s publishes an empty description, so the "+
+						"residue check ruled on nothing for it", tl.Name, name, sch.kind)
+					continue
+				}
+				described++
+				if strings.Contains(d, "%!") {
+					t.Errorf("%s's %q %s carries fmt residue (%q): a tail grew a "+
+						"%% and Sprintf shipped it to every generated client",
+						tl.Name, name, sch.kind, d)
+				}
+			}
+		}
+	}
+	// A FLOOR OVER THE FIELDS, not over the tools: a tool with no
+	// arguments is ordinary, and a sweep that found none at all would
+	// pass against any residue.
+	if described == 0 {
+		t.Fatalf("%d tools published no described argument or result field between "+
+			"them, so the residue check above ruled on nothing", len(tools))
 	}
 }

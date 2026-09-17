@@ -174,12 +174,13 @@ func (s *Server) v1Tools() []*Tool {
 			Run: s.sendKeys,
 		},
 		{
-			Name:        "send_mouse",
-			Description: "Inject a pointer event at a cell coordinate. Hit-testing, hover and focus-follows-click all happen as they would from a real terminal.",
+			Name: "send_mouse",
+			Description: "Inject a pointer event at a cell coordinate. Hit-testing, hover and focus-follows-click all happen as they would from a real terminal. " +
+				"Coordinates are ABSOLUTE screen cells; a scoped session converts a position read off screen_text by adding screen_size's x and y.",
 			Schema: object(map[string]any{
 				"kind":   enum_("What the pointer did.", "click", "press", "release", "move", "wheelup", "wheeldown"),
-				"x":      prop_("integer", "Column, 0-based."),
-				"y":      prop_("integer", "Row, 0-based."),
+				"x":      prop_("integer", "Column"+fmt.Sprintf(pointerFrameRule, "x")),
+				"y":      prop_("integer", "Row"+fmt.Sprintf(pointerFrameRule, "y")),
 				"button": enum_("Which button; default left.", "left", "middle", "right", "none"),
 			}, "kind", "x", "y"),
 			Run: s.sendMouse,
