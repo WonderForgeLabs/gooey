@@ -334,7 +334,21 @@ func (h *history) abort(root *node) {
 // The entries are zeroed rather than dropped, the way pop and the bound
 // do it: a snapshot holds a whole cloned tree, and leaving one reachable
 // from the array's tail keeps it alive for as long as the slice is.
-func (h *history) reset(root *node) {
+//
+// THE SELECTION IS PART OF THE BASELINE, and taking root alone was a
+// regression this function introduced. Every other site that establishes
+// a baseline carries sel/hasSel — record's !started branch, abort, and
+// restore — and the reason is record's sel-refresh two screens down: it
+// is guarded on the path still RESOLVING in the state being left, so
+// after an ADD it does not fire and the pushed snapshot keeps whatever
+// selection the base already had. Baseline with none and the first undo
+// after an open pushes hasSel:false, which restore turns into
+// `ed.sel = nil` unconditionally — the node goes away as it should and
+// the properties pane empties with it, so the user has to ctrl+n back to
+// where they were. Measured before the fix: open, paste a <Button>, undo,
+// and ed.sel is nil. Raised in review of #501; pinned by
+// TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade.
+func (h *history) reset(root *node, sel []int, hasSel bool) {
 	for i := range h.undo {
 		h.undo[i] = snapshot{}
 	}
@@ -345,7 +359,7 @@ func (h *history) reset(root *node) {
 		h.cleared[i] = snapshot{}
 	}
 	h.undo, h.redo, h.cleared, h.stashed = nil, nil, nil, false
-	h.base = snapshot{root: root.clone()}
+	h.base = snapshot{root: root.clone(), sel: sel, hasSel: hasSel}
 	h.pending = ""
 }
 
