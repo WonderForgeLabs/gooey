@@ -1517,6 +1517,20 @@ func noBuild(e Element, ctx *Context) error {
 	if reader == "" {
 		return fmt.Errorf("markup: <%s> builds no component of its own — Context.Elements[%q] declares no Build", e.Name, e.Name)
 	}
+	// THE DOCUMENT MAY ALREADY BE RIGHT, and then the placement sentence
+	// prescribes no change at all. Reaching here means something built
+	// this element's parent's children; if that parent IS the declared
+	// reader, the document put the element exactly where the message
+	// would send it, and the author's next step is to do nothing. The
+	// fault is one layer up: the host's catalog says <reader> parses
+	// this element while <reader>'s own Build hands its children to
+	// BuildChildren, so the two halves of one registration contradict
+	// each other. Both remedies below are real edits, and either fixes
+	// it. Raised in review of #486.
+	if e.parent == reader {
+		return fmt.Errorf("markup: <%s> builds no component of its own, and it is already inside the <%s> that Context.Elements[%q].ParsedBy names — so the document is not the fault: <%s>'s Build hands its children to markup.BuildChildren instead of reading them. Either give <%s> a Build, or have <%s>'s Build read its <%s> children itself",
+			e.Name, reader, e.Name, reader, e.Name, reader, e.Name)
+	}
 	return fmt.Errorf("markup: <%s> builds no component of its own — <%s> reads <%s> as data, so a <%s> is only valid where <%s> parses one",
 		e.Name, reader, e.Name, e.Name, reader)
 }

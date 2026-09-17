@@ -55,16 +55,6 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 	// one sentence, and TestEveryPseudoElementRefusesAUniversalTheSameWay
 	// is what keeps them sharing it.
 	//
-	// A MISPLACED ELEMENT IS SOMEBODY ELSE'S ERROR TO REPORT. checkAttrs
-	// runs before the element's own Build, so on
-	// `<VStack><Tab Name="Z">…` this refusal preempted defTab.Build's
-	// "<Tab> is only valid directly inside <Tabs>" and told the author
-	// to move an attribute — a remedy that leaves the document just as
-	// broken, while the diagnosis that would fix it never printed. The
-	// placement fault is the larger one and is answerable from the
-	// catalog, so it is deferred to rather than raced. See
-	// acceptedByParent, whose comment records why it cannot ask
-	// spec.Nested for the answer.
 	// PSEUDO IS NOT "BUILDS NO COMPONENT", and the two refusals below
 	// rest on that claim, so they run only where it is true. Pseudo is
 	// derived as `Proto == nil && (Opaque != "" || ParsedBy != "")`
@@ -109,6 +99,20 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 			return err
 		}
 	}
+	// A MISPLACED ELEMENT IS SOMEBODY ELSE'S ERROR TO REPORT, and this
+	// is the gate that defers. checkAttrs runs before the element's own
+	// Build, so on `<VStack><Tab Name="Z">…` the refusal above preempted
+	// defTab.Build's "<Tab> is only valid directly inside <Tabs>" and
+	// told the author to move an attribute — a remedy that leaves the
+	// document just as broken, while the diagnosis that would fix it
+	// never printed. The placement fault is the larger one and is
+	// answerable from the catalog, so it is deferred to rather than
+	// raced. See misplaced, whose comment records why it cannot ask
+	// spec.Nested for the answer.
+	//
+	// This paragraph sat above the asData gate rather than this one
+	// until review of #486 round 8 — describing a deferral two gates
+	// away, and citing acceptedByParent, which misplaced replaced.
 	if ok && spec.Pseudo && !asData {
 		if misplaced(e, spec, ctx) {
 			// THE DEFERRAL COVERS THE EXHAUSTIVE CHECK TOO, and it
@@ -812,10 +816,10 @@ func isUniversalAttr(name string) bool {
 // something more useful — "<Tab> is only valid directly inside <Tabs>" —
 // and checkAttrs, which runs first, must not talk over it.
 //
-// THREE ANSWERS, AND THE THIRD IS WHY THIS IS NOT acceptedByParent. The
-// first two are the ones that function had: the parent names this
-// element among its children, or the catalog says the home is somewhere
-// else. The third is a catalog that says NOTHING about where the element
+// THREE ANSWERS, AND THE THIRD IS WHY THIS IS NOT THE TWO-ANSWER
+// PREDICATE IT REPLACED. The first two are the ones that had: the parent
+// names this element among its children, or the catalog says the home is
+// somewhere else. The third is a catalog that says NOTHING about where the element
 // belongs — a host def stating its reason with Opaque, under a container
 // that enumerates nothing. There is no placement diagnosis to defer to
 // there, so standing down bought silence: measured on a <Table>
@@ -867,8 +871,8 @@ func declaredHome(spec ElementSpec, ctx *Context) string {
 // both reduce to.
 //
 // THREE CALLERS, NOT FIVE, and the difference is worth stating because a
-// review counted five copies of it. acceptedByParent asks it of ONE
-// named parent and namingParent asks it of the whole catalog — the same
+// review counted five copies of it. misplaced asks it of ONE named
+// parent and namingParent asks it of the whole catalog — the same
 // predicate, two questions, which is why one reads ctx.spec and the
 // other reads Catalog(); that is not an inconsistent source.
 //
@@ -938,7 +942,20 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string, builds bool)
 	// that addresses something real. checkAttrs passes !asData here for
 	// the same reason it gates the two pseudo refusals on it. Raised in
 	// review of #486.
-	if builds || !spec.Pseudo {
+	//
+	// `builds` IS THE WHOLE ANSWER, and an `|| !spec.Pseudo` beside it
+	// was a silent drop rather than a redundancy. The only caller that
+	// can reach this with builds == false is checkAttrs on a child its
+	// parent reads as data, and a reader — buildTabs, buildMenuBar, or
+	// a host's own Build walking e.Children — never calls named(). So
+	// the disjunct admitted Name on exactly the accepted-and-dropped
+	// shape #461 exists to close: a host def that shadows Tab, Menu or
+	// MenuItem with a Proto is not Pseudo, took Name="…", and left
+	// ctx.Named empty with no error. acceptsInside is the other caller
+	// and passes builds == true, so it is unaffected. Measured in
+	// review of #486 and pinned by
+	// TestAShadowingHostDefStillRefusesNameWhereItsReaderTakesOver.
+	if builds {
 		allowed["Name"] = true
 	}
 	for _, a := range spec.Attrs {
@@ -954,6 +971,25 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string, builds bool)
 		return allowed, attached
 	}
 	for _, a := range universalAttrs {
+		if a.Name == "Name" {
+			// NAME IS DECIDED ABOVE, ON `builds`, AND THIS LOOP WAS
+			// OVERRIDING IT. Name is in universalAttrs, so every
+			// element that takes layout got the row back here
+			// regardless of the guarded write — which made that write
+			// reachable only for the layout-less minority and left the
+			// silent drop it exists to close wide open for everything
+			// else. Measured in review of #486: with the guard
+			// tightened but this loop untouched, a host <Tab> def with
+			// a *components.Text Proto still took Name="zonk" under
+			// <Tabs>, dropped it, and reported nothing.
+			//
+			// Skipping rather than re-writing keeps ONE decision site.
+			// `allowed["Name"] = builds` would not work here for the
+			// reason the paragraph above gives: suggest() ranges over
+			// the map's KEYS, so a false value still advertises Name in
+			// "did you mean".
+			continue
+		}
 		allowed[a.Name] = true
 	}
 	// The DOCUMENT ROOT has no layout parent to scope against: its

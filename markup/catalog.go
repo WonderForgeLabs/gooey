@@ -608,9 +608,34 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// element that BUILDS one can be addressed. A pseudo-element is
 		// consumed as data and never reaches named(), so offering the row
 		// invites an edit the loader accepts and nothing honours. The
-		// loader refuses it for the same reason (Context.vocabulary), and
-		// these two must agree or the grid offers a row that fails to
-		// load.
+		// loader withholds it for the same reason (Context.vocabulary),
+		// and in THIS direction the two must agree or the grid offers a
+		// row that fails to load.
+		//
+		// THE OTHER DIRECTION IS NOT GUARDED, and the sentence above
+		// used to claim it was. Context.vocabulary decides Name on the
+		// CALL SITE — `builds`, which is `!asData` — and this function
+		// has only the spec. For the builtins the two answers coincide,
+		// because buildTabs and buildMenuBar are the readers and they
+		// pass asData. For a HOST def carrying ParsedBy AND a real Build
+		// they do not: the parent's Build routes children through
+		// BuildChildren, the child reaches build(), named() runs, and
+		// the grid still offers nothing. Measured:
+		//
+		//	AttrsFor(hostDeckCtx's <Panel>)            -> [Label]
+		//	Build(`<Deck><Panel Label="a" Name="p">…`) -> ctx.Named["p"]
+		//
+		// Carrying a has-a-Build bit onto the spec does not close it:
+		// defTab, defMenu and defMenuItem all have a non-nil Build whose
+		// only job is to refuse, so the bit is true for exactly the
+		// three elements the row must stay off — measured, it reddens
+		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement and
+		// TestTheCatalogDoesNotOfferNameOnAPseudoElement. The fact that
+		// separates the two is whether Build RETURNS a component, which
+		// no field can state. So the gap is pinned rather than closed,
+		// by TestTheDesignerOffersNoNameRowWhereTheLoaderHonoursOne —
+		// which is also what goes red if somebody closes it. Raised in
+		// review of #486.
 		//
 		// THE AGREEMENT WAS ONCE CONDITIONED ON AttrsKnown, and is not
 		// any more (#461). checkAttrs returned early on !AttrsKnown, so

@@ -344,9 +344,10 @@ host's own registration is where they come apart, and no builtin fixture
 can show it — which is why both tests below construct one.
 
 **Placement is not `namesChild` alone.** The stand-down that lets a
-misplaced element's `Build` report the larger fault asks
-`acceptedByParent`, which asked whether the parent is a `ModeRestricted`
-container naming this element. `ModeRestricted` is the operative word: a
+misplaced element's `Build` report the larger fault asked
+`acceptedByParent` — since replaced by `misplaced`, which is where the
+reasoning below now lives — and that predicate asked whether the parent
+is a `ModeRestricted` container naming this element. `ModeRestricted` is the operative word: a
 host container that hands its children to `BuildChildren` takes *many* of
 them and enumerates nothing, so every correctly-placed pseudo-child under
 it read as misplaced and lost the exhaustive unknown-attribute gate along

@@ -1595,8 +1595,8 @@ func TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst(t *testing.T) {
 // readsAsData's comment makes, measured instead of asserted.
 //
 // That comment says everything after the parent branch is dead for any
-// document a user can write, and the argument is that acceptedByParent
-// has already established the parent branch's own condition. The load
+// document a user can write, and the argument is that misplaced has
+// already established the parent branch's own condition. The load
 // bearing half is this: the parser stamps `parent` on every element it
 // produces except the root, and the parser is the only constructor of an
 // Element in this package. If a shape ever slipped through unstamped,
@@ -2007,12 +2007,63 @@ func TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs(t *testing.T) {
 	// AND THE ONE WITH NO Build IS A LOAD ERROR RATHER THAN A SEGV, in
 	// the same position. <Bare> is the shape whose declaration really
 	// does build nothing.
+	//
+	// THE TWO POSITIONS GET DIFFERENT SENTENCES, and this arm used to
+	// check only that both names appeared — which passed on the arm
+	// where the message was wrong. Round 8's finding 3: inside <Table>
+	// the document has already done what the placement sentence asks,
+	// so the author's next step is to make no change. The fault there is
+	// the registration — <Table>'s Build routes children through
+	// BuildChildren while the catalog says <Table> parses them — and the
+	// message never said so.
 	_, err := Build([]byte(`<Gooey><Table><Bare Label="a"/></Table></Gooey>`), hostTableCtx())
 	if err == nil {
 		t.Error("a registered element with no Build produced a component")
-	} else if !strings.Contains(err.Error(), "<Bare>") || !strings.Contains(err.Error(), "<Table>") {
-		t.Errorf("the no-Build error should name the element and the reader the "+
-			"catalog says consumes it: %v", err)
+	} else {
+		if !strings.Contains(err.Error(), "<Bare>") || !strings.Contains(err.Error(), "<Table>") {
+			t.Errorf("the no-Build error should name the element and the reader the "+
+				"catalog says consumes it: %v", err)
+		}
+		if strings.Contains(err.Error(), "only valid where") {
+			t.Errorf("the <Bare> is inside the <Table> the catalog names, and the "+
+				"refusal prescribes moving it there — a remedy whose next step is "+
+				"to change nothing:\n\t%v", err)
+		}
+		if !strings.Contains(err.Error(), "BuildChildren") {
+			t.Errorf("the in-place refusal does not name the registration that is "+
+				"actually wrong: %v", err)
+		}
+	}
+
+	// THE MISPLACED ONE KEEPS THE PLACEMENT SENTENCE, or the split above
+	// would be a swap rather than a discrimination.
+	_, err = Build([]byte(`<Gooey><VStack><Bare Label="a"/></VStack></Gooey>`), hostTableCtx())
+	if err == nil {
+		t.Error("a <Bare> outside its reader loaded clean")
+	} else if !strings.Contains(err.Error(), "only valid where") {
+		t.Errorf("a <Bare> in a <VStack> really is misplaced, and the refusal no "+
+			"longer says where it belongs: %v", err)
+	}
+
+	// AND BOTH REMEDIES ARE RUN, because an error message's prescription
+	// is a behavioural claim. The in-place sentence offers two edits;
+	// each is applied to the fixture here and the document must load.
+	withBuild := hostTableCtx()
+	withBuild.Elements["Bare"].Build = func(e Element, ctx *Context) (gooey.Component, error) {
+		return &components.Text{}, nil
+	}
+	if _, err := Build([]byte(`<Gooey><Table><Bare Label="a"/></Table></Gooey>`), withBuild); err != nil {
+		t.Errorf(`the first remedy — "give <Bare> a Build" — does not load: %v`, err)
+	}
+	readsOwn := hostTableCtx()
+	readsOwn.Elements["Table"].Build = func(e Element, ctx *Context) (gooey.Component, error) {
+		// <Table> reading its <Bare> children itself, which is what
+		// ParsedBy said all along.
+		return &components.VStack{}, nil
+	}
+	if _, err := Build([]byte(`<Gooey><Table><Bare Label="a"/></Table></Gooey>`), readsOwn); err != nil {
+		t.Errorf(`the second remedy — "have <Table>'s Build read its <Bare> `+
+			`children itself" — does not load: %v`, err)
 	}
 
 	// THE DEFERRAL MUST SURVIVE. A fix that simply checked every
@@ -2217,4 +2268,201 @@ func withContent(sp ElementSpec) Element {
 		parent:   namingParent(sp.Name, &Context{}),
 		Children: []Element{{Name: "Text"}},
 	}
+}
+
+// TestAShadowingHostDefStillRefusesNameWhereItsReaderTakesOver is round
+// 8's finding 1, and it is the accepted-and-dropped shape #461 exists to
+// close arriving from the side the fix for #461 left open.
+//
+// Name was gated on `builds || !spec.Pseudo`. `builds` is `!asData`, and
+// the only caller that can reach vocabulary with builds == false is
+// checkAttrs on a child its parent reads as DATA — buildTabs,
+// buildMenuBar, or a host's own Build walking e.Children, none of which
+// calls named(). So the `|| !spec.Pseudo` disjunct could only ever admit
+// Name where it would be dropped, on an element that is read as data and
+// is not Pseudo: a HOST def shadowing Tab, Menu or MenuItem with a real
+// Proto.
+//
+// THE REVIEW'S PRESCRIBED FIX WAS NOT ENOUGH, and the measurement is why
+// this test has two arms. Tightening the gate to `if builds {` left the
+// fixture in the finding still silent:
+//
+//	Elements["Tab"] = {Proto: &components.Text{}, Attrs: [Header]}
+//	<Tabs><Tab Header="a" Name="zonk"><Text>x</Text></Tab></Tabs>
+//	  with `if builds {` alone: err = <nil>, len(ctx.Named) == 0
+//
+// because Name is ALSO in universalAttrs, and the loop that adds those
+// runs below the guarded write for every element with a Layout. The
+// guarded write was therefore reachable only for the layout-less
+// minority. Both sites are now one decision — the universals loop skips
+// Name — and the two arms below are the two sites:
+//
+//	*components.Text  TakesLayout == true   -> the universals loop
+//	*components.Timer TakesLayout == false  -> the guarded write
+//
+// Drop either half and one arm goes green while the other stays red.
+func TestAShadowingHostDefStillRefusesNameWhereItsReaderTakesOver(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proto  gooey.Component
+		layout bool
+	}{
+		{"a shadowing def that takes layout, where universalAttrs re-adds Name", &components.Text{}, true},
+		{"a shadowing def with no Layout, where only the guarded write runs", &components.Timer{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := func() *Context {
+				return &Context{Elements: map[string]*ElementDef{"Tab": {
+					Name:     "Tab",
+					Known:    true,
+					Proto:    tc.proto,
+					Attrs:    []AttrSpec{{Name: "Header"}},
+					Children: ChildSpec{Mode: ModeOne},
+				}}}
+			}
+			sp, ok := ctx().spec("Tab")
+			if !ok || sp.Pseudo {
+				t.Fatalf("the shadowing <Tab> is Pseudo (%v/%v), so the pseudo "+
+					"refusals would answer first and this arm would be about "+
+					"a different gate", ok, sp.Pseudo)
+			}
+			// The axis this arm exists for. Without it the two arms
+			// could both be the same site and the table would prove
+			// one thing twice.
+			if got := TakesLayout(sp); got != tc.layout {
+				t.Fatalf("TakesLayout is %v, want %v — this arm is not the gate "+
+					"it is named for", got, tc.layout)
+			}
+
+			// The fixture loads without the attribute, so a refusal
+			// below is about Name and not about the registration.
+			base := ctx()
+			if _, err := Build([]byte(
+				`<Gooey><Tabs><Tab Header="a"><Text>x</Text></Tab></Tabs></Gooey>`), base); err != nil {
+				t.Fatalf("the fixture itself does not load, so the arm below "+
+					"proves nothing about Name: %v", err)
+			}
+
+			named := ctx()
+			_, err := Build([]byte(
+				`<Gooey><Tabs><Tab Header="a" Name="zonk"><Text>x</Text></Tab></Tabs></Gooey>`), named)
+			if err == nil {
+				t.Fatalf("<Tab Name=%q> loaded under <Tabs>, which reads it as data "+
+					"and never calls named() — accepted, dropped, and reported "+
+					"nowhere (ctx.Named holds %d)", "zonk", len(named.Named))
+			}
+			if !strings.Contains(err.Error(), "Name") {
+				t.Errorf("the refusal does not name the attribute it refused: %v", err)
+			}
+			if strings.Contains(err.Error(), "takes") && strings.Contains(
+				strings.SplitN(err.Error(), "takes", 2)[1], "Name") {
+				t.Errorf("the near-miss advice still advertises Name on the element "+
+					"that has just refused it: %v", err)
+			}
+		})
+	}
+
+	// THE COUNTERFACTUAL: an element that is BUILT keeps Name, or the
+	// change above would be a repo-wide regression rather than a gate.
+	ctx := &Context{}
+	if _, err := Build([]byte(
+		`<Gooey><VStack Name="outer"><Text Name="inner">x</Text></VStack></Gooey>`), ctx); err != nil {
+		t.Fatalf("Name was refused on ordinary built elements: %v", err)
+	}
+	if len(ctx.Named) != 2 {
+		t.Errorf("ctx.Named holds %d names, want 2 — Name reached the map for "+
+			"neither <VStack> nor <Text>", len(ctx.Named))
+	}
+}
+
+// TestTheDesignerOffersNoNameRowWhereTheLoaderHonoursOne is the identity
+// row's version of the shape above, and it is round 8's finding 2.
+//
+// Grant.AttrsFor withholds Name on `!e.Pseudo`, and its comment asserts
+// the agreement outright: "the loader refuses it for the same reason
+// (Context.vocabulary), and these two must agree or the grid offers a
+// row that fails to load." For a HOST def carrying ParsedBy AND a real
+// Build — the shape TestAHostPseudoElementThatBuildsKeepsWhatItBuildsWith
+// establishes is legal — that is measurably false, with the two sides
+// swapped: the grid offers nothing and the loader HONOURS it.
+//
+//	AttrsFor(hostDeckCtx's <Panel>)                -> [Label]
+//	Build(`<Deck><Panel Label="a" Name="p">…`)     -> err = <nil>,
+//	                                                  ctx.Named["p"] set
+//
+// THE REVIEW'S PRESCRIBED FIX DOES NOT WORK, and this is why the gap is
+// pinned rather than closed. It was to carry a has-a-Build bit from
+// ElementDef onto ElementSpec, since specAs holds d.Build. Measured on
+// the three builtin pseudo-elements:
+//
+//	Tab       Build != nil   Menu   Build != nil   MenuItem  Build != nil
+//
+// All three have one, and all three exist only to REFUSE — defMenu.Build
+// returns "markup: <Menu> is only valid directly inside <MenuBar>". So
+// `Builds: d.Build != nil` is true for exactly the elements the row must
+// stay off, and gating on it reddens
+// TestTheDesignerOffersNoUniversalRowOnAPseudoElement. The fact that
+// separates hostDeck's Panel.Build from defMenu.Build is whether it
+// RETURNS a component, which no bit on the spec can state.
+//
+// So this is stated and pinned rather than fixed, exactly as the layout
+// row above is, and the pin is what keeps the comment honest.
+func TestTheDesignerOffersNoNameRowWhereTheLoaderHonoursOne(t *testing.T) {
+	offers := func(parent, child string, ctx *Context) bool {
+		p, ok := ctx.spec(parent)
+		if !ok {
+			t.Fatalf("<%s> did not resolve", parent)
+		}
+		c, ok := ctx.spec(child)
+		if !ok {
+			t.Fatalf("<%s> did not resolve", child)
+		}
+		for _, a := range p.Grants.AttrsFor(c) {
+			if a.Name == "Name" {
+				return true
+			}
+		}
+		return false
+	}
+
+	ctx := hostDeckCtx()
+	sp, _ := ctx.spec("Panel")
+	if !sp.Pseudo {
+		t.Fatal("<Panel> is not Pseudo, so the gate under test would not fire " +
+			"on it and this test would prove nothing")
+	}
+	if TakesLayout(sp) {
+		t.Fatal("<Panel> takes layout, so AttrsFor's first arm answers and the " +
+			"Name row comes from universalAttrs — a different gate")
+	}
+
+	offered := offers("Deck", "Panel", ctx)
+	root, err := Build([]byte(
+		`<Gooey><Deck><Panel Label="a" Name="p"><Text>x</Text></Panel></Deck></Gooey>`), ctx)
+	if err != nil {
+		t.Fatalf("the loader now refuses Name on a host ParsedBy def with a "+
+			"real Build, which closes this gap from the other side — update "+
+			"Grant.AttrsFor's comment with it: %v", err)
+	}
+	if root == nil {
+		t.Fatal("Build returned no root")
+	}
+	honoured := ctx.Named["p"] != nil
+
+	switch {
+	case offered && honoured:
+		t.Error("the grid now offers the Name row the loader honours, which " +
+			"CLOSES this gap — delete this test and correct Grant.AttrsFor's " +
+			"comment, which says the two gates agree")
+	case !offered && !honoured:
+		t.Error("Name was accepted and dropped on a host ParsedBy def with a " +
+			"real Build, which is #461's own defect rather than this one — " +
+			"the loader must either refuse it or honour it")
+	case offered && !honoured:
+		t.Error("the grid offers a Name row the loader drops, which is the " +
+			"direction Grant.AttrsFor's comment says IS guarded")
+	}
+	// The surviving case is !offered && honoured, which is the asymmetry
+	// this test exists to hold: an attribute that works with no designer
+	// surface anywhere.
 }
