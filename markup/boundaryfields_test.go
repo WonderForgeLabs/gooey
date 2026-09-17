@@ -68,8 +68,10 @@ var boundaryPartition = map[string]struct {
 	"Declared":   {true, "the declared-surface registry is page-wide by construction"},
 	"Includes":   {true, "a control may instantiate another control"},
 	"Dispatcher": {true, "there is one UI goroutine, so there is one dispatcher"},
-	"Dir":        {true, "the document directory <Companion> resolves against"},
-	"Variant":    {true, "the pixel protocol is a property of the app, not of one file"},
+	"Dir": {true, "the PAGE's directory <Companion> resolves Dir/Log against — " +
+		"the reference paragraph is derived from this row, so the wording " +
+		"corrected on Context.Dir had to reach here too"},
+	"Variant": {true, "the pixel protocol is a property of the app, not of one file"},
 
 	"Values": {false, "VALUES ISOLATE — the whole point of the boundary. They " +
 		"cross only through the declared surface (<x:Property>), which is " +
@@ -92,6 +94,9 @@ var boundaryPartition = map[string]struct {
 		"resolves Style= against the document scope it was instantiated in"},
 	"controls": {true, "the ancestry EXTENDS rather than resets — a control " +
 		"appearing twice in it is the load-time cycle check"},
+	"rowDepth": {true, "the row-seam counter, and it must survive a control " +
+		"instantiation or a recursive template resets it every level and " +
+		"the bound never fires — see MaxTemplateDepth"},
 
 	"fsys": {false, "REPLACED, not inherited: a control's literal asset paths " +
 		"resolve against the FS its OWN markup came from, the same isolation " +
@@ -133,8 +138,14 @@ var rowPartition = map[string]struct {
 	"Dispatcher": {true, "one UI goroutine, one dispatcher"},
 	"Dir":        {true, "the row's markup is in the same document directory"},
 	"Variant":    {true, "the pixel protocol is a property of the app"},
-	"controls": {true, "the cycle ancestry: resetting it turned the #216 " +
-		"load error back into a stack overflow"},
+	"controls": {false, "RESET, because a row is a legitimate re-entry and " +
+		"identity cannot tell a terminating recursive template from a " +
+		"self-supplying one. Inheriting it caught the #216 stack overflow " +
+		"and also refused a finite tree view; rowDepth below is what " +
+		"catches the first without the second — see MaxTemplateDepth"},
+	"rowDepth": {false, "INCREMENTED, which is the one field this seam neither " +
+		"inherits nor resets: crossing a template seam is exactly what it " +
+		"counts"},
 	"res": {true, "the resource chain is lexical and the row is lexically " +
 		"inside the document"},
 	"fsys": {true, "a row's markup CAME FROM the document's FS, so a literal " +
@@ -244,9 +255,15 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 	declSentinel := &components.Text{}
 	var child *Context
 	page := &Context{
-		Includes:   ctlFS,
-		Dir:        "/tmp/anchor",
-		Variant:    "sixel",
+		Includes: ctlFS,
+		Dir:      "/tmp/anchor",
+		Variant:  "sixel",
+		// NON-ZERO, because the rowDepth arm is an equality and two
+		// zeroes satisfy one. The page is not actually inside three
+		// templates; the value is a sentinel, and the claim being
+		// checked is that a control instantiation carries it across
+		// unchanged rather than starting again at nothing.
+		rowDepth:   3,
 		Values:     map[string]any{"N": 1},
 		Named:      map[string]gooey.Component{"PageOnly": &components.Text{}},
 		Declared:   map[gooey.Component]DeclaredSurface{declSentinel: {Control: "PageOnly"}},
@@ -340,6 +357,14 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 			// Same shape: the page declares <Gooey.Resources>, so a
 			// non-nil scope in the child can only have come across.
 			crossed = child.res.cur != nil
+		case "rowDepth":
+			// CARRIED UNCHANGED. A control instantiation is not a row
+			// seam, so the counter neither resets nor advances here —
+			// and if it reset, a recursive template would start again
+			// at zero on every level and MaxTemplateDepth would never
+			// fire. The page's sentinel is 3 so this is not two zeroes
+			// agreeing.
+			crossed = child.rowDepth == page.rowDepth
 		case "controls":
 			// It EXTENDS rather than copies, so the claim is that the
 			// ancestry names the control being built. The entries are
@@ -725,6 +750,10 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 		Dir:      "/tmp/anchor",
 		Variant:  "sixel",
 		Includes: ctlFS,
+		// A SENTINEL, for the reason the control fixture's copy gives:
+		// the row arm asserts an INCREMENT, and 0 -> 1 is satisfied by
+		// a counter that was reset and then advanced.
+		rowDepth: 3,
 		// SET, because nil == nil. The Dispatcher arm below is a pointer
 		// compare, and a page that carries no dispatcher makes it read
 		// true against a row that carries none either — so the arm passed
@@ -827,7 +856,22 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 			crossed = row.Dir == page.Dir
 		case "Variant":
 			crossed = row.Variant == page.Variant
+		case "rowDepth":
+			// INCREMENTED, which is neither inherited nor reset — so a
+			// negative alone would be satisfied by a reset to zero, and
+			// the increment is asserted on its own line rather than
+			// left to it.
+			if row.rowDepth != page.rowDepth+1 {
+				t.Errorf("a template row's rowDepth is %d, want %d — crossing a "+
+					"template seam is exactly what this counter counts, and a "+
+					"row that does not advance it makes MaxTemplateDepth "+
+					"unreachable", row.rowDepth, page.rowDepth+1)
+			}
+			crossed = row.rowDepth == page.rowDepth
 		case "controls":
+			// RESET, so the claim is that the row does NOT carry the
+			// page's ancestry. See rowPartition's entry and
+			// MaxTemplateDepth.
 			crossed = len(row.controls) > 0 &&
 				row.controls[len(row.controls)-1] == "page.gooey"
 		case "res":
@@ -1038,27 +1082,31 @@ func TestADeclaredElementWorksInsideARow(t *testing.T) {
 	}
 }
 
-// TestARowCannotResetTheCycleAncestry is the sharp half of the row seam,
-// and the difference between a load error and a fatal.
+// TestASelfSupplyingItemSourceIsALoadError is the sharp half of the row
+// seam, and the difference between a load error and a fatal.
 //
-// controls is the ancestry indexOf(parent.controls, name) reads to turn
-// "a control includes itself" into a load error naming the loop — the
-// #216 crash, caught. The item-template row context did not copy it, so
-// a row RESET it: every row started a fresh ancestry and the check could
-// not see across one.
+// A control whose item template instantiates it, fed a projection that
+// hands down an item source at every depth, never stops instantiating.
+// Nothing in the ancestry says so — a row is a legitimate re-entry — so
+// what catches it is the row-seam counter, MaxTemplateDepth. Both
+// directions measured on this fixture:
 //
-// Both directions measured on this fixture, which is a passthrough
-// control whose own template instantiates it, fed a projection that
-// supplies itself at every depth:
-//
-//	with the propagation:    markup: control loop.gooey includes itself
-//	without it:              fatal error: stack overflow
+//	with the bound:    markup: control loop.gooey: <ItemsView.ItemTemplate>:
+//	                   nested item templates too deep
+//	without it:        fatal error: stack overflow
 //
 // The second is not merely worse, it is unreportable: a Go fatal is not
 // a panic, so nothing recovers it and Screen.Restore never runs — the
 // terminal is left in raw mode with the alternate screen up. That is the
-// whole reason the load-time check exists. Raised in review of #490.
-func TestARowCannotResetTheCycleAncestry(t *testing.T) {
+// whole reason a load-time refusal exists here.
+//
+// THIS TEST USED TO REQUIRE "includes itself", and that was the round
+// that inherited `controls` across the row seam. It caught this fixture
+// and also refused the terminating tree-view shape, which
+// TestATerminatingRecursiveTemplateLoads is the other half of. The
+// message is what changed; the guarantee is the same one. Raised in
+// review of #490, twice.
+func TestASelfSupplyingItemSourceIsALoadError(t *testing.T) {
 	ctlFS := fstest.MapFS{
 		"loop.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
 			`<ItemsView Items="{{.Items}}">` +
@@ -1083,10 +1131,64 @@ func TestARowCannotResetTheCycleAncestry(t *testing.T) {
 	if err == nil {
 		t.Fatal("a control whose item template instantiates itself built cleanly")
 	}
-	if !strings.Contains(err.Error(), "includes itself") {
+	if !strings.Contains(err.Error(), "nested item templates too deep") {
 		t.Errorf("a control whose item template instantiates itself failed for "+
-			"some other reason than the cycle check, so this test is not "+
+			"some other reason than the depth bound, so this test is not "+
 			"reaching it: %v", err)
+	}
+	// THE MESSAGE NAMES THE SEAM ONCE. The refusal is raised at the
+	// innermost of MaxTemplateDepth nested templates and passes back out
+	// through every one of them, so before errTemplateTooDeep gave it an
+	// identity the author read sixty-four copies of
+	// "markup: <ItemsView.ItemTemplate>: " before the first useful word.
+	if n := strings.Count(err.Error(), "<ItemsView.ItemTemplate>"); n != 1 {
+		t.Errorf("the refusal names <ItemsView.ItemTemplate> %d times, want 1 — "+
+			"every enclosing template re-wrapped it:\n%v", n, err)
+	}
+}
+
+// The shape the round that inherited `controls` across the row seam
+// refused, and the reason identity is the wrong instrument here.
+//
+// A tree view is node.gooey: a label, and an <ItemsView> over the node's
+// children whose template instantiates <Node/>. It is recursive and it
+// TERMINATES, because ItemsView.Validate realizes a probe row only for a
+// non-empty collection — so the load descends exactly as far as the data
+// goes. With the ancestry inherited it failed at depth two with
+//
+//	markup: control node.gooey includes itself: node.gooey → node.gooey
+//	— a control cannot be its own ancestor, because instantiating it
+//	never terminates
+//
+// whose final clause is false at this seam. Raised in review of #490.
+func TestATerminatingRecursiveTemplateLoads(t *testing.T) {
+	ctlFS := fstest.MapFS{
+		"node.gooey": {Data: []byte(`<Gooey xmlns="wonderforge.io/gooey/2026">` +
+			`<VStack><Text>{{.Label}}</Text>` +
+			`<ItemsView Items="{{.Kids}}">` +
+			`<ItemsView.ItemTemplate><Node Label="{{.Label}}" Kids="{{.Kids}}"/></ItemsView.ItemTemplate>` +
+			`</ItemsView></VStack></Gooey>`)},
+	}
+	// TWO LEVELS AND A LEAF, so the recursion is real and finite: the
+	// probe row for the root's one child is itself a <Node/>, whose own
+	// <ItemsView> has an empty collection and realizes nothing.
+	leaf := components.ItemsOf([]string{}, func(string) map[string]any { return nil })
+	kids := components.ItemsOf([]string{"leaf"}, func(string) map[string]any {
+		return map[string]any{
+			"Label": prop.NewSource("leaf"),
+			"Kids":  prop.NewSource(leaf),
+		}
+	})
+	ctx := &Context{
+		Includes: ctlFS,
+		Values: map[string]any{
+			"Label": prop.NewSource("root"),
+			"Kids":  prop.NewSource(kids),
+		},
+	}
+	if _, err := Build([]byte(`<Gooey xmlns="wonderforge.io/gooey/2026">`+
+		`<Node Label="{{.Label}}" Kids="{{.Kids}}"/></Gooey>`), ctx); err != nil {
+		t.Fatalf("a finite tree view failed to load: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,11 @@ import (
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
+
+// errTemplateTooDeep is the depth refusal's identity, so the enclosing
+// templates it passes through can tell it from an ordinary row failure
+// and leave it alone. See MaxTemplateDepth.
+var errTemplateTooDeep = errors.New("markup: <ItemsView.ItemTemplate>: nested item templates too deep")
 
 // buildItemsView is the markup side of DataTemplates, and the one place
 // where a template becomes a factory:
@@ -130,6 +136,15 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// the <Image> it exercised was built by the probe row.
 	docFS := ctx.fsys
 	factory := func(values map[string]any) (gooey.Component, error) {
+		// THE ROW SEAM IS COUNTED, not judged by identity. See
+		// MaxTemplateDepth for why a recursive template is a legitimate
+		// shape and the control cycle check is the wrong instrument for
+		// it. Refused HERE rather than inside the row build so the
+		// message names the seam the author has to look at.
+		if ctx.rowDepth >= MaxTemplateDepth {
+			return nil, fmt.Errorf("%w: reached %d levels — a template that instantiates its own control terminates only when the item source does, and this one has not. Check that the projection stops supplying children at the leaves",
+				errTemplateTooDeep, MaxTemplateDepth)
+		}
 		rowPending := &deferredArms{open: true}
 		item := &Context{
 			Values:     values,
@@ -302,9 +317,16 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			},
 			ns:  ns,
 			res: res,
-			// The ancestry, so the cycle check can see across a row. See
-			// the Elements block above.
-			controls: ctx.controls,
+			// RESET, and bounded by rowDepth instead. The previous round
+			// inherited the ancestry here so the cycle check could see
+			// across a row, which fixed a self-supplying source that
+			// overflowed the stack and made a terminating tree-view
+			// template a load error — the shape is legitimate and
+			// identity cannot tell it from the shape that is not. See
+			// MaxTemplateDepth, and the refusal at the top of this
+			// factory. Raised in review of #490.
+			controls: nil,
+			rowDepth: ctx.rowDepth + 1,
 			// THE DOCUMENT'S FS, because a row's markup came from the
 			// same document the <ItemsView> did. fsys is what
 			// Context.assets resolves a literal path against, and with it
@@ -387,6 +409,17 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// An empty collection has nothing to check against; those errors
 	// surface at first realization and are painted into the view.
 	if err := v.Validate(); err != nil {
+		// ALREADY ATTRIBUTED, and unwrapped once rather than sixty-four
+		// times. The depth refusal is raised at the INNERMOST seam and
+		// passes back out through every enclosing template, so wrapping
+		// it here put "markup: <ItemsView.ItemTemplate>: " in front of
+		// it once per level — a message whose first usable word is 2KB
+		// in. attributedErr does the same job for the control path,
+		// which is why "control node.gooey" appears once. Raised in
+		// review of #490.
+		if errors.Is(err, errTemplateTooDeep) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("markup: <ItemsView.ItemTemplate>: %w", err)
 	}
 	return v, nil

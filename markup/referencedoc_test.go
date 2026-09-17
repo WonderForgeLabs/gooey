@@ -229,11 +229,20 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 		t.Fatalf("boundaryPartition says Dir no longer crosses the control "+
 			"boundary, and the reference still says it is inherited:\n\t%s", para)
 	}
-	if !strings.Contains(para, "nil") {
+	// ANY OF THREE WORDS, because the accurate one is not "nil". Dir is
+	// a string and the loader tests `child.Dir == ""`
+	// (markup/usercontrol.go), so an author correcting the prose to
+	// "empty" — which is right — turned this red for being right. The
+	// guard's DIRECTION is the part worth keeping: it REQUIRES the
+	// condition rather than forbidding an overstatement, so a paragraph
+	// that drops it fails closed. Only the token was wrong. Raised in
+	// review of #490.
+	if !strings.Contains(para, "empty") && !strings.Contains(para, "nil") &&
+		!strings.Contains(para, "unset") {
 		t.Errorf("the <Companion> section states Dir's inheritance without its "+
 			"condition — a setup returning a Context with its own Dir keeps "+
 			"that one (markup/usercontrol.go), so an unconditional sentence "+
 			"here tells a control author the opposite of what the loader "+
-			"does:\n\t%s", para)
+			"does. Say empty (accurate), or unset:\n\t%s", para)
 	}
 }

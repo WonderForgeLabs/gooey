@@ -166,7 +166,7 @@ func checkCompanionAttrs(e Element) error {
 // exec.LookPath so a binary that is not installed is a LOAD error naming
 // it, rather than a start failure behind a screen that is already up. A
 // pathful one is resolved against the PAGE's directory (Context.Dir,
-// which a control inherits when it leaves it nil — see its doc) and
+// which a control inherits when it leaves it empty — see its doc) and
 // made absolute: exec.Cmd
 // resolves a relative Path against Dir, so leaving it relative would
 // silently mean two different files depending on whether Dir was also
@@ -276,7 +276,7 @@ func companionLog(e Element, ctx *Context, name string) (string, error) {
 
 // hostPath resolves one host-side path against the PAGE's directory.
 // An absolute path is left alone; everything else is joined onto
-// Context.Dir — the page's, inherited by a control that leaves it nil,
+// Context.Dir — the page's, inherited by a control that leaves it empty,
 // not the enclosing document's — which is empty (the process's working
 // directory) for a document built from bytes.
 func (ctx *Context) hostPath(p string) string {

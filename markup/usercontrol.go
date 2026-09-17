@@ -362,8 +362,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		if child.Dispatcher == nil {
 			child.Dispatcher = parent.Dispatcher
 		}
-		// Dir is the DOCUMENT DIRECTORY <Companion> resolves Dir/Log
-		// against. Unpropagated it was "", and hostPath falls back to
+		// Dir is the PAGE's directory <Companion> resolves Dir/Log
+		// against — the wording this branch corrected on Context.Dir and
+		// in companion.go for leaving WHICH document ambiguous exactly
+		// where the answer stops being obvious, and then left standing
+		// here. Raised in review of #490. Unpropagated it was "", and hostPath falls back to
 		// filepath.Clean — the process working directory — so a
 		// companion declared in a control file quietly ran somewhere
 		// else. Nothing restricts <Companion> to page level, so this was
@@ -386,10 +389,12 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// actually breaks", which is true at one level and false below
 		// it.
 		//
-		// INHERITED WHEN THE CHILD LEAVES IT NIL, like every field in
+		// INHERITED WHEN THE CHILD LEAVES IT EMPTY, like every field in
 		// this block: a setup returning a Context with its own Variant
-		// keeps it. Flagged in review of #490 alongside Dir's doc, which
-		// said "at every depth" of the same nil-guarded arm.
+		// keeps it. Variant is a string and the arm tests `== ""`, so
+		// "nil" was the wrong word for it too. Flagged in review of
+		// #490 alongside Dir's doc, which said "at every depth" of the
+		// same guarded arm; the word itself corrected the round after.
 		if child.Variant == "" {
 			child.Variant = parent.Variant
 		}
@@ -452,6 +457,13 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// Four levels deep, because append leaves no spare slot to fight
 		// over until growth has over-allocated.
 		child.controls = append(parent.controls[:len(parent.controls):len(parent.controls)], name)
+		// AND THE ROW DEPTH, which is the other half of the ancestry
+		// now that a row seam resets `controls` rather than extending
+		// it. A recursive template descends through a control
+		// instantiation at every level, so a counter that stopped here
+		// would count one seam and then reset — which is a stack
+		// overflow at load, not a refusal. See MaxTemplateDepth.
+		child.rowDepth = parent.rowDepth
 		w, err := doc.build(child)
 		if err != nil {
 			// ATTRIBUTED TO THE CONTROL, the way the setup-error path

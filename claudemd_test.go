@@ -1735,7 +1735,7 @@ var fileSuffixes = map[string]bool{
 // symbol.
 var symbolCiteRe = regexp.MustCompile("`([a-z][a-z0-9]*)\\.([A-Za-z_][A-Za-z0-9_]*)`")
 
-// symbolForeignMarker opts ONE LINE out of the symbol check, for a
+// symbolForeignMarkerRe opts ONE CITATION out of the symbol check, for a
 // `pkg.Name` that is not Go at all.
 //
 // The collision this answers is not the vendored one — vendoredByPackage
@@ -1755,10 +1755,36 @@ var symbolCiteRe = regexp.MustCompile("`([a-z][a-z0-9]*)\\.([A-Za-z_][A-Za-z0-9_
 // citation of `controlv1.ActResult_SendKeys` would have been silently
 // exempted by the rule meant to exempt Python.
 //
-// AND IT EXPIRES: a marked line whose name our package of that name
+// AND IT EXPIRES: a marked citation whose name our package of that name
 // DOES declare is a stale marker hiding a live citation, and the loop
 // below fails on it rather than skipping. Raised in review of #490.
-const symbolForeignMarker = "<!-- symbols: not-go -->"
+//
+// IT NAMES THE SYMBOL, and it did not. The marker was LINE-scoped, so it
+// exempted every `pkg.Name` on the line it appeared on — and the expiry
+// arm below fires only when our package DOES declare the name, which is
+// the case that would have passed anyway. The case it could not see is
+// the one this guard exists for: a second, genuinely-Go citation on the
+// same line that has ROTTED, skipped in silence. The live marker was
+// safe only by accident, because the other citation on its line carries
+// a slash and the pattern does not match one. Measured both ways —
+// adding a rotted markup.NoSuchSymbolHere to that line is caught now (no
+// backticks on that name here: a citation form written as an EXAMPLE is
+// not a live reference, which this guard would otherwise read as one).
+// Raised in review of #490, the round after.
+//
+// Spelled `<!-- symbols: not-go pkg.Name -->`, exempting exactly that
+// citation; anything else on the line is checked.
+var symbolForeignMarkerRe = regexp.MustCompile(
+	`<!-- symbols: not-go ([a-z][a-z0-9]*\.[A-Za-z_][A-Za-z0-9_]*) -->`)
+
+// exemptedSymbols is every `pkg.Name` a line opts out, as "pkg.Name".
+func exemptedSymbols(line string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range symbolForeignMarkerRe.FindAllStringSubmatch(line, -1) {
+		out[m[1]] = true
+	}
+	return out
+}
 
 // TestEveryCitedSymbolResolves is the half TestCLAUDEMDCitationsResolve
 // cannot see, and #490 is what made it necessary.
@@ -1811,7 +1837,7 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 		// this reads exactly what the whole-text scan read, and the
 		// failures below can now say WHERE.
 		for ln, line := range strings.Split(text, "\n") {
-			exempt := strings.Contains(line, symbolForeignMarker)
+			exempted := exemptedSymbols(line)
 			for _, m := range symbolCiteRe.FindAllStringSubmatch(line, -1) {
 				pkg, name := m[1], m[2]
 				if fileSuffixes[name] {
@@ -1839,17 +1865,16 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 				if !ours {
 					continue // a stdlib or third-party name; not ours to check
 				}
-				if exempt {
+				if exempted[pkg+"."+name] {
 					// THE MARKER EXPIRES HERE. It says "this pkg.Name is
 					// not Go"; if our package of that name declares it,
 					// that has stopped being true and the marker is
 					// hiding a live citation from the check.
 					if syms[name] {
-						t.Errorf("%s:%d carries %s and cites `%s.%s`, which package "+
-							"%s now declares. The marker says the name is not Go, "+
-							"and it is: remove the marker so the citation is "+
-							"checked like any other. (#490)",
-							doc, ln+1, symbolForeignMarker, pkg, name, pkg)
+						t.Errorf("%s:%d exempts `%s.%s` as not-Go, and package "+
+							"%s now declares it. Remove the marker so the citation "+
+							"is checked like any other. (#490)",
+							doc, ln+1, pkg, name, pkg)
 					}
 					continue
 				}
@@ -1885,9 +1910,9 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 						"line citation cannot do and this form can. If this is a "+
 						"DEPENDENCY's %s and not ours, it is not vendored under "+
 						"that name either, so spell it with enough of its import "+
-						"path to say so — and if it is not Go at all, put %s on "+
-						"the line. (#490)",
-						doc, ln+1, pkg, name, pkg, name, pkg, symbolForeignMarker)
+						"path to say so — and if it is not Go at all, put "+
+						"<!-- symbols: not-go %s.%s --> on the line. (#490)",
+						doc, ln+1, pkg, name, pkg, name, pkg, pkg, name)
 				}
 			}
 		}
@@ -1965,9 +1990,15 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 // copy, never reject one that resolves in the right one.
 // ONCE PER BINARY, not once per caller. Two tests ask for each of these
 // indexes and each walk parses the whole tree (vendor/ included), which
-// put about 1.5 s of pure duplicate work in a ~20 s root suite. The
+// put a substantial slice of pure duplicate work in the root suite. The
 // memo changes nothing either test asserts: the walk is over files on
 // disk, which no test here writes. Raised in review of #490.
+//
+// The memo stays even though buildDeclaredByPackage now delegates to a
+// memoized index of its own: this one is the SEAM, and a caller should
+// not have to know that the two indexes share a walk. Collapsing it
+// would make the sharing load-bearing for correctness rather than for
+// cost.
 var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
 
 func declaredByPackage(t *testing.T) map[string]map[string]bool {
@@ -1979,54 +2010,21 @@ func declaredByPackage(t *testing.T) map[string]map[string]bool {
 	return out
 }
 
+// ONE WALK, ONE PARSE, TWO INDEXES. This had its own WalkDir over the
+// identical file set with the identical prune, and parsed every .go file
+// in the tree a second time — so the memo that removed the duplication
+// between CALLERS left the duplication between INDEXES. A file parsed
+// with ParseComments carries its Decls too, so the comment corpus can
+// produce this for nothing. Measured over the root suite, -count=1,
+// three runs each: see the PR comment for the round that did it; no
+// seconds are written here, for the reason CLAUDE.md's Verify section
+// gives about numbers in prose. Raised in review of #490.
 func buildDeclaredByPackage() (map[string]map[string]bool, error) {
-	out := map[string]map[string]bool{}
-	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if n := d.Name(); p != "." && (strings.HasPrefix(n, ".") || n == "vendor" || n == "testdata") {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(p, ".go") {
-			return nil
-		}
-		src, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		fset := gotoken.NewFileSet()
-		f, err := goparser.ParseFile(fset, p, src, 0)
-		if err != nil {
-			return nil // the compiler owns this one
-		}
-		pkg := f.Name.Name
-		if out[pkg] == nil {
-			out[pkg] = map[string]bool{}
-		}
-		for _, decl := range f.Decls {
-			switch d := decl.(type) {
-			case *ast.FuncDecl:
-				out[pkg][d.Name.Name] = true
-			case *ast.GenDecl:
-				for _, sp := range d.Specs {
-					switch sp := sp.(type) {
-					case *ast.TypeSpec:
-						out[pkg][sp.Name.Name] = true
-					case *ast.ValueSpec:
-						for _, n := range sp.Names {
-							out[pkg][n.Name] = true
-						}
-					}
-				}
-			}
-		}
-		return nil
-	})
-	return out, err
+	c, err := goCommentIndex()
+	if err != nil {
+		return nil, err
+	}
+	return c.declared, nil
 }
 
 // goCommentSources are the .go files whose COMMENTS carry symbol
@@ -2087,6 +2085,11 @@ type goCommentCorpus struct {
 	// same corpus in the same order.
 	paths []string
 	files map[string]goCommentFile
+	// declared is package name -> the top-level names it declares, the
+	// third product of the same parse. It answers a question about the
+	// TREE rather than about one file, which is why it is not on
+	// goCommentFile. See buildDeclaredByPackage.
+	declared map[string]map[string]bool
 }
 
 type goCommentFile struct {
@@ -2106,7 +2109,10 @@ type goCommentLine struct {
 var goCommentIndex = sync.OnceValues(buildGoCommentIndex)
 
 func buildGoCommentIndex() (*goCommentCorpus, error) {
-	c := &goCommentCorpus{files: map[string]goCommentFile{}}
+	c := &goCommentCorpus{
+		files:    map[string]goCommentFile{},
+		declared: map[string]map[string]bool{},
+	}
 	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -2139,6 +2145,31 @@ func buildGoCommentIndex() (*goCommentCorpus, error) {
 			c.files[p] = goCommentFile{}
 			continue
 		}
+		// THE DECLARATION INDEX, from the parse that already happened.
+		// An unparseable file contributes nothing here either, which is
+		// what the old separate walk did on its own.
+		pkg := f.Name.Name
+		if c.declared[pkg] == nil {
+			c.declared[pkg] = map[string]bool{}
+		}
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				c.declared[pkg][d.Name.Name] = true
+			case *ast.GenDecl:
+				for _, sp := range d.Specs {
+					switch sp := sp.(type) {
+					case *ast.TypeSpec:
+						c.declared[pkg][sp.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, n := range sp.Names {
+							c.declared[pkg][n.Name] = true
+						}
+					}
+				}
+			}
+		}
+
 		var b strings.Builder
 		var lines []goCommentLine
 		for _, cg := range f.Comments {

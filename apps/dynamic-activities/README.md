@@ -170,7 +170,7 @@ Run the tests from this directory too:
 > `grpc` is a regular package and wins the path scan from any directory, so this cannot
 > break a correct venv — but it will happily tell you a broken one is fine. Never treat a
 > bare `import grpc` as evidence the package is there; check `pip list`, or probe for a
-> real attribute such as `grpc.insecure_channel`. <!-- symbols: not-go --> (`mcp/` is a
+> real attribute such as `grpc.insecure_channel`. <!-- symbols: not-go grpc.insecure_channel --> (`mcp/` is a
 > bare directory here too, and shadows the `mcp` package the same way.)
 
 Then:
