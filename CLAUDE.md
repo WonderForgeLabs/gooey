@@ -533,7 +533,17 @@ had already got it right. Review of #456 found them.
 For a pop the clear is **one slot**, not the whole tail:
 `x[len(x)-1] = nil` before the pop releases exactly what left, and where
 the pop is hot (`prop/prop.go`) clearing to cap instead would be
-O(depth) per pop. The guard reads both.
+O(depth) per pop. The guard reads both spellings **and the order**: it
+records where the zeroing statement is and exempts the pop only when it
+precedes it. That sentence used to end "the guard reads both", meaning
+the two spellings, and a reader took the paragraph whole and concluded
+the placement was checked. It was not, and the shape that slipped
+through was not a near-miss — `x = x[:len(x)-1]` followed by
+`x[len(x)-1] = nil` nils a LIVE element, leaves the released one, and
+was certified as the fix for itself. Also enforced now: the pop's own
+subtrahend and the zeroed index must both be `1`, because the evidence
+is about the ONE slot that left `[0, len)`. Review of #456 measured all
+three.
 
 `TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
 it — over all three spellings above, and not over a general compaction

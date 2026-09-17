@@ -1121,6 +1121,14 @@ const (
 	resetTruncate = "truncate" // x = x[:0]
 	resetSplice   = "splice"   // x = append(x[:i], x[i+1:]...)
 	resetPop      = "pop"      // x = x[:len(x)-1]
+
+	// A POP BY MORE THAN ONE IS THE SAME RETENTION AND A DIFFERENT
+	// EXEMPTION. `x = x[:len(x)-2]` leaves just as much behind, so it is
+	// still a reset the guard must report; but the top-zero evidence
+	// proves ONE released slot, so it cannot cover this. Splitting the
+	// kind is what lets resetIsExempt say so without widening what the
+	// guard matches. Raised in review of #456.
+	resetPopN = "pop-by-n" // x = x[:len(x)-2]
 )
 
 func resetBase(rhs ast.Expr, text func(ast.Expr) string) (base, kind string) {
@@ -1133,7 +1141,10 @@ func resetBase(rhs ast.Expr, text func(ast.Expr) string) (base, kind string) {
 			return text(e.X), resetTruncate
 		}
 		if isPopOf(e.High, text(e.X), text) {
-			return text(e.X), resetPop
+			if popsOneOf(e.High, text(e.X), text) {
+				return text(e.X), resetPop
+			}
+			return text(e.X), resetPopN
 		}
 		return "", ""
 
@@ -1210,7 +1221,26 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 				return true
 			}
 		}
+		// LOW MUST BE NIL ON THE clearToCap ARM, and the justification
+		// is why. Stripping the slice expression off the argument rests
+		// on cap(x[:0]) being cap(x) — true only from the head.
+		// `clearToCap(x[2:])` clears from element 2 to cap and leaves
+		// x[0] and x[1] reachable, and this arm exempted a later
+		// `x = x[:0]` for it. Measured in review of #456; nothing in the
+		// tree writes the offset spelling, which is why the fixture arm
+		// is the pin.
+		//
+		// NOT ON THE clear ARM, which is the mistake the first version
+		// of this narrowing made: `clear(x[len(x):cap(x)])` is the
+		// canonical spelling in this tree and its Low is len(x), so a
+		// blanket Low == nil dropped fourteen live exemptions at once.
+		// That arm is already pinned from both ends by the High check
+		// above — cap() over the same base — which is what makes the
+		// whole tail the thing being cleared whatever Low is.
 		if sliced {
+			if id.Name == "clearToCap" && sl.Low != nil {
+				return true
+			}
 			arg = sl.X
 		}
 		found[text(arg)] = true
@@ -1288,7 +1318,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 						continue
 					}
 					retaining++
-					if resetIsExempt(base, text(as.Lhs[i]), kind, clears, zeroesTop) {
+					if resetIsExempt(base, text(as.Lhs[i]), kind, as.Pos(), clears, zeroesTop) {
 						cleared++
 						continue
 					}
@@ -1730,6 +1760,30 @@ func isPopOf(high ast.Expr, base string, text func(ast.Expr) string) bool {
 	return ok && id.Name == "len" && text(call.Args[0]) == base
 }
 
+// popsOneOf is isPopOf narrowed to a subtrahend of exactly ONE, which
+// is the only thing the top-zero exemption's argument is true of.
+//
+// isPopOf accepts `len(x) - <any constant>` because for the RESET that
+// is the right question: `x = x[:len(x)-2]` retains exactly as much as
+// `x = x[:len(x)-1]` does, and both are the shape a long-lived list
+// uses. The exemption asks something else — "did the one slot that left
+// [0, len) get released" — and that has a different answer for every
+// constant but 1. Reusing one predicate for both meant three retaining
+// shapes were certified as exempt; measured in review of #456:
+//
+//	x[len(x)-1] = nil ; x = x[:len(x)-2]   two leave, one is zeroed
+//	x[len(x)-2] = nil ; x = x[:len(x)-1]   the vacated slot is untouched
+//
+// Both now report NO. Raised in review of #456.
+func popsOneOf(high ast.Expr, base string, text func(ast.Expr) string) bool {
+	bin, ok := high.(*ast.BinaryExpr)
+	if !ok {
+		return false
+	}
+	lit, ok := bin.Y.(*ast.BasicLit)
+	return ok && lit.Value == "1" && isPopOf(high, base, text)
+}
+
 // zeroesTopIn is every slice base that fn zeroes the LAST SLOT of —
 // `x[len(x)-1] = nil` or `= T{}` — which is the clear a POP needs and
 // the whole of it.
@@ -1750,8 +1804,15 @@ func isPopOf(high ast.Expr, base string, text func(ast.Expr) string) bool {
 //
 // The assigned value must be a ZERO: nil, or a composite literal with
 // no elements. `x[len(x)-1] = y` is a write, not a release.
-func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
-	found := map[string]bool{}
+// IT RETURNS WHERE, NOT WHETHER, because the argument names an ORDER.
+// "`x[len(x)-1] = nil` BEFORE the pop releases exactly what left" is
+// false read the other way round: after the pop, `len(x)-1` is a LIVE
+// element and the released slot is never touched. That is not a missed
+// case, it is a real bug shape, and a boolean could not tell the guard
+// which one it had. The position is the earliest zeroing of that base
+// in the function; resetIsExempt requires it to precede the reset.
+func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]token.Pos {
+	found := map[string]token.Pos{}
 	ast.Inspect(fn, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
 		if !ok || len(as.Lhs) != len(as.Rhs) {
@@ -1762,7 +1823,7 @@ func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 			if !ok {
 				continue
 			}
-			if !isPopOf(ix.Index, text(ix.X), text) {
+			if !popsOneOf(ix.Index, text(ix.X), text) {
 				continue
 			}
 			switch v := as.Rhs[i].(type) {
@@ -1777,7 +1838,10 @@ func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 			default:
 				continue
 			}
-			found[text(ix.X)] = true
+			base := text(ix.X)
+			if at, seen := found[base]; !seen || as.Pos() < at {
+				found[base] = as.Pos()
+			}
 		}
 		return true
 	})
@@ -1844,7 +1908,7 @@ func notAPop()   { x[len(x)-n] = nil }
 			}
 			continue
 		}
-		if !got[tc.want] || len(got) != 1 {
+		if !got[tc.want].IsValid() || len(got) != 1 {
 			t.Errorf("%s: zeroesTopIn = %v, want exactly %q — %s", tc.fn, got, tc.want, tc.why)
 		}
 	}
@@ -1867,11 +1931,24 @@ func notAPop()   { x[len(x)-n] = nil }
 // pops, so widening this back to every kind changes nothing that a walk
 // of the corpus can see — the mutation is silent, and
 // TestTheExemptionIsScopedToTheSpellingItProves is where it goes red.
-func resetIsExempt(base, lhs, kind string, clears, zeroesTop map[string]bool) bool {
+func resetIsExempt(base, lhs, kind string, at token.Pos, clears map[string]bool, zeroesTop map[string]token.Pos) bool {
 	if clears[base] || clears[lhs] {
 		return true
 	}
-	return kind == resetPop && (zeroesTop[base] || zeroesTop[lhs])
+	if kind != resetPop {
+		return false
+	}
+	// BEFORE, NOT MERELY PRESENT. CLAUDE.md and zeroesTopIn's doc both
+	// say the zero comes before the pop, and until round five nothing
+	// read the order: `x = x[:len(x)-1]` followed by
+	// `x[len(x)-1] = nil` nils a LIVE element, leaves the released one,
+	// and was certified as the fix for itself. Raised in review of #456.
+	for _, name := range [2]string{base, lhs} {
+		if zeroed, ok := zeroesTop[name]; ok && zeroed < at {
+			return true
+		}
+	}
+	return false
 }
 
 // TestTheExemptionIsScopedToTheSpellingItProves is resetIsExempt's
@@ -1910,6 +1987,26 @@ func zeroesSomeoneElsesTop() {
 	y[len(y)-1] = nil
 	x = x[:len(x)-1]
 }
+
+func popTwoZeroOne() {
+	h.kids[len(h.kids)-1] = nil
+	h.kids = h.kids[:len(h.kids)-2]
+}
+
+func zeroWrongSlot() {
+	h.kids[len(h.kids)-2] = nil
+	h.kids = h.kids[:len(h.kids)-1]
+}
+
+func zeroAfterPop() {
+	h.kids = h.kids[:len(h.kids)-1]
+	h.kids[len(h.kids)-1] = nil
+}
+
+func clearFromAnOffset() {
+	clearToCap(x[2:])
+	x = x[:0]
+}
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "fixture.go", src, 0)
@@ -1937,7 +2034,7 @@ func zeroesSomeoneElsesTop() {
 				if base == "" {
 					continue
 				}
-				if resetIsExempt(base, text(as.Lhs[i]), kind, clears, zeroesTop) {
+				if resetIsExempt(base, text(as.Lhs[i]), kind, as.Pos(), clears, zeroesTop) {
 					continue
 				}
 				left = append(left, kind)
@@ -1967,6 +2064,23 @@ func zeroesSomeoneElsesTop() {
 		{"zeroesSomeoneElsesTop", []string{resetPop}, "the exemption is keyed on the " +
 			"base, so releasing y's top slot says nothing about x — even a pop is " +
 			"reported"},
+
+		// THE THREE SHAPES ROUND FIVE MEASURED AS FALSELY EXEMPT. None
+		// of them exists in the tree — every live top-zero site is a
+		// single clean pop with the zero first — so a mutation of any
+		// of the three narrowings is silent against the corpus and
+		// these arms are the only place it goes red.
+		{"popTwoZeroOne", []string{resetPopN}, "two slots leave [0, len) and one is " +
+			"zeroed, so h.kids[len-2] stays reachable — the top-zero evidence " +
+			"proves ONE released slot and cannot cover a pop by two"},
+		{"zeroWrongSlot", []string{resetPop}, "the slot the pop vacated is never " +
+			"touched: the index must be len(x)-1, not len(x)-<any constant>"},
+		{"zeroAfterPop", []string{resetPop}, "after the pop, len(x)-1 is a LIVE " +
+			"element — this nils it and leaves the released one, which is a real " +
+			"bug shape the guard used to certify as its own fix"},
+		{"clearFromAnOffset", []string{resetTruncate}, "clearToCap(x[2:]) clears from " +
+			"element 2 to cap and leaves x[0] and x[1] reachable, so it cannot " +
+			"exempt a truncation to zero"},
 	} {
 		var decl *ast.FuncDecl
 		for _, d := range f.Decls {
