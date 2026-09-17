@@ -689,8 +689,12 @@ func (n *node) markup(indent string) string {
 // author to put it, and so does every file saved before this change — so
 // this is the spelling the editor has to read. It is not the spelling the
 // editor now WRITES: this function moves an attribute prefix down onto
-// the root, envelopeAttrs computes the complement, and gooeyOpen writes
-// that complement back. Raised in review of #501.
+// the root and RETURNS THE SET IT MOVED, envelopeAttrs subtracts that
+// set, and gooeyOpen writes what is left back. Not "computes the
+// complement", which is what this said and what envelopeAttrs' own doc
+// spends a paragraph refusing to do: a second predicate over the same
+// attributes is the shape three rounds of this branch kept reaching for
+// and getting wrong. Raised in review of #501.
 //
 // THE ROOT'S OWN DECLARATION IS LEFT ALONE, and the reason is not XML
 // subtree scoping — markup.parse keeps one flat, document-wide ns map
@@ -795,8 +799,8 @@ func carryDeclarations(env, root *node) map[string]bool {
 
 // envelopeAttrs is everything on a <Gooey> that did NOT move down with
 // carryDeclarations — kept so gooeyOpen can write it back. Call it AFTER
-// carryDeclarations and pass the same root: the question it answers is
-// what actually carried, not what was eligible to.
+// carryDeclarations and pass the set it returned: the question it
+// answers is what actually carried, not what was eligible to.
 //
 // THE COMPLEMENT IS OBSERVED, NOT ASSUMED. This dropped every xmlns:
 // unconditionally while carryDeclarations skips a prefix the root
