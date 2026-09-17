@@ -495,10 +495,10 @@ func appendByRank[T any](dst, lifted []T, rankOf func(T) int, buckets *[]rankBuc
 			// Grow by one, then open a gap at i.
 			//
 			// THE SPARE SLICE IS TAKEN BEFORE THE COPY, and that is the
-			// whole subtlety. Reading bs[i].nodes AFTER the shift hands
+			// whole subtlety. Reading bs[i].items AFTER the shift hands
 			// back the array that now belongs to bs[i+1] — the two
 			// buckets alias, and appending to one silently overwrites the
-			// other's nodes. That is not hypothetical: it is the bug the
+			// other's items. That is not hypothetical: it is the bug the
 			// first version of this function shipped, and
 			// TestAHigherRankPaintsOverALowerOneDeclaredLater caught it.
 			//

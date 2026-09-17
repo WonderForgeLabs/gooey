@@ -920,19 +920,25 @@ func notAClear() { copy(x[:cap(x)], y) }
 		return src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset]
 	}
 
+	// ordered says the spelling's region moves with len, so the clear
+	// only releases anything when it runs AFTER the reset. It is the
+	// half of clearsToCapIn's answer that nothing in the tree pins: the
+	// four accepted spellings are all live, and all four are already
+	// written on the correct side of their reset.
 	for _, tc := range []struct {
-		fn   string
-		want bool
+		fn      string
+		want    bool
+		ordered bool
 	}{
-		{"full", true},
-		{"fullTail", true},
-		{"named", true},
-		{"namedSlice", true},
-		{"whole", false},
-		{"toLen", false},
-		{"toZero", false},
-		{"otherCap", false},
-		{"notAClear", false},
+		{"full", true, false},
+		{"fullTail", true, true},
+		{"named", true, false},
+		{"namedSlice", true, false},
+		{"whole", false, false},
+		{"toLen", false, false},
+		{"toZero", false, false},
+		{"otherCap", false, false},
+		{"notAClear", false, false},
 	} {
 		var decl *ast.FuncDecl
 		for _, d := range f.Decls {
@@ -943,13 +949,26 @@ func notAClear() { copy(x[:cap(x)], y) }
 		if decl == nil {
 			t.Fatalf("the fixture has no func %s", tc.fn)
 		}
-		if got := clearsToCapIn(decl, text)["x"]; got != tc.want {
-			t.Errorf("%s: clearsToCapIn exempts x = %v, want %v. %s", tc.fn, got, tc.want,
+		got := clearsToCapIn(decl, text)["x"]
+		exempts := len(got) != 0
+		if exempts != tc.want {
+			t.Errorf("%s: clearsToCapIn exempts x = %v, want %v. %s", tc.fn, exempts, tc.want,
 				map[bool]string{
 					true: "this spelling does reach cap and a reset beside it is safe",
 					false: "this spelling leaves elements reachable past the truncation, " +
 						"which is the defect the guard is for",
 				}[tc.want])
+			continue
+		}
+		if tc.want && got[0].ordered != tc.ordered {
+			t.Errorf("%s: clearsToCapIn reports ordered = %v, want %v — %s", tc.fn,
+				got[0].ordered, tc.ordered,
+				map[bool]string{
+					true: "this spelling's low bound is len, so the region it clears " +
+						"moves with the reset and only a clear AFTER it releases anything",
+					false: "this spelling starts at element zero, so it names the whole " +
+						"backing array whenever it runs",
+				}[tc.ordered])
 		}
 	}
 }
@@ -1188,15 +1207,30 @@ func resetBase(rhs ast.Expr, text func(ast.Expr) string) (base, kind string) {
 //
 // WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and that scope
 // now lives on resetBase above, where the matching happens, rather than
-// on this function. The version of this paragraph that stood here named
+// IT RETURNS WHERE AND WHETHER THE ORDER MATTERS, not a bool, and the
+// argument is zeroesTopIn's one screen down, made about the other
+// exemption. `clear(x[:cap(x)])` and `clearToCap(x)` name the whole
+// backing array whenever they run, so they are order-free.
+// `clear(x[len(x):cap(x)])` is not: its Low reads len, and len is
+// precisely what the reset changes. Placed BEFORE the reset it clears
+// the region above the OLD len — already dead — and the following
+// `x = x[:0]` then leaves the entire live range past the new len and
+// reachable. CLAUDE.md's clearToCap note bolds "after the refill" for
+// that spelling and nothing here read it: measured, moving
+// ItemsView.sync's clear (components/itemsview.go:345) above its reset
+// leaves this guard green over every row component of a shrinking
+// window, which is the leak clearToCap's own doc argues from. Raised in
+// review of #456.
+//
+// The version of this paragraph that stood here named
 // the delete-splice's sibling `x = append(x[:0], …)` and not the splice
 // itself, and called the omission scope rather than a live miss — which
 // was true of the spellings it listed and false of the one it did not:
 // three fields were spliced and retaining while this guard reported a
 // clean tree. Raised in review of #456, round two, and corrected in the
 // round that found them.
-func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
-	found := map[string]bool{}
+func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSite {
+	found := map[string][]clearSite{}
 	ast.Inspect(fn, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok || len(call.Args) != 1 {
@@ -1237,16 +1271,32 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 		// That arm is already pinned from both ends by the High check
 		// above — cap() over the same base — which is what makes the
 		// whole tail the thing being cleared whatever Low is.
+		ordered := false
 		if sliced {
 			if id.Name == "clearToCap" && sl.Low != nil {
 				return true
 			}
+			// A LOW THAT IS NOT THE HEAD makes the spelling relative to
+			// len. `x[:cap(x)]` and `x[:0]` start at element zero and
+			// mean the same region whenever they run; `x[len(x):…]`
+			// moves with the reset.
+			ordered = sl.Low != nil
 			arg = sl.X
 		}
-		found[text(arg)] = true
+		base := text(arg)
+		found[base] = append(found[base], clearSite{at: call.Pos(), ordered: ordered})
 		return true
 	})
 	return found
+}
+
+// clearSite is one tail-clear: where it is, and whether that matters.
+// An ordered site releases the live range only when it runs AFTER the
+// reset it is supposed to cover; an unordered one covers the reset from
+// either side.
+type clearSite struct {
+	at      token.Pos
+	ordered bool
 }
 
 func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
@@ -1281,7 +1331,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 		// caller reads the reset. If your new reset is not covered by a
 		// clear in the SAME function, this guard will tell you — which
 		// is the property the file-wide version did not have.
-		clearsIn := func(fn ast.Node) map[string]bool { return clearsToCapIn(fn, text) }
+		clearsIn := func(fn ast.Node) map[string][]clearSite { return clearsToCapIn(fn, text) }
 
 		// The reset walk runs per function too, so `clears` below is
 		// the enclosing function's and no other's. A reset outside any
@@ -1809,10 +1859,19 @@ func popsOneOf(high ast.Expr, base string, text func(ast.Expr) string) bool {
 // false read the other way round: after the pop, `len(x)-1` is a LIVE
 // element and the released slot is never touched. That is not a missed
 // case, it is a real bug shape, and a boolean could not tell the guard
-// which one it had. The position is the earliest zeroing of that base
-// in the function; resetIsExempt requires it to precede the reset.
-func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]token.Pos {
-	found := map[string]token.Pos{}
+// which one it had.
+//
+// EVERY ZEROING, NOT THE EARLIEST, because the evidence is per SLOT. One
+// zeroing proves one slot released, and a function that pops the same
+// base twice with a single zero vacates a second slot nothing touched —
+// which the earliest-only form certified with the first pop's evidence.
+// resetIsExempt SPENDS a position per pop for that reason. Not reachable
+// in the tree today: all three top-zero sites are single clean pops, so
+// the mutation is silent against the corpus and
+// TestTheExemptionIsScopedToTheSpellingItProves is where it goes red.
+// Raised in review of #456.
+func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string][]token.Pos {
+	found := map[string][]token.Pos{}
 	ast.Inspect(fn, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
 		if !ok || len(as.Lhs) != len(as.Rhs) {
@@ -1839,12 +1898,13 @@ func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]token.Pos {
 				continue
 			}
 			base := text(ix.X)
-			if at, seen := found[base]; !seen || as.Pos() < at {
-				found[base] = as.Pos()
-			}
+			found[base] = append(found[base], as.Pos())
 		}
 		return true
 	})
+	for base := range found {
+		slices.Sort(found[base])
+	}
 	return found
 }
 
@@ -1908,7 +1968,7 @@ func notAPop()   { x[len(x)-n] = nil }
 			}
 			continue
 		}
-		if !got[tc.want].IsValid() || len(got) != 1 {
+		if len(got[tc.want]) != 1 || len(got) != 1 {
 			t.Errorf("%s: zeroesTopIn = %v, want exactly %q — %s", tc.fn, got, tc.want, tc.why)
 		}
 	}
@@ -1931,9 +1991,25 @@ func notAPop()   { x[len(x)-n] = nil }
 // pops, so widening this back to every kind changes nothing that a walk
 // of the corpus can see — the mutation is silent, and
 // TestTheExemptionIsScopedToTheSpellingItProves is where it goes red.
-func resetIsExempt(base, lhs, kind string, at token.Pos, clears map[string]bool, zeroesTop map[string]token.Pos) bool {
-	if clears[base] || clears[lhs] {
-		return true
+//
+// IT SPENDS THE TOP-ZERO EVIDENCE IT USES, which is the one surprising
+// thing about a predicate: zeroesTop is the enclosing function's map and
+// this removes the position it consumes. One zeroing is evidence about
+// ONE slot, so a second pop of the same base has to find its own. Both
+// callers walk a function's resets with ast.Inspect over its body, which
+// visits statements in source order, so the entry spent is the earliest
+// unspent zeroing that precedes this pop.
+func resetIsExempt(base, lhs, kind string, at token.Pos, clears map[string][]clearSite, zeroesTop map[string][]token.Pos) bool {
+	// AN ORDERED CLEAR HAS TO FOLLOW THE RESET — see clearsToCapIn: the
+	// `clear(x[len(x):cap(x)])` spelling reads len, and len is what the
+	// reset changes, so before it the call clears an already-dead region
+	// and releases nothing.
+	for _, name := range [2]string{base, lhs} {
+		for _, c := range clears[name] {
+			if !c.ordered || c.at > at {
+				return true
+			}
+		}
 	}
 	if kind != resetPop {
 		return false
@@ -1944,8 +2020,11 @@ func resetIsExempt(base, lhs, kind string, at token.Pos, clears map[string]bool,
 	// `x[len(x)-1] = nil` nils a LIVE element, leaves the released one,
 	// and was certified as the fix for itself. Raised in review of #456.
 	for _, name := range [2]string{base, lhs} {
-		if zeroed, ok := zeroesTop[name]; ok && zeroed < at {
-			return true
+		for i, zeroed := range zeroesTop[name] {
+			if zeroed < at {
+				zeroesTop[name] = slices.Delete(slices.Clone(zeroesTop[name]), i, i+1)
+				return true
+			}
 		}
 	}
 	return false
@@ -1976,9 +2055,25 @@ func popOnly() {
 }
 
 func clearedAll() {
-	clear(x[len(x):cap(x)])
 	x = x[:0]
 	x = x[:len(x)-1]
+	clear(x[len(x):cap(x)])
+}
+
+func clearBeforeReset() {
+	clear(x[len(x):cap(x)])
+	x = x[:0]
+}
+
+func clearWholeArrayFirst() {
+	clear(x[:cap(x)])
+	x = x[:0]
+}
+
+func popTwiceZeroOnce() {
+	h.kids[len(h.kids)-1] = nil
+	h.kids = h.kids[:len(h.kids)-1]
+	h.kids = h.kids[:len(h.kids)-1]
 }
 
 func bareTruncate() { x = x[:0] }
@@ -2057,8 +2152,8 @@ func clearFromAnOffset() {
 			"is still held"},
 		{"popOnly", nil, "a clean pop is what zeroesTopIn was widened for: one slot " +
 			"leaves the live range and that one slot is released"},
-		{"clearedAll", nil, "clear(x[len(x):cap(x)]) really does cover every spelling, " +
-			"so that exemption stays general"},
+		{"clearedAll", nil, "clear(x[len(x):cap(x)]) AFTER the resets really does cover " +
+			"every spelling, so that exemption stays general"},
 		{"bareTruncate", []string{resetTruncate}, "with no clear at all there is nothing " +
 			"to exempt it"},
 		{"zeroesSomeoneElsesTop", []string{resetPop}, "the exemption is keyed on the " +
@@ -2081,6 +2176,20 @@ func clearFromAnOffset() {
 		{"clearFromAnOffset", []string{resetTruncate}, "clearToCap(x[2:]) clears from " +
 			"element 2 to cap and leaves x[0] and x[1] reachable, so it cannot " +
 			"exempt a truncation to zero"},
+
+		// AND THE TWO ROUND SIX MEASURED, in the same shape and for the
+		// same reason: every live site is already written the way that
+		// happens to be safe, so both mutations are silent against the
+		// corpus.
+		{"clearBeforeReset", []string{resetTruncate}, "the len-relative spelling before " +
+			"the reset clears the region above the OLD len, which is already dead; " +
+			"the truncation then leaves the whole live range reachable"},
+		{"clearWholeArrayFirst", nil, "clear(x[:cap(x)]) names the backing array from " +
+			"element zero, so it releases the same region whichever side of the " +
+			"reset it is on"},
+		{"popTwiceZeroOnce", []string{resetPop}, "two pops vacate two slots and one " +
+			"zeroing releases one: the second pop has to find its own evidence, " +
+			"and the first pop's does not carry"},
 	} {
 		var decl *ast.FuncDecl
 		for _, d := range f.Decls {
