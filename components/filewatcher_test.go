@@ -435,11 +435,18 @@ func (c *countingPost) Post(f func()) {
 // the test does not schedule, and one caller wants forty of them. The
 // two-second base is a FLOOR against a runner that gives the poll
 // goroutine no slot at all, not a per-post allowance, so it does not
-// divide: the budget is 2.15s at n=3 (717ms a post) and 4s at n=40
-// (100ms a post). The marginal 50ms is what scales, and at a 1ms
-// interval even the tighter figure is a hundred times what a post costs
-// when the machine is idle — bounded either way, so a watcher that has
-// genuinely stopped polling fails rather than hanging.
+// divide — the per-post share of it falls as n rises, and only the
+// marginal term scales. At the intervals these callers use, even the
+// tightest per-post figure the formula produces is orders of magnitude
+// above what a post costs on an idle machine; bounded either way, so a
+// watcher that has genuinely stopped polling fails rather than hanging.
+//
+// THE SHAPE, NOT THE ARITHMETIC. This paragraph evaluated the formula
+// at both call sites and quoted three figures, one line from the
+// expression that produces them — so retuning either constant left the
+// prose wrong with nothing red, which is the sample-taken-once shape
+// CLAUDE.md's Verify section rules against. The shape is the durable
+// half and survives any retuning. Raised in review of #511.
 //
 // THE MUTATION THAT SHOWS THIS WORKS IS NOT THE OBVIOUS ONE. Replacing
 // BOTH waits in TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay
@@ -833,11 +840,25 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	//
 	// AND THE WINDOW IT REPLACES WAS ALREADY TOO SHORT ON AN IDLE
 	// MACHINE, which is worth recording because the rest of this PR
-	// argues from the loaded runner. Forty posts measure ~51ms here
-	// (50.8–51.3 over five runs), so the 40ms drainFor could not buy the
-	// forty polls its message named even with nothing else running. The
-	// CI story is why the fix is a counter; this is why the old number
-	// was wrong before CI ever saw it.
+	// argues from the loaded runner. At the Interval set above — one
+	// millisecond, which is what the figure depends on — forty posts
+	// measure ~51ms here (50.8–51.3 over five runs), so the 40ms
+	// drainFor could not buy the forty polls its message named even with
+	// nothing else running. The CI story is why the fix is a counter;
+	// this is why the old number was wrong before CI ever saw it. The
+	// interval is named because a retuned one leaves the measurement
+	// silently wrong — raised in review of #511.
+	//
+	// FORTY POSTS IS FORTY CYCLES ONLY WHILE THE IDLE PATH POSTS ONCE,
+	// and nothing pins that: FileWatcher.Start's no-hit arm continues
+	// without a fire post (filewatcher.go), so a second per-cycle post
+	// added there would halve this negative assertion's coverage with no
+	// test going red. The assertion still fails CLOSED and its message
+	// says "poll posts" rather than "polls", so this is a coverage risk
+	// rather than a false claim — and n is 40 against a claim that needs
+	// only "the watcher ran", so the margin absorbs a factor of two.
+	// Recorded rather than pinned because the seam that would give a
+	// deterministic pin is #518's. Raised in review of #511.
 	posts := drainUntilPosts(t, d, c, 40)
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
