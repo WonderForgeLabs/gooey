@@ -1189,12 +1189,40 @@ func TestAPrefixedElementIsRefusedLikeAPrefixedAttribute(t *testing.T) {
 		{"no namespace at all", `<Gooey><Canvas Name="R"/></Gooey>`, ""},
 		{"a child REDECLARING the default", `<Gooey xmlns="urn:u"><Canvas xmlns="urn:v" Name="R"/></Gooey>`, ""},
 		{"a prefix bound to the default's own URI", `<Gooey xmlns="urn:u" xmlns:g="urn:u"><g:Canvas Name="R"/></Gooey>`, ""},
+
+		// THE EXEMPTION, and the reason this branch has one. The
+		// refusal's premise is that the model cannot hold the namespace,
+		// so the element is renamed on write. node.Space holds
+		// markup.XNamespace and the envelope re-derives the prefix from
+		// the document's own xmlns, so a declaration makes the round
+		// trip under the author's prefix — which is the whole of #517.
+		// Under the envelope's binding and under the element's own,
+		// because those are the two placements declPrefix exists for.
+		{"an x-namespaced declaration, bound on the envelope",
+			`<Gooey xmlns:x="` + markup.XNamespace + `"><x:Property Name="T" Type="string"/></Gooey>`, ""},
+		{"an x-namespaced declaration binding its own prefix",
+			`<Gooey><p:Property xmlns:p="` + markup.XNamespace + `" Name="T" Type="string"/></Gooey>`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n, err := nodeOf(tc.doc)
 			if tc.refuse == "" {
 				if err != nil {
 					t.Fatalf("nodeOf refused a document with no prefixed element: %v\n%s", err, tc.doc)
+				}
+				// AND THE EXEMPT ONE IS ACTUALLY CARRIED, not merely
+				// tolerated: an accept that dropped the namespace would
+				// pass the arm above while leaving exactly the rename
+				// the refusal exists to prevent.
+				for _, k := range n.Kids {
+					if k.Elem != "Property" {
+						continue
+					}
+					if k.Space != markup.XNamespace {
+						t.Errorf("the declaration was accepted with Space %q; "+
+							"the exemption is that the model HOLDS this "+
+							"namespace, and a node without it is written back "+
+							"out as a plain <Property>", k.Space)
+					}
 				}
 				return
 			}
@@ -2006,8 +2034,16 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	// write them to somebody else's file, with nothing red. That is the
 	// same "prose invariant repeated, not measured" shape this test was
 	// written against, one field over. Raised in review of #522.
-	envDecls := assignedIn(t, func(e ast.Expr) bool {
-		_, ok := selects(e, "envDecls")
+	//
+	// ON THE EDITOR, like the two above. It read a bare
+	// `selects(e, "envDecls")` when it was written, which counted any
+	// assignment whose final field is envDecls whatever it belongs to —
+	// harmless while the editor is the only holder, and the same
+	// false-positive shape onEd exists to remove. The base derivation
+	// makes that free now, and a base the walk cannot identify is
+	// reported rather than dropped.
+	envDecls := assignedIn(t, "envDecls", func(e ast.Expr, eds map[string]bool) bool {
+		_, ok := onEd(e, "envDecls", eds)
 		return ok
 	})
 
