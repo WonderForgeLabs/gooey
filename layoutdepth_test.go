@@ -1,11 +1,13 @@
 package gooey
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -326,16 +328,41 @@ func forkCycle() *forkbox {
 // process is the cancel: on the bug it hangs, this process kills it, and
 // nothing it wrote was ever in this address space. Raised in review of
 // #458.
+//
+// AND THE PARENT REALLY DOES THE KILLING NOW. The first version wrote
+// exec.Command + CombinedOutput with no Context and no deadline, so what
+// ended a hung child was the child's OWN -test.timeout, and the sentence
+// above described a kill that did not happen. Two consequences, both
+// real: mistype that argument and the regression becomes a hung
+// `go test` with no message, because this side has no wall-clock bound
+// of its own; and when the PARENT hits the outer -timeout, Go panics the
+// parent, leaving the child in no process group anybody reaps — a hung
+// walk surviving as an orphan burning a core, which is the "a test whose
+// RED can corrupt its neighbours" argument above, one level out.
+// CommandContext makes the sentence true; -test.timeout stays as
+// belt-and-braces and as what produces a readable message when it is the
+// one that fires. Raised in review of #458.
 func TestHitTestOnABranchingCycleTerminates(t *testing.T) {
 	if os.Getenv(cycleChildEnv) == "1" {
 		hitTestTheCycleOrHang()
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestHitTestOnABranchingCycleTerminates$",
+	// Longer than the child's own -test.timeout, so on an ordinary
+	// regression the child reports and this is the backstop rather than
+	// the reporter.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0],
+		"-test.run=^TestHitTestOnABranchingCycleTerminates$",
 		"-test.timeout=60s")
 	cmd.Env = append(os.Environ(), cycleChildEnv+"=1")
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("the child outlived this process's own deadline and was "+
+			"killed here — it did not reach its -test.timeout, so the walk is "+
+			"hung and the argument list is what to check first.\n%s", out)
+	}
 	// The child exits 0 having asserted for itself; every other outcome
 	// is this test's to report, and a KILLED child is the bug.
 	if err != nil {
@@ -388,9 +415,13 @@ func hitTestTheCycleOrHang() {
 // legal tree never fires it. A budget on total visits — the other obvious
 // spelling — would truncate a WIDE legal tree instead, and every ordering
 // assertion in this package would still pass, because truncation drops
-// candidates rather than mis-comparing them. 2^12 is 4096 nodes, well past
-// any visit budget somebody might think MaxLayoutDepth justifies, and
-// every leaf still has to be reachable.
+// candidates rather than mis-comparing them. `build` recurses from d == 0
+// through d == levels, so levels = 12 is THIRTEEN levels: 8191 nodes, of
+// which 4096 are leaves. This sentence said "2^12 is 4096 nodes", which
+// counted the leaves and understated the tree by half — in a sentence
+// whose whole job is the size argument. 8191 is well past any visit
+// budget somebody might think MaxLayoutDepth justifies, and every leaf
+// still has to be reachable. Corrected in review of #458.
 func TestABranchingTreeUnderTheCapIsFullyVisited(t *testing.T) {
 	const levels = 12
 	// A binary tree of legal depth, every node at the same bounds so the

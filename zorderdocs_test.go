@@ -2,6 +2,9 @@ package gooey
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -3187,5 +3190,165 @@ func TestAReportNamesThePlaneItFound(t *testing.T) {
 					"reader to the wrong contract:\n\t%s", tc.notPlane, got[0])
 			}
 		})
+	}
+}
+
+// TestEveryRulePlaneIsScannedExactlyOnce closes the call-site mutation
+// that `rulePlane` did not, and it is strictly the worse of the two.
+//
+// Bundling the six values into one struct made
+// `visibilityRule.plane = planeZOrder` fail, because guard and pin then
+// read the same field. It left the ARGUMENT free: rewriting
+//
+//	func TestNoFileTeachesTheRetiredHiddenWording(t *testing.T) {
+//		scanForRetiredRule(t, zOrderRule)   // was: visibilityRule
+//	}
+//
+// scans the tree twice for z-order and never for Visibility, and `go
+// test .` stays green — measured in review of #458. Nothing else can
+// see it: TestAReportNamesThePlaneItFound constructs its rules itself
+// and never asks which one a guard passes, and the guards themselves
+// are negative assertions over a clean tree, which is precisely the
+// shape scanFilesForRetiredRule's own doc warns about.
+//
+// SO THE PAIRING IS DERIVED FROM THIS FILE'S SOURCE, not spelled a
+// second time — a second spelling is one more place to rewrite, which
+// is the defect wearing a hat. The rule set comes from the
+// `var X = rulePlane{…}` declarations, the call set from every
+// `scanForRetiredRule(t, X)` and `scanFilesForRetiredRule(t, files, X)`,
+// and the two must be a bijection. Point two guards at one rule and the
+// duplicate AND the starved rule are both named.
+//
+// TWO CLAUSES, BECAUSE TWO THINGS CAN GO WRONG. The repo-wide guards
+// are the `scanForRetiredRule(t, X)` call sites, and no two of them may
+// name the same rule or the same plane — that is the mutation above,
+// and either spelling of it (a duplicated ident, or a second rule
+// declared with a plane already covered) is caught. Separately, every
+// declared rule must be named by SOME scan call, which catches a rule
+// declared and wired to nothing.
+//
+// THE SECOND CLAUSE IS DELIBERATELY WEAKER THAN THE FIRST, and the
+// reason is in the file: residueRule reaches the scanner through
+// scanFilesForResidue rather than through a repo-wide guard, and
+// inputRule and zOrderRule are each named a second time by a fixture
+// arm inside another test. Demanding one call per rule reported all
+// three as defects — measured while writing this. So the strong
+// bijection is scoped to the repo-wide entry point, where the silent
+// rewiring lives, and the weak one covers the rest.
+//
+// PLANES ARE NOT UNIQUE ACROSS ALL RULES and this does not pretend they
+// are: inputRule and residueRule deliberately share planeInput, the
+// input walk's retired claim and the half-finished correction it leaves
+// behind. The uniqueness is asserted over what the repo-wide guards
+// scan, not over what the file declares.
+func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "zorderdocs_test.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parsing this file: %v", err)
+	}
+
+	// name -> the identifier its `plane:` field names.
+	declared := map[string]string{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+			return true
+		}
+		lit, ok := vs.Values[0].(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		if id, ok := lit.Type.(*ast.Ident); !ok || id.Name != "rulePlane" {
+			return true
+		}
+		plane := ""
+		for _, el := range lit.Elts {
+			kv, ok := el.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			if k, ok := kv.Key.(*ast.Ident); !ok || k.Name != "plane" {
+				continue
+			}
+			if v, ok := kv.Value.(*ast.Ident); ok {
+				plane = v.Name
+			}
+		}
+		if plane == "" {
+			t.Errorf("%s declares no `plane:` naming a constant, so its report "+
+				"cannot say which contract it scanned", vs.Names[0].Name)
+		}
+		declared[vs.Names[0].Name] = plane
+		return true
+	})
+	if len(declared) == 0 {
+		t.Fatal("no `var X = rulePlane{…}` declaration found in this file, so " +
+			"both sides of the comparison below are empty and it proves nothing")
+	}
+
+	// TWO SETS. `guards` is the repo-wide entry point — where the
+	// rewiring is silent — and `named` is every literal mention of a
+	// rule anywhere in the file, including scanFilesForResidue's and
+	// the fixture arms'.
+	guards := map[string]int{}
+	named := map[string]bool{}
+	entry := map[string]int{"scanForRetiredRule": 1, "scanFilesForRetiredRule": 2}
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fn, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		at, isEntry := entry[fn.Name]
+		if !isEntry || at >= len(call.Args) {
+			return true
+		}
+		id, ok := call.Args[at].(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if _, isRule := declared[id.Name]; !isRule {
+			// scanForRetiredRule's own forwarding call passes its
+			// parameter `r`, which is not a declared rule.
+			return true
+		}
+		named[id.Name] = true
+		if fn.Name == "scanForRetiredRule" {
+			guards[id.Name]++
+		}
+		return true
+	})
+	if len(guards) == 0 {
+		t.Fatal("no scanForRetiredRule(t, <rule>) call found, so the clause " +
+			"below has nothing to compare and this test proves nothing")
+	}
+
+	planes := map[string][]string{}
+	for name, n := range guards {
+		if n != 1 {
+			t.Errorf("%s is the argument of %d repo-wide guards; one guard is "+
+				"pointed at the wrong rule, so some other rule is scanned by "+
+				"none", name, n)
+		}
+		plane := declared[name]
+		planes[plane] = append(planes[plane], name)
+	}
+	for plane, names := range planes {
+		if len(names) != 1 {
+			t.Errorf("the repo-wide guards scan plane %s through %v — two of "+
+				"them ask the same contract, so a third contract is asked by "+
+				"nobody", plane, names)
+		}
+	}
+	for name, plane := range declared {
+		if !named[name] {
+			t.Errorf("%s is declared and no scan names it — the plane it carries "+
+				"(%s) may be checked by nothing, and every guard in this file is "+
+				"a negative assertion, so nothing else goes red", name, plane)
+		}
 	}
 }
