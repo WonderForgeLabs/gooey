@@ -201,7 +201,7 @@ func TestCollapsedGridZeroesItsSubtree(t *testing.T) {
 	if b := inner.Bounds(); b.W > 0 && b.H > 0 {
 		t.Errorf("the intermediate container kept its cells: %+v", b)
 	}
-	if row := rowText(f, live.Y, 20); strings.TrimSpace(row) != "" {
+	if row := rowText(f, 0, live.Y, 20); strings.TrimSpace(row) != "" {
 		t.Errorf("the collapsed subtree is still on screen: row %d = %q", live.Y, row)
 	}
 

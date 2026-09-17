@@ -294,10 +294,10 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// A loop over TerminalColumns asserting col == i was false of a
 	// CORRECT wide row — a continuation cell's recorded column is where
 	// the cursor sits mid-glyph, which is legitimately not its index —
-	// so it could not run. render.Displaced replaced it and cannot
-	// FAIL: #519 blanked the orphaned lead through healSeam, so the row
-	// was wrong without being displaced. Measured against the render
-	// this commit fixes, all three cases of this fixture:
+	// so it could not run. render.Displaced replaced it and cannot FAIL:
+	// #519 blanked the orphaned lead through healSeam, so the row was
+	// wrong WITHOUT being displaced. Measured against the render this
+	// commit fixes, all three cases of this fixture:
 	//
 	//	"世界" unfocused -> " 界       "  displaced=false
 	//	"世界" focused   -> "  █       "  displaced=false
@@ -306,9 +306,7 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// Nor is it reachable for any component test: Buffer.Set and
 	// SetString lay the continuation themselves, and render/cell.go says
 	// of the remaining displacement branch that it is only reachable by
-	// assigning Cells directly. An assertion that cannot fail measures
-	// nothing, and a second one beside a real pin reads as corroboration
-	// it is not supplying. Raised in review of #520.
+	// assigning Cells directly.
 	if got, want := caret, wantCaret; got != want {
 		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
 			"the caret belongs in column 4", got, want)

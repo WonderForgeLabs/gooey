@@ -320,36 +320,93 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	if got, want := SpanText(b, 0, 9, 4), "    "; got != want {
 		t.Errorf("a span on row 9 of a one-row buffer = %q, want %q", got, want)
 	}
-	// A NIL BUFFER IS THE FOURTH SHAPE, and it was the one the doc
-	// promised and the body did not have: Buffer.At dereferences b.W, so
-	// this panicked inside render with At on the stack rather than the
-	// caller. Raised in review of #520.
+}
+
+// TestANonPositiveWidthIsTheEmptyStringNotBlanks is the shape the
+// off-buffer enumeration went past: three out-of-range shapes, then nil,
+// and never `w <= 0`.
+//
+// SPLIT OUT, because most of the ways it can go red are about NOT
+// padding, and the first line CI prints is the test's name. It lived
+// inside TestSpanTextPadsWhereTheBufferIsNot, which by then pinned five
+// separate contracts, so a failure here reported the padding contract
+// breaking. Raised in review of #520.
+//
+// A width can ARRIVE as a difference — an extent minus an origin, a
+// remaining budget — so a negative one is a value a caller produces
+// rather than a caller error. And the hazard is the padding
+// paragraph's, at the other end: "" passes `!strings.Contains(got, …)`
+// and "the row is empty" exactly as blanks do, so a span that silently
+// collapsed to nothing reads as a component that drew nothing.
+func TestANonPositiveWidthIsTheEmptyStringNotBlanks(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
+	// AGAINST A LIVE BUFFER, which is what these two add. The only
+	// assertion that existed was SpanText(nil, 0, 0, 0), and since the
+	// width guard runs BEFORE the nil guard it never reached a buffer.
+	if got := SpanText(b, 0, 0, 0); got != "" {
+		t.Errorf("a zero-width span of a LIVE buffer = %q, want empty — zero "+
+			"columns of a terminal is nothing, not one blank, which is the "+
+			"answer ClipCols gives the same question", got)
+	}
+	if got := SpanText(b, 0, 0, -1); got != "" {
+		t.Errorf("a negative-width span of a LIVE buffer = %q, want empty", got)
+	}
+	// THE ONE ARRANGEMENT WHERE THE GUARD CHANGES AN ANSWER rather than
+	// restating what the loop already does. For a live buffer
+	// `for i := 0; i < w` with w <= 0 returns "" on its own, so removing
+	// the guard leaves the two assertions above green — measured, which
+	// is why this third one is here. Nil is different: the guard below
+	// would hand strings.Repeat a count of -1, and that PANICS. The
+	// order of the two guards is therefore load-bearing, not incidental.
+	if got := SpanText(nil, 0, 0, -1); got != "" {
+		t.Errorf("a negative-width span of a nil buffer = %q, want empty — "+
+			"without the width guard ahead of the nil guard this is a panic "+
+			"in strings.Repeat, inside render with the caller off the stack", got)
+	}
+	// Nil AND zero-width at once, which the width guard answers first —
+	// asserted so the two rules cannot disagree about their overlap.
+	if got := SpanText(nil, 0, 0, 0); got != "" {
+		t.Errorf("a zero-width span of a nil buffer = %q, want empty", got)
+	}
+}
+
+// TestAnAbsentBufferIsAnsweredThreeDifferentWays holds the disagreement,
+// which is a claim of its own rather than a corollary of padding.
+//
+// SpanText pads — a nil buffer is the most out of range a span can be,
+// and Buffer.At dereferences b.W, so without the guard it panicked
+// inside render with At on the stack rather than the caller. RowText
+// answers EMPTY, because a row of no buffer has no width to pad to, and
+// the guard has to live in RowText since `b.W` is evaluated in the
+// argument list before SpanText is entered. TerminalColumns answers
+// nothing at all, because a per-cell map has no blank cell to report.
+//
+// Three functions, three answers, one input: asserted together so the
+// asymmetry is chosen rather than noticed later. Raised in review of
+// #520.
+func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
 	if got, want := SpanText(nil, 0, 0, 3), "   "; got != want {
 		t.Errorf("a span of a nil buffer = %q, want %q — the out-of-range "+
 			"contract is blanks, and a nil buffer is the most out of range a "+
 			"span can be", got, want)
 	}
-	if got := SpanText(nil, 0, 0, 0); got != "" {
-		t.Errorf("a zero-width span of a nil buffer = %q, want empty", got)
-	}
-	// The sibling answering the same question the other way, asserted so
-	// the asymmetry is deliberate rather than noticed later: a per-cell
-	// map has no blank cell to report, so it reports nothing.
-	if got := TerminalColumns(b, 9); len(got) != 0 {
-		t.Errorf("TerminalColumns on row 9 of a one-row buffer = %v, want empty — "+
-			"the two functions answer an out-of-range row differently and that is "+
-			"the point", got)
+	if got := RowText(nil, 0); got != "" {
+		t.Errorf("RowText of a nil buffer = %q, want empty — the guard has to be "+
+			"in RowText, since b.W is read before SpanText is entered", got)
 	}
 	if got := TerminalColumns(nil, 0); len(got) != 0 {
 		t.Errorf("TerminalColumns of a nil buffer = %v, want empty", got)
 	}
-	// AND THE WHOLE-ROW SPELLING, which sat outside the contract its own
-	// doc had just written down: RowText evaluates b.W in the argument
-	// list, so it faulted before SpanText's guard could answer. Empty
-	// rather than blanks, because a nil buffer has no width to pad to.
-	// Raised in review of #520, the round after the SpanText case.
-	if got := RowText(nil, 0); got != "" {
-		t.Errorf("RowText of a nil buffer = %q, want empty — the guard has to be "+
-			"in RowText, since b.W is read before SpanText is entered", got)
+	// The same question about a row rather than a buffer, because that is
+	// where SpanText and TerminalColumns visibly disagree on live input.
+	if got := TerminalColumns(b, 9); len(got) != 0 {
+		t.Errorf("TerminalColumns on row 9 of a one-row buffer = %v, want empty — "+
+			"the two functions answer an out-of-range row differently and that is "+
+			"the point", got)
 	}
 }
