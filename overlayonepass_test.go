@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -952,11 +953,195 @@ func notAClear() { copy(x[:cap(x)], y) }
 	}
 }
 
+// The same fixture arm for the OTHER half of the pair. The reset
+// matcher is a negative assertion over a tree that now satisfies it, so
+// scanning the repo proves nothing about what it can SEE — and the
+// spelling it could not see was live in three files. Raised in review
+// of #456.
+func TestTheResetMatcherSeesTheDeleteSplice(t *testing.T) {
+	const src = `package p
+
+func truncate()  { x = x[:0] }
+func splice()    { x = append(x[:i], x[i+1:]...) }
+func field()     { c.kids = append(c.kids[:i], c.kids[i+1:]...) }
+func spliceHead(){ x = append(x[:i], x[j:]...) }
+func otherBase() { x = append(x[:i], y[i+1:]...) }
+func rebuild()   { x = append(x[:0], y...) }
+func compact()   { x = x[:n] }
+func grow()      { x = append(x, v) }
+func lowBound()  { x = x[1:0] }
+func pop()       { x = x[:len(x)-1] }
+func popField()  { c.kids = c.kids[:len(c.kids)-1] }
+func popTwo()    { x = x[:len(x)-2] }
+func popOther()  { x = x[:len(y)-1] }
+func popExpr()   { x = x[:len(x)-n] }
+func noHigh()    { x = append(x[:], x[k:]...) }
+func noLow()     { x = append(x[:i], x[:k]...) }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	text := func(e ast.Expr) string {
+		return src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset]
+	}
+
+	for _, tc := range []struct {
+		fn   string
+		want string
+		why  string
+	}{
+		{"truncate", "x", "the plain truncation, which this guard has always read"},
+		{"splice", "x", "the delete-splice: len drops, the old last element stays in " +
+			"the vacated slot, and the high-water mark is what the array holds"},
+		{"field", "c.kids", "the base is the whole selector, so two different " +
+			"structs' kids do not collide"},
+		{"spliceHead", "x", "the indices are not the point — any append of a slice " +
+			"of x onto a prefix of x shortens x and leaves its tail"},
+		{"otherBase", "", "appending a slice of y onto a prefix of x is not a reset " +
+			"of either; it is a build"},
+		{"rebuild", "", "append(x[:0], y...) REPLACES the contents rather than " +
+			"shortening them, and needs its own reasoning rather than this one"},
+		{"compact", "", "a compaction to a non-literal length: out of scope, and " +
+			"said so in resetBase's doc rather than left in the AST"},
+		{"grow", "", "growing is not resetting"},
+		{"lowBound", "", "a Low bound means it is not the reset spelling"},
+		{"pop", "x", "the POP: len drops by one and the popped element stays in " +
+			"the vacated slot, which is the delete-splice's retention with a " +
+			"different spelling"},
+		{"popField", "c.kids", "and it reads a field base the same way the splice " +
+			"arm does"},
+		{"popTwo", "x", "any constant taken off len is the same shape; the count is " +
+			"not the point"},
+		{"popOther", "", "len of a DIFFERENT slice is not this idiom — it is a " +
+			"compaction to a length that happens to be spelled with len"},
+		{"popExpr", "", "a non-constant subtrahend is the general compaction, which " +
+			"is out of scope for the reason isPopOf gives"},
+		{"noHigh", "", "append(x[:], x[k:]...) GROWS and is not the removal idiom; " +
+			"without requiring a written High it read as a reset of x"},
+		{"noLow", "", "append(x[:i], x[:k]...) is not the removal idiom either, and " +
+			"the tail argument's Low is what says so"},
+	} {
+		var decl *ast.FuncDecl
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == tc.fn {
+				decl = fd
+			}
+		}
+		if decl == nil {
+			t.Fatalf("the fixture has no func %s", tc.fn)
+		}
+		var got string
+		ast.Inspect(decl.Body, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok || len(as.Rhs) != 1 {
+				return true
+			}
+			got = resetBase(as.Rhs[0], text)
+			return false
+		})
+		if got != tc.want {
+			t.Errorf("%s: resetBase = %q, want %q — %s", tc.fn, got, tc.want, tc.why)
+		}
+	}
+}
+
 // clearsToCapIn is every slice base that fn clears ALL THE WAY TO CAP,
 // keyed by source text. It is the exemption the reset guard below reads:
 // a `x = x[:0]` is accepted when the same function clears x's whole
 // backing array.
 //
+// resetBase names the field a statement's right side resets, or "" when
+// the statement is not a reset this guard recognises.
+//
+// TWO SPELLINGS, and the second is why this function exists. `x = x[:0]`
+// is the obvious one. `x = append(x[:i], x[i+1:]...)` is the canonical
+// Go removal idiom, it retains IDENTICALLY — len drops, the old last
+// element stays in the vacated slot, and the high-water mark is what
+// the backing array holds — and it was invisible here because its right
+// side is a call rather than a slice expression.
+//
+// NOT HYPOTHETICAL, and not a fixture: ToastHost.Dismiss
+// (components/toast.go) and AdornmentLayer.Remove (components/adorn.go)
+// both used it, both on a field of components, and this guard reported
+// a clean tree over them. adorn.go is the sharper of the two — the same
+// file gained a tail clear in Arrange one screen below, so the splice
+// was safe only because Arrange happens to run every frame. Raised in
+// review of #456.
+//
+// The append form is matched structurally rather than by text: two
+// slice expressions over the same base, the second spread with `...`,
+// each with the index the removal idiom writes.
+//
+// THE INDICES' VALUES ARE STILL NOT CHECKED, and the reason this
+// paragraph used to give was arithmetic that does not hold.
+// `append(x[:i], x[j:]...)` has length `i + (len(x) - j)`, so it
+// shortens x only for `j > i`; `x = append(x[:1], x[0:]...)`
+// duplicates the head and GROWS. The guard is indifferent to which,
+// because either way the tail past the new length is left where it
+// was — which is the property this guard is about, not deletion
+// specifically. What it does require is that both indices be WRITTEN:
+// `x = append(x[:], x[k:]...)` is an unambiguous grow and is not this
+// idiom, and without `head.High != nil` it was classified as a reset of
+// x and would have been reported as needing a clear. Nothing in the
+// tree writes either shape, so this was a latent false positive beside
+// a justification that was simply wrong. Raised in review of #456.
+//
+// THREE SPELLINGS NOW, and the third is the POP — `x = x[:len(x)-1]`,
+// which retains identically and which the two arms above could not see.
+// The previous version of this paragraph said the compaction shapes did
+// not appear on a reused field in the tree, and that was false at the
+// commit that wrote it: four live sites popped a reference off a reused
+// field, two of them leaving a discarded markup subtree reachable from
+// a live parent. `apps/wysiwyg/undo.go` is the counter-evidence that the
+// idiom was already known to retain here — it zeroes the slot before the
+// pop — so the claim was refuted inside the tree it was made about.
+// Raised in review of #456. See isPopOf for why this widens to the pop
+// and not to every `x = x[:n]`.
+//
+// STILL NARROWER THAN WHAT RETAINS: a general compaction `x = x[:n]` is
+// invisible, and so is `x = append(x[:0], …)` — a one-argument append
+// with no spread, which is a REBUILD rather than a reset and would need
+// its own reasoning. That is scope, and it is stated rather than
+// claimed to be empty, which is the mistake the paragraph above
+// records.
+func resetBase(rhs ast.Expr, text func(ast.Expr) string) string {
+	switch e := rhs.(type) {
+	case *ast.SliceExpr:
+		if e.Low != nil || e.Max != nil || e.High == nil {
+			return ""
+		}
+		if hi, ok := e.High.(*ast.BasicLit); ok && hi.Value == "0" {
+			return text(e.X)
+		}
+		if isPopOf(e.High, text(e.X), text) {
+			return text(e.X)
+		}
+		return ""
+
+	case *ast.CallExpr:
+		id, ok := e.Fun.(*ast.Ident)
+		if !ok || id.Name != "append" || len(e.Args) != 2 || e.Ellipsis == token.NoPos {
+			return ""
+		}
+		head, ok := e.Args[0].(*ast.SliceExpr)
+		if !ok || head.Low != nil || head.Max != nil || head.High == nil {
+			return ""
+		}
+		tail, ok := e.Args[1].(*ast.SliceExpr)
+		if !ok || tail.Max != nil || tail.Low == nil {
+			return ""
+		}
+		base := text(head.X)
+		if base == "" || base != text(tail.X) {
+			return ""
+		}
+		return base
+	}
+	return ""
+}
+
 // THE SPELLING HAS TO REACH CAP, and this used to accept three that do
 // not. Stripping any slice expression off the argument meant `clear(x)`,
 // `clear(x[:len(x)])` and `clear(x[:0])` all exempted a subsequent
@@ -973,18 +1158,15 @@ func notAClear() { copy(x[:cap(x)], y) }
 // text renders an expression back to source, which is how two different
 // `c.kids` compare equal and a `c.kids` and a `d.kids` do not.
 //
-// WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and the guard
-// below says so only here. It matches an assignment whose right side is
-// a slice expression with the literal 0 as its High — `x = x[:0]`. Two
-// spellings retain identically and are invisible to it: a compaction
-// `x = x[:n]`, whose High is not a literal, and `x = append(x[:0], …)`,
-// whose right side is a call. Measured across the tree in review of
-// #456: neither appears on a REUSED FIELD today (the two `x = x[:n]`
-// sites, apps/introdeck/sysmon.go and cmd/finder/main.go, are locals
-// handed back to the caller), so this is scope rather than a live miss —
-// but a guard CLAUDE.md calls "what enforces it" should not leave the
-// reader to derive its own reach from the AST. Raised in review of #456,
-// round two.
+// WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and that scope
+// now lives on resetBase above, where the matching happens, rather than
+// on this function. The version of this paragraph that stood here named
+// the delete-splice's sibling `x = append(x[:0], …)` and not the splice
+// itself, and called the omission scope rather than a live miss — which
+// was true of the spellings it listed and false of the one it did not:
+// three fields were spliced and retaining while this guard reported a
+// clean tree. Raised in review of #456, round two, and corrected in the
+// round that found them.
 func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
 	found := map[string]bool{}
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -1064,6 +1246,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 				continue
 			}
 			clears := clearsIn(fn)
+			zeroesTop := zeroesTopIn(fn, text)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				as, ok := n.(*ast.AssignStmt)
 				// PAIRWISE — see the composer-only guard above, which had
@@ -1072,15 +1255,10 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 					return true
 				}
 				for i, rhs := range as.Rhs {
-					sl, ok := rhs.(*ast.SliceExpr)
-					if !ok || sl.Low != nil || sl.Max != nil || sl.High == nil {
+					base := resetBase(rhs, text)
+					if base == "" {
 						continue
 					}
-					hi, ok := sl.High.(*ast.BasicLit)
-					if !ok || hi.Value != "0" {
-						continue
-					}
-					base := text(sl.X)
 					// The element type is looked up by the LAST segment:
 					// c.gonePlacements is the gonePlacements field.
 					name := base
@@ -1093,15 +1271,16 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 						continue
 					}
 					retaining++
-					if clears[base] || clears[text(as.Lhs[i])] {
+					if clears[base] || clears[text(as.Lhs[i])] ||
+						zeroesTop[base] || zeroesTop[text(as.Lhs[i])] {
 						cleared++
 						continue
 					}
-					pos := p.fset.Position(sl.Pos())
+					pos := p.fset.Position(rhs.Pos())
 					if retainsNothingAbove(lines, pos.Line) {
 						continue
 					}
-					t.Errorf("%s:%d resets %s with [:0], and its elements can hold a "+
+					t.Errorf("%s:%d resets %s, and its elements can hold a "+
 						"reference (%s). That truncates len and leaves the backing array "+
 						"holding everything past it — for a list that shrinks and stays "+
 						"small, until nothing. Clear to cap (clearToCap here, "+
@@ -1279,6 +1458,50 @@ func importDirs(f *ast.File) map[string]string {
 	return out
 }
 
+// A THREE-DECLARATION SEQUENCE, which is the ordering the conflict
+// marker used to lose.
+//
+// The repo scan cannot pin this: every `kids []` in components/ is
+// []gooey.Component today, so the classifier never reaches its own
+// conflict branch and a test over the tree would pass with the bug
+// present. The fixture supplies the sequence directly — value, pointer,
+// value again, in one directory — and requires the name to stay
+// unresolved after the third. With the marker forgotten it resolves
+// back to `int`, holdsAReference answers false, and every reset on
+// `kids` in that directory is waved through. Raised in review of #456.
+func TestAnAmbiguousFieldStaysAmbiguous(t *testing.T) {
+	srcs := []string{
+		"package p\n\ntype a struct{ kids []int }\n",
+		"package p\n\ntype b struct{ kids []*int }\n",
+		"package p\n\ntype c struct{ kids []int }\n",
+	}
+	var files []goFile
+	for i, src := range srcs {
+		fset := token.NewFileSet()
+		path := filepath.Join("dir", "f"+strconv.Itoa(i)+".go")
+		f, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("the fixture does not parse: %v", err)
+		}
+		files = append(files, goFile{path: path, src: []byte(src), fset: fset, file: f})
+	}
+
+	// THE PREMISE FIRST: two declarations must already disagree, or the
+	// third proves nothing.
+	if got := sliceFieldsByDir(files[:2])["dir"]["kids"]; got != nil {
+		t.Fatalf("two conflicting declarations resolved kids to %v, want "+
+			"unresolved — the fixture is not exercising the conflict branch", got)
+	}
+	if got := sliceFieldsByDir(files)["dir"]["kids"]; got != nil {
+		t.Errorf("after a third declaration matching the FIRST shape, kids "+
+			"resolved to %v again. The conflict was recorded in out[dir] and "+
+			"not in the shape map, so the scan forgot a decision it had "+
+			"already made — and a value-typed resurrection makes "+
+			"holdsAReference answer false for every reset on this name in "+
+			"the directory", got)
+	}
+}
+
 // sliceFieldsByDir maps a directory to the slice ELEMENT type of every
 // name declared in it — struct fields and package-level vars alike.
 //
@@ -1290,6 +1513,22 @@ func importDirs(f *ast.File) map[string]string {
 func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 	out := map[string]map[string]ast.Expr{}
 	shape := map[string]string{}
+	// A CONFLICT IS PERMANENT, and it was not. The conflict branch below
+	// used to return without touching `shape`, so the key kept the FIRST
+	// declaration's shape — and a third declaration of the same name
+	// matching that first shape took the normal path and wrote a
+	// concrete element type back over the nil, resurrecting a resolution
+	// for a name this scan had already decided was ambiguous. If the
+	// surviving resolution is a value type, holdsAReference answers
+	// false and every reset on that name in the directory is waved
+	// through, including the one whose elements are gooey.Component.
+	//
+	// That is the one place this classifier failed OPEN — everywhere
+	// else "unresolvable" means the strict reading — and it did it by
+	// forgetting a decision it had made, with the outcome depending on
+	// file-walk order. Not reachable today; the shape is the defect.
+	// Raised in review of #456.
+	conflicted := map[string]bool{}
 	for _, p := range files {
 		dir := filepath.Dir(p.path)
 		if out[dir] == nil {
@@ -1302,7 +1541,12 @@ func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 			}
 			s := string(p.src[p.fset.Position(arr.Elt.Pos()).Offset:p.fset.Position(arr.Elt.End()).Offset])
 			key := dir + " " + name
+			if conflicted[key] {
+				out[dir][name] = nil
+				return
+			}
 			if was, seen := shape[key]; seen && was != s {
+				conflicted[key] = true
 				out[dir][name] = nil
 				return
 			}
@@ -1311,9 +1555,30 @@ func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 		}
 		ast.Inspect(p.file, func(n ast.Node) bool {
 			switch d := n.(type) {
-			case *ast.Field:
-				for _, nm := range d.Names {
-					record(nm.Name, d.Type)
+			case *ast.StructType:
+				// STRUCT FIELDS, not every *ast.Field. An ast.Field is
+				// also a function PARAMETER, a result and an interface
+				// method, and collecting those put `func offsets(sizes
+				// []int, …)` in components/grid.go into the same bucket
+				// as ButtonBar's `sizes []gooey.Size`. That is not an
+				// ambiguity about a field; it is two unrelated names.
+				//
+				// It was invisible while the conflict marker could be
+				// undone: the grid.go parameter conflicted, the next
+				// file's `[]gooey.Size` matched the retained shape and
+				// resurrected it, and four resets were classified safe
+				// through a resolution the scan had already rejected.
+				// Making the conflict permanent is what surfaced it, and
+				// the two fixes belong together — the marker without
+				// this one reports four sites that are genuinely fine.
+				// Raised in review of #456.
+				if d.Fields == nil {
+					return true
+				}
+				for _, f := range d.Fields.List {
+					for _, nm := range f.Names {
+						record(nm.Name, f.Type)
+					}
 				}
 			case *ast.ValueSpec:
 				if d.Type == nil {
@@ -1418,4 +1683,153 @@ func retainsNothingAbove(lines []string, line int) bool {
 		}
 	}
 	return false
+}
+
+// isPopOf reports whether high is `len(base) - <constant>` — the POP,
+// which is the same retention as the truncation to zero and as the
+// delete-splice, and which was invisible to both arms.
+//
+// NOT EVERY `x = x[:n]`, and the difference is what makes this guard
+// usable. Widening to any High at all collects twenty-nine sites, and
+// the great majority are LOCAL slices — a `line`, a `buf`, a scratch
+// `s` — which the field lookup cannot resolve and which therefore read
+// as retaining. The guard is about a REUSED FIELD, and a general
+// truncation of a local says nothing about one. The pop is different:
+// it is spelled over the slice's own len, so it is the shape a
+// long-lived stack or child list uses, and every site it finds in this
+// tree is one.
+func isPopOf(high ast.Expr, base string, text func(ast.Expr) string) bool {
+	bin, ok := high.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.SUB {
+		return false
+	}
+	if _, ok := bin.Y.(*ast.BasicLit); !ok {
+		return false
+	}
+	call, ok := bin.X.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	id, ok := call.Fun.(*ast.Ident)
+	return ok && id.Name == "len" && text(call.Args[0]) == base
+}
+
+// zeroesTopIn is every slice base that fn zeroes the LAST SLOT of —
+// `x[len(x)-1] = nil` or `= T{}` — which is the clear a POP needs and
+// the whole of it.
+//
+// A pop shortens by one, so exactly one slot passes out of [0, len) and
+// clearing to cap is clearing that slot plus a tail some other reset
+// already owns. Both spellings are correct; only one of them is O(1),
+// and that matters where the pop is: `prop.evalStack` is popped on every
+// computed evaluation in the process, so `clear(evalStack[len:cap])`
+// there would be O(depth) per pop and O(depth²) per evaluation on the
+// hottest path the framework has.
+//
+// IT IS ALSO THE SPELLING ALREADY IN THE TREE. `apps/wysiwyg/undo.go`
+// zeroes the slot before popping — it was the counter-evidence the
+// review used to show the pop retains — so a guard that refused to see
+// it would have reported the one file that already got this right.
+// Raised in review of #456.
+//
+// The assigned value must be a ZERO: nil, or a composite literal with
+// no elements. `x[len(x)-1] = y` is a write, not a release.
+func zeroesTopIn(fn ast.Node, text func(ast.Expr) string) map[string]bool {
+	found := map[string]bool{}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != len(as.Rhs) {
+			return true
+		}
+		for i, lhs := range as.Lhs {
+			ix, ok := lhs.(*ast.IndexExpr)
+			if !ok {
+				continue
+			}
+			if !isPopOf(ix.Index, text(ix.X), text) {
+				continue
+			}
+			switch v := as.Rhs[i].(type) {
+			case *ast.Ident:
+				if v.Name != "nil" {
+					continue
+				}
+			case *ast.CompositeLit:
+				if len(v.Elts) != 0 {
+					continue
+				}
+			default:
+				continue
+			}
+			found[text(ix.X)] = true
+		}
+		return true
+	})
+	return found
+}
+
+// TestTheZeroedTopMatcherSeesOnlyAReleasedSlot is zeroesTopIn's own
+// fixture, and it exists because the guard cannot supply one.
+//
+// Loosening either narrowing — the index shape, or the zero-value
+// requirement — changes NOTHING in the tree: nothing else writes
+// `x[…] = nil`, so both are unexercised by the live corpus and a
+// mutation of either is silent. That is the shape a fixture test is
+// for. Raised in review of #456.
+func TestTheZeroedTopMatcherSeesOnlyAReleasedSlot(t *testing.T) {
+	const src = `package p
+
+func nilTop()    { x[len(x)-1] = nil }
+func litTop()    { x[len(x)-1] = snapshot{} }
+func fieldTop()  { h.undo[len(h.undo)-1] = snapshot{} }
+func liveValue() { x[len(x)-1] = y }
+func filledLit() { x[len(x)-1] = snapshot{label: "a"} }
+func notTheTop() { x[i] = nil }
+func otherLen()  { x[len(y)-1] = nil }
+func notAPop()   { x[len(x)-n] = nil }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	text := func(e ast.Expr) string {
+		return src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset]
+	}
+	for _, tc := range []struct {
+		fn   string
+		want string
+		why  string
+	}{
+		{"nilTop", "x", "the release itself: the slot that leaves [0, len) is set to nil"},
+		{"litTop", "x", "and an empty composite literal is the same release for a struct element"},
+		{"fieldTop", "h.undo", "the base is the whole selector, as everywhere else in this guard"},
+		{"liveValue", "", "assigning a VALUE to the top slot is a write, not a release — " +
+			"the element it overwrites is gone but a live one takes its place"},
+		{"filledLit", "", "and a composite literal with elements is a value like any other"},
+		{"notTheTop", "", "an arbitrary index is not the slot a pop releases"},
+		{"otherLen", "", "len of a different slice does not name this slice's top"},
+		{"notAPop", "", "a non-constant subtrahend is not the pop shape isPopOf reads, " +
+			"so the reset it would exempt is not one this guard matches either"},
+	} {
+		var decl *ast.FuncDecl
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == tc.fn {
+				decl = fd
+			}
+		}
+		if decl == nil {
+			t.Fatalf("the fixture has no func %s", tc.fn)
+		}
+		got := zeroesTopIn(decl, text)
+		if tc.want == "" {
+			if len(got) != 0 {
+				t.Errorf("%s: zeroesTopIn = %v, want nothing — %s", tc.fn, got, tc.why)
+			}
+			continue
+		}
+		if !got[tc.want] || len(got) != 1 {
+			t.Errorf("%s: zeroesTopIn = %v, want exactly %q — %s", tc.fn, got, tc.want, tc.why)
+		}
+	}
 }

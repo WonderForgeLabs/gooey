@@ -731,6 +731,11 @@ func nodeOf(src string) (*node, error) {
 				return nil, fmt.Errorf("seed has an unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
+			// retains nothing: stack is a LOCAL parse stack whose last
+			// reference dies with this function. The high-water mark it
+			// leaves behind is freed with the slice itself at return, so
+			// there is nothing for a clear to release — unlike the
+			// reused FIELDS this guard is about. Raised in review of #456.
 			stack = stack[:len(stack)-1]
 			// The SAME body rule the loader applies, called through the
 			// package that owns it rather than restated here. A seed's
@@ -2449,6 +2454,11 @@ func (ed *editor) addSelected() {
 	if ed.remote == nil && ed.docRoot == nil {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		into.Kids = into.Kids[:len(into.Kids)-1]
+		// THE POP RETAINS, exactly as the delete-splice did: len drops
+		// and the refused subtree stays in the vacated slot, reachable
+		// from a live parent, with nothing that re-inserts it. Raised in
+		// review of #456.
+		clear(into.Kids[len(into.Kids):cap(into.Kids)])
 		ed.sel = prev
 		// BEFORE the rebuild: the refused mutation must not stay on the
 		// undo stack, or one ctrl+z re-enters the docRoot==nil state this

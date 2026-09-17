@@ -154,6 +154,16 @@ type Overlay interface{ OverlaysPage() }
 // belongs. Higher is nearer the viewer; an Overlay that does not
 // implement this is rank 0, which is the floor.
 //
+// A RANK BELOW OverlayRankPopup READS AS THE FLOOR. Returning a negative
+// number does not buy a band under the popups — it is clamped, silently,
+// and the component paints among them. This sentence is here rather than
+// only on the unexported helper that does the clamping because the one
+// reader who can trip it is an app author implementing this interface in
+// their own package, and what they read is `go doc gooey.OverlayRanker`,
+// which shows neither an unexported comment nor a spec. Why negative
+// ranks were not simply defined is in
+// docs/specs/2026-09-05-overlay-ranks.md. Raised in review of #456.
+//
 // WHY A RANK AND NOT DECLARATION ORDER. #437 lifted overlays into one
 // layer and left order within it to the document, documenting that as a
 // limit. It stopped being tenable the moment more than one KIND of
@@ -176,15 +186,28 @@ type Overlay interface{ OverlaysPage() }
 // OverlayRankToast and OverlayRankAdornment. They are spaced so an
 // application can sit between them.
 //
-// A RANK IS A STATIC PROPERTY OF THE TYPE. It is sampled by
-// Composer.orderPaint, which runs on composition build and structural
-// re-sync — NOT per frame. A component whose OverlayRank() returned a
-// varying value would restack on some unrelated later re-sync, or never,
-// with no error anywhere. That is the same reason Overlay is a marker
-// rather than a bool: a value that can change needs the
-// observer-and-re-sync machinery Frozen has, and a method returning an
-// int reads as dynamic in a way an empty marker never does. Return a
-// constant. Raised in review of #456.
+// A RANK IS A STATIC PROPERTY OF THE TYPE, and THE TWO PAINT PATHS
+// SAMPLE IT AT DIFFERENT MOMENTS — which is the argument, not a
+// footnote to it.
+//
+// Composer.orderPaint samples it on composition build and structural
+// re-sync, NOT per frame. gooey.Compose samples it per CALL, through
+// collectPaint → overlayOf. So a component whose OverlayRank() varied
+// would be stale on the retained path and live on the one-shot path,
+// and the two paths would then DISAGREE ABOUT Z-ORDER — the exact
+// property TestBothPaintPathsAgreeOnRanks and Compose's own "IT PAINTS
+// IN THE SAME Z-ORDER Composer does" paragraph exist to hold. Nothing
+// in the suite could see it: every fixture returns a constant set at
+// construction, which is what the rule asks for.
+//
+// The earlier version of this paragraph named only orderPaint, and the
+// failure it described — restacking on some unrelated later re-sync, or
+// never — is the milder half. Raised in review of #456.
+//
+// That is the same reason Overlay is a marker rather than a bool: a
+// value that can change needs the observer-and-re-sync machinery Frozen
+// has, and a method returning an int reads as dynamic in a way an empty
+// marker never does. Return a constant.
 //
 // AND THE TWO PLANES NOW READ IT DIFFERENTLY, which is the sharper cost
 // and was not here. Paint SAMPLES the rank at re-sync; hitTest reads it

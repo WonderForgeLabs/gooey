@@ -544,7 +544,13 @@ TRUNCATED.** `x = x[:0]` moves `len` and leaves the backing array holding
 every element past it, so a list that shrinks — a container that loses a
 child, a computed whose dependency set narrows, a filter that drops an
 adornment — keeps the dropped components, property nodes or closures
-alive for as long as the owner is. Nothing reports it: the tree renders
+alive for as long as the owner is. **The removal idiom
+`x = append(x[:i], x[i+1:]...)` is the same rule**, and it is the one
+that hides: it reads as "remove", not as "truncate", and it leaves the
+old last element in the vacated slot. Three live sites spelled it that
+way — `ToastHost.Dismiss`, `AdornmentLayer.Remove`, and wysiwyg's
+`unlink` — with the guard reporting a clean tree over all three, until
+review of #456 taught the matcher to read it. Nothing reports it: the tree renders
 correctly, the tests pass, and the only symptom is a heap that does not
 come back down. Write `clearToCap(x)` in the root package, or
 `clear(x[len(x):cap(x)])` **after** the refill elsewhere (the after-the-
@@ -561,8 +567,29 @@ half of the rule only has a reader when the slice is one a container
 PUBLISHES — `ChildComponents()`'s return, or `FocusManager.Order()`'s —
 so those are the sites where the after-form is not merely cheaper.
 
+**The POP `x = x[:len(x)-1]` is the third spelling of the same rule**,
+and the paragraph here used to say the opposite. It claimed the
+compaction shapes appeared on no reused field in the tree, and at the
+commit that wrote it four did: two popped a refused markup subtree off a
+live parent's `Kids` in `apps/wysiwyg`, one popped a scratch component
+off a live `Grid`, and `prop.evalStack` popped a `*node` off a
+package-level stack on the hottest path the framework has.
+`apps/wysiwyg/undo.go` was the counter-evidence in the same tree — it
+zeroes the slot before the pop — so the claim was refuted by a file that
+had already got it right. Review of #456 found them.
+
+For a pop the clear is **one slot**, not the whole tail:
+`x[len(x)-1] = nil` before the pop releases exactly what left, and where
+the pop is hot (`prop/prop.go`) clearing to cap instead would be
+O(depth) per pop. The guard reads both.
+
 `TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
-it, and where that test LIVES is the half worth knowing: it walks every
+it — over all three spellings above, and not over a general compaction
+`x = x[:n]`. That last one is scope rather than a claim about the tree:
+widening to it collects two dozen LOCAL slices the field lookup cannot
+resolve, which says nothing about a reused field (`isPopOf` carries the
+argument, and fixture arms pin what the matcher can and cannot see). Where that test LIVES is the other half
+worth knowing: it walks every
 non-test Go file in the whole tree, **nested modules included**, from the
 ROOT module's suite. So a reset added in `packs/temporal-workflow` reddens
 `go test ./...` at the repo root while that module's own `go test ./...`
@@ -632,7 +659,7 @@ repo-restructure epic
 relocation and demo-suffix scrub landed in
 [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
 
-**`prop.Set` does not compare values** (`prop/prop.go:134`). Setting a
+**`prop.Set` does not compare values** (`prop/prop.go:142`). Setting a
 property to what it already holds still invalidates every dependent and
 still costs a repaint. Guard at the call site if you need idempotence.
 

@@ -116,6 +116,14 @@ func (h *ToastHost) Dismiss(t *Toast) {
 	for i, x := range h.toasts {
 		if x == t {
 			h.toasts = append(h.toasts[:i], h.toasts[i+1:]...)
+			// The delete-splice shortens len and leaves the old last
+			// element in the vacated slot, so a host that peaked at N
+			// concurrent toasts kept up to N *Toast — each with a
+			// gooey.Base, a render.Style and a Delays closure — alive
+			// for the host's lifetime. Exactly what this PR's own
+			// clear-to-cap invariant forbids, in the one spelling the
+			// guard could not see. Raised in review of #456.
+			clear(h.toasts[len(h.toasts):cap(h.toasts)])
 			if h.structure != nil {
 				h.structure()
 			}
