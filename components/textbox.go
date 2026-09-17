@@ -67,13 +67,44 @@ type TextBox struct {
 	// paint node anyway and a property here would only add a second way
 	// to say the same thing.
 	scroll int
+
+	// runes is value()'s memo of the last string it converted, and
+	// runesFrom is that string. Derived state like scroll, for the same
+	// reason: it is a cache of a pure function of Text, so nothing can
+	// change it without changing Text.
+	runes     []rune
+	runesFrom string
+	runesOK   bool
 }
 
 // noAnchor is the anchor value meaning "no selection". A real anchor is
 // an index into the text, which is never negative.
 const noAnchor = -1
 
-func (t *TextBox) value() []rune { return []rune(getStr(t.Text)) }
+// value is the bound text as runes, MEMOISED ON THE STRING IT CAME
+// FROM — and the memo is not a micro-optimisation. A single motion
+// event converts the whole value three times (indexAt, Caret, setCaret's
+// clamp), which is O(len) per conversion on the input path: 100 drag
+// events over a 200,000-rune value spent most of their time here, which
+// is what TestADragDoesNotWalkTheWholeValue could not see while its
+// fixture kept the caret at the end. Raised in review of #521.
+//
+// THE Get STILL RUNS ON EVERY CALL, which is the half that must not be
+// optimised away: getStr is what subscribes the paint node to Text (the
+// Get-order rule), so the memo may skip the []rune conversion and never
+// the read. Comparing the string is also what makes this safe against a
+// value that changed to the same length.
+//
+// The slice is not defensively copied because nothing writes through
+// it: every caller that edits builds a new slice from append([]rune{},
+// …). A caller that mutates in place would be editing the memo.
+func (t *TextBox) value() []rune {
+	s := getStr(t.Text)
+	if !t.runesOK || t.runesFrom != s {
+		t.runes, t.runesFrom, t.runesOK = []rune(s), s, true
+	}
+	return t.runes
+}
 
 func (t *TextBox) caretProp() *prop.Property[int] {
 	if t.caret == nil {
@@ -149,10 +180,32 @@ func (t *TextBox) Measure(avail gooey.Size) gooey.Size {
 }
 
 func (t *TextBox) Render(f *gooey.Frame) {
-	// Read the error before any early return: the read is what
-	// subscribes this paint node, and a Get hidden behind a bounds check
-	// would silently drop the dependency (the Get-order rule).
+	// Read the error AND the styles it selects between before any early
+	// return: the read is what subscribes this paint node, and a Get
+	// hidden behind a bounds check would silently drop the dependency
+	// (the Get-order rule).
+	//
+	// THE OTHER TWO WERE BELOW THE avail CHECK until #521's review.
+	// Nothing painted on such a frame reads either — a prompt filling
+	// the field leaves only accent-styled text — so the missed
+	// subscription costs no visible staleness today, and the reason to
+	// hoist them anyway is that whether it does is a question about the
+	// REST of this function, re-answerable by anyone who adds a line to
+	// it. errMsg was hoisted for exactly this and these two were left
+	// behind.
 	errMsg := getStr(t.Error)
+	textSty := getSty(t.Style)
+	if errMsg != "" {
+		// The terminal's error convention: red, underlined text. An
+		// InvalidStyle handle replaces it wholesale for apps with their
+		// own palette — the Style/AccentStyle pattern, one more knob.
+		if t.InvalidStyle != nil {
+			textSty = t.InvalidStyle.Get()
+		} else {
+			textSty.Fg = errorRed
+			textSty.Underline = true
+		}
+	}
 	b := t.Bounds()
 	if b.W <= 0 || b.H <= 0 {
 		return
@@ -178,18 +231,6 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// walking right off the end.
 	t.scroll = scrollFor(runes, t.scroll, caret, avail)
 
-	textSty := getSty(t.Style)
-	if errMsg != "" {
-		// The terminal's error convention: red, underlined text. An
-		// InvalidStyle handle replaces it wholesale for apps with their
-		// own palette — the Style/AccentStyle pattern, one more knob.
-		if t.InvalidStyle != nil {
-			textSty = t.InvalidStyle.Get()
-		} else {
-			textSty.Fg = errorRed
-			textSty.Underline = true
-		}
-	}
 	// ONE GRAPHEME CLUSTER, ITS OWN COLUMNS. `x++` was the whole of
 	// #519: a wide glyph occupies two columns and SetCell places both,
 	// so advancing one put the next rune on the continuation cell the
@@ -251,17 +292,27 @@ func (t *TextBox) Render(f *gooey.Frame) {
 		i := idx
 		n := len([]rune(cluster))
 		idx += n
-		if w == 0 {
-			// A zero-width cluster owns no column. It can only be a mark
-			// with nothing in front of it to decorate — scrollFor snaps
-			// the window back over those, so reaching one here means the
-			// value itself opens with one. Skipping it is right, and the
-			// caret cannot be lost with it: the caret arm below fires on
-			// the cluster CONTAINING it, and a caret inside this one has
-			// no cell to reverse either way.
-			return true
-		}
-		if x+w > b.X+b.W {
+		// A ZERO-WIDTH CLUSTER TAKES A COLUMN, which is what SetString
+		// does with the same string and what this loop refused to do
+		// until #521's review. Such a cluster is a mark with nothing in
+		// front of it to decorate, so it can only be the first of the
+		// span: scrollFor snaps the window back over the others, and
+		// reaching one here means the VALUE opens with one.
+		//
+		// Skipping it was argued to be right on the grounds that the
+		// caret arm fires on the containing cluster and a caret inside
+		// this one has no cell to reverse either way. True of the
+		// cluster, false of the field. Measured on "\u0301abc", focused,
+		// caret 0: this loop painted "abc       " with NOT ONE reversed
+		// cell, while render.Buffer.SetString on the same string paints
+		// the mark. So the character was in the bound property and
+		// absent from the screen — #519's own symptom, one Unicode
+		// category over — and the user was typing into a field showing
+		// no caret at all. The framework's own writer is the authority
+		// on what a cluster is worth in columns; disagreeing with it is
+		// how a glyph goes missing.
+		cols := max(w, 1)
+		if x+cols > b.X+b.W {
 			return false
 		}
 		st := textSty
@@ -294,7 +345,7 @@ func (t *TextBox) Render(f *gooey.Frame) {
 			c.Cluster = cluster
 		}
 		f.Cells.SetCell(x, b.Y, c)
-		x += w
+		x += cols
 		return true
 	})
 	if t.IsFocused() && !selected && caret >= len(runes) && x < b.X+b.W {
@@ -323,8 +374,16 @@ func (t *TextBox) Render(f *gooey.Frame) {
 // inside a prop.NewComputed on the UI goroutine: a hard freeze on End,
 // on a click, on a paste, or on the first render of a prefilled field.
 // windowFloor answers the same question by walking LEFT from the end of
-// the span, so the cost is O(avail) — the columns that fit — rather than
-// O(len). The window is the same one; only the arithmetic moved.
+// the span, so its own cost is O(avail) — the columns that fit — rather
+// than O(len). The window is the same one; only the arithmetic moved.
+//
+// THAT IS THE FUNCTION'S OWN ARITHMETIC AND NOT THE WHOLE BILL, which
+// this comment claimed until #521's review measured it: scrollFor calls
+// clusterStartAt twice and caretCols once, and each of those copied the
+// tail of the value into a string, so the O(len) it removed was still
+// being paid three times per frame — 3.34 ms and 185 KB at 100,000
+// runes with the caret mid-value. Those three are bounded at their own
+// declarations now, and the claim here holds only because they are.
 func scrollFor(runes []rune, cur, caret, avail int) int {
 	if avail <= 0 {
 		return 0
@@ -440,15 +499,29 @@ func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 	}
 	// AND OFF A REGIONAL-INDICATOR RUN, which is the one boundary a
 	// fixed lookback cannot re-synchronise on: start inside a run of
-	// flags and every pair from there is offset by one. Walking to the
-	// run's own start restores the parity. Only when `lo` landed IN a
-	// run — landing just after one is already a true boundary — so this
-	// costs nothing on the values that have no flags in them, which is
-	// nearly all of them. Raised in review of #521.
+	// flags and every pair from there is offset by one (UAX #29
+	// GB12/GB13 decide the boundary by the parity of the whole run).
+	// Only when `lo` landed IN a run — landing just after one is already
+	// a true boundary — so this costs nothing on the values that have no
+	// flags in them, which is nearly all of them.
+	//
+	// THE PARITY IS THE ANSWER, NOT THE RUN'S START, and that
+	// distinction is worth the two lines. This moved `lo` back to the
+	// run's own start, which is correct and made the SEGMENTED SPAN as
+	// long as the run: measured over 5,000 flags, 100 clusterStartAt
+	// calls cost 42.9 ms against 0.42 ms on ASCII of the same rune
+	// count — 100x, on the paint path and again per column of a drag.
+	// Any EVEN offset into the run is a true pair boundary, so dropping
+	// back to the nearest one keeps the parity and leaves the span
+	// bounded by clusterSlack. Finding the run's start still walks it,
+	// but that walk is a rune comparison per step and segments nothing.
+	// Raised in review of #521, both halves.
 	if lo > 0 && regionalIndicator(runes[lo]) {
-		for lo > 0 && regionalIndicator(runes[lo-1]) {
-			lo--
+		runStart := lo
+		for runStart > 0 && regionalIndicator(runes[runStart-1]) {
+			runStart--
 		}
+		lo -= (lo - runStart) % 2
 	}
 	idx := lo
 	first := true
@@ -467,12 +540,24 @@ func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 }
 
 // clusterStartAt is the index the cluster containing i begins at.
+//
+// BOUNDED ON BOTH SIDES, and the right-hand bound is the half that was
+// missing. eachClusterFrom copies runes[lo:to] into a string, so passing
+// len(runes) here made a question about ONE cluster cost a copy of the
+// whole tail: MEASURED at 1.19 ms and 57 KB per call over a
+// 100,000-rune value, on the paint path inside a prop.NewComputed and
+// again per column walked on a drag. That is the same O(len) shape this
+// branch took out of scrollFor, relocated into the helper that replaced
+// it. clusterSlack is already the lookback, and it is the lookahead for
+// the same reason and with the same residual: a cluster longer than it
+// is reported short, which its own doc records. Raised in review of
+// #521.
 func clusterStartAt(runes []rune, i int) int {
 	if i <= 0 || i >= len(runes) {
 		return i
 	}
 	at := i
-	eachClusterFrom(runes, i, len(runes), func(a, n, _ int) bool {
+	eachClusterFrom(runes, i, i+clusterSlack, func(a, n, _ int) bool {
 		if i >= a && i < a+n {
 			at = a
 			return false
@@ -507,7 +592,10 @@ func caretCols(runes []rune, i int) int {
 		return 1
 	}
 	got := 1
-	eachClusterFrom(runes, i, len(runes), func(at, n, w int) bool {
+	// The span ends clusterSlack runes on, for the reason clusterStartAt
+	// above carries: the caret's own cluster is the only one this asks
+	// about, and len(runes) bought a whole-tail copy per call.
+	eachClusterFrom(runes, i, i+clusterSlack, func(at, n, w int) bool {
 		if i >= at && i < at+n {
 			if w > 1 {
 				got = w
@@ -1006,9 +1094,18 @@ func (t *TextBox) indexAt(x int) int {
 	// between the window and the click, so the walk is bounded by the
 	// OFFSET rather than by the value: forward from the window for a
 	// non-negative column, backward one cluster at a time for a negative
-	// one. Both are allocation-free, and the backward half is the
-	// drag-left behaviour the paragraph above insists on.
-	// Raised in review of #521.
+	// one. The backward half is the drag-left behaviour the paragraph
+	// above insists on.
+	//
+	// BOUNDED IN THE WALK IS NOT BOUNDED IN THE SPAN, and this comment
+	// said "both are allocation-free" when neither was. Stopping the
+	// callback early does not stop eachClusterFrom having already copied
+	// runes[lo:to] into a string, and both halves passed the end of the
+	// value as `to` — so a drag ten columns left of a 100,000-rune field
+	// cost 21.9 ms and 1.6 MB per motion event, on the UI goroutine.
+	// Each half bounds its own span now: the forward walk doubles from
+	// off+clusterSlack, and the backward one inherits clusterStartAt's
+	// and caretCols' bounds. Raised in review of #521.
 	start = clusterStartAt(runes, start)
 	off := x - t.Bounds().X - promptW
 	if off < 0 {
@@ -1022,15 +1119,35 @@ func (t *TextBox) indexAt(x int) int {
 		}
 		return i
 	}
+	// A SPAN THAT GROWS, not the rest of the value, and the difference
+	// is the allocation: eachClusterFrom copies runes[lo:to] into a
+	// string, so `to = len(runes)` made a walk of `off` columns cost a
+	// copy of the tail — 3.74 ms and 516 KB per call over a
+	// 100,000-rune value with the window mid-value, measured in review
+	// of #521. off+clusterSlack runes hold off+1 columns unless the span
+	// is mostly zero-width clusters, which is why this doubles rather
+	// than guessing once: the same shape windowFloor uses for the same
+	// reason. The loop ends when the walk has passed the column asked
+	// for or the span has reached the end of the value.
 	col, last := 0, start
-	eachClusterFrom(runes, start, len(runes), func(at, n, w int) bool {
-		if col > off {
-			return false
+	for span := off + clusterSlack; ; span *= 2 {
+		to := start + span
+		if to >= len(runes) {
+			to = len(runes)
 		}
-		last = at
-		col += w
-		return true
-	})
+		col, last = 0, start
+		eachClusterFrom(runes, start, to, func(at, n, w int) bool {
+			if col > off {
+				return false
+			}
+			last = at
+			col += w
+			return true
+		})
+		if col > off || to == len(runes) {
+			break
+		}
+	}
 	// PAST THE END OF THE TEXT, which is a click in the empty part of the
 	// field and puts the caret at the end. Distinguished from "stopped on
 	// a cluster" by col: the walk only runs out with col <= off.
