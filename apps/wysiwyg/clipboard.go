@@ -942,13 +942,21 @@ func collectNamespaces(n *node, into map[string]string) {
 // default-namespace reasoning moved onto the skip in
 // reconcileNamespacesInto, where it is the only thing deciding anything.
 //
-// AND IT HAS FOUR CALLERS NOW, which is the other half of that round's
-// finding. While this matched the plain form it could not be shared —
-// carryDeclarations, envelopeAttrs and collectNamespaces must NOT move a
-// plain xmlns, so each spelled the prefixed test inline and the comment
-// here recorded that as the reason. The narrowing made the reason moot
-// and left four identical predicates with nothing explaining why they
-// were four; they call this now. Raised in review of #501.
+// AND IT IS SHARED NOW, which is the other half of that round's finding.
+// While this matched the plain form it could not be: every caller that
+// must NOT move a plain xmlns spelled the prefixed test inline, and the
+// comment here recorded that as the reason. The narrowing made the reason
+// moot and left identical predicates scattered with nothing explaining
+// why; they call this instead.
+//
+// NO COUNT OF THEM HERE. This said "FOUR CALLERS NOW" and named three,
+// and the very commit that wrote it added a fifth — which is the
+// hand-maintained count this branch had already removed from gooeyOpen's
+// doc two commits earlier, and the one CLAUDE.md's Verify section refuses
+// in prose: a number in a comment is a sample taken once. The reason the
+// predicate is shared is the paragraph's point and it survives without an
+// arithmetic claim; `grep -n 'isNamespaceAttr(' apps/wysiwyg/*.go` is the
+// current answer. Raised in review of #501, twice.
 func isNamespaceAttr(k string) bool {
 	return strings.HasPrefix(k, "xmlns:")
 }

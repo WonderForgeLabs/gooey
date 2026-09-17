@@ -1372,6 +1372,18 @@ func TestOnlyOneFunctionWritesADocumentEnvelope(t *testing.T) {
 	// island inside another document, so the envelope attributes gooeyOpen
 	// writes are the ones it must NOT carry. See gooeyOpen's doc.
 	const exempt = "fragmentFor"
+	// PACKAGE SCOPE IS A SITE TOO, and it was invisible. The walk took
+	// d.(*ast.FuncDecl) and inspected fn.Body, so a *ast.GenDecl was
+	// skipped whole: `const envelope = "<Gooey>\n"` at package scope
+	// would have been attributed to no function at all and every user of
+	// it recorded under no name, leaving this guard green over the exact
+	// thing it exists to find. Hoisting a repeated literal to a package
+	// const is the ordinary refactor, not an exotic one — and this test
+	// replaced a hand-maintained list precisely because that list failed
+	// SILENTLY. A name nothing can exempt is the right attribution: there
+	// is no function to route through gooeyOpen, so the answer is always
+	// to move the literal. Raised in review of #501.
+	const pkgScope = "package scope"
 
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
@@ -1384,19 +1396,26 @@ func TestOnlyOneFunctionWritesADocumentEnvelope(t *testing.T) {
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files {
 			for _, d := range f.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Body == nil {
-					continue
+				// THE WHOLE DECLARATION, whatever kind it is. A
+				// FuncDecl's literals are attributed to it; anything
+				// else — a const block, a var, an interface's default —
+				// is package scope, which no exemption names.
+				owner := pkgScope
+				if fn, ok := d.(*ast.FuncDecl); ok {
+					if fn.Body == nil {
+						continue
+					}
+					owner = fn.Name.Name
 				}
 				// OPENS WITH IT, rather than contains it:
 				// openWorkspaceFile's refusal message says "a <Gooey>
 				// document needs exactly one root element", which is
 				// prose about an envelope and not one. lit.Value keeps
 				// the quote, so [1:] drops either kind of it.
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
+				ast.Inspect(d, func(n ast.Node) bool {
 					if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING &&
 						strings.HasPrefix(lit.Value[1:], "<Gooey") {
-						seen[fn.Name.Name] = true
+						seen[owner] = true
 					}
 					return true
 				})
