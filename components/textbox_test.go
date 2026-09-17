@@ -269,9 +269,10 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// behind a green check once the bug is fixed, and "the fixing branch
 	// already satisfies it" is a cross-branch promise rather than a
 	// local pin. Composing FIRST and deciding after costs one frame and
-	// needs nothing from the issue tracker: the day the row reads
-	// correctly, this fails and says to delete the skip. Raised in
-	// review of #520.
+	// needs nothing from the issue tracker: the day all three rows read
+	// correctly the skip below does not fire, the assertions at the
+	// bottom take over, and NOTHING IN THIS FILE HAS TO BE EDITED.
+	// Raised in review of #520.
 	//
 	// ALL THREE SHAPES, and a tripwire on each. The first version
 	// composed only the focused caret row, while the table below
@@ -299,19 +300,30 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	caret := compose("世界", true)
 	plain := compose("世界", false)
 	mixed := compose("a世b", false)
+	// THE SKIP IS THE CONDITION, not a statement after one. This was a
+	// t.Fatalf on a shape that read CORRECTLY followed by an
+	// unconditional t.Skip, and the Fatalf's message said to delete the
+	// skip — so a fixer who did exactly what it said deleted one of the
+	// two things holding the test shut and left it permanently red, with
+	// an instruction naming something that was already gone. Retiring by
+	// hand needs the instruction to be complete; retiring by CONDITION
+	// needs no instruction at all, and no edit to this file on the day
+	// #519 lands. The loop skips on the FIRST shape still reading wrongly
+	// and names it, so the skip line in `go test -v` says which of the
+	// three is still broken rather than restating the issue. When all
+	// three read correctly the loop falls through and the three
+	// assertions below take over. Raised in review of #520, twice.
 	for _, tw := range []struct{ got, want, shape string }{
 		{caret, wantCaret, "the focused row with the caret after both glyphs"},
 		{plain, wantPlain, "the unfocused row"},
 		{mixed, wantMixed, "the unfocused mixed-width row"},
 	} {
-		if tw.got == tw.want {
-			t.Fatalf("#519 looks fixed — %s reads correctly now (%q). Delete the "+
-				"skip below and let this fixture assert. The skip is what has to "+
-				"die with the fix, and nothing outside this file can make it",
-				tw.shape, tw.got)
+		if tw.got != tw.want {
+			t.Skipf("TextBox blanks wide glyphs — %s reads %q, want %q — "+
+				"https://github.com/WonderForgeLabs/gooey/issues/519",
+				tw.shape, tw.got, tw.want)
 		}
 	}
-	t.Skip("TextBox blanks wide glyphs — https://github.com/WonderForgeLabs/gooey/issues/519")
 
 	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
 	// to stand beside it are gone for opposite reasons.

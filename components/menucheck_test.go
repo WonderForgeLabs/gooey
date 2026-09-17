@@ -85,21 +85,43 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	f, _ := c.Frame()
 
 	rows := strings.Split(menuRows(f), "\n")
-	var wrapAt, plainAt int = -1, -1
-	for _, r := range rows {
-		if i := strings.Index(r, "Wrap"); i >= 0 {
-			wrapAt = i
+	// EVERY MATCH, not the last one, for the reason
+	// TestACheckItemDrawsAWideLabelInItsOwnColumns gives below: this was
+	// an assignment inside the loop with no break, so a second row
+	// holding "Wrap" was resolved by iteration order and the other became
+	// invisible. menuRows just widened from a fixed 14 rows to the whole
+	// frame, which is more rows for a second match to hide in. Raised in
+	// review of #520.
+	find := func(word string) (byteAt int, rows_ []int) {
+		byteAt = -1
+		for y, r := range rows {
+			if i := strings.Index(r, word); i >= 0 {
+				byteAt, rows_ = i, append(rows_, y)
+			}
 		}
-		if i := strings.Index(r, "Plain"); i >= 0 {
-			plainAt = i
-		}
+		return byteAt, rows_
 	}
-	if wrapAt < 0 || plainAt < 0 {
-		t.Fatalf("could not find both items:\n%s", strings.Join(rows, "\n"))
+	wrapAt, wrapRows := find("Wrap")
+	plainAt, plainRows := find("Plain")
+	if len(wrapRows) != 1 || len(plainRows) != 1 {
+		t.Fatalf("%q matched rows %v and %q matched rows %v, want one each: this "+
+			"test compares ONE lead column against another, and two candidates "+
+			"make the answer depend on iteration order:\n%s",
+			"Wrap", wrapRows, "Plain", plainRows, strings.Join(rows, "\n"))
 	}
 	if wrapAt != plainAt {
+		// THE REPORTED NUMBER IS A COLUMN. strings.Index answers in BYTES
+		// and the dropdown's border is '│', three bytes for one column, so
+		// the offset printed 7 where the cell is 5 — a diagnostic sending
+		// the reader to the wrong cell of a row this file now puts wide
+		// glyphs into. The COMPARISON is sound either way: both rows carry
+		// the same prefix, so the offsets differ exactly when the columns
+		// do, which is why this was the message lying and not the
+		// assertion. Raised in review of #520.
 		t.Errorf("the checked item's text starts at column %d and the plain one's at %d; "+
-			"a menu's lead column belongs to the menu", wrapAt, plainAt)
+			"a menu's lead column belongs to the menu",
+			render.StringWidth(rows[wrapRows[0]][:wrapAt]),
+			render.StringWidth(rows[plainRows[0]][:plainAt]))
 	}
 }
 
@@ -182,12 +204,13 @@ func TestACheckedMenuIsWideEnoughForItsLabels(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	var sb strings.Builder
-	for y := 0; y < 8; y++ {
-		sb.WriteString(render.SpanText(f.Cells, 0, y, 60))
-		sb.WriteByte('\n')
-	}
-	if got := sb.String(); !strings.Contains(got, "[x] Wrap long lines") {
+	// menuRows, not a second hand-built window. Both extents were written
+	// down here — 60 columns and 8 rows against a 60x16 composer, so this
+	// read HALF the frame's height, on the axis a dropdown moves along and
+	// the one SpanText's own doc calls out as turning a short read into
+	// phantom blanks. menuRows derives both from f.Cells and is four lines
+	// up. Raised in review of #520.
+	if got := menuRows(f); !strings.Contains(got, "[x] Wrap long lines") {
 		t.Errorf("the label is clipped; the dropdown was sized without the check column:\n%s", got)
 	}
 }
@@ -209,11 +232,17 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// underlined '[' to catch — it overwrites the '[' WITH a 'W'. A test
 	// that only looked for an underlined 'W' passed against exactly that,
 	// which a mutation run is how we found out.
-	// COLUMNS ARE RUNES, and strings.Index returns BYTES. The dropdown's
-	// border is '│', three bytes each, so a byte offset lands three cells
-	// right of the cell it names — which is how the first version of this
-	// assertion read column 7 of the row below and reported a perfectly
-	// correct underline as misplaced.
+	// COLUMNS ARE NOT RUNES AND NOT BYTES, and this comment used to say
+	// the first of those. strings.Index returns BYTES — the dropdown's
+	// border is '│', three bytes for one column, which is how the first
+	// version of this assertion read column 7 of the row below and
+	// reported a perfectly correct underline as misplaced — and the
+	// conversion off a byte offset is render.StringWidth, not a rune
+	// count. A rune count agrees with the column only while the prefix is
+	// narrow, which it is in this fixture and is not in
+	// TestACheckItemDrawsAWideLabelInItsOwnColumns thirty lines below:
+	// exactly the accidental agreement the paragraph under this one names
+	// for the row index. Raised in review of #520.
 	// THE ROW INDEX IS THE ROW, now that menuRows reads the frame from
 	// its top rather than from bar.Bounds().Y. This was `b.Y + dy` and
 	// it was right for the old window; it is right for this one only
@@ -226,13 +255,13 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 		if bytesAt < 0 {
 			continue
 		}
-		at := len([]rune(r[:bytesAt]))
+		at := render.StringWidth(r[:bytesAt])
 		// The check box must have SURVIVED, which is what discriminates
 		// an underline placed in the label from one placed over the box:
 		// Render SETS the rune as well as the style, so a wrong offset
 		// does not leave an underlined '[' behind — it overwrites the '['
 		// WITH the accelerator letter.
-		want := at + len([]rune("[x] "))
+		want := at + render.StringWidth("[x] ")
 		cell := f.Cells.At(want, y)
 		if !cell.Style.Underline || cell.Rune != 'W' {
 			t.Errorf("column %d of row %d is %q (underline=%v); the accelerator underline "+
