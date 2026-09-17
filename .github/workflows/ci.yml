@@ -367,6 +367,20 @@ jobs:
       # check has nothing to look at. It fails rather than logging that, so
       # this line is what makes it run rather than what keeps it quiet.
       #
+      # AND IT BUYS THE REFSPEC, WHICH IS THE HALF NOT WRITTEN DOWN ABOVE.
+      # actions/checkout uses `+refs/heads/*:refs/remotes/origin/*` (plus
+      # tags) ONLY when fetch-depth <= 0; otherwise it fetches the single
+      # `+<commit>:refs/remotes/pull/N/merge`. That refspec is the only
+      # reason `refs/remotes/origin/main` exists on the runner at all —
+      # and the same test treats a NON-shallow clone with no origin/main
+      # as a t.Error, not a skip, because a checkout that can see every
+      # commit and not the branch they are on is a misconfigured remote.
+      # So this one line does two jobs. Anyone trimming the cost the
+      # paragraph below invites scrutiny of — `--shallow-since`,
+      # `--deepen`, a targeted `git fetch origin main` — satisfies the
+      # reason written above and reds the leg on this one, with a message
+      # about a remote nobody touched. Raised in review of #497.
+      #
       # THE OPERANDS ARE QUOTED STRINGS, and dropping the quotes reverts
       # the fix silently. In a GitHub expression `0` is FALSY, so
       # `matrix.mode == 'test' && 0 || 1` evaluates to 1 on every leg
@@ -374,10 +388,16 @@ jobs:
       # checked here", which is the correct failure and a miserable thing
       # to debug from a bare ternary. Raised in review of #497.
       #
-      # Affordable on the one leg: 216 commits and a 56 MiB pack against
-      # the LFS objects this same step already pulls. The other three
-      # checkout steps in this file stay at the default — none of them asks
-      # git anything about history.
+      # Affordable on the one leg, against the LFS objects this same step
+      # already pulls. NO FIGURE HERE, for the reason CLAUDE.md's Verify
+      # section gives about counts in prose: this said "216 commits and a
+      # 56 MiB pack", and with `refs/heads/*` the fetch tracks the number
+      # of open branches and tags in the repository rather than the length
+      # of main, so the sample was taken once and describes something that
+      # moves for reasons unrelated to this file. `git count-objects -vH`
+      # after a full clone is the measurement. The other three checkout
+      # steps in this file stay at the default — none of them asks git
+      # anything about history. Raised in review of #497.
       - uses: actions/checkout@v4
         with:
           lfs: true

@@ -124,6 +124,34 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 				t.Errorf("%s requires %s %q, which is not a version", dir, r.path, r.version)
 				continue
 			}
+			// AND A PSEUDO-VERSION THAT IS NOT ONE IS NOT A TAG. Without
+			// this the failure had no reporter at all: revisionOf wants
+			// exactly twelve hex characters, so a short or clipped tail
+			// returns ok=false, skewFrom files it under `tagged` — "a
+			// require naming a plain tag", legitimate and merely
+			// unorderable — and that is reported through a t.Logf this
+			// same file measures to be invisible for a passing package.
+			// pinPopulations drops it too, so the existence check never
+			// asks whether the commit is real. Green, silent, and `go
+			// get` cannot resolve it: Go does not recognise a short tail
+			// as a pseudo-version, so it asks for a TAG of that name.
+			// Measured on this tree, revisionOf("v0.0.0-20260913132232-
+			// e5cdb56") = ("", false) with stampOf = "20260913132232".
+			// Raised in review of #497.
+			if malformedPseudo(r.version) {
+				t.Errorf("%s requires %s %q, which carries a pseudo-version's "+
+					"14-digit stamp and NOT its twelve-hex-character revision — so "+
+					"it is a malformed pseudo-version, not a plain tag, and no "+
+					"proxy can serve it: Go asks for a tag of that name instead and "+
+					"gets \"unknown revision\". Twelve is the whole of it and git's "+
+					"default abbreviation is seven, so the remedy this file prints "+
+					"elsewhere produces exactly this string with its `-c "+
+					"core.abbrev=12` dropped: `TZ=UTC git -c core.abbrev=12 log -1 "+
+					"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
+					"origin/main`. A `sed` across the tree that clips one character "+
+					"lands here too", dir, r.path, r.version)
+				continue
+			}
 			// APPENDED AFTER THE SHAPE CHECKS, not before. A sentinel
 			// went into the skew population and was then rejected, so
 			// one bad require produced two failures with two different
@@ -798,6 +826,15 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			"saying so is gone, which is how a conditional becomes a deletion:"+
 			"\n\t%s", twoRev)
 	}
+	// AND IT SAYS HOW MANY, which only the three-revision loop's ABSENCE
+	// check covered — so the string could have been changed to anything,
+	// including something wrong, with every arm green. A count asserted
+	// from one side is not asserted. Raised in review of #497.
+	if !strings.Contains(twoRev, "two revisions is") {
+		t.Errorf("the two-revision message does not say how many revisions it "+
+			"found, so the clause the three-revision arms check for the ABSENCE "+
+			"of is pinned from neither side:\n\t%s", twoRev)
+	}
 	// AND IT SPELLS THE VERSION, which the arm above cannot see because
 	// a bare hash and a spelled one both contain "pin THAT one back".
 	// Both shapes, because a tree can hold either and the reader has to
@@ -953,6 +990,40 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			t.Errorf("revisionOf(%q) reports %v, want %v — a twelve-character hex "+
 				"tail is a revision only when the version also carries a stamp, "+
 				"because a prerelease tag can have one too", tc.v, got, tc.want)
+		}
+	}
+
+	// AND THE OTHER SIDE OF THE SAME FACT, which had no reporter at all.
+	// revisionOf answers false for a plain tag and for a MALFORMED
+	// pseudo-version alike, and the two want opposite treatment: one is
+	// legitimate and merely unorderable, the other is a pin no proxy can
+	// serve. Filed together, the second reached only a t.Logf describing
+	// it as "a plain tag" and was dropped from the existence check.
+	// The stamp separates them, and the first and fourth arms here are
+	// the discriminating pair — both fail revisionOf, both are hex-
+	// tailed, and they answer oppositely. Raised in review of #497.
+	for _, tc := range []struct {
+		v    string
+		want bool
+	}{
+		// git's default abbreviation is seven, which is what this file's
+		// own offline remedy prints with `-c core.abbrev=12` dropped.
+		{"v0.0.0-20260913132232-e5cdb56", true},
+		// And clipped by one, which is the `sed` across the tree hazard.
+		{"v0.0.0-20260913132232-e5cdb56ecec", true},
+		{"v0.0.0-20260913132232-e5cdb56ececd", false},
+		{"v1.2.3-abcdef123456", false},
+		{"v0.1.0", false},
+		// The sentinels have their own reporter and their own remedy,
+		// and both carry a well-formed tail, so neither lands here.
+		{"v0.0.0", false},
+		{"v0.0.0-00010101000000-000000000000", false},
+	} {
+		if got := malformedPseudo(tc.v); got != tc.want {
+			t.Errorf("malformedPseudo(%q) reports %v, want %v — a version carrying "+
+				"a 14-digit stamp and no twelve-hex revision is a pseudo-version "+
+				"that failed, not a tag, and filing it as a tag is what let it "+
+				"past every check in this file", tc.v, got, tc.want)
 		}
 	}
 
@@ -1149,6 +1220,24 @@ func TestTwoCommitsInOneSecondReachTheStringFallback(t *testing.T) {
 	}
 }
 
+// malformedPseudo is the one shape this file could not report: a
+// version TRYING to be a pseudo-version and failing.
+//
+// The discriminator costs nothing and was already in the file, asked for
+// the opposite purpose by revisionOf's stamp test. A plain tag carries no
+// 14-digit stamp and a pseudo-version always does, so "has a stamp and
+// has no revision" separates the two exactly — a legitimate tag answers
+// false whatever its tail looks like, and a clipped or short-abbreviated
+// pseudo-version answers true. A function rather than an inline
+// conjunction for this file's usual reason: the arm is the only evidence
+// the rule holds. Raised in review of #497.
+func malformedPseudo(v string) bool {
+	if _, ok := revisionOf(v); ok {
+		return false
+	}
+	return stampOf(v) != ""
+}
+
 // pinPopulations splits the tree's own-module requires into the two
 // keyed sets the pin check needs: revision → a representative pin, and
 // full version string → where it was found.
@@ -1295,7 +1384,20 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// different ones.
 	for _, version := range sortedKeys(spellings) {
 		where := spellings[version]
-		rev, _ := revisionOf(version)
+		// THE ok IS READ, for the reason the newestRev arm gives about
+		// dropping it: correct today only because pinPopulations
+		// filtered first, and a silent "" would key present[] at the
+		// empty string and skip every spelling the moment the two walks
+		// come to disagree about what a pin is. Raised in review of
+		// #497.
+		rev, ok := revisionOf(version)
+		if !ok {
+			t.Errorf("the stamp check reached %s with version %q, which has no "+
+				"revision — pinPopulations is meant to have filtered it out, so "+
+				"the two walks have come to disagree about what a pin is",
+				where, version)
+			continue
+		}
 		if !present[rev] {
 			continue // said below
 		}
@@ -1324,8 +1426,9 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	}
 
 	sort.Strings(absent)
-	if fail, msg := pinCoverage(len(at), absent); msg != "" {
-		if fail {
+	nothingRan, msg := pinCoverage(len(at), absent)
+	if msg != "" {
+		if nothingRan {
 			t.Error(msg)
 		} else {
 			t.Log(msg)
@@ -1341,6 +1444,17 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// review of #497.
 	switch {
 	case canReach:
+	case nothingRan:
+		// SUPPRESSED, because the line below would withdraw the one
+		// above it. pinCoverage has just said no check ran at all, and
+		// "existence and stamp ran for every revision present here" is
+		// true only of an empty set — measured verbatim in a real `git
+		// clone --depth 1 --no-local` of this branch, the two lines
+		// landed two apart and contradicted each other. It is not a
+		// corner: the tree holds ONE revision across every pin, so the
+		// all-absent arm is the only shallow outcome available today,
+		// and it is the CI failure the fetch-depth change exists to
+		// prevent. Raised in review of #497.
 	case shallow == "true":
 		t.Logf("ancestry of origin/main was NOT checked for any pin: this clone " +
 			"is SHALLOW, and a truncated history answers `merge-base " +
@@ -1381,17 +1495,17 @@ func pinCoverage(pins int, absent []string) (fail bool, msg string) {
 	case len(absent) >= pins:
 		return true, fmt.Sprintf("NOTHING was checked here: this is a shallow "+
 			"clone (actions/checkout's default is fetch-depth: 1) and not one of "+
-			"the %d pinned revisions is an object in it, so no existence, "+
-			"ancestry or stamp check ran at all: %s. Set fetch-depth: 0 on the "+
-			"checkout that runs this suite", pins, strings.Join(absent, "; "))
+			"the %d pinned revisions is an object in it, so no existence or stamp "+
+			"check ran at all: %s. Set fetch-depth: 0 on the checkout that runs "+
+			"this suite", pins, strings.Join(absent, "; "))
 	default:
 		// SAID, NOT PASSED OVER, and named one by one: a reader has to
 		// be able to tell "checked and clean" from "not looked at".
 		return false, fmt.Sprintf("this is a SHALLOW clone (actions/checkout's "+
 			"default is fetch-depth: 1) and %d of the %d pinned revisions are "+
-			"not objects here, so their existence, ancestry and stamp were NOT "+
-			"checked: %s. Run with fetch-depth: 0 to check them; everything "+
-			"else above ran", len(absent), pins, strings.Join(absent, "; "))
+			"not objects here, so their existence and stamp were NOT checked: "+
+			"%s. Run with fetch-depth: 0 to check them; existence and stamp ran "+
+			"for the rest", len(absent), pins, strings.Join(absent, "; "))
 	}
 }
 
