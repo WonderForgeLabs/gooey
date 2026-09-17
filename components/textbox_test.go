@@ -400,6 +400,57 @@ func TestTheScrollWindowIsWalkedNotResummed(t *testing.T) {
 	}
 }
 
+// TestADragDoesNotWalkTheWholeValue is a COST assertion over the INPUT
+// path, and it is the same shape and the same reason as
+// TestTheScrollWindowIsWalkedNotResummed above: the caret indexAt
+// returns was right before this fix and is right after it, so every
+// assertion about the answer passes over the defect.
+//
+// #519's fix put a whole-value segmentation into indexAt — a
+// `string(runes)` copy plus two []int with an entry per cluster, on
+// every call — and HandleMouseMove calls it on every motion event, on
+// the UI goroutine, where motion arrives in bursts. Measured on the
+// version this replaces: 202µs per call at 1,000 runes, 1.95ms at
+// 10,000, 27.3ms at 100,000, 51.6ms at 200,000. The same O(len) shape
+// this branch had already taken out of scrollFor, relocated one file
+// over. Raised in review of #521.
+//
+// THE BUDGET IS DELIBERATELY ENORMOUS, for the reason its sibling gives:
+// the walk from the window costs microseconds and the whole-value form
+// costs seconds at this size, so half a second sits orders of magnitude
+// from both and cannot flake on a loaded shared runner.
+//
+// A HUNDRED EVENTS, because one call of the defective shape is already
+// slow but a drag is not one call — and because a per-call figure over a
+// single sample is what a loaded runner turns into a flake.
+func TestADragDoesNotWalkTheWholeValue(t *testing.T) {
+	const n = 200000
+	v := prop.NewSource(strings.Repeat("a", n))
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	tb.setCaret(n)
+	gooey.Compose(tb, term.Caps{Cols: 40, Rows: 1}, nil)
+	tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 39, Y: 0, Button: input.ButtonLeft})
+
+	start := time.Now()
+	for range 100 {
+		tb.HandleMouseMove(input.MouseEvent{X: 20, Y: 0, Button: input.ButtonLeft})
+	}
+	took := time.Since(start)
+
+	// The answer first: a budget over a wrong caret proves nothing. The
+	// window holds the last 39 runes with the caret's own column, so
+	// column 20 is that many runes in from its left edge.
+	if got, want := tb.Caret(), n-39+20; got != want {
+		t.Fatalf("a drag to column 20 put the caret at %d, want %d", got, want)
+	}
+	if took > 500*time.Millisecond {
+		t.Errorf("100 motion events over a %d-rune value took %v, want well under "+
+			"500ms; that is the whole-value segmentation #521's review measured "+
+			"at 51.6ms a call on the UI goroutine", n, took)
+	}
+}
+
 // TestDraggingPastTheLeftEdgeKeepsSelecting is the gesture
 // HandleMouseMove's doc comment promises — "dragging past the field's
 // edge keeps working" — and an intermediate version of #519 removed it.
@@ -730,6 +781,22 @@ func widthVocabulary() []string {
 		strings.Repeat("⚠️", 8),
 		strings.Repeat("é", 10),
 		strings.Repeat("abc"+family+"東⚠️", 3),
+		// LONGER THAN clusterSlack, AND FLAGS, which are two coverage
+		// holes in one entry. Every other string here is shorter than
+		// the 64-rune lookback, so eachClusterFrom's re-synchronising
+		// branch — the whole reason clusterSlack exists — was never
+		// executed by any test in this PR. And a regional-indicator
+		// boundary is the one a lookback cannot re-synchronise on at
+		// all: it is decided by the parity of the run, so a segmenter
+		// restarted mid-run pairs every flag from there one rune out.
+		// Measured against the implementation before the fix, this entry
+		// reddened TestTheScrollWindowAlwaysOpensOnAClusterBoundary at
+		// caret 65 — the window opened inside a cluster, Render painted
+		// "🇸🇺" for a value holding only "🇺🇸", and indexAt answered a
+		// click on column 0 with rune 64. Two runs, because the parity
+		// question is about the run and not about the flag. Raised in
+		// review of #521.
+		strings.Repeat("🇺🇸", 40) + strings.Repeat("🇬🇧", 4),
 	}
 }
 
