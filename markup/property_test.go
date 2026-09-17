@@ -552,11 +552,28 @@ func TestTheXPropertyRefusalNamesTheRoot(t *testing.T) {
   <Text>x</Text>
 </Gooey>`},
 	} {
-		if _, err := Build([]byte(tc.doc), &Context{}); err != nil &&
-			strings.Contains(err.Error(), "dependency property declaration") {
+		// ANY error, not only the refusal. This asked whether the error
+		// was the <Property> one and let every other failure through —
+		// so a fixture typo, or any future change that breaks this
+		// document for an unrelated reason, would leave the arm green
+		// while it had stopped measuring that the declaration RESOLVES.
+		// That matters here specifically: this arm is the correction to
+		// a claim that was itself measured against too narrow a case,
+		// and a correction that cannot fail is not one. Both fixtures
+		// build with err == nil today, so nothing is lost by asking for
+		// it. Raised in review of #501.
+		_, err := Build([]byte(tc.doc), &Context{})
+		if err == nil {
+			continue
+		}
+		if strings.Contains(err.Error(), "dependency property declaration") {
 			t.Errorf("xmlns:x %s is still refused as an unprefixed <Property>: %v\n"+
 				"Both placements put the declaration in scope at the <x:Property>, "+
 				"which is what element-prefix resolution asks", tc.name, err)
+			continue
 		}
+		t.Errorf("xmlns:x %s did not build: %v\nThis arm exists to show the "+
+			"declaration RESOLVES, so any failure retires it — including one "+
+			"that has nothing to do with namespaces", tc.name, err)
 	}
 }

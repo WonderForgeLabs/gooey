@@ -1330,6 +1330,71 @@ func TestUndoDoesNotReachBackPastAnOpen(t *testing.T) {
 	}
 }
 
+// TestAnElementPrefixSurvivesBeingDeclaredAtBothLevels is the sibling
+// guard's exception, asserted on the complement.
+//
+// carryDeclarations refuses to move markup.XNamespace down;
+// envelopeAttrs — documented as "everything on a <Gooey> that did NOT
+// move down", with a paragraph on the complement being OBSERVED rather
+// than assumed — compared values and fell into its skip whenever the
+// content root happened to declare the same URI. A document declaring
+// xmlns:x at BOTH levels therefore lost the envelope's copy by the other
+// route. Measured before the fix, through the file browser:
+//
+//	envAttrs = map[]
+//	rebuilt  = "<Gooey>"   over  <Canvas … xmlns:x="…">
+//
+// That saves as a bare <Gooey> with the declaration on the content root,
+// which is exactly the relocation the sibling guard exists to prevent.
+//
+// ONE DOCUMENT, BOTH ENDS. The envelope's map is what gooeyOpen writes,
+// so asserting on ed.envAttrs alone would pass over a rebuild that
+// dropped it afterwards; asserting on the rebuilt source alone would
+// pass over an envAttrs that happened to be repaired downstream. Raised
+// in review of #501.
+func TestAnElementPrefixSurvivesBeingDeclaredAtBothLevels(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root" xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "both.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("both.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("the document did not open (%q), so nothing below is about "+
+			"where its declaration went", got)
+	}
+
+	// THE PREMISE: the content root really does still declare it, or the
+	// value-equality branch this test is about was never taken and the
+	// assertions below pass for the wrong reason.
+	if got := ed.doc().Attrs["xmlns:x"]; got != markup.XNamespace {
+		t.Fatalf("the content root declares xmlns:x as %q; this test is about "+
+			"the case where BOTH levels declare the same URI", got)
+	}
+
+	if got := ed.envAttrs["xmlns:x"]; got != markup.XNamespace {
+		t.Errorf("the envelope's xmlns:x is %q after the open. carryDeclarations "+
+			"never moves this namespace down, so envelopeAttrs — its complement — "+
+			"has no business dropping it: value-equality is not the question, "+
+			"\"did carryDeclarations put it there\" is, and for this URI the answer "+
+			"is always no", got)
+	}
+	if src := ed.source.Get(); !strings.Contains(src, `<Gooey xmlns:x="`+markup.XNamespace+`"`) {
+		t.Errorf("the rebuilt document opens without the declaration:\n%s\n"+
+			"Saved, this is a bare <Gooey> over a content root holding the "+
+			"prefix — the element prefix relocated, which is the loss "+
+			"carryDeclarations' own guard exists to prevent", src)
+	}
+}
+
 // TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade is the other half of
 // the re-baseline above, and it broke in the commit that added it.
 //
