@@ -265,19 +265,25 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 // spelling of it is the shape that kept wide glyphs out of this
 // package's fixtures at all.
 //
-// WHICH IS AN ARGUMENT ABOUT THE PACKAGE, so the other four moved in the
-// same commit: dock_test.go's rowText, floatover_test.go's cellLine and
-// tracks_test.go's readCells to Cell.Text(), designmode_test.go's screen
-// to RowText a row at a time. A sentence claiming one spelling while
-// four others stood is the shape of claim this branch exists to retire.
-// Derive the set rather than trusting that list:
+// WHICH IS AN ARGUMENT ABOUT THE DIRECTORY, so the other six moved in
+// the same branch: dock_test.go's rowText, floatover_test.go's cellLine
+// and tracks_test.go's readCells to Cell.Text(), designmode_test.go's
+// screen to RowText a row at a time, and — a round later — the two span
+// readbacks in components/panel/panel_test.go, which is a different
+// package under the same tree. A sentence claiming one spelling while
+// others stood is the shape of claim this branch exists to retire, and
+// the first version of this paragraph made it twice: it said "four" and
+// reasoned about package wysiwyg while the command below reasons about
+// the directory, so two multi-cell readbacks one package down sat inside
+// the grep's output and outside the sentence. Derive the set rather than
+// trusting that list:
 //
 //	grep -rnE '\.At\([^)]*\)\.Rune' --include='*_test.go' apps/wysiwyg
 //
 // Every remaining hit is a SINGLE-CELL identity check against a literal,
 // which .Rune answers correctly, plus docs_test.go's control-character
 // sweep, which skips render.Continuation by name. Raised in review of
-// #524.
+// #524, corrected in the round after.
 func screenRow(f *gooey.Frame, y int) string { return render.RowText(f.Cells, y) }
 
 // ---- 2. the copy tells the truth ----
