@@ -2297,10 +2297,20 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // really declares is a citation of x/term and is left alone. Nothing is
 // skipped on the strength of the package name by itself.
 //
-// EXPORTED, AND TOP-LEVEL FUNCTIONS ONLY — both narrowings, and both in
-// the direction that keeps coverage rather than spends it. The sentence
-// at the top of this comment said EXPORTED while the code indexed every
-// top-level name, which is the wrong way round for a SKIP list: every
+// EXPORTED TOP-LEVEL DECLARATIONS, METHODS EXCLUDED — which is what the
+// walk records: funcs, types and vars alike, so a cited vendored TYPE
+// (workflow.Context) or VAR (grpc.ErrClientConnClosing) is in here and
+// is exempted too. This heading said "TOP-LEVEL FUNCTIONS ONLY" until
+// round ten, understating a SKIP list — which is the same direction as
+// the error the next paragraph records, written into the heading by the
+// edit that fixed it. Only the methods narrowing is real, and the
+// paragraph below states it. Raised in review of #490.
+//
+// EXPORTED is the other narrowing, and it is in the direction that
+// keeps coverage rather than spends it. The sentence at the top of this
+// comment said EXPORTED while the code indexed every top-level name,
+// UNEXPORTED ONES INCLUDED, which is the wrong way round for a SKIP
+// list: every
 // name in here is a citation this guard stops checking, so an unexported
 // vendored identifier — which no page can legitimately be citing, since
 // a consumer cannot name one — was silently widening the exemption.

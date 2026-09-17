@@ -269,17 +269,17 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 // whole corpus, which is one more than a guard like this survives.
 var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 
-// backtickedInheriting is every INHERITING partition field a paragraph
-// names in backticks, which is the half of the adjudication both guards
-// have to agree on. Shared rather than spelled twice for the reason this
-// file keeps running into: a rule written in two places is a rule only
-// half the callers receive the next fix for.
-func backtickedInheriting(flat string) map[string]bool {
-	return backtickedPartition(flat, true)
-}
-
-// backtickedPartition is the same read with the side as a parameter, and
-// the parameter is the whole of finding #490 round 9. The forbid guard
+// backtickedPartition is every partition field a paragraph names in
+// backticks, on the side asked for.
+//
+// Shared rather than spelled twice for the reason this file keeps
+// running into: a rule written in two places is a rule only half the
+// callers receive the next fix for. The inheriting-only wrapper that
+// stood here was deleted in round ten, once the forbid guard stopped
+// re-deriving its own copy and the wrapper's only caller went with it.
+//
+// THE SIDE IS A PARAMETER, and the parameter is the whole of finding
+// #490 round 9. The forbid guard
 // adjudicates a PROPER SUBSET of the inheriting side, so it counts only
 // that side. The require guard asks a different question — "does this
 // paragraph answer what crosses by naming fields" — and `Values` and
@@ -300,14 +300,26 @@ func backtickedPartition(flat string, inheritingOnly bool) map[string]bool {
 	return named
 }
 
-// namesPartitionFields is how many distinct partition fields a paragraph
+// namedPartitionFields is every distinct partition field a paragraph
 // names, by backtick or in a comma run, on the side asked for.
-func namesPartitionFields(flat string, inheritingOnly bool) int {
+//
+// THE SET RATHER THAN THE COUNT, because the forbid guard needs both:
+// the count is its bar and the set is what its message subtracts from
+// everyInheriting to say which fields were left out. It re-derived the
+// set inline until round ten, which put the bar in two places and left
+// enumeratesThePartition — the function whose doc says it IS the bar —
+// called by nobody. Raised in review of #490.
+func namedPartitionFields(flat string, inheritingOnly bool) map[string]bool {
 	named := backtickedPartition(flat, inheritingOnly)
 	for _, name := range partitionRunSide(flat, inheritingOnly) {
 		named[name] = true
 	}
-	return len(named)
+	return named
+}
+
+// namesPartitionFields is how many of them there are.
+func namesPartitionFields(flat string, inheritingOnly bool) int {
+	return len(namedPartitionFields(flat, inheritingOnly))
 }
 
 // answersByNaming is the REQUIRE direction's bar: a paragraph that
@@ -318,9 +330,20 @@ func answersByNaming(flat string) bool {
 }
 
 // enumeratesThePartition reports that a paragraph answers the crossing
-// question BY LISTING — the conjunction the forbid guard adjudicates on,
-// and the same one the require guard demands a citation for, so the two
-// cannot disagree about which paragraphs are in scope.
+// question BY LISTING the inheriting side — the conjunction
+// TestNoPageEnumeratesTheBoundaryPartition adjudicates on, and its only
+// spelling.
+//
+// THE REQUIRE DIRECTION'S BAR IS DELIBERATELY WIDER, which this comment
+// used to deny: it said the two guards read the same conjunction "so the
+// two cannot disagree about which paragraphs are in scope". They do
+// disagree, on purpose. answersByNaming counts BOTH sides, because a
+// paragraph that answers "what crosses" by naming the fields that do NOT
+// is giving the same answer and owes the same citation; the forbid
+// direction only has something to subtract when the list is of the
+// inheriting side. The sentence outlived the round that widened one of
+// them, and while it stood it sent a reader auditing scope-agreement to
+// a function neither guard called. Raised in review of #490.
 func enumeratesThePartition(flat string) bool {
 	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(flat, true) >= 2
 }
@@ -413,10 +436,10 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// reported as leaving out seven fields — one false positive
 			// out of the whole corpus, and noise a reader learns to
 			// widen is the failure this guard's own doc warns about.
-			if !answersWhatCrosses.MatchString(flat) {
+			if !enumeratesThePartition(flat) {
 				continue
 			}
-			named := backtickedInheriting(flat)
+			named := namedPartitionFields(flat, true)
 			// AND THE UNFORMATTED SPELLING OF THE SAME LIST. Requiring
 			// backticks made the guard a check on markup: "styles,
 			// registered components, handlers, includes" is the four-of-
@@ -437,12 +460,6 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// partition names in one comma-or-and list. A sentence that
 			// mentions a field does not produce one; a stale answer to
 			// "what crosses" always does. Raised in review of #490.
-			for _, name := range partitionRun(flat) {
-				named[name] = true
-			}
-			if len(named) < 2 {
-				continue
-			}
 			checked++
 			if strings.Contains(flat, "boundaryPartition") {
 				continue // cites the source rather than copying it
@@ -474,20 +491,17 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 	}
 }
 
-// partitionRun is every inheriting partition field named inside one
-// comma-or-and list of three or more of them, case-insensitively —
-// the shape of a prose answer to "what crosses a control boundary",
-// and nothing else in the corpus.
+// partitionRunSide is every partition field on the side asked for that
+// is named inside one comma-or-and list of three or more of them,
+// case-insensitively — the shape of a prose answer to "what crosses a
+// control boundary", and nothing else in the corpus. The side is a
+// parameter for backtickedPartition's reason.
 //
 // Three rather than two, and a bounded gap between them: two names a
 // clause apart is an ordinary sentence ("Styles and Named are handled
 // differently"), and the separators a list uses are short. The gap is
 // measured in the flattened paragraph, so a list wrapped over three
 // source lines is still one run. Raised in review of #490.
-func partitionRun(flat string) []string { return partitionRunSide(flat, true) }
-
-// partitionRunSide is partitionRun with the side as a parameter, for
-// backtickedPartition's reason.
 func partitionRunSide(flat string, inheritingOnly bool) []string {
 	const maxGap = 30 // ", registered " and friends; not a clause
 

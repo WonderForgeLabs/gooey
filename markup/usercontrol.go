@@ -395,6 +395,18 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// "nil" was the wrong word for it too. Flagged in review of
 		// #490 alongside Dir's doc, which said "at every depth" of the
 		// same guarded arm; the word itself corrected the round after.
+		//
+		// WHAT A SETUP'S OWN Variant GOVERNS IS ITS DESCENDANTS, NOT
+		// ITSELF, and the asymmetry is worth the sentence because it is
+		// the depth surprise above pointing the other way. This
+		// control's document was already chosen: resolveVariant runs on
+		// the parent's Variant at the loadDocument call near the top of
+		// this function, before runSetup produces the child at all. So
+		// <Card/> on a plain page, with a setup returning
+		// Context{Variant: "sixel"}, gets card.gooey — and a <Panel/>
+		// inside it gets panel.sixel.gooey. A setup cannot retroactively
+		// choose the file it was loaded from; it can only redirect what
+		// it instantiates. Raised in review of #490.
 		if child.Variant == "" {
 			child.Variant = parent.Variant
 		}
