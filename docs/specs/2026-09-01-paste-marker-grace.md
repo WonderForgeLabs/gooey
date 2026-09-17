@@ -286,15 +286,24 @@ was four behind by round sixteen, inside the paragraph whose subject is prose
 counts going stale. Nothing about the point needed the number, so it is a
 `grep` now. Corrected in review of #445.
 
-### One pty test refuses to pass vacuously; the other narrows the window and names the residue
+### Every pty test here bounds its window in ONE direction, and names what the other direction leaves
 
-Both `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` and
-`TestASplitPasteMarkerStillPastes` need a window: the first needs the tty to
-close while the prefix is still held, the second needs the marker's tail to
-land after one timeout but inside the grace. A stalled runner misses either,
-and a test that merely passes when it does is green and blind — worse than
-red. So each measures whether it hit the window, treats a miss as
-**inconclusive** and retries.
+The heading above used to read "one pty test refuses to pass vacuously; the
+other narrows the window and names the residue" — a two-member framing over
+the five subjects this section actually covers, and it had been that for
+several rounds while subjects were added under it. It is a property, not a
+tally: a heading that counts goes stale the way the prose counts elsewhere in
+this file did. Restated in review of #445.
+
+Each of these tests needs a window — the tty closing while the prefix is
+still held, a marker's tail landing after one timeout but inside the grace, a
+remainder surviving a timeout of its own. A stalled runner misses any of
+them, and a test that merely passes when it does is green and blind — worse
+than red. So each measures whether it hit its window where there is an
+observable, treats a miss as **inconclusive** and retries; where there is
+none it says so here instead. What follows is one subject at a time: what it
+bounds, which direction it leaves open, and what that direction produces — a
+red suite on a loaded machine, or a vacuous green.
 
 What happens when the retries run out is not the same on both, and the
 difference is the point of `closedTtyAttempt`'s non-measured outcomes — how
@@ -367,6 +376,37 @@ returns **true** having exercised nothing - a vacuous pass that stops the retry
 loop, under the mutation as well as under the fix. The helper's comment used
 to claim the bound held "on either side", citing `splitMarkerAttempt`, whose
 comment establishes only the direction. Corrected in review of #445.
+
+It has a **second** residue, from the same handshake inference
+`closedTtyAttempt` was corrected for: reading the `b` back proves the decoder
+consumed *a* read, not that it consumed the whole of `b ESC ESC [ 2`. If the
+slave returns `b ESC` and `ESC [ 2` as two reads, the lone Esc resolves on
+its own first timeout — unmodified, so the premise assertion still passes —
+`pend` empties, `stalls` returns to 0, and the marker prefix arrives on the
+chunks branch with a full fresh grace whether or not the partial-progress
+reset exists. The tail completes the paste and the attempt returns a vacuous
+**true**, under the mutation as well as under the fix. The drift bail does
+not see it: that Esc still lands at about `wrote + EscTimeout`. Four bytes is
+essentially always one read, so this is unlikely rather than impossible —
+which is exactly why it is written down here rather than asserted away in the
+helper. Raised in review of #445.
+
+Its `#419` branch now bails **inconclusive** on an Esc that arrives at or
+after `2*EscTimeout - EscTimeout/4` past `escAt`, the same shape
+`splitMarkerAttempt` carries. The budget above it bounds when `master.Write`
+returns, not when the decoder READS, so an attempt can be admitted with ~20ms
+left of the remainder's grace; descheduled past that, a healthy decoder's
+prefix resolves to Esc and the helper announced #419 on it — a `Fatalf`, which
+no retry loop can absorb. Arrival time separates the two: the decoder sends
+before it re-arms, so `arm2 >= escAt`; a healthy Esc cannot come before
+`arm2 + 2*EscTimeout >= escAt + 80ms`, while under the deleted reset it is
+emitted at `arm2 + EscTimeout` and the branch is only reached when the tail
+was read after that, which puts it at about `escAt + 60ms` or less. 70ms is
+the midpoint. The cost is the same concession `splitMarkerAttempt` makes: a
+deschedule long enough to push the mutation's own Esc past 70ms makes this
+branch's #419 kill probabilistic across the retry loop rather than certain on
+one attempt. It is not the pin on `PasteMarkerGrace` — grace = 1 is caught at
+the unmodified-Esc premise, far above the bail. Raised in review of #445.
 
 `loneEscAttempt` is the third helper with an unbounded arm, and **its residue
 runs the other way**, which is why it is worth stating separately rather than

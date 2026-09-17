@@ -1021,9 +1021,26 @@ func partialProgressAttempt(t *testing.T) bool {
 	}()
 	evs := s.Events(16)
 
-	// Handshake, dangling Esc and marker prefix in ONE write. The
-	// handshake byte's read-back proves the decoder consumed this read,
-	// so the whole of `\x1b\x1b[2` is in pend when its timer arms.
+	// Handshake, dangling Esc and marker prefix in ONE write.
+	//
+	// WHAT READING THE 'b' BACK PROVES is that the decoder consumed A
+	// read — not that it consumed THIS WHOLE WRITE. This said the whole
+	// of `\x1b\x1b[2` is in pend when the timer arms, which is the
+	// inference closedTtyAttempt in this same file already retired.
+	//
+	// AND THE RESIDUE RUNS TOWARD GREEN, which is why it is not only a
+	// wording matter: if the slave returns `b\x1b` and `\x1b[2`
+	// separately, the lone Esc resolves on its own first timeout —
+	// unmodified, so the premise assertion below still passes — pend
+	// empties, stalls is 0, and the marker prefix then arrives on the
+	// chunks branch with a full fresh grace whether or not the
+	// partial-progress reset exists. The tail completes the paste, the
+	// attempt returns a vacuous true and stops the retry loop, with the
+	// mutation green. The drift bail does not catch it: the Esc still
+	// lands at about wrote+EscTimeout. Unlikely — four bytes is
+	// essentially always one read — and recorded in the spec's residue
+	// list for this helper rather than asserted away. Raised in review
+	// of #445.
 	wrote := time.Now()
 	if _, err := master.Write([]byte("b\x1b\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
@@ -1125,6 +1142,44 @@ func partialProgressAttempt(t *testing.T) bool {
 
 	ev = next(t, evs, "no event arrived after the marker's tail")
 	if !ev.IsPaste() {
+		// INCONCLUSIVE RATHER THAN #419, and this helper was written
+		// after splitMarkerAttempt got the same bail and did not
+		// inherit it. The budget above bounds when master.Write
+		// RETURNS, not when the decoder READS: it admits an attempt at
+		// escAt+60ms, and the remainder's grace does not expire until
+		// arm2+2*EscTimeout, which is at least escAt+80ms — so the
+		// decoder goroutine may have as little as ~20ms to be
+		// scheduled and take the tail. Descheduled past that, the tail
+		// lands after the grace, the prefix resolves to Esc, and the
+		// Fatalf below announces a real paste torn into keystrokes
+		// about a decoder doing exactly what it should — which the
+		// retry loop cannot absorb, because a Fatalf is not a false
+		// return.
+		//
+		// THE ARRIVAL TIME STILL SEPARATES THE MUTATION, which is why
+		// the bail can be a threshold rather than a surrender. The
+		// decoder sends before it re-arms, so arm2 >= escAt. Healthy,
+		// the Esc is emitted when the remainder's own grace expires at
+		// arm2+2*EscTimeout, so no earlier than escAt+80ms. Under the
+		// deleted reset it is emitted at arm2+EscTimeout, and for this
+		// branch to be reached at all the tail must be read after
+		// arm2+EscTimeout while the write returned before escAt+60ms —
+		// which puts the mutation's Esc at about escAt+60ms or less
+		// whenever the decoder reads promptly. 2*EscTimeout-EscTimeout/4
+		// is 70ms, the midpoint of the two.
+		//
+		// The cost, stated: the same concession splitMarkerAttempt's
+		// bail makes. A deschedule long enough to push the mutation's
+		// own Esc past 70ms turns a real kill into an inconclusive
+		// attempt, so the #419 kill through THIS branch is
+		// probabilistic across the retry loop rather than certain on
+		// one attempt. It is not the pin on PasteMarkerGrace itself —
+		// grace = 1 is caught at the unmodified-Esc premise far above,
+		// which this bail is nowhere near. Raised in review of #445.
+		if ev.IsKey() && ev.Key.Key == input.KeyEsc &&
+			time.Since(escAt) >= 2*EscTimeout-EscTimeout/4 {
+			return false // the remainder's grace had already expired
+		}
 		if ev.IsKey() && ev.Key.Key == input.KeyEsc {
 			t.Fatalf("the remainder of a partially-drained buffer was resolved " +
 				"to Esc rather than held for its own grace: the idle pass that " +
