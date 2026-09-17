@@ -785,8 +785,33 @@ func unwrapGooey(n *node) (*node, bool) {
 // No surface declares anything today, so this is the latent half rather
 // than a live bug; the two scopes are one level apart and the choice
 // belongs written down. Raised in review of #501.
+//
+// AND ed.envAttrs, WHICH IS A THIRD SCOPE AND NOT A SECOND. The
+// paragraph above enumerated two and there are three, which is the
+// shape a future reader trusts: ed.root is excluded because it is NOT
+// in the save, and ed.envAttrs is included for the mirror-image reason
+// — it is what the saved <Gooey> carries and it is not reachable from
+// ed.doc(). Open a document whose envelope keeps xmlns:x (an element
+// prefix stays there through an open, which
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen measures), paste a
+// fragment binding x to something else, and with only ed.doc()
+// collected there is no conflict to report: the second binding lands
+// inside the document and is written to disk. Small blast radius today
+// — x: is an element prefix and the <x:Property> elements it exists for
+// are siblings of the content root — but the enumeration was one scope
+// short, not the reach. Raised in review of #501.
+//
+// SEEDED FIRST, then overwritten by the document's own. The envelope is
+// the outermost element, so if a prefix is declared in both, the
+// document's declaration is the later one and markup.parse's
+// last-wins is what this has to agree with.
 func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
+	for k, v := range ed.envAttrs {
+		if isNamespaceAttr(k) {
+			doc[k] = v
+		}
+	}
 	collectNamespaces(ed.doc(), doc)
 	return reconcileNamespacesInto(n, doc)
 }

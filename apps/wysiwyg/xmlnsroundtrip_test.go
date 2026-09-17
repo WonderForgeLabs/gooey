@@ -1493,6 +1493,31 @@ func selects(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
 	return se, true
 }
 
+// onEd is selects with the RECEIVER checked. `ed` is the editor in every
+// method in this package, and the guard below is about the editor's two
+// fields specifically — a bare `selects(e, "root")` counts any
+// assignment whose final field is `root`, so `s.root = …` or
+// `h.base.root = …` inside undo.go would be read as a
+// document-replacement site.
+//
+// Latent rather than live: `grep '\.root = '` over the package's
+// non-test sources returns only undo.go's `ed.root = s.root.clone()`.
+// And loud rather than silent — a spurious site makes the two sets
+// differ and the guard fails naming it — which is why the widening that
+// introduced it was right and this is a narrowing rather than a fix.
+// Raised in review of #501.
+func onEd(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
+	se, ok := selects(e, name)
+	if !ok {
+		return nil, false
+	}
+	id, ok := se.X.(*ast.Ident)
+	if !ok || id.Name != "ed" {
+		return nil, false
+	}
+	return se, true
+}
+
 // TestEnvAttrsIsAssignedWhereTheDocumentIs turns an invariant three
 // comments assert into one the suite checks.
 //
@@ -1510,7 +1535,7 @@ func selects(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
 // the bug, whatever either is set to.
 func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	envAttrs := assignedIn(t, func(e ast.Expr) bool {
-		_, ok := selects(e, "envAttrs")
+		_, ok := onEd(e, "envAttrs")
 		return ok
 	})
 	// TWO SPELLINGS OF REPLACING THE DOCUMENT, because matching one of
@@ -1523,10 +1548,10 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	// own message describes. Raised in review of #501.
 	kids := assignedIn(t, func(e ast.Expr) bool {
 		if se, ok := selects(e, "Kids"); ok {
-			_, ok = selects(se.X, "root")
+			_, ok = onEd(se.X, "root")
 			return ok
 		}
-		_, ok := selects(e, "root")
+		_, ok := onEd(e, "root")
 		return ok
 	})
 	// AND ONE OF THEM IS ALLOWED TO, with the reason stated rather than
@@ -1556,5 +1581,67 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 			"so a site that replaces one and not the other leaves the editor "+
 			"describing a file it is no longer showing — which is the defect three "+
 			"comments in this package warn about and nothing measured", envAttrs, kids)
+	}
+}
+
+// The THIRD scope reconcileNamespaces has to collect, and the one its
+// doc comment left out.
+//
+// ed.root is excluded because it is not in the save. ed.envAttrs is the
+// mirror image: it IS what the saved <Gooey> carries, and it is not
+// reachable from ed.doc(). An element prefix stays there through an open
+// — TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen is that half — so
+// with only ed.doc() collected, a paste rebinding it finds no conflict to
+// report, and the second binding lands inside the document and is written
+// to disk.
+//
+// THE PREMISE IS ASSERTED FIRST. If the declaration were on the content
+// root this test would pass through the ordinary doc scope and prove
+// nothing about the envelope. Raised in review of #501.
+func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="Existing" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "env.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("env.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+	if _, onRoot := ed.doc().Attrs["xmlns:x"]; onRoot {
+		t.Fatal("the declaration came down onto the content root, so this test " +
+			"is measuring the ordinary document scope and not the envelope")
+	}
+	if got := ed.envAttrs["xmlns:x"]; got != markup.XNamespace {
+		t.Fatalf("the envelope holds xmlns:x = %q, want %q — the scope this "+
+			"test is about is empty", got, markup.XNamespace)
+	}
+
+	const other = "urn:gooey:test:501:not-x"
+	ed.pasteMarkup(`<Gooey xmlns:x="` + other + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go"/>` + "\n" +
+		`</Gooey>` + "\n")
+
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("pasting a fragment that binds x to a DIFFERENT uri reports "+
+			"%q. The envelope's declaration is not reachable from ed.doc(), so "+
+			"nothing compared the two: the second binding is now inside the "+
+			"document, and markup.parse's flat last-wins table hands every "+
+			"x: element in the saved file to the pasted uri", got)
+	}
+	if src := ed.source.Get(); strings.Contains(src, other) {
+		t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+	}
+	if got := ed.envAttrs["xmlns:x"]; got != markup.XNamespace {
+		t.Errorf("the envelope's own declaration became %q after a refused "+
+			"paste, want %q", got, markup.XNamespace)
 	}
 }

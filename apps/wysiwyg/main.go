@@ -2047,8 +2047,16 @@ func (ed *editor) contexts() []*markup.Context { return []*markup.Context{ed.ctx
 // setDispatcher wires the app's dispatcher into every context.
 //
 // ONE dispatcher across all of them, not one each: handler results are
-// Set on the UI goroutine (markup/handlers.go:193), and two dispatchers
-// would be two routes to a graph that tolerates exactly one.
+// Set on the UI goroutine (handlerCommand's `ctx.Dispatcher == nil` arm
+// in markup/handlers.go), and two dispatchers would be two routes to a
+// graph that tolerates exactly one.
+//
+// BY SYMBOL, NOT BY LINE. This said `:193` and a nine-line comment added
+// to that function in this same branch moved the arm to 202 — a citation
+// broken by an edit in another module, which CI vets without running, so
+// nothing here would have said. carryDeclarations argues the same rule
+// three files over; it applies to its own branch. Raised in review of
+// #501.
 //
 // Separate from newEditor because the dispatcher does not exist yet when
 // the contexts are built — gooey.NewApp comes after.
