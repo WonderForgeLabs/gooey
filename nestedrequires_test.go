@@ -86,17 +86,18 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// Every own-module require in the tree, so the skew check below can
 	// compare them against each other rather than against a constant.
 	all, mods := allOwnRequires(t)
-	var seen []ownRequire
+	seen := pinsOf(all)
 	{
 		for _, r := range all {
 			dir := r.dir
+			shape := classifyRequire(r.version)
 			// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
 			// on a module the workspace replaces writes the canonical
 			// spelling `v0.0.0-00010101000000-000000000000`, which is the
 			// same unservable revision wearing a pseudo-version's shape —
 			// and apps/wysiwyg carried three of them while the plain
 			// sentinel elsewhere carried the rest.
-			if unservableSentinel(r.version) {
+			if shape == shapeSentinel {
 				t.Errorf("%s requires %s %s, which is neither a tag nor a "+
 					"pseudo-version any proxy can serve: `go get` of this module "+
 					"fails with \"unknown revision\" for everybody outside this "+
@@ -120,7 +121,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			}
 			// Not a resolution check (no network here), just the shape: a
 			// version the proxy could be asked for at all.
-			if !strings.HasPrefix(r.version, "v") {
+			if shape == shapeNotAVersion {
 				t.Errorf("%s requires %s %q, which is not a version", dir, r.path, r.version)
 				continue
 			}
@@ -138,7 +139,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			// Measured on this tree, revisionOf("v0.0.0-20260913132232-
 			// e5cdb56") = ("", false) with stampOf = "20260913132232".
 			// Raised in review of #497.
-			if malformedPseudo(r.version) {
+			if shape == shapeMalformed {
 				t.Errorf("%s requires %s %q, which carries a pseudo-version's "+
 					"14-digit stamp and NOT its twelve-hex-character revision — so "+
 					"it is a malformed pseudo-version, not a plain tag, and no "+
@@ -152,27 +153,16 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 					"lands here too", dir, r.path, r.version)
 				continue
 			}
-			// APPENDED AFTER THE SHAPE CHECKS, not before. A sentinel
-			// went into the skew population and was then rejected, so
-			// one bad require produced two failures with two different
-			// remedies — the sentinel error, and a skew group naming the
-			// same line and telling the fixer to match a revision. The
-			// len(seen) == 0 fatal below still fires correctly: a tree of
-			// nothing but sentinels fails loudly on the sentinels.
-			// Raised in review of #497.
-			seen = append(seen, r)
 		}
 	}
 
 	if len(seen) == 0 {
-		// NAMING THE SET THE NUMBER DESCRIBES. It said "nested modules"
-		// while len(mods) had come to include the ROOT, in the one
-		// failure path whose whole job is to tell the reader which walk
-		// came back empty. Raised in review of #497.
-		t.Fatalf("none of the %d modules walked — the root and every nested "+
-			"module — were found to require %s or a module under it; either "+
-			"the requires moved or this test stopped reading them, and an "+
-			"empty check is not a passing one", len(mods), coreModule)
+		// NAMING THE SET THE NUMBER DESCRIBES, and naming which of the
+		// two empties it is. The first half was a round-fifteen repair
+		// — it said "nested modules" while len(mods) had come to
+		// include the ROOT; the second is emptyPopulationMsg's, one
+		// round later.
+		t.Fatal(emptyPopulationMsg(len(mods), len(all)))
 	}
 
 	// ONE REVISION ACROSS THE TREE, which the shape checks above cannot
@@ -333,6 +323,105 @@ func comparedNothing(seen []ownRequire, tagged []string) bool {
 // ownRequire is one require of a module in this repository, by the module
 // that names it.
 type ownRequire struct{ dir, path, version string }
+
+// requireShape is what the three shape gates decide about one require,
+// and the reason it is a value rather than three `if`s in the loop.
+//
+// The gates were each a function with a table — revisionOf, stampOf,
+// unservableSentinel, malformedPseudo — and the DISPATCH was not: the
+// loop reads the real tree, the real tree holds only correct pins, so
+// the whole malformedPseudo block could be deleted from the caller with
+// the package still green. Measured in review of #497, round sixteen.
+// The ordering was unpinned the same way, and its own comment called it
+// load-bearing: a require that reached the skew population before being
+// rejected produced two failures with two contradicting remedies.
+//
+// With the decision in one function the ordering is structural — pinsOf
+// and the reporting loop read the same answer — and both are
+// table-driven below.
+type requireShape int
+
+const (
+	shapePin         requireShape = iota // a version a proxy could be asked for
+	shapeSentinel                        // v0.0.0, or the canonical zero pseudo-version
+	shapeNotAVersion                     // no leading "v"
+	shapeMalformed                       // a pseudo-version's stamp without its revision
+)
+
+func (s requireShape) String() string {
+	switch s {
+	case shapePin:
+		return "pin"
+	case shapeSentinel:
+		return "sentinel"
+	case shapeNotAVersion:
+		return "not-a-version"
+	case shapeMalformed:
+		return "malformed-pseudo"
+	}
+	return "unknown"
+}
+
+// classifyRequire is the three gates, in the order the loop applied
+// them. The order is not arbitrary: unservableSentinel accepts
+// `v0.0.0-00010101000000-000000000000`, which also carries a stamp, so
+// asking malformedPseudo first would file the sentinel under the wrong
+// remedy.
+func classifyRequire(version string) requireShape {
+	switch {
+	case unservableSentinel(version):
+		return shapeSentinel
+	case !strings.HasPrefix(version, "v"):
+		return shapeNotAVersion
+	case malformedPseudo(version):
+		return shapeMalformed
+	}
+	return shapePin
+}
+
+// pinsOf is the requires that classify as a pin — the population the
+// skew and existence checks read, and nothing else.
+//
+// APPENDED AFTER THE SHAPE CHECKS, not before, which this expresses
+// rather than remembers. A sentinel that went into the skew population
+// and was then rejected produced two failures with two different
+// remedies: the sentinel error, and a skew group naming the same line
+// and telling the fixer to match a revision. Raised in review of #497.
+func pinsOf(all []ownRequire) []ownRequire {
+	var out []ownRequire
+	for _, r := range all {
+		if classifyRequire(r.version) == shapePin {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// emptyPopulationMsg says WHY the pin population is empty, and the two
+// causes are different facts.
+//
+// It said "none of the N modules walked were found to require core or a
+// module under it" whatever had happened. Once the population was
+// gated, a tree whose own-module requires were all rewritten badly — a
+// `sed` clipping one character off each revision, which is the hazard
+// the malformed gate's own message names — produced 36 accurate errors
+// and then that sentence, which states the requires were not found.
+// They were found. They were rejected. Raised in review of #497.
+func emptyPopulationMsg(mods, found int) string {
+	if found == 0 {
+		return fmt.Sprintf("none of the %d modules walked — the root and every "+
+			"nested module — were found to require %s or a module under it; "+
+			"either the requires moved or this test stopped reading them, and "+
+			"an empty check is not a passing one", mods, coreModule)
+	}
+	return fmt.Sprintf("all %d own-module require(s) across the %d modules "+
+		"walked were REJECTED by the shape checks above, so the skew and "+
+		"existence checks below have nothing to read. This is not a second "+
+		"defect: fix the errors already printed and this line goes with "+
+		"them. It is here because an empty population and an absent one are "+
+		"different facts, and the sentence that stood here reported the "+
+		"absent one for both", found, mods)
+}
 
 // skewGroup is the requires naming one revision that is not the newest.
 // skewMsg is one skew group's failure, rendered rather than formatted at
@@ -1152,6 +1241,26 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			t.Errorf("%s: pinCoverage says %q, want it to carry %q",
 				tc.name, msg, tc.want)
 		}
+		// BOTH REMEDIES, ON BOTH ARMS. The nothing-ran arm is a
+		// t.Error, so `git clone --depth 1` of this repo reds the root
+		// suite — and a reader at a terminal has no checkout step to
+		// set fetch-depth on. A message that names only the CI knob
+		// spends the attention "a red suite is yours" exists to buy, on
+		// a failure that is not theirs. Raised in review of #497.
+		for _, want := range []string{"--unshallow", "fetch-depth: 0"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: pinCoverage's message does not name %q. Both the "+
+					"local and the CI remedy have to be there: the reader who "+
+					"hits this could be at either:\n\t%s", tc.name, want, msg)
+			}
+		}
+		// AND NOT AS actions/checkout's DOING, which is a cause the
+		// local reader never had.
+		if strings.Contains(msg, "actions/checkout") {
+			t.Errorf("%s: pinCoverage attributes the shallow clone to "+
+				"actions/checkout, which a developer who ran `git clone "+
+				"--depth 1` never invoked:\n\t%s", tc.name, msg)
+		}
 	}
 
 	// AND THE POPULATION THAT READS IT, on a fixture, because the tree
@@ -1254,7 +1363,15 @@ func pinPopulations(reqs []ownRequire) (at, spellings map[string]string) {
 		}
 		rev, ok := revisionOf(r.version)
 		if !ok {
-			continue // a plain tag; the shape guard reports those
+			// TWO POPULATIONS, AND A DIFFERENT REPORTER FOR EACH. A
+			// plain tag, which the shape guard ACCEPTS — the only
+			// thing that mentions one is the caller's tagged t.Logf,
+			// which this file measures to be invisible for a passing
+			// package; or a malformed pseudo-version, which the shape
+			// guard does report, as of the round that added the gate
+			// and left this line saying the opposite of both halves.
+			// Raised in review of #497.
+			continue
 		}
 		where := r.dir + " → " + r.path + " " + r.version
 		if _, seen := at[rev]; !seen {
@@ -1488,24 +1605,39 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 // and said so only under -v. It is not a corner: the tree holds ONE
 // revision across all its pins today, so a single absent object removes
 // everything there was to check.
+//
+// TWO REMEDIES, AND CI IS ONLY ONE OF THEM. Both messages used to
+// explain the shallow clone as actions/checkout's doing and print
+// `fetch-depth: 0`. Once the nothing-ran arm became a t.Error that made
+// `git clone --depth 1` of this repo red the root suite with no remedy
+// the reader could act on: they have no checkout step, and the sentence
+// names an action they never ran. CLAUDE.md's "a red suite is yours" is
+// what makes that expensive — a contributor spends the attention that
+// rule is for on a failure which is not theirs. The local remedy is
+// `git fetch --unshallow`, or `--deepen=<n>`: measured, a depth-40
+// deepen brings the pinned revisions into reach while the clone stays
+// shallow, which is the some-absent arm. CLAUDE.md's Verify section now
+// carries the requirement too, because it lived only inside this string
+// and a ci.yml comment. Raised in review of #497.
 func pinCoverage(pins int, absent []string) (fail bool, msg string) {
+	const remedy = "Deepen the clone: `git fetch --unshallow` locally (or " +
+		"`--deepen=50`, which reaches these while the clone stays shallow), " +
+		"or `fetch-depth: 0` on the checkout step in CI"
 	switch {
 	case len(absent) == 0:
 		return false, ""
 	case len(absent) >= pins:
 		return true, fmt.Sprintf("NOTHING was checked here: this is a shallow "+
-			"clone (actions/checkout's default is fetch-depth: 1) and not one of "+
-			"the %d pinned revisions is an object in it, so no existence or stamp "+
-			"check ran at all: %s. Set fetch-depth: 0 on the checkout that runs "+
-			"this suite", pins, strings.Join(absent, "; "))
+			"clone and not one of the %d pinned revisions is an object in it, "+
+			"so no existence or stamp check ran at all: %s. %s",
+			pins, strings.Join(absent, "; "), remedy)
 	default:
 		// SAID, NOT PASSED OVER, and named one by one: a reader has to
 		// be able to tell "checked and clean" from "not looked at".
-		return false, fmt.Sprintf("this is a SHALLOW clone (actions/checkout's "+
-			"default is fetch-depth: 1) and %d of the %d pinned revisions are "+
-			"not objects here, so their existence and stamp were NOT checked: "+
-			"%s. Run with fetch-depth: 0 to check them; existence and stamp ran "+
-			"for the rest", len(absent), pins, strings.Join(absent, "; "))
+		return false, fmt.Sprintf("this is a SHALLOW clone and %d of the %d "+
+			"pinned revisions are not objects here, so their existence and "+
+			"stamp were NOT checked: %s. %s; existence and stamp ran for the "+
+			"rest", len(absent), pins, strings.Join(absent, "; "), remedy)
 	}
 }
 
@@ -1563,4 +1695,83 @@ const coreModule = "github.com/WonderForgeLabs/gooey"
 // keeps a future `github.com/WonderForgeLabs/gooeyfoo` from matching.
 func ownModule(path string) bool {
 	return path == coreModule || strings.HasPrefix(path, coreModule+"/")
+}
+
+// TestEveryRequireShapeReachesItsOwnArm is the DISPATCH's fixture, and
+// it is the half the tree cannot supply: the real tree holds 36 correct
+// pins, so every gate could be deleted from the caller with the whole
+// package green. Measured in review of #497, round sixteen, on
+// malformedPseudo's block.
+//
+// The two halves are separate assertions because they are separate
+// claims. classifyRequire is the rule; pinsOf is the wiring, and it is
+// the one that says a rejected require never reaches the skew and
+// existence checks — the ordering the comment in the caller calls
+// load-bearing and nothing read.
+func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
+	const good = "v0.0.0-20260913132232-e5cdb56ececd"
+	for _, tc := range []struct {
+		v    string
+		want requireShape
+		why  string
+	}{
+		{good, shapePin, "a well-formed pseudo-version is the population everything below reads"},
+		{"v0.1.0", shapePin, "and so is a plain tag: unorderable for skew, but a proxy can serve it"},
+		{"v0.0.0", shapeSentinel, "the placeholder no proxy can serve, with its own remedy"},
+		{"v0.0.0-00010101000000-000000000000", shapeSentinel,
+			"the canonical zero pseudo-version is the same unservable revision " +
+				"wearing a pseudo-version's shape — and it carries a stamp, so " +
+				"asking malformedPseudo first would file it under the wrong remedy"},
+		{"e5cdb56ececd", shapeNotAVersion, "`go mod edit -require` writes literally what it is handed"},
+		{"v0.0.0-20260913132232-e5cdb56", shapeMalformed,
+			"git's default abbreviation is seven, which is this file's own " +
+				"offline remedy with `-c core.abbrev=12` dropped"},
+	} {
+		if got := classifyRequire(tc.v); got != tc.want {
+			t.Errorf("classifyRequire(%q) = %s, want %s — %s", tc.v, got, tc.want, tc.why)
+		}
+	}
+
+	// THE WIRING. Every shape in one slice, and only the pins come back.
+	all := []ownRequire{
+		{"mcp", coreModule, "v0.0.0"},
+		{"grpc", coreModule, good},
+		{"editor", coreModule, "e5cdb56ececd"},
+		{"paint", coreModule, "v0.0.0-20260913132232-e5cdb56"},
+		{"apps/gitui", coreModule, "v0.1.0"},
+	}
+	got := pinsOf(all)
+	if len(got) != 2 || got[0].dir != "grpc" || got[1].dir != "apps/gitui" {
+		t.Errorf("pinsOf returned %v, want the grpc and apps/gitui requires and "+
+			"nothing else. A sentinel, a non-version or a malformed pseudo-version "+
+			"in the skew population is one bad require producing two failures with "+
+			"two contradicting remedies — the shape error, and a skew group telling "+
+			"the fixer to match a revision", got)
+	}
+}
+
+// TestTheEmptyPopulationSaysWhichEmptyItIs pins the distinction round
+// sixteen found: the message reported "not found" for a tree whose
+// requires were all found and REJECTED.
+//
+// Neither arm is reachable from the tree — it holds 36 correct pins —
+// so both live here.
+func TestTheEmptyPopulationSaysWhichEmptyItIs(t *testing.T) {
+	absent := emptyPopulationMsg(21, 0)
+	if !strings.Contains(absent, "were found to require") {
+		t.Errorf("with no own-module require found at all, the message does not "+
+			"say the requires were not found:\n\t%s", absent)
+	}
+	rejected := emptyPopulationMsg(21, 36)
+	if !strings.Contains(rejected, "REJECTED") || strings.Contains(rejected, "were found to require") {
+		t.Errorf("with 36 requires found and every one rejected, the message must "+
+			"say so rather than reporting them absent — a `sed` clipping one "+
+			"character off every revision prints 36 accurate errors and then "+
+			"this line:\n\t%s", rejected)
+	}
+	if !strings.Contains(rejected, "not a second defect") {
+		t.Errorf("the rejected-population message does not tell the reader this "+
+			"line goes away with the errors above it, so it reads as a %dth "+
+			"failure to chase:\n\t%s", 37, rejected)
+	}
 }

@@ -1,10 +1,12 @@
 package gooey
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -123,19 +125,42 @@ func TestCIMatrixPackingPartitionsEveryModule(t *testing.T) {
 			"NON-EMPTY tier. Got: %v", len(legs), legs)
 	}
 
+	// AND THE CHECKOUT DEPTH THE LEGS CARRY, which is the other thing
+	// this program decides. The rule is the leg holding the ROOT module
+	// `.` gets full history and no other leg does — several guards in
+	// the root suite read git history, and actions/checkout produces
+	// refs/remotes/origin/main and the parent commits only at
+	// fetch-depth <= 0. It was keyed on the tier NAME in the checkout
+	// step instead, which couples the step to the `case` in discover
+	// across two places in one file — and that `case` carries its own
+	// proposal to invert itself. The fixture above puts `.` in the
+	// `test` tier precisely so this arm is not measuring the name.
+	for _, l := range legs {
+		want := 1
+		if slices.Contains(strings.Fields(l.Modules), ".") {
+			want = 0
+		}
+		if l.Depth != want {
+			t.Errorf("leg %q (%q) carries depth %d, want %d — the leg running "+
+				"the ROOT module needs the full history that buys "+
+				"refs/remotes/origin/main and the pinned commits, and every "+
+				"other leg asks git nothing", l.Mode, l.Modules, l.Depth, want)
+		}
+	}
+
 	// The property the `covered` sum exists to enforce: the legs partition
 	// the input. Not "cover" — partition, so a module cannot be silently
 	// dropped OR silently built twice.
 	var got []string
 	total := 0
 	for _, l := range legs {
-		total += l.count
-		mods := strings.Fields(l.modules)
-		if len(mods) != l.count {
+		total += l.Count
+		mods := strings.Fields(l.Modules)
+		if len(mods) != l.Count {
 			t.Errorf("leg %q reports count=%d but lists %d module(s) (%q). The "+
 				"`covered` sum trusts that count, so a count that disagrees with "+
 				"its own list would clear the check while a module went unbuilt.",
-				l.mode, l.count, len(mods), l.modules)
+				l.Mode, l.Count, len(mods), l.Modules)
 		}
 		got = append(got, mods...)
 	}
@@ -256,32 +281,34 @@ func TestCILegNamesEveryFailingModule(t *testing.T) {
 }
 
 type leg struct {
-	mode    string
-	count   int
-	modules string
+	Mode    string `json:"mode"`
+	Count   int    `json:"count"`
+	Modules string `json:"modules"`
+	Depth   int    `json:"depth"`
 }
 
-// parseLegs reads the compact JSON the matrix program emits without a JSON
-// dependency: the shape is fixed by the program above, and this test is
-// what would catch it changing.
+// parseLegs reads the compact JSON the matrix program emits.
+//
+// DECODED, NOT PATTERN-MATCHED. This was a regexp naming the three keys
+// in order, which made adding a fourth — `depth`, the checkout's
+// fetch-depth, derived per leg — a failure of the PARSER rather than of
+// anything the program does: "the matrix program emitted no
+// {mode,count,modules} object", printed over output that was correct.
+// A decoder has no opinion about which other keys are present, so the
+// assertions below are what say what the shape must be.
 func parseLegs(t *testing.T, s string) []leg {
 	t.Helper()
 
-	s = strings.TrimSpace(s)
-	entry := regexp.MustCompile(`\{"mode":"([^"]*)","count":(\d+),"modules":"([^"]*)"\}`)
-	ms := entry.FindAllStringSubmatch(s, -1)
-	if len(ms) == 0 {
-		t.Fatalf("the matrix program emitted no {mode,count,modules} object: %s\n"+
-			"If its output shape changed, every consumer in ci.yml's `test` job "+
-			"changed with it.", s)
-	}
 	var out []leg
-	for _, m := range ms {
-		n := 0
-		for _, c := range m[2] {
-			n = n*10 + int(c-'0')
-		}
-		out = append(out, leg{mode: m[1], count: n, modules: m[3]})
+	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &out); err != nil {
+		t.Fatalf("the matrix program emitted something that is not a JSON array "+
+			"of legs (%v): %s\nIf its output shape changed, every consumer in "+
+			"ci.yml's `test` job changed with it.", err, s)
+	}
+	if len(out) == 0 {
+		t.Fatalf("the matrix program emitted an empty array: %s\nEvery leg the "+
+			"tiering produced has gone missing, which is the coverage failure "+
+			"this file exists for.", s)
 	}
 	return out
 }

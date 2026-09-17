@@ -257,13 +257,28 @@ jobs:
           # so every discovered module lands in exactly one leg by
           # construction; the check below is what proves that rather than
           # asserting it.
+          # DEPTH IS DERIVED FROM WHAT A LEG CARRIES, not from its name.
+          # The requirement is that the leg running the ROOT module gets
+          # full history, and the checkout step below spelled it as
+          # matrix.mode == test — a coupling remembered across two places
+          # in one file, which is the shape
+          # TestCIWorkflowRaceTierMatchesCLAUDEMD and its siblings exist
+          # to remove. The case above proposes its own inversion (race by
+          # default, exemption explicit); under that the root module
+          # lands in the race leg at depth 1, the root suite reds with
+          # NOTHING was checked here, and the remedy it prints points at
+          # a fetch-depth: 0 already in this file on the wrong leg. The
+          # depth field below carries the fact instead, and
+          # TestTheLegThatRunsTheRootModuleGetsFullHistory pins it.
+          # Raised in review of #497.
           matrix=$(jq -Rnc '
             [inputs | split("\t") | {module: .[0], mode: .[1]}]
             | group_by(.mode)
             | map({
                 mode:    .[0].mode,
                 count:   length,
-                modules: (map(.module) | join(" "))
+                modules: (map(.module) | join(" ")),
+                depth:   (if (map(.module) | index(".")) then 0 else 1 end)
               })
             | sort_by(.mode)
           ' < "$tmp/modules-tiered")
@@ -381,12 +396,19 @@ jobs:
       # reason written above and reds the leg on this one, with a message
       # about a remote nobody touched. Raised in review of #497.
       #
-      # THE OPERANDS ARE QUOTED STRINGS, and dropping the quotes reverts
-      # the fix silently. In a GitHub expression `0` is FALSY, so
-      # `matrix.mode == 'test' && 0 || 1` evaluates to 1 on every leg
-      # including this one — the root suite then fails with "NOTHING was
-      # checked here", which is the correct failure and a miserable thing
-      # to debug from a bare ternary. Raised in review of #497.
+      # WHICH LEG GETS IT IS DERIVED IN discover, not decided here. The
+      # matrix carries a `depth` per leg, computed from whether that
+      # leg's module list contains `.`, so this line reads the fact
+      # rather than restating it. It was
+      # `${{ matrix.mode == 'test' && '0' || '1' }}` — keyed on the tier
+      # NAME while the requirement is about the root module — and the
+      # bridge between the two was the paragraph above. That also
+      # disposes of a hazard this paragraph used to spend itself on: in
+      # a GitHub expression `0` is FALSY, so dropping the quotes from
+      # that ternary made it evaluate to 1 on every leg and reverted the
+      # fix silently. There is no ternary now.
+      # TestTheLegThatRunsTheRootModuleGetsFullHistory is what keeps the
+      # derivation honest. Raised in review of #497.
       #
       # Affordable on the one leg, against the LFS objects this same step
       # already pulls. NO FIGURE HERE, for the reason CLAUDE.md's Verify
@@ -401,7 +423,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
-          fetch-depth: ${{ matrix.mode == 'test' && '0' || '1' }}
+          fetch-depth: ${{ matrix.depth }}
 
       # NO actions/setup-go. It installs the go.mod version and puts it on
       # PATH, which looks right and is not: the runner image ships its own

@@ -158,6 +158,18 @@ go vet ./...     # whole-repo compile check — use this, not `go build`
 go test ./...
 ```
 
+**The root suite needs a full clone with `origin/main`.** Several guards
+read git history rather than the working tree — the own-module pins are
+checked for existence, for their commit stamp, and for being ancestors of
+the published branch — so on a `git clone --depth 1` the pinned revisions
+are not objects and the suite goes red saying nothing was checked. That
+is a real answer, not a false alarm: a run that verified nothing must not
+report `ok`. The fix is `git fetch --unshallow` (or `--deepen=50`, which
+reaches them while the clone stays shallow) and `git fetch origin main`
+if the ref is missing. This lived only inside a failure message and a
+`ci.yml` comment until review of #497 pointed out that "a red suite is
+yours" then costs a contributor the attention that rule exists to buy.
+
 `./...` stops at the module boundary, and every nested module it skips has
 to be run on its own. **Discover them — never enumerate them.** A written
 list of module names is stale the first time someone adds one, and the
