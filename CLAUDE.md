@@ -46,9 +46,20 @@ Two consequences that are easy to trip over:
   it names. This bullet claimed the pin made `apps/*` installable until
   review of [#497](https://github.com/WonderForgeLabs/gooey/pull/497)
   measured it.
-  The requires this guard is about are read by `go get` of the LIBRARY
-  modules — `imagefmt/svg`, `paint`, `mcp`, `grpc`, `handlers/*` — where
-  a replace in a dependency's go.mod is ignored rather than fatal.
+  The requires this guard is about are read by `go get` of every module
+  in the tree that is NOT under `apps/`, where a replace in a
+  dependency's go.mod is ignored rather than fatal. Named by the property
+  rather than listed: this bullet spelled five of them out until review
+  of [#497](https://github.com/WonderForgeLabs/gooey/pull/497), which is
+  the shape the Verify section below forbids for exactly the reason that
+  applies here — `TestCLAUDEMDNamesNoDeletedModule` only checks the
+  namespaces in its own list, so `paint`, `mcp` and `grpc` carry no
+  prefix it can see and renaming any of the three would have left the
+  sentence pointing at nothing with nothing red. The list was also
+  already incomplete in spirit: the `packs/temporal-*` modules are
+  distributed the same way, and are outside this sentence today only
+  because they happen to require nothing of the tree — which stops being
+  true the day one of them requires core.
 - **`GOPROXY=off` does not prove vendoring works.** It blocks downloads
   while the local module cache still satisfies everything, so a tree that
   would fail on a clean machine passes for you. The discriminating checks

@@ -2,6 +2,7 @@ package gooey
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
@@ -30,8 +31,9 @@ import (
 //	    github.com/WonderForgeLabs/gooey/go.mod at revision v0.0.0:
 //	    unknown revision v0.0.0
 //
-// That made every consumable module in the tree — imagefmt/svg, paint,
-// mcp, grpc, handlers/* — impossible to `go get`, while all 25 modules
+// That made every consumable module in the tree — every one outside
+// apps/, which is the property rather than the list this named until
+// review of #497 — impossible to `go get`, while every module in it
 // stayed green in here. Nobody inside the workspace could reach the
 // failure, which is why it survived: the tree is not the environment the
 // line is for.
@@ -202,7 +204,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// scheduled bump or a distance-from-main check, neither of which is
 	// this guard — so it is #515 rather than a caveat with no owner.
 	// Raised in review of #497.
-	newest, newestRev, behind, tagged := skewFrom(seen)
+	_, newestRev, behind, tagged := skewFrom(seen)
 	// REPORTED, NOT CHECKED. A require naming a plain tag is legitimate
 	// and is also the one shape this guard cannot compare without
 	// resolving it, so the count of what it skipped is the honest
@@ -284,19 +286,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 		// the message has to name both. The count in the report is what
 		// tells them apart: many behind and one ahead is a newcomer.
 		// Raised in review of #497.
-		t.Errorf("%d requires name commit %s while the newest in the tree is %s "+
-			"(%s) — one repository, one push, so two revisions is skew rather "+
-			"than a choice. Behind:\n\t%s\nEither move them up to commit %s, in "+
-			"each module's own spelling of it — a pseudo-version off a tag reads "+
-			"v0.1.1-0.<stamp>-%s and one off an untagged path reads "+
-			"v0.0.0-<stamp>-%s — or, if the newest is a single module you just "+
-			"added or bumped, pin THAT one back to %s, which is what the rest of "+
-			"the tree names. This guard is about one revision across the tree, "+
-			"not about which revision, so either direction closes it. A module "+
-			"requiring an OLDER core than its siblings builds in this workspace "+
-			"and fails for anyone who `go get`s it.",
-			len(g.at), g.rev, newestRev, newest, strings.Join(g.at, "\n\t"),
-			newestRev, newestRev, newestRev, g.rev)
+		t.Error(skewMsg(g, newestRev))
 	}
 }
 
@@ -320,6 +310,39 @@ func comparedNothing(seen []ownRequire, tagged []string) bool {
 type ownRequire struct{ dir, path, version string }
 
 // skewGroup is the requires naming one revision that is not the newest.
+// skewMsg is one skew group's failure, rendered rather than formatted at
+// the call — so a test can assert what the reader is handed.
+//
+// THE PARENTHETICAL IS GONE, and that was the last representative
+// spelling in this message. It read "the newest in the tree is <rev>
+// (<version>)", where the version is version[newestRev]: whichever
+// spelling won laterThan's tie-break among the requires AT that commit.
+// In a partly-tagged tree that is the tagged path's string —
+// v0.1.1-0.<stamp>-<rev> outsorts v0.0.0-<stamp>-<rev> — so a reader
+// copying the first version string the message shows them into
+// `go mod edit -require` for an untagged module lands on a version core
+// has never had, and fails this same test again. That is the failure
+// mode the remedy text below was rewritten to prevent, left standing at
+// the reference site while round 9 fixed it for the behind groups.
+//
+// The commit is the fact every spelling shares; the remedy already
+// spells BOTH shapes off it. Raised in review of #497.
+func skewMsg(g skewGroup, newestRev string) string {
+	return fmt.Sprintf("%d requires name commit %s while the newest in the tree "+
+		"is commit %s — one repository, one push, so two revisions is skew "+
+		"rather than a choice. Behind:\n\t%s\nEither move them up to commit %s, "+
+		"in each module's own spelling of it — a pseudo-version off a tag reads "+
+		"v0.1.1-0.<stamp>-%s and one off an untagged path reads "+
+		"v0.0.0-<stamp>-%s — or, if the newest is a single module you just "+
+		"added or bumped, pin THAT one back to %s, which is what the rest of "+
+		"the tree names. This guard is about one revision across the tree, "+
+		"not about which revision, so either direction closes it. A module "+
+		"requiring an OLDER core than its siblings builds in this workspace "+
+		"and fails for anyone who `go get`s it.",
+		len(g.at), g.rev, newestRev, strings.Join(g.at, "\n\t"),
+		newestRev, newestRev, newestRev, g.rev)
+}
+
 type skewGroup struct {
 	// rev is the 12-character COMMIT the group's requires name, and it
 	// is what the remedy prints. version is one spelling of it, kept for
@@ -578,6 +601,54 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		t.Errorf("skewFrom reports the newest revision as %q, want %q — the "+
 			"remedy is printed from this, so an empty or wrong one is a failure "+
 			"message that names no commit", newestRev, want)
+	}
+
+	// AND THE MESSAGE ITSELF, which is the half the assertions above
+	// cannot reach: they read skewFrom's RETURN, and every representative
+	// spelling this guard has printed wrongly was printed from a value
+	// that was correct. Round 9 fixed the behind groups by carrying
+	// g.rev; the reference site went on printing version[newestRev] for
+	// one more round, because nothing rendered the message.
+	//
+	// The newest group here is MIXED — paint tagged, the rest not — so
+	// version[newestRev] is the tagged spelling, a string no laggard's
+	// module has ever held. It may not appear. Raised in review of #497.
+	mixedNewest, mixedRev, mixedBehind, _ := skewFrom([]ownRequire{
+		{"mcp", "github.com/WonderForgeLabs/gooey", newer},
+		{"paint", "github.com/WonderForgeLabs/gooey/paint", tagged},
+		{"grpc", "github.com/WonderForgeLabs/gooey", old},
+		{"apps/introdeck", "github.com/WonderForgeLabs/gooey", old},
+	})
+	if mixedNewest != tagged {
+		t.Fatalf("the newest group's representative spelling is %q, want the "+
+			"TAGGED one (%q) — this arm is about a message printing a spelling "+
+			"no laggard's module has held, so it needs the tie-break to have "+
+			"picked one", mixedNewest, tagged)
+	}
+	if len(mixedBehind) != 1 {
+		t.Fatalf("mixedBehind = %v, want one group", mixedBehind)
+	}
+	if msg := skewMsg(mixedBehind[0], mixedRev); strings.Contains(msg, tagged) {
+		t.Errorf("the skew message names %s, a spelling of the newest commit "+
+			"that belongs to whichever path won the tie-break — a reader who "+
+			"copies the first version string they are shown into `go mod edit "+
+			"-require` for an untagged module lands on a version core has never "+
+			"had, and fails this test again:\n\t%s", tagged, msg)
+	} else {
+		// NON-VACUOUS: the message has to still carry the remedy the
+		// assertion above is allowed to remove, or deleting the whole
+		// sentence passes.
+		for _, want := range []string{
+			"commit " + mixedRev,
+			"v0.1.1-0.<stamp>-" + mixedRev,
+			"v0.0.0-<stamp>-" + mixedRev,
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("the skew message does not contain %q, so the arm above "+
+					"passes over a message that names no remedy at all:\n\t%s",
+					want, msg)
+			}
+		}
 	}
 
 	// THE TAGGED SPELLING AT THE OLDER COMMIT, which is the arm that
