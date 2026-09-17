@@ -3338,9 +3338,19 @@ func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
 	}
 
 	// TWO SETS. `guards` is the repo-wide entry point — where the
-	// rewiring is silent — and `named` is every literal mention of a
-	// rule anywhere in the package's tests, which is what an exempt rule
-	// has to clear instead.
+	// rewiring is silent — and `named` is what an exempt rule has to
+	// clear instead: the rule appearing as the RULE ARGUMENT of
+	// scanForRetiredRule or scanFilesForRetiredRule, at the positions
+	// the `entry` table below gives.
+	//
+	// THAT IS NARROWER THAN "mentioned anywhere in the package's tests",
+	// which is what this said. A rule reaching a scanner through a
+	// further helper's own parameter — one step removed, the shape
+	// scanFilesForResidue already has — is not named, and the
+	// `exempt && !named[name]` arm would fire on it. The mechanism is
+	// right and the sentence was the looser of the two, in the paragraph
+	// a reader consults before adding an exemption. Raised in review of
+	// #458.
 	guards := map[string]int{}
 	named := map[string]bool{}
 	entry := map[string]int{"scanForRetiredRule": 1, "scanFilesForRetiredRule": 2}

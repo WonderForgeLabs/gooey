@@ -331,12 +331,23 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // and Place — which is what an Adornment is — and fails on one that
 // neither declares nor inherits HitTestTransparent. Declared OR embedded,
 // in both halves: the scan promotes an embedded struct field's methods to
-// a fixed point, so `type badge struct{ DragGhost }` is INSIDE the check
-// and an embedder that inherits the method PASSES. This paragraph said
-// "declaring" and "declare", which answers a different question and got
-// both of those backwards — the fourth instance of the
-// doc-says-declare/code-means-method-set shape the same commit fixed in
-// the test's own doc. Raised in review of #458. A fourth adornment comes
+// a fixed point, so `type badge struct{ DragGhost }` is INSIDE the check.
+//
+// EMBEDDING BRINGS A TYPE IN; IT DOES NOT EXEMPT IT. The method set is
+// only the first arm. The second is a CALL TABLE — an adornment whose
+// HitTestTransparent nothing here constructs and calls is one whose
+// `return false` no test would see — so an inheriting embedder still
+// fails until `transparency` gains an entry for it. Measured, with
+// `type reviewProbeBadge struct{ DragGhost }` added to this package:
+//
+//	adornments found in source: [markerPopup reviewProbeBadge tipPopup DragGhost]
+//	reviewProbeBadge is an adornment and nothing here CALLS its
+//	HitTestTransparent, so a `return false` in it would pass this test.
+//
+// This paragraph first said "declaring", which answers a different
+// question; correcting it to "an embedder that inherits the method
+// PASSES" then answered a third. It is neither: inside the check, not
+// exempted, and still owing an entry. Raised in review of #458, twice. A fourth adornment comes
 // under it on the commit that adds it, where the sentence this replaces
 // ("the grep to run rather than a count to trust here") asked the reader
 // to do the walk by hand and would have gone on reading true while a new

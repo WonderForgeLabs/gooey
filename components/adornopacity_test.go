@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// receiverName is the TYPE a method hangs off, through every spelling a
-// receiver can have: T, *T, and — the one this missed — the generic
-// forms T[P] and T[P, Q], which parse as ast.IndexExpr and
-// ast.IndexListExpr and reach the Ident only through .X.
-//
-// It returns "" for a shape it does not know, and the caller treats that
-// as an error rather than a skip: see there. For an EMBEDDED FIELD the
-// caller asks qualifiedEmbed first, because pkg.T is a shape this
-// deliberately does not name.
-//
-// NOT HYPOTHETICAL. This package already declares generic receivers —
-// itemsview.go's Len and At — so before the two Index arms the extractor
-// was returning "" on real methods every run and dropping their types
-// out of the scan without a word. Measured by removing the arms: the
-// error names them. Raised in review of #458.
 // qualifiedEmbed reports whether e is `pkg.T` or `*pkg.T`, generic forms
 // included — an embed from a package this scan does not parse.
 //
@@ -55,6 +40,21 @@ func qualifiedEmbed(e ast.Expr) bool {
 	}
 }
 
+// receiverName is the TYPE a method hangs off, through every spelling a
+// receiver can have: T, *T, and — the one this missed — the generic
+// forms T[P] and T[P, Q], which parse as ast.IndexExpr and
+// ast.IndexListExpr and reach the Ident only through .X.
+//
+// It returns "" for a shape it does not know, and the caller treats that
+// as an error rather than a skip: see there. For an EMBEDDED FIELD the
+// caller asks qualifiedEmbed first, because pkg.T is a shape this
+// deliberately does not name.
+//
+// NOT HYPOTHETICAL. This package already declares generic receivers —
+// itemsview.go's Len and At — so before the two Index arms the extractor
+// was returning "" on real methods every run and dropping their types
+// out of the scan without a word. Measured by removing the arms: the
+// error names them. Raised in review of #458.
 func receiverName(e ast.Expr) string {
 	for {
 		switch x := e.(type) {

@@ -608,10 +608,22 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// away the early exit on the first hit so that ranks could be
 	// compared across the whole tree.
 	//
-	// PRESS AND RELEASE ARE THE TWO THAT DO READ IT, which is the whole
-	// condition: a press sets the implicit captor FROM the hit, and a
-	// release measures m.within(captor, hit) to decide whether a click is
-	// synthesized. Nothing else does. The first version of this skip took
+	// AN UNHELD PRESS AND A RELEASE ARE THE TWO THAT READ IT, which is
+	// the whole condition: a press sets the IMPLICIT captor from the
+	// hit, and a release measures m.within(captor, hit) to decide
+	// whether a click is synthesized. Nothing else does.
+	//
+	// UNHELD, because a press arriving while something HOLDS an explicit
+	// capture reads nothing either: the `if !m.held` block that assigns
+	// m.captor from the hit is skipped, and target(hit) hands back the
+	// captor. This said "press and release" flat, and paid for the walk
+	// on a held-capture press — measured on the drag fixture, one walk
+	// where MouseTarget on the identical event walked zero and answered
+	// the same component. MouseTarget has spelled the condition with
+	// !m.held since it was written, so the two disagreed about when they
+	// walk while the comment gave a reason covering only the release.
+	// Reachable the way the wheel is: a press mid-drag, while a splitter
+	// or a scrollbar holds the pointer. Raised in review of #458. The first version of this skip took
 	// MouseMove alone and called it "exactly the case where both
 	// consumers are dead" — a captured WheelUp/WheelDown falls to the
 	// default arm, where target(hit) is the captor and setHover is never
@@ -626,7 +638,7 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// The COST that motivates it is still the move: ?1003h reports one
 	// per cell crossed, where a wheel is one per notch.
 	var under Component
-	if m.captor == nil || ev.Kind == input.MousePress || ev.Kind == input.MouseRelease {
+	if m.captor == nil || (ev.Kind == input.MousePress && !m.held) || ev.Kind == input.MouseRelease {
 		under = m.HitTest(ev.X, ev.Y)
 	}
 	hit := m.frozenHostFor(under, AllowPointer)

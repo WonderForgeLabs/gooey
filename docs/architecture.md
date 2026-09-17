@@ -1128,9 +1128,12 @@ because #465 deleted it along with the divergence, and a live citation
 to a dead test reads as a check while checking nothing.
 
 The walk still allocates nothing of its own — and **a drag does not run
-it at all**. A `MouseMove` arriving while something holds pointer
-capture skips the hit test entirely (`DispatchMouse`, and
-`TestADragDoesNotWalkTheTreeOnEveryMove`): the captor is the target by
+it at all**. While the pointer is captured, only an unheld press and a
+release run the hit test; every other kind — a move, a wheel, a press
+arriving while the capture is held — skips it entirely (`DispatchMouse`,
+and `TestADragDoesNotWalkTheTreeOnEveryMove`). Naming the move alone was
+the defect, twice: the motion reports are where the *cost* lives, but
+they are not the rule. The captor is the target by
 definition and hover does not move during a drag, so both consumers of
 the hit already ignored it. That is where the cost of losing the early
 exit actually lands, or rather does not — the sentence this replaced
@@ -1148,8 +1151,9 @@ a later one, so every subtree whose bounds contain the point is visited.
 Bounds still prune at every node, which is where the work was.
 
 `DispatchMouse` runs three framework behaviors before the app sees
-anything — or, during a drag, none of them. A `MouseMove` with a captor
-held skips the hit test, and with no hit there is nothing to retarget,
+anything — or, during a drag, none of them. A captured event that is not
+an unheld press or a release skips the hit test, and with no hit there is
+nothing to retarget,
 nothing to move focus to and nothing to hover: `frozenHostFor(nil)` is
 nil and `target(nil)` hands back the captor verbatim. What routes during
 a drag is whatever `m.captor` already holds — for an implicit capture

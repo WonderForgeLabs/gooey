@@ -619,10 +619,20 @@ func (c *countingBox) Arrange(b Rect) {
 // dragSink is a captor that records the motion events it is routed.
 type dragSink struct {
 	stripe
-	moves int
+	moves   int
+	presses int
 }
 
 func (d *dragSink) HandleMouseMove(input.MouseEvent) bool { d.moves++; return true }
+
+// A PRESS COUNTER, so the held-press arm can say the dispatch still
+// reached the captor rather than only that the walk was skipped.
+func (d *dragSink) HandleMouse(ev input.MouseEvent) bool {
+	if ev.Kind == input.MousePress {
+		d.presses++
+	}
+	return true
+}
 
 // TestADragDoesNotWalkTheTreeOnEveryMove is the cost #465 added, paid on
 // the one path that cannot use the result.
@@ -676,6 +686,36 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 			"tell routing to the CAPTOR from routing to the HIT")
 	}
 
+	// THE OTHER DIRECTION OF THE SAME CONDITION, and it is narrower than
+	// it first looks. An UNCAPTURED press walks because of the first
+	// disjunct, so removing the press clause entirely does not change
+	// it — measured, the whole root suite stays green. The one state
+	// the clause decides is a press arriving while an IMPLICIT capture
+	// is live: m.captor is set, m.held is false, and the `if !m.held`
+	// block must re-take the captor from the new hit. Dropping the
+	// clause leaves that press unwalked and the captor stale.
+	//
+	// So the arm is the SECOND press, and the first is its setup rather
+	// than its subject. Raised in review of #458.
+	press := input.MouseEvent{Kind: input.MousePress, X: 0, Y: 0}
+	m.DispatchMouse(press)
+	if m.captor == nil {
+		t.Fatal("an UNCAPTURED press set no captor, so the second press below is " +
+			"not the implicit-capture case and the arm would pass over nothing")
+	}
+	if m.held {
+		t.Fatal("a press established a HELD capture, so the arm below measures " +
+			"the held case the wheel arm already covers")
+	}
+	before = box.walks
+	m.DispatchMouse(press)
+	if n := box.walks - before; n == 0 {
+		t.Error("a press arriving while an IMPLICIT capture is live did not walk " +
+			"the tree, so the captor it re-takes from the hit is whatever the " +
+			"previous press left there — the pointer moved and the capture did not")
+	}
+	m.DispatchMouse(input.MouseEvent{Kind: input.MouseRelease, X: 0, Y: 0})
+
 	if !m.CaptureMouse(sink) {
 		t.Fatal("the captor refused the capture, so the arm below is not a drag")
 	}
@@ -703,6 +743,30 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 		t.Errorf("a CAPTURED wheel walked the tree %d times for a hit nothing "+
 			"reads: the default arm routes to target(hit), which is the captor, "+
 			"and the hover update is not on that path at all", n)
+	}
+
+	// THE PRESS, WHILE THE CAPTURE IS HELD, which is the arm neither
+	// direction of the condition had. A press reads the hit only to set
+	// the IMPLICIT captor from it — the whole `if !m.held` block — so on
+	// a HELD capture it reads nothing either, and the skip said "press"
+	// flat. Reachable the way the wheel is: a click arriving mid-drag,
+	// while a splitter or a scrollbar holds the pointer.
+	//
+	// BOTH HALVES, because a condition narrowed too far would stop the
+	// press reaching the captor at all, and a walk count alone cannot
+	// tell that from the saving. Raised in review of #458.
+	before = box.walks
+	presses := sink.presses
+	m.DispatchMouse(input.MouseEvent{Kind: input.MousePress, X: 0, Y: 0})
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a press arriving while the capture is HELD walked the tree %d "+
+			"times for a hit nothing reads: the block that sets the captor from "+
+			"the hit runs only when the capture is implicit, and target(hit) "+
+			"hands back the captor either way", n)
+	}
+	if sink.presses == presses {
+		t.Error("the held captor was not routed the press, so narrowing the walk " +
+			"changed the dispatch rather than only its cost")
 	}
 }
 
@@ -762,6 +826,11 @@ func TestADragIsNotWalkedForByAQueryEither(t *testing.T) {
 	}{
 		{"move", move},
 		{"wheel", wheel},
+		// A PRESS ON A HELD CAPTURE reads nothing either — the captor
+		// is already set and target() answers with it — which is the
+		// condition this query has spelled with !m.held since it was
+		// written and DispatchMouse did not. Raised in review of #458.
+		{"held press", input.MouseEvent{Kind: input.MousePress, X: 0, Y: 0}},
 	} {
 		before = box.walks
 		if got := m.MouseTarget(tc.ev); got != Component(sink) {
