@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1261,12 +1262,68 @@ func TestUndoDoesNotReachBackPastAnOpen(t *testing.T) {
 	}
 }
 
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen is the end-to-end
+// half the round before this one said was unreachable.
+//
+// The argument for unreachability was that #517 refuses a document
+// declaring xmlns:x as having two roots. It refuses one CONTAINING an
+// <x:Property>: that element is a second kid of <Gooey>, and the
+// len(n.Kids) != 1 arm in openWorkspaceFile is what turns it away. A
+// document that only DECLARES the prefix has one kid and opens like any
+// other, which is what this drives — through the file browser, on a file
+// on disk, so the arm runs where a user reaches it rather than where a
+// unit call does.
+//
+// The assertion is on ed.source and ed.doc().Attrs rather than on the
+// screen: the defect a carried element prefix causes is not visible in
+// the running canvas at all. It appears on the next OPEN, when the
+// declaration sits on the content root and <x:Property> — its sibling —
+// is out of scope.
+func TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "decl.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("decl.gooey")
+
+	// THE OPEN ITSELF IS HALF THE FINDING. If this refuses, the skip in
+	// carryDeclarations really is unreachable through this path and the
+	// comment that said so was right.
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening a document that DECLARES xmlns:x reports %q. Only a "+
+			"document that CONTAINS an <x:Property> has two kids of <Gooey>; "+
+			"this one has a single Canvas and must open", got)
+	}
+	if got, ok := ed.doc().Attrs["xmlns:x"]; ok {
+		t.Errorf("the element prefix came down onto the content root as %q. "+
+			"<x:Property> is a SIBLING of this root, so a declaration here is "+
+			"out of scope at the element it exists for and the saved document "+
+			"stops loading", got)
+	}
+	if src := ed.source.Get(); !strings.Contains(src, `<Gooey xmlns:x=`) {
+		t.Errorf("the rebuilt source does not carry the declaration on its "+
+			"envelope:\n%s", src)
+	}
+}
+
 // TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope calls the
-// function directly, because the editor's own open path cannot reach it:
-// a document with an <x:Property> has two children of <Gooey> and
-// openWorkspaceFile refuses it as having two root elements (#517). So the
-// unit call IS the coverage, and it says so rather than dressing up as an
-// end-to-end test that would pass on the refusal.
+// function directly, which pins the rule at the seam both unwraps share.
+// The end-to-end half is
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen, and it is reachable
+// today: the comment here used to say the open path could not get here,
+// on the grounds that #517 refuses such a document. What #517 refuses is
+// a document CONTAINING an <x:Property>, which gives <Gooey> two kids.
+// One that merely DECLARES xmlns:x has one kid and opens normally.
+// Corrected in review of #501.
 //
 // The rule: an ATTRIBUTE prefix may come down onto the content root,
 // because markup.parse resolves one through a flat document-wide table
@@ -1301,11 +1358,131 @@ func TestCarryDeclarationsLeavesTheElementPrefixOnTheEnvelope(t *testing.T) {
 	}
 }
 
+// TestOnlyOneFunctionWritesADocumentEnvelope replaces the count that used
+// to sit in gooeyOpen's doc comment.
+//
+// A hand-maintained list of call sites inside a comment is the
+// enumeration CLAUDE.md's Verify section is about, and this one had
+// already gone stale: it named three literals in two functions while a
+// fourth sat in fragmentFor. The set is derived here, so adding a bare
+// envelope anywhere reddens this rather than quietly making a sentence
+// wrong. Raised in review of #501.
+func TestOnlyOneFunctionWritesADocumentEnvelope(t *testing.T) {
+	// EXEMPT, WITH THE REASON, not dropped: a patch fragment addresses an
+	// island inside another document, so the envelope attributes gooeyOpen
+	// writes are the ones it must NOT carry. See gooeyOpen's doc.
+	const exempt = "fragmentFor"
+	// PACKAGE SCOPE IS A SITE TOO, and it was invisible. The walk took
+	// d.(*ast.FuncDecl) and inspected fn.Body, so a *ast.GenDecl was
+	// skipped whole: `const envelope = "<Gooey>\n"` at package scope
+	// would have been attributed to no function at all and every user of
+	// it recorded under no name, leaving this guard green over the exact
+	// thing it exists to find. Hoisting a repeated literal to a package
+	// const is the ordinary refactor, not an exotic one — and this test
+	// replaced a hand-maintained list precisely because that list failed
+	// SILENTLY. A name nothing can exempt is the right attribution: there
+	// is no function to route through gooeyOpen, so the answer is always
+	// to move the literal. Raised in review of #501.
+	const pkgScope = "package scope"
+
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parsing this package: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				// THE WHOLE DECLARATION, whatever kind it is. A
+				// FuncDecl's literals are attributed to it; anything
+				// else — a const block, a var, an interface's default —
+				// is package scope, which no exemption names.
+				owner := pkgScope
+				if fn, ok := d.(*ast.FuncDecl); ok {
+					if fn.Body == nil {
+						continue
+					}
+					owner = fn.Name.Name
+				}
+				// OPENS WITH IT, rather than contains it:
+				// openWorkspaceFile's refusal message says "a <Gooey>
+				// document needs exactly one root element", which is
+				// prose about an envelope and not one. lit.Value keeps
+				// the quote, so [1:] drops either kind of it.
+				ast.Inspect(d, func(n ast.Node) bool {
+					if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING &&
+						strings.HasPrefix(lit.Value[1:], "<Gooey") {
+						seen[owner] = true
+					}
+					return true
+				})
+			}
+		}
+	}
+	if !seen["gooeyOpen"] {
+		t.Fatalf("no <Gooey literal found in gooeyOpen; the walk found %v. An "+
+			"empty or wrong side makes every assertion below vacuous",
+			sortedNames(seen))
+	}
+	var extra []string
+	for name := range seen {
+		if name != "gooeyOpen" && name != exempt {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	if len(extra) != 0 {
+		t.Errorf("%v spell a <Gooey envelope by hand. gooeyOpen is the one "+
+			"function that writes a document's envelope, because the attributes "+
+			"that belong on it — Graphics, a default xmlns, an xmlns:x — are "+
+			"carried by ed.envAttrs and a hand-written literal drops all of "+
+			"them silently. Route it through gooeyOpen, or exempt it here with "+
+			"the reason it describes something other than a document, as "+
+			"%s is", extra, exempt)
+	}
+	if !seen[exempt] {
+		t.Errorf("%s no longer writes its own envelope; the exemption above is "+
+			"stale and should go with whatever replaced it", exempt)
+	}
+}
+
+// sortedNames is the keys of set, sorted, for a message.
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // assignedIn returns the names of the functions in this package's
-// non-test sources that ASSIGN the field the matcher picks out, sorted.
-// It reads the AST rather than grepping because a grep cannot tell an
-// assignment from a read, and every one of these fields is read in many
-// more places than it is written.
+// non-test sources that WRITE the field the matcher picks out, sorted.
+// It reads the AST rather than grepping because a grep cannot tell a
+// write from a read, and every one of these fields is read in many more
+// places than it is written.
+//
+// THREE SPELLINGS, not one, and the two that were missing are the ones
+// the invariant is most likely to be broken with. This matched only
+// `*ast.AssignStmt` with the field itself on the left, so an in-place
+// empty was invisible:
+//
+//	ed.envAttrs = nil        // caught
+//	clear(ed.envAttrs)       // NOT caught — a call, not an assignment
+//	delete(ed.envAttrs, k)   // NOT caught, same reason
+//	ed.envAttrs[k] = v       // NOT caught — the LHS is an IndexExpr
+//
+// Measured with a probe method rather than read off the types: with
+// `func (ed *editor) probeClearA() { clear(ed.envAttrs) }` in the
+// package, the guard stayed GREEN, while the `= nil` spelling beside it
+// reddened. `clear` is the idiomatic Go spelling of exactly the clear
+// the three comments this guard replaces forbid, so the blind spot was
+// over the fourth site's most likely form. Same class as the
+// FuncDecl-body hole closed in TestOnlyOneFunctionWritesADocumentEnvelope
+// one commit earlier. Raised in review of #501.
 func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -1324,12 +1501,30 @@ func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
 					continue
 				}
 				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					as, ok := n.(*ast.AssignStmt)
-					if !ok {
-						return true
-					}
-					for _, lhs := range as.Lhs {
-						if writes(lhs) {
+					switch n := n.(type) {
+					case *ast.AssignStmt:
+						for _, lhs := range n.Lhs {
+							// The field itself, or a slot in it:
+							// `m[k] = v` writes m without naming it on
+							// the left.
+							if writes(lhs) {
+								seen[fn.Name.Name] = true
+							}
+							if ix, ok := lhs.(*ast.IndexExpr); ok && writes(ix.X) {
+								seen[fn.Name.Name] = true
+							}
+						}
+					case *ast.CallExpr:
+						// clear and delete are the in-place empties, and
+						// they are calls rather than assignments. append
+						// is deliberately NOT here: it returns, and the
+						// assignment that stores the result is already
+						// matched above.
+						id, ok := n.Fun.(*ast.Ident)
+						if !ok || len(n.Args) == 0 {
+							return true
+						}
+						if (id.Name == "clear" || id.Name == "delete") && writes(n.Args[0]) {
 							seen[fn.Name.Name] = true
 						}
 					}
@@ -1354,6 +1549,31 @@ func selects(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
 	return se, true
 }
 
+// onEd is selects with the RECEIVER checked. `ed` is the editor in every
+// method in this package, and the guard below is about the editor's two
+// fields specifically — a bare `selects(e, "root")` counts any
+// assignment whose final field is `root`, so `s.root = …` or
+// `h.base.root = …` inside undo.go would be read as a
+// document-replacement site.
+//
+// Latent rather than live: `grep '\.root = '` over the package's
+// non-test sources returns only undo.go's `ed.root = s.root.clone()`.
+// And loud rather than silent — a spurious site makes the two sets
+// differ and the guard fails naming it — which is why the widening that
+// introduced it was right and this is a narrowing rather than a fix.
+// Raised in review of #501.
+func onEd(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
+	se, ok := selects(e, name)
+	if !ok {
+		return nil, false
+	}
+	id, ok := se.X.(*ast.Ident)
+	if !ok || id.Name != "ed" {
+		return nil, false
+	}
+	return se, true
+}
+
 // TestEnvAttrsIsAssignedWhereTheDocumentIs turns an invariant three
 // comments assert into one the suite checks.
 //
@@ -1371,17 +1591,40 @@ func selects(e ast.Expr, name string) (*ast.SelectorExpr, bool) {
 // the bug, whatever either is set to.
 func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	envAttrs := assignedIn(t, func(e ast.Expr) bool {
-		_, ok := selects(e, "envAttrs")
+		_, ok := onEd(e, "envAttrs")
 		return ok
 	})
+	// TWO SPELLINGS OF REPLACING THE DOCUMENT, because matching one of
+	// them is the hole this test was written to close, one level up.
+	// `ed.root.Kids = …` swaps the content under a root the editor keeps;
+	// `ed.root = …` swaps the root itself. history.restore (undo.go)
+	// spells it the second way, does not touch envAttrs, and was invisible
+	// to a matcher that only knew the first — so the guard reported the
+	// package clean while holding a live example of the arrangement its
+	// own message describes. Raised in review of #501.
 	kids := assignedIn(t, func(e ast.Expr) bool {
-		se, ok := selects(e, "Kids")
-		if !ok {
-			return false
+		if se, ok := selects(e, "Kids"); ok {
+			_, ok = onEd(se.X, "root")
+			return ok
 		}
-		_, ok = selects(se.X, "root")
+		_, ok := onEd(e, "root")
 		return ok
 	})
+	// AND ONE OF THEM IS ALLOWED TO, with the reason stated rather than
+	// the site quietly dropped. history.reset (undo.go) clears the stack
+	// on every open, so every snapshot restore can reach belongs to the
+	// file that is open — the same document ed.envAttrs already describes,
+	// which is why restoring one without re-assigning the other cannot
+	// separate them. TestUndoDoesNotReachBackPastAnOpen is
+	// what holds that premise; if reset ever stops clearing, this
+	// exemption is what has to go with it.
+	if !slices.Contains(kids, "restore") {
+		t.Fatalf("the document-replacement walk found %v, with no restore in it "+
+			"— the exemption below would then remove nothing and the matcher has "+
+			"stopped seeing history.restore's `ed.root = s.root.clone()`, which "+
+			"is the site this widening was for", kids)
+	}
+	kids = slices.DeleteFunc(kids, func(fn string) bool { return fn == "restore" })
 
 	// ENVDECLS IS THE THIRD, and it was leaning on this test without
 	// being in it. Its own comment cites this guard as the reason it is
@@ -1404,7 +1647,7 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 			"every assertion below would pass vacuously", envAttrs, kids, envDecls)
 	}
 	if strings.Join(envAttrs, ",") != strings.Join(kids, ",") {
-		t.Errorf("ed.envAttrs is assigned in %v and ed.root.Kids in %v. These must "+
+		t.Errorf("ed.envAttrs is assigned in %v and the document in %v. These must "+
 			"be the same set: the envelope belongs to the document on the canvas, "+
 			"so a site that replaces one and not the other leaves the editor "+
 			"describing a file it is no longer showing — which is the defect three "+
@@ -1416,5 +1659,67 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 			"worse than the envelope attrs': a declaration left over from the last "+
 			"file becomes part of the next one's public surface, written back on "+
 			"the first save", envDecls, kids)
+	}
+}
+
+// The THIRD scope reconcileNamespaces has to collect, and the one its
+// doc comment left out.
+//
+// ed.root is excluded because it is not in the save. ed.envAttrs is the
+// mirror image: it IS what the saved <Gooey> carries, and it is not
+// reachable from ed.doc(). An element prefix stays there through an open
+// — TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen is that half — so
+// with only ed.doc() collected, a paste rebinding it finds no conflict to
+// report, and the second binding lands inside the document and is written
+// to disk.
+//
+// THE PREMISE IS ASSERTED FIRST. If the declaration were on the content
+// root this test would pass through the ordinary doc scope and prove
+// nothing about the envelope. Raised in review of #501.
+func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="Existing" Content="go"/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	if err := os.WriteFile(filepath.Join(root, "env.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("env.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+	if _, onRoot := ed.doc().Attrs["xmlns:x"]; onRoot {
+		t.Fatal("the declaration came down onto the content root, so this test " +
+			"is measuring the ordinary document scope and not the envelope")
+	}
+	if got := ed.envAttrs["xmlns:x"]; got != markup.XNamespace {
+		t.Fatalf("the envelope holds xmlns:x = %q, want %q — the scope this "+
+			"test is about is empty", got, markup.XNamespace)
+	}
+
+	const other = "urn:gooey:test:501:not-x"
+	ed.pasteMarkup(`<Gooey xmlns:x="` + other + `">` + "\n" +
+		`  <Button Name="Pasted" Content="go"/>` + "\n" +
+		`</Gooey>` + "\n")
+
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("pasting a fragment that binds x to a DIFFERENT uri reports "+
+			"%q. The envelope's declaration is not reachable from ed.doc(), so "+
+			"nothing compared the two: the second binding is now inside the "+
+			"document, and markup.parse's flat last-wins table hands every "+
+			"x: element in the saved file to the pasted uri", got)
+	}
+	if src := ed.source.Get(); strings.Contains(src, other) {
+		t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+	}
+	if got := ed.envAttrs["xmlns:x"]; got != markup.XNamespace {
+		t.Errorf("the envelope's own declaration became %q after a refused "+
+			"paste, want %q", got, markup.XNamespace)
 	}
 }

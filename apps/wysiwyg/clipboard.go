@@ -902,8 +902,33 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // No surface declares anything today, so this is the latent half rather
 // than a live bug; the two scopes are one level apart and the choice
 // belongs written down. Raised in review of #501.
+//
+// AND ed.envAttrs, WHICH IS A THIRD SCOPE AND NOT A SECOND. The
+// paragraph above enumerated two and there are three, which is the
+// shape a future reader trusts: ed.root is excluded because it is NOT
+// in the save, and ed.envAttrs is included for the mirror-image reason
+// — it is what the saved <Gooey> carries and it is not reachable from
+// ed.doc(). Open a document whose envelope keeps xmlns:x (an element
+// prefix stays there through an open, which
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen measures), paste a
+// fragment binding x to something else, and with only ed.doc()
+// collected there is no conflict to report: the second binding lands
+// inside the document and is written to disk. Small blast radius today
+// — x: is an element prefix and the <x:Property> elements it exists for
+// are siblings of the content root — but the enumeration was one scope
+// short, not the reach. Raised in review of #501.
+//
+// SEEDED FIRST, then overwritten by the document's own. The envelope is
+// the outermost element, so if a prefix is declared in both, the
+// document's declaration is the later one and markup.parse's
+// last-wins is what this has to agree with.
 func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
+	for k, v := range ed.envAttrs {
+		if isNamespaceAttr(k) {
+			doc[k] = v
+		}
+	}
 	collectNamespaces(ed.doc(), doc)
 	return reconcileNamespacesInto(n, doc)
 }
@@ -1034,13 +1059,21 @@ func collectNamespaces(n *node, into map[string]string) {
 // default-namespace reasoning moved onto the skip in
 // reconcileNamespacesInto, where it is the only thing deciding anything.
 //
-// AND IT HAS FOUR CALLERS NOW, which is the other half of that round's
-// finding. While this matched the plain form it could not be shared —
-// carryDeclarations, envelopeAttrs and collectNamespaces must NOT move a
-// plain xmlns, so each spelled the prefixed test inline and the comment
-// here recorded that as the reason. The narrowing made the reason moot
-// and left four identical predicates with nothing explaining why they
-// were four; they call this now. Raised in review of #501.
+// AND IT IS SHARED NOW, which is the other half of that round's finding.
+// While this matched the plain form it could not be: every caller that
+// must NOT move a plain xmlns spelled the prefixed test inline, and the
+// comment here recorded that as the reason. The narrowing made the reason
+// moot and left identical predicates scattered with nothing explaining
+// why; they call this instead.
+//
+// NO COUNT OF THEM HERE. This said "FOUR CALLERS NOW" and named three,
+// and the very commit that wrote it added a fifth — which is the
+// hand-maintained count this branch had already removed from gooeyOpen's
+// doc two commits earlier, and the one CLAUDE.md's Verify section refuses
+// in prose: a number in a comment is a sample taken once. The reason the
+// predicate is shared is the paragraph's point and it survives without an
+// arithmetic claim; `grep -n 'isNamespaceAttr(' apps/wysiwyg/*.go` is the
+// current answer. Raised in review of #501, twice.
 func isNamespaceAttr(k string) bool {
 	return strings.HasPrefix(k, "xmlns:")
 }
