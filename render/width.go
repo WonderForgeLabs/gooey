@@ -214,10 +214,9 @@ func RowText(b *Buffer, y int) string {
 // a dock header, a menu row's check box or a status gutter is asking
 // about a REGION, and without this each package grew its own reader —
 // each writing Continuation as a literal rune, which is the defect
-// RowText exists to remove, re-introduced one directory over.
-// [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the
-// sweep; this is the function that makes each site a call rather than a
-// helper.
+// RowText exists to remove, re-introduced one directory over. [#516] is
+// the sweep; this is the function that makes each site a call rather
+// than a helper.
 //
 // TWO EDGES, BOTH FROM THE SPAN CUTTING A WIDE GLYPH, and both are the
 // honest answer rather than a rounding:
@@ -264,13 +263,15 @@ func RowText(b *Buffer, y int) string {
 // already does. ClipCols answers `w <= 0` the same way, and the reason
 // is the same: zero columns of a terminal is nothing, not one blank.
 //
-// It is stated because a width can ARRIVE as a difference rather than as
-// a constant — components/box_test.go's rowString computes one — and a
-// negative w is then a reachable value rather than a caller error. The
-// hazard is the one the padding paragraph above describes, at the other
-// end: "" passes `!strings.Contains(got, …)` and "the row is empty"
-// exactly as blanks do, so a span that silently collapsed to nothing
-// reads as a component that drew nothing.
+// It is stated rather than left to the loop because a width can ARRIVE
+// as a difference — an extent minus an origin, a remaining budget — so
+// a negative one is a value a caller produces rather than a caller
+// error. The hazard is the one the padding paragraph above describes, at
+// the other end: "" passes `!strings.Contains(got, …)` and "the row is
+// empty" exactly as blanks do, so a span that silently collapsed to
+// nothing reads as a component that drew nothing.
+//
+// [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
 func SpanText(b *Buffer, x, y, w int) string {
 	if w <= 0 {
 		return ""

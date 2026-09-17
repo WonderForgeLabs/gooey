@@ -170,8 +170,11 @@ shipped:
    report; that asymmetry is asserted rather than left to be noticed.
 4. **A non-positive width is `""`.** The enumeration in (3) named three
    out-of-range shapes and nil, and never `w <= 0` — which matters
-   because a width can arrive as a DIFFERENCE: `components/box_test.go`'s
-   `rowString` computed one. The guard is mostly a restatement — for a
+   because a width can arrive as a DIFFERENCE — an extent minus an
+   origin, a remaining budget. (`components/box_test.go`'s `rowString`
+   computed one at the time; the round after this finding gave it
+   `SpanText`'s own signature, so the example is gone and the reason is
+   not.) The guard is mostly a restatement — for a
    live buffer the loop returns `""` on its own, measured — with one
    arrangement where it changes the answer: a nil buffer and a negative
    width would hand `strings.Repeat` a count of `-1`, which panics. So

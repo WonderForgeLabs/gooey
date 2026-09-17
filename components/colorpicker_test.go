@@ -18,12 +18,21 @@ func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Prop
 	return p, v, f
 }
 
-// rowText is w columns of row y as a terminal would show them. Through
-// render.SpanText for the reason #516 gives: a rune-per-cell read writes
-// the continuation marker into the row and makes a wide glyph
-// unassertable.
-func rowText(f *gooey.Frame, y, w int) string {
-	return render.SpanText(f.Cells, 0, y, w)
+// rowText is w columns of row y, from column x, as a terminal would show
+// them — render.SpanText's own signature, with its arguments passed
+// straight through. Through SpanText for the reason #516 gives: a
+// rune-per-cell read writes the continuation marker into the row and
+// makes a wide glyph unassertable.
+//
+// IT TOOK y BEFORE w, which is the argument-order trap this sweep
+// reasoned out at length over components/box_test.go's rowString and
+// then applied to one wrapper and not the other, in the same package,
+// in the same commit. Every parameter is an int, so `rowText(f, 0, 30)`
+// reads as x=0 to anyone who has just internalised
+// SpanText(b, x, y, w), compiles either way, and returns blanks rather
+// than failing. Raised in review of #520.
+func rowText(f *gooey.Frame, x, y, w int) string {
+	return render.SpanText(f.Cells, x, y, w)
 }
 
 func TestColorPickerArrowsSelectChannelAndAdjustValue(t *testing.T) {
@@ -180,7 +189,7 @@ func TestColorPicker16UsesAFillMeter(t *testing.T) {
 	cur := render.RGB(100, 170, 60)
 	p, _, f := pickerAt(render.Color16, cur)
 	w := p.barWidth()
-	row := rowText(f, 0, pickerLabelW+w)
+	row := rowText(f, 0, 0, pickerLabelW+w)
 
 	if !strings.Contains(row, "░") {
 		t.Errorf("16-color bar has no empty run: %q", row)
@@ -219,7 +228,7 @@ func TestColorPickerReadoutIsTierSpecific(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.depth.String(), func(t *testing.T) {
 			_, _, f := pickerAt(tc.depth, render.RGB(255, 170, 60))
-			row := rowText(f, 4, 30)
+			row := rowText(f, 0, 4, 30)
 			if !strings.Contains(row, tc.want) {
 				t.Errorf("readout %q does not contain %q", row, tc.want)
 			}
@@ -227,7 +236,7 @@ func TestColorPickerReadoutIsTierSpecific(t *testing.T) {
 	}
 	// Truecolor must NOT claim a palette index it isn't using.
 	_, _, f := pickerAt(render.TrueColor, render.RGB(255, 170, 60))
-	if row := rowText(f, 4, 30); strings.Contains(row, "xterm") {
+	if row := rowText(f, 0, 4, 30); strings.Contains(row, "xterm") {
 		t.Errorf("truecolor readout mentions a palette index: %q", row)
 	}
 }

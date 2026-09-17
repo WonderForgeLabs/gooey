@@ -268,28 +268,43 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// because a MenuBar sits at y=0 in this fixture, which is exactly
 	// the kind of accidental agreement a moved fixture breaks silently.
 	// Raised in review of #520.
+	// EVERY CANDIDATE, NOT THE FIRST. This took the first row containing
+	// the string and returned, so two matching rows were resolved by
+	// ITERATION ORDER — and the claim below is positional, about a
+	// specific column of a specific row, which is exactly the shape the
+	// two neighbouring tests in this file were hardened into (find() +
+	// len(wrap) != 1, and the `at []int` fatal). It also just acquired
+	// more rows to be ambiguous in: menuRows widened from a fixed 14 to
+	// f.Cells.H. Raised in review of #520.
 	rows := strings.Split(menuRows(f), "\n")
+	var found []int
 	for y, r := range rows {
-		bytesAt := strings.Index(r, "[x] Wrap")
-		if bytesAt < 0 {
-			continue
+		if strings.Index(r, "[x] Wrap") >= 0 {
+			found = append(found, y)
 		}
-		at := render.StringWidth(r[:bytesAt])
-		// The check box must have SURVIVED, which is what discriminates
-		// an underline placed in the label from one placed over the box:
-		// Render SETS the rune as well as the style, so a wrong offset
-		// does not leave an underlined '[' behind — it overwrites the '['
-		// WITH the accelerator letter.
-		want := at + render.StringWidth("[x] ")
-		cell := f.Cells.At(want, y)
-		if !cell.Style.Underline || cell.Rune != 'W' {
-			t.Errorf("column %d of row %d is %q (underline=%v); the accelerator underline "+
-				"is not on the label's first letter", want, y, cell.Rune, cell.Style.Underline)
-		}
-		return
 	}
-	t.Fatalf("no intact \"[x] Wrap\" row; the underline overwrote the check box:\n%s",
-		strings.Join(rows, "\n"))
+	if len(found) != 1 {
+		// Zero is the regression this test was written for — the
+		// underline overwriting the check box leaves no intact row.
+		t.Fatalf("%d rows hold an intact \"[x] Wrap\" (%v), want exactly 1. Zero "+
+			"means the underline overwrote the check box, which is this test's "+
+			"subject; more than one means the column asserted below depends on "+
+			"which row this loop happened to reach first:\n%s",
+			len(found), found, strings.Join(rows, "\n"))
+	}
+	y := found[0]
+	at := render.StringWidth(rows[y][:strings.Index(rows[y], "[x] Wrap")])
+	// The check box must have SURVIVED, which is what discriminates
+	// an underline placed in the label from one placed over the box:
+	// Render SETS the rune as well as the style, so a wrong offset
+	// does not leave an underlined '[' behind — it overwrites the '['
+	// WITH the accelerator letter.
+	want := at + render.StringWidth("[x] ")
+	cell := f.Cells.At(want, y)
+	if !cell.Style.Underline || cell.Rune != 'W' {
+		t.Errorf("column %d of row %d is %q (underline=%v); the accelerator underline "+
+			"is not on the label's first letter", want, y, cell.Rune, cell.Style.Underline)
+	}
 }
 
 // TestACheckItemDrawsAWideLabelInItsOwnColumns is the fixture menuRows
