@@ -775,9 +775,18 @@ func (n *node) markup(indent string) string {
 // TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen; pasteMarkup ->
 // unwrapGooey reaches the same skip the other way. So this is not
 // pre-work for #517: delete it and every <Gooey xmlns:x> document already
-// on disk gets its element prefix moved onto the content root, out of
-// scope at the <x:Property> it exists for. Corrected in review of #501,
-// the round after the claim was written.
+// on disk gets its element prefix moved onto the content root, where it
+// no longer scopes the siblings of that root.
+//
+// THAT LAST CLAUSE USED TO NAME <x:Property>, and nodeOf's element
+// refusal has taken the live example away: a document CONTAINING one is
+// now turned back at the read, before this function is reached. The
+// guard is unchanged and still right — the declaration is the author's
+// and the move is a fidelity loss on every `<Gooey xmlns:x>` file on
+// disk today, none of which need contain an <x:Property> — but the
+// justification had drifted back to a state no document reaching here
+// can be in, which is the same correction beb3501 made arriving from
+// the other direction. Corrected in review of #501, twice.
 //
 // ONE FUNCTION BECAUSE THERE ARE TWO UNWRAPS. openWorkspaceFile had
 // this inline and unwrapGooey (clipboard.go) had nothing, so #472
@@ -813,10 +822,26 @@ func carryDeclarations(env, root *node) {
 // class, and the claim was the stated reason nobody need cross-check the
 // two predicates. Comparing against what the root now holds makes the
 // complement true instead of asserted. Raised in review of #501.
+//
+// AND THE SIBLING'S OWN EXCEPTION CAME WITH IT, which the paragraph
+// above had just finished arguing was the whole point. carryDeclarations
+// refuses to move markup.XNamespace down; this compared values and fell
+// into the skip whenever the content root happened to declare the same
+// URI, whether or not anything had put it there. Measured end to end
+// through the file browser on a document declaring xmlns:x at BOTH
+// levels:
+//
+//	envAttrs = map[]
+//	rebuilt  = "<Gooey>"  over  <Canvas … xmlns:x="…">
+//
+// — the exact relocation the sibling guard exists to prevent, reached
+// through the complement instead. Value-equality is not the question;
+// "did carryDeclarations put it there" is, and for this one URI the
+// answer is always no. Raised in review of #501.
 func envelopeAttrs(env, root *node) map[string]string {
 	out := make(map[string]string, len(env.Attrs))
 	for k, v := range env.Attrs {
-		if isNamespaceAttr(k) && root.Attrs[k] == v {
+		if isNamespaceAttr(k) && v != markup.XNamespace && root.Attrs[k] == v {
 			continue
 		}
 		out[k] = v
@@ -1251,11 +1276,14 @@ func nodeOf(src string) (*node, error) {
 			// carryDeclarations: it now KEEPS `xmlns:x` on the envelope,
 			// so a paste produced `<Thing xmlns:t="urn:a"/>` — the
 			// declaration preserved and the prefix it scoped discarded.
-			// Raised in review of #501, where the argument ended
-			// "and once #517 lifts the two-roots refusal, an
-			// <x:Property> read through here becomes a node named
-			// Property". THAT IS THIS BRANCH, and it is why the
-			// x-namespace is exempt below rather than refused.
+			// And once #517/#522 lifts the two-roots refusal, an
+			// `<x:Property>` read through here becomes a node named
+			// `Property`, which saveOpenFile writes as `<Property>` —
+			// the exact spelling splitDeclarations' `c.Name ==
+			// "Property"` arm (markup/property.go) refuses. That lift is
+			// what the x-namespace exemption below answers, which is why
+			// the namespace is exempted here rather than refused.
+			// Raised in review of #501.
 			//
 			// THE TEST IS NOT `t.Name.Space != ""`, and that is the
 			// whole reason this needs a scope stack. encoding/xml
@@ -1334,8 +1362,8 @@ func nodeOf(src string) (*node, error) {
 				// out verbatim, so a declaration that survives the read
 				// survives the write, the save, and an edit made
 				// through the properties pane. What the pane cannot do
-				// is ADD one: valueEditor.Write only ever writes
-				// p.name (properties.go:798) and p.name comes from the
+				// is ADD one: valueEditor.Write (properties.go) only
+				// ever writes p.name, and p.name comes from the
 				// element's DECLARED attributes, so there is nowhere to
 				// type a free-form attribute name — that is #500. This
 				// comment claimed the opposite until review of #501,
