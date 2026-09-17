@@ -2,6 +2,7 @@ package gooey
 
 import (
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -356,11 +357,19 @@ func TestANonConstantRankPartsThePlanes(t *testing.T) {
 //
 // docFilesIn is the same walk every guard in zorderdocs_test.go uses, so
 // the set is tracked files only and the two cannot drift.
+//
+// THE EXCLUDED FILE TRAVELS WITH THE NAME. This function took a testName
+// parameter in round six and went on excluding a hardcoded path, so a
+// second caller asking about a test defined elsewhere would have dropped
+// THIS file from that test's list — a page that does cite it — while
+// keeping the file that defines it, which does not count as a citation.
+// definingFile derives it instead. Raised in review of #458.
 func citingPages(t *testing.T, testName string) []string {
 	t.Helper()
+	defined := definingFile(t, testName)
 	var out []string
 	for _, p := range docFilesIn(t, ".") {
-		if isTheDivergencePin(p) {
+		if isTheDivergencePin(p, defined) {
 			continue
 		}
 		b, err := docText(p)
@@ -375,18 +384,50 @@ func citingPages(t *testing.T, testName string) []string {
 	return out
 }
 
-// isTheDivergencePin is the one file citingPages must not report: this
-// one, where the test is DEFINED. The path is the whole path rather than
-// a basename, for the reason docFilesIn's own exemption gives — a
-// basename exempts a same-named file at any depth.
+// definingFile is the tracked file that declares `func <testName>`, and
+// it is the one file citingPages must not report: a definition is not a
+// citation.
+//
+// DERIVED, NOT NAMED, so the exclusion cannot part from the name it is
+// an exclusion for. Exactly one file must declare it — none means the
+// caller named a test that does not exist, and two is not expressible in
+// one Go package, so either answer says the walk or the name is wrong
+// rather than quietly trimming the list by one.
+func definingFile(t *testing.T, testName string) string {
+	t.Helper()
+	decl := regexp.MustCompile(`(?m)^func ` + regexp.QuoteMeta(testName) + `\(`)
+	var found []string
+	for _, p := range docFilesIn(t, ".") {
+		if !strings.HasSuffix(p, ".go") {
+			continue
+		}
+		b, err := docText(p)
+		if err != nil {
+			t.Fatalf("reading %s: %v", p, err)
+		}
+		if decl.MatchString(b) {
+			found = append(found, filepath.ToSlash(filepath.Clean(p)))
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d files declare func %s (%v), want exactly 1 — the exclusion "+
+			"citingPages applies is the file that DEFINES the test, and it cannot "+
+			"be derived from an answer that is not one file", len(found), testName, found)
+	}
+	return found[0]
+}
+
+// isTheDivergencePin reports whether p is that file. The path is the
+// whole path rather than a basename, for the reason docFilesIn's own
+// exemption gives — a basename exempts a same-named file at any depth.
 //
 // Clean before the compare, because the walk's spelling is not the only
 // one a caller has: docFilesIn(".") yields a bare `overlayrank_test.go`
 // while the honesty arm below hands it `./overlayrank_test.go`, and an
 // exemption that answers differently for two spellings of one file is
 // the same defect one level down.
-func isTheDivergencePin(p string) bool {
-	return filepath.ToSlash(filepath.Clean(p)) == "overlayrank_test.go"
+func isTheDivergencePin(p, defined string) bool {
+	return filepath.ToSlash(filepath.Clean(p)) == filepath.ToSlash(filepath.Clean(defined))
 }
 
 // TestTheDivergencePinExcludesItselfAndNothingElse keeps the exemption
@@ -394,10 +435,40 @@ func isTheDivergencePin(p string) bool {
 // file it was written for is how a derived list quietly becomes a
 // shorter derived list.
 func TestTheDivergencePinExcludesItselfAndNothingElse(t *testing.T) {
+	// DERIVED, and this is the half the hardcoded version could not
+	// assert: the file the exclusion names is the file that declares the
+	// test citingPages is asked about. Move the test to a sibling and
+	// this answer moves with it.
+	defined := definingFile(t, "TestARankOrdersHitTestingAsWellAsPaint")
+	if defined != "overlayrank_test.go" {
+		t.Errorf("the test citingPages is asked about is declared in %q, want "+
+			"overlayrank_test.go — the arms below describe this file", defined)
+	}
+
+	// A SECOND NAME, DEFINED SOMEWHERE ELSE, which is the pairing itself
+	// rather than a mutation of it: under the hardcoded exclusion this
+	// arm is false both ways round — overlayrank_test.go, a page that
+	// CITES the test below, was dropped from its list, and
+	// overlayhit_test.go, which defines it, was kept.
+	elsewhere := definingFile(t, "TestADragIsNotWalkedForByAQueryEither")
+	if elsewhere != "overlayhit_test.go" {
+		t.Fatalf("the second test is declared in %q, want overlayhit_test.go — "+
+			"this arm exists to ask about a test defined in another file and "+
+			"has stopped doing so", elsewhere)
+	}
+	if !isTheDivergencePin("overlayhit_test.go", elsewhere) {
+		t.Error("the exclusion for a test defined in overlayhit_test.go does not " +
+			"cover that file, so a definition would be counted as a citation")
+	}
+	if isTheDivergencePin("overlayrank_test.go", elsewhere) {
+		t.Error("the exclusion for a test defined in overlayhit_test.go covers " +
+			"overlayrank_test.go, which only CITES it — the exclusion has not " +
+			"travelled with the name it is an exclusion for")
+	}
 	for _, p := range []string{
 		"overlayrank_test.go", "./overlayrank_test.go",
 	} {
-		if !isTheDivergencePin(p) {
+		if !isTheDivergencePin(p, defined) {
 			t.Errorf("isTheDivergencePin(%q) is false; this file must be excluded "+
 				"however the walk spells its path", p)
 		}
@@ -408,7 +479,7 @@ func TestTheDivergencePinExcludesItselfAndNothingElse(t *testing.T) {
 		"overlayrank.go",
 		"overlayonepass_test.go",
 	} {
-		if isTheDivergencePin(p) {
+		if isTheDivergencePin(p, defined) {
 			t.Errorf("isTheDivergencePin(%q) is true; the exemption is for the one "+
 				"file that DEFINES the test, and anything wider silently shrinks "+
 				"the list the failure message derives", p)

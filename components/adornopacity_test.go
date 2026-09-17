@@ -15,13 +15,46 @@ import (
 // ast.IndexListExpr and reach the Ident only through .X.
 //
 // It returns "" for a shape it does not know, and the caller treats that
-// as an error rather than a skip: see there.
+// as an error rather than a skip: see there. For an EMBEDDED FIELD the
+// caller asks qualifiedEmbed first, because pkg.T is a shape this
+// deliberately does not name.
 //
 // NOT HYPOTHETICAL. This package already declares generic receivers —
 // itemsview.go's Len and At — so before the two Index arms the extractor
 // was returning "" on real methods every run and dropping their types
 // out of the scan without a word. Measured by removing the arms: the
 // error names them. Raised in review of #458.
+// qualifiedEmbed reports whether e is `pkg.T` or `*pkg.T`, generic forms
+// included — an embed from a package this scan does not parse.
+//
+// It exists so that the two ways receiverName can answer "" stop meaning
+// the same thing. gooey.Base is an ast.SelectorExpr and is meant to be
+// skipped: this package's scan reads its own directory, so a method
+// promoted from another package is residue it states rather than
+// follows. Every OTHER unnamed shape is the hole the receiver side
+// already treats as an error — a type embedding something this
+// extractor cannot name has a method set the scan under-reports, and an
+// adornment reached that way goes unchecked with nothing said. Until
+// this split, both fell through the same silent `continue`. Raised in
+// review of #458.
+func qualifiedEmbed(e ast.Expr) bool {
+	for {
+		switch x := e.(type) {
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.IndexListExpr:
+			e = x.X
+		case *ast.SelectorExpr:
+			_, ok := x.X.(*ast.Ident)
+			return ok
+		default:
+			return false
+		}
+	}
+}
+
 func receiverName(e ast.Expr) string {
 	for {
 		switch x := e.(type) {
@@ -99,6 +132,13 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 			// than one type going missing. Promoting an embedded type's
 			// methods onto the embedder is what makes the derived set a
 			// method-set question again. Raised in review of #458.
+			//
+			// WITHIN THIS PACKAGE. The scan parses this directory, so
+			// promotion reaches an embed declared here and stops at one
+			// naming another package — gooey.Base is the case, and
+			// qualifiedEmbed is where that residue is stated rather
+			// than fallen through. Raised in review of #458, round
+			// seven.
 			if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
 				for _, sp := range gd.Specs {
 					ts, ok := sp.(*ast.TypeSpec)
@@ -109,13 +149,30 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 					if !ok || st.Fields == nil {
 						continue
 					}
-					for _, f := range st.Fields.List {
-						if len(f.Names) != 0 {
+					// fld, not f: f is the FILE path this loop
+					// reports with, and a field named f shadows it.
+					for _, fld := range st.Fields.List {
+						if len(fld.Names) != 0 {
 							continue // a named field promotes nothing
 						}
-						if e := receiverName(f.Type); e != "" {
+						if e := receiverName(fld.Type); e != "" {
 							embeds[ts.Name.Name] = append(embeds[ts.Name.Name], e)
+							continue
 						}
+						if qualifiedEmbed(fld.Type) {
+							// STATED RESIDUE: an embed from another
+							// package, whose methods this scan cannot
+							// see because it reads this directory only.
+							// gooey.Base is the case, and it carries no
+							// Anchor or Place.
+							continue
+						}
+						t.Errorf("%s: %s embeds a type this scan cannot name, so the "+
+							"methods it promotes are invisible to the transparency "+
+							"check below and an adornment reached that way goes "+
+							"unchecked. Teach receiverName the shape, or "+
+							"qualifiedEmbed if it names another package",
+							f, ts.Name.Name)
 					}
 				}
 				continue

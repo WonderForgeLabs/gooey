@@ -601,20 +601,32 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// reaches it: they all scan prose, and an identifier is not prose.
 	// Raised in review of #478.
 	//
-	// NO WALK WHEN NOTHING READS IT. A captured MouseMove is a drag, and
-	// a drag routes to the captor: target() returns m.captor whatever the
-	// hit is, and the hover update below is skipped while captured. So
-	// every motion event of every drag paid for a full HitTest whose two
-	// results were both discarded — and the walk got dearer with #465,
-	// which took away the early exit on the first hit so that ranks could
-	// be compared across the whole tree.
+	// NO WALK WHEN NOTHING READS IT. While the pointer is captured every
+	// event routes to the captor — target() returns m.captor whatever the
+	// hit is — and the hover update below is skipped too. So the walk was
+	// paid for and thrown away, and it got dearer with #465, which took
+	// away the early exit on the first hit so that ranks could be
+	// compared across the whole tree.
 	//
-	// The skip is exactly the case where both consumers are dead, and
-	// nothing else changes: frozenHostFor(nil) is nil, and target(nil)
+	// PRESS AND RELEASE ARE THE TWO THAT DO READ IT, which is the whole
+	// condition: a press sets the implicit captor FROM the hit, and a
+	// release measures m.within(captor, hit) to decide whether a click is
+	// synthesized. Nothing else does. The first version of this skip took
+	// MouseMove alone and called it "exactly the case where both
+	// consumers are dead" — a captured WheelUp/WheelDown falls to the
+	// default arm, where target(hit) is the captor and setHover is never
+	// reached, so it discarded the walk too and went on paying for it.
+	// Scrolling during a splitter or scrollbar drag is the reachable
+	// case. Raised in review of #458.
+	//
+	// Nothing else changes: frozenHostFor(nil) is nil, and target(nil)
 	// with a captor is the captor. TestADragDoesNotWalkTheTreeOnEveryMove
-	// pins it by counting the walk. Raised in review of #458.
+	// pins it by counting the walk, for a move and for a wheel.
+	//
+	// The COST that motivates it is still the move: ?1003h reports one
+	// per cell crossed, where a wheel is one per notch.
 	var under Component
-	if ev.Kind != input.MouseMove || m.captor == nil {
+	if m.captor == nil || ev.Kind == input.MousePress || ev.Kind == input.MouseRelease {
 		under = m.HitTest(ev.X, ev.Y)
 	}
 	hit := m.frozenHostFor(under, AllowPointer)
@@ -714,11 +726,19 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 //
 // UI-goroutine only, like every other query on this type.
 func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
-	// THE SAME SKIP DISPATCH TAKES. A captured MouseMove routes to the
-	// captor whatever the hit is — target() returns m.captor, and the
-	// press arm below cannot fire for a move — so the walk's result is
-	// discarded here exactly as it was there, and the answer is
-	// identical by construction rather than by agreement.
+	// THE SAME SKIP DISPATCH TAKES, in this function's own terms. While
+	// the pointer is captured, target() answers with the captor whatever
+	// the hit is, so the only kind whose ANSWER here depends on the walk
+	// is the press that discards an implicit capture — the arm below.
+	// Every other kind returns the captor, and the walk's result is
+	// discarded exactly as it is on the dispatch side.
+	//
+	// The condition is deliberately NOT spelled the way dispatch's is. A
+	// captured RELEASE reads the hit there — m.within(captor, hit) decides
+	// whether a click is synthesized — and reads nothing here, because a
+	// query synthesizes nothing. One condition shared between the two
+	// would make this function model a dispatch behaviour it does not
+	// have. Raised in review of #458.
 	//
 	// Mirroring it is what keeps this function the thing its own doc
 	// above calls it: "the query that models where an event would
@@ -733,7 +753,7 @@ func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
 	// MouseMove arriving with the pointer captured performs no hit test
 	// at all" a statement about the framework rather than about one
 	// function. Raised in review of #458.
-	if ev.Kind == input.MouseMove && m.captor != nil {
+	if m.captor != nil && !(ev.Kind == input.MousePress && !m.held) {
 		return m.captor
 	}
 	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y), AllowPointer)

@@ -1630,14 +1630,6 @@ func spanWindow(lines []string, first, last, before, after int) string {
 // is somebody else's prose entirely.
 func docFiles(t *testing.T) []string { return docFilesIn(t, ".") }
 
-// docFilesIn is docFiles over an arbitrary root, which is what lets the
-// honesty arm point these guards at a FIXTURE DIRECTORY instead of at the
-// repo. Without it every one of them is exercised only against the tree's
-// current contents, so a mutation the tree does not happen to trigger is
-// silent — and five of them were, measured, in review of #478. That is
-// the same defect #475 found in the citation guard: an honesty arm that
-// drives the check through a stub exercises everything except the
-// production path.
 // walkDocFiles is docFilesIn without a *testing.T, so the shared corpus
 // below can build itself off any goroutine. The floor and the failure
 // reporting stay with the caller, which is the half that needs the T.
@@ -1759,6 +1751,19 @@ func docText(path string) (string, error) {
 	return string(b), err
 }
 
+// docFilesIn is docFiles over an arbitrary root, which is what lets the
+// honesty arm point these guards at a FIXTURE DIRECTORY instead of at the
+// repo. Without it every one of them is exercised only against the tree's
+// current contents, so a mutation the tree does not happen to trigger is
+// silent — and five of them were, measured, in review of #478. That is
+// the same defect #475 found in the citation guard: an honesty arm that
+// drives the check through a stub exercises everything except the
+// production path.
+//
+// This paragraph sat in walkDocFiles' doc block until round seven, so
+// godoc rendered it as walkDocFiles' and this function had none — the
+// #483 class, in the file whose thesis is that a description outlives
+// its subject. Raised in review of #458.
 func docFilesIn(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -3227,30 +3232,75 @@ func TestAReportNamesThePlaneItFound(t *testing.T) {
 // declared rule must be named by SOME scan call, which catches a rule
 // declared and wired to nothing.
 //
-// THE SECOND CLAUSE IS DELIBERATELY WEAKER THAN THE FIRST, and the
-// reason is in the file: residueRule reaches the scanner through
-// scanFilesForResidue rather than through a repo-wide guard, and
-// inputRule and zOrderRule are each named a second time by a fixture
-// arm inside another test. Demanding one call per rule reported all
-// three as defects — measured while writing this. So the strong
-// bijection is scoped to the repo-wide entry point, where the silent
-// rewiring lives, and the weak one covers the rest.
+// THE SECOND CLAUSE IS AN EXPLICIT EXEMPTION, NOT A WEAKER TEST, and
+// the round that made it weaker instead left the hole it was closing
+// open one call shape over. It accepted a rule "named by SOME scan
+// call", and scanFilesForRetiredRule is one — so rewriting
+//
+//	scanForRetiredRule(t, visibilityRule)
+//
+// to `scanFilesForRetiredRule(t, docFiles(t), visibilityRule)`, the
+// variant that RETURNS findings instead of reporting them, left guards
+// with two entries, both planes unique, visibilityRule still "named",
+// and the Visibility plane scanned by nobody. Measured in review of
+// #458, round seven — the same silent rewiring the test was written
+// for, in the caller half rather than the argument half.
+//
+// So every declared rule must now be the argument of exactly one
+// repo-wide guard, EXCEPT the ones guardedOtherwise names and says why.
+// An exemption that has to be written down and justified does not grow
+// by itself, which is the argument docFilesIn makes in this same file.
+// A stale entry is a failure too: a rule that stops being declared, or
+// starts having a repo-wide guard, leaves its exemption behind, and the
+// exemption is exactly the thing that would then hide the next rewiring.
 //
 // PLANES ARE NOT UNIQUE ACROSS ALL RULES and this does not pretend they
 // are: inputRule and residueRule deliberately share planeInput, the
 // input walk's retired claim and the half-finished correction it leaves
 // behind. The uniqueness is asserted over what the repo-wide guards
 // scan, not over what the file declares.
+// guardedOtherwise is the rules that legitimately have no repo-wide
+// scanForRetiredRule guard, and what reaches them instead. Anything not
+// here must have exactly one.
+var guardedOtherwise = map[string]string{
+	"residueRule": "scanFilesForResidue, which TestNoFileTeachesTheRetiredInputRule " +
+		"calls beside its own guard: the residue is the half-finished correction " +
+		"a retired input claim leaves behind, so it is scanned with that rule " +
+		"rather than on its own",
+}
+
 func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "zorderdocs_test.go", nil, 0)
+	// EVERY TEST FILE IN THIS PACKAGE, not this one by name. The
+	// hardcoded filename meant a rule and its guard moving to a sibling
+	// _test.go together left the bijection unchecked without a word —
+	// the same "exemption that grows by itself" shape this test's own
+	// doc argues against, one level up. Raised in review of #458.
+	names, err := filepath.Glob("*_test.go")
 	if err != nil {
-		t.Fatalf("parsing this file: %v", err)
+		t.Fatalf("listing this package's test files: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("no *_test.go in this directory, so both sides of the " +
+			"comparison below are empty and it proves nothing")
+	}
+	fset := token.NewFileSet()
+	var parsed []*ast.File
+	for _, name := range names {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		parsed = append(parsed, f)
+	}
+	inspect := func(fn func(ast.Node) bool) {
+		for _, f := range parsed {
+			ast.Inspect(f, fn)
+		}
 	}
 
 	// name -> the identifier its `plane:` field names.
 	declared := map[string]string{}
-	ast.Inspect(f, func(n ast.Node) bool {
+	inspect(func(n ast.Node) bool {
 		vs, ok := n.(*ast.ValueSpec)
 		if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
 			return true
@@ -3283,18 +3333,18 @@ func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
 		return true
 	})
 	if len(declared) == 0 {
-		t.Fatal("no `var X = rulePlane{…}` declaration found in this file, so " +
+		t.Fatal("no `var X = rulePlane{…}` declaration found in this package, so " +
 			"both sides of the comparison below are empty and it proves nothing")
 	}
 
 	// TWO SETS. `guards` is the repo-wide entry point — where the
 	// rewiring is silent — and `named` is every literal mention of a
-	// rule anywhere in the file, including scanFilesForResidue's and
-	// the fixture arms'.
+	// rule anywhere in the package's tests, which is what an exempt rule
+	// has to clear instead.
 	guards := map[string]int{}
 	named := map[string]bool{}
 	entry := map[string]int{"scanForRetiredRule": 1, "scanFilesForRetiredRule": 2}
-	ast.Inspect(f, func(n ast.Node) bool {
+	inspect(func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -3345,10 +3395,32 @@ func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
 		}
 	}
 	for name, plane := range declared {
-		if !named[name] {
-			t.Errorf("%s is declared and no scan names it — the plane it carries "+
-				"(%s) may be checked by nothing, and every guard in this file is "+
-				"a negative assertion, so nothing else goes red", name, plane)
+		why, exempt := guardedOtherwise[name]
+		switch {
+		case !exempt && guards[name] == 0:
+			t.Errorf("%s is declared and no repo-wide scanForRetiredRule names it, "+
+				"so the plane it carries (%s) is scanned by nobody. Every guard in "+
+				"this package is a negative assertion over a clean tree, so nothing "+
+				"else goes red — including a guard rewired to the RETURNING variant, "+
+				"scanFilesForRetiredRule, which reports nothing on its own. Point a "+
+				"repo-wide guard at it, or add it to guardedOtherwise with the "+
+				"reason", name, plane)
+		case exempt && guards[name] != 0:
+			t.Errorf("%s is exempted from the repo-wide bijection (%s) and has %d "+
+				"repo-wide guard(s) anyway. Drop the guardedOtherwise entry: while "+
+				"it stands, a later rewiring of that guard is exactly what it would "+
+				"hide", name, why, guards[name])
+		case exempt && !named[name]:
+			t.Errorf("%s is exempted from the repo-wide bijection on the grounds of "+
+				"%s, and no scan call names it at all — so the plane it carries (%s) "+
+				"is checked by nothing and the exemption is what says so", name, why, plane)
+		}
+	}
+	for name := range guardedOtherwise {
+		if _, ok := declared[name]; !ok {
+			t.Errorf("guardedOtherwise names %s, which is not a declared rulePlane "+
+				"in this package. A stale exemption is the thing that would hide "+
+				"the next rewiring", name)
 		}
 	}
 }

@@ -645,15 +645,24 @@ func (d *dragSink) HandleMouseMove(input.MouseEvent) bool { d.moves++; return tr
 // optimization working. Raised in review of #458.
 func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 	sink := &dragSink{stripe: stripe{ch: 'S'}}
-	box := &countingBox{kids: []Component{sink}}
+	// TOP IS NOT THE CAPTOR, which is what makes "routes to the captor"
+	// distinguishable from "routes to the hit". Both children take the
+	// box's whole bounds and only one of them can be under the pointer;
+	// which one is ASSERTED by the uncaptured arm below rather than
+	// stated here, so this fixture teaches no ordering rule of its own.
+	// Raised in review of #458.
+	top := &stripe{ch: 'T'}
+	box := &countingBox{kids: []Component{sink, top}}
 	c := NewComposer(box, 12, 3)
 	t.Cleanup(c.Close)
 	c.Frame()
 	m := NewFocusManager(box)
 
 	move := input.MouseEvent{Kind: input.MouseMove, X: 0, Y: 0}
+	wheel := input.MouseEvent{Kind: input.WheelDown, X: 0, Y: 0}
 
 	before := box.walks
+	moves := sink.moves
 	m.DispatchMouse(move)
 	if box.walks == before {
 		t.Fatalf("an UNCAPTURED move asked the tree for its children %d times, "+
@@ -661,12 +670,17 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 			"fixture, so the captured arm below would pass over nothing",
 			box.walks-before)
 	}
+	if sink.moves != moves {
+		t.Fatalf("an UNCAPTURED move reached the captor-to-be, so it is also the " +
+			"component under the pointer — and the captured arm below cannot then " +
+			"tell routing to the CAPTOR from routing to the HIT")
+	}
 
 	if !m.CaptureMouse(sink) {
 		t.Fatal("the captor refused the capture, so the arm below is not a drag")
 	}
 	before = box.walks
-	moves := sink.moves
+	moves = sink.moves
 	m.DispatchMouse(move)
 	if n := box.walks - before; n != 0 {
 		t.Errorf("a CAPTURED move walked the tree %d times for a hit nothing "+
@@ -677,6 +691,18 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 	if sink.moves == moves {
 		t.Error("the captor was not routed the move, so skipping the walk changed " +
 			"the dispatch rather than only its cost")
+	}
+
+	// THE WHEEL, which the first version of this skip left paying. It
+	// falls to DispatchMouse's default arm, where target(hit) is the
+	// captor and setHover is never reached — the same dead pair as the
+	// move, reached by scrolling mid-drag.
+	before = box.walks
+	m.DispatchMouse(wheel)
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a CAPTURED wheel walked the tree %d times for a hit nothing "+
+			"reads: the default arm routes to target(hit), which is the captor, "+
+			"and the hover update is not on that path at all", n)
 	}
 }
 
@@ -693,23 +719,32 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 //
 // THE DELTA, NOT THE TOTAL, and the uncaptured arm is the non-vacuity
 // floor, for the reasons TestADragDoesNotWalkTheTreeOnEveryMove gives.
-// The returned component is asserted in both arms as well: a skip that
-// changed the ANSWER rather than only its cost would satisfy a walk
-// count on its own. Raised in review of #458.
+//
+// THE CAPTOR IS NOT THE COMPONENT UNDER THE POINTER, and until round
+// seven it was — one child, which was both, so both arms asserted
+// `got == sink` and neither could tell "returns the captor" from
+// "returns the hit". The doc claimed the opposite: that the answer
+// assertions would catch a skip which changed the answer rather than
+// only the cost. They now do. Two children take the box's whole bounds
+// and the uncaptured arm asserts which one HitTest answers with; the
+// captured arm must answer the OTHER one, so a skip that returned the
+// hit reddens it. Raised in review of #458.
 func TestADragIsNotWalkedForByAQueryEither(t *testing.T) {
 	sink := &dragSink{stripe: stripe{ch: 'S'}}
-	box := &countingBox{kids: []Component{sink}}
+	top := &stripe{ch: 'T'}
+	box := &countingBox{kids: []Component{sink, top}}
 	c := NewComposer(box, 12, 3)
 	t.Cleanup(c.Close)
 	c.Frame()
 	m := NewFocusManager(box)
 
 	move := input.MouseEvent{Kind: input.MouseMove, X: 0, Y: 0}
+	wheel := input.MouseEvent{Kind: input.WheelDown, X: 0, Y: 0}
 
 	before := box.walks
-	if got := m.MouseTarget(move); got != Component(sink) {
-		t.Fatalf("an UNCAPTURED move targets %#v, want the sink under it — the "+
-			"fixture this test measures is not the one being walked", got)
+	if got := m.MouseTarget(move); got != Component(top) {
+		t.Fatalf("an UNCAPTURED move targets %#v, want the top stripe under it — "+
+			"the fixture this test measures is not the one being walked", got)
 	}
 	if box.walks == before {
 		t.Fatalf("an UNCAPTURED move asked the tree for its children %d times, "+
@@ -721,14 +756,24 @@ func TestADragIsNotWalkedForByAQueryEither(t *testing.T) {
 	if !m.CaptureMouse(sink) {
 		t.Fatal("the captor refused the capture, so the arm below is not a drag")
 	}
-	before = box.walks
-	if got := m.MouseTarget(move); got != Component(sink) {
-		t.Fatalf("a CAPTURED move targets %#v, want the captor: skipping the "+
-			"walk has changed the answer, not only its cost", got)
-	}
-	if n := box.walks - before; n != 0 {
-		t.Errorf("a CAPTURED move walked the tree %d times for a hit nothing "+
-			"reads: MouseTarget discards it in target(), and control's "+
-			"Service.mayPoint asks this per pointer event for every guest", n)
+	for _, tc := range []struct {
+		what string
+		ev   input.MouseEvent
+	}{
+		{"move", move},
+		{"wheel", wheel},
+	} {
+		before = box.walks
+		if got := m.MouseTarget(tc.ev); got != Component(sink) {
+			t.Errorf("a CAPTURED %s targets %#v, want the captor — the skip has "+
+				"changed the answer, not only its cost, and the top stripe is "+
+				"what it answers with when it returns the hit", tc.what, got)
+		}
+		if n := box.walks - before; n != 0 {
+			t.Errorf("a CAPTURED %s walked the tree %d times for a hit nothing "+
+				"reads: MouseTarget discards it in target(), and control's "+
+				"Service.mayPoint asks this per pointer event for every guest",
+				tc.what, n)
+		}
 	}
 }
