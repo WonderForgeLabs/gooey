@@ -169,9 +169,13 @@ line), or inferred from the root's arranged bounds in `tree_snapshot`.
 That inference is reliable for an unscoped session — the composer arranges
 the root to the whole screen whatever it declares — and for a scoped one it
 returns the same rect this tool does, because a scoped `tree_snapshot` is
-rooted at the island and reports its bounds from the same call. What it
-does not tell you is *which* of the two you are looking at, and it costs a
-whole tree to learn two integers and cannot report the cell metrics at all.
+rooted at the island and reports its bounds from the same call. It costs a
+whole tree to learn two integers, and it cannot report the cell metrics at
+all. Which of the two surfaces you are looking at, `screen_size` answers by
+*contract* rather than by a field — the result is this session's visible
+surface, whatever its scope — so you never have to ask. Do not try to read
+it off the numbers: `x`/`y` are `(0,0)` for an unscoped session and also for
+a session scoped to an island arranged at the origin.
 
 ```sh
 curl -s http://127.0.0.1:7778/mcp \

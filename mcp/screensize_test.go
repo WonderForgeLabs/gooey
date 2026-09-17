@@ -545,11 +545,29 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 		t.Fatalf("screenSizeSchema declares no properties (%v), so this test "+
 			"would compare the result against an empty set", schema)
 	}
-	for name := range props {
+	for name, v := range props {
 		if _, ok := got[name]; !ok {
 			t.Errorf("the schema publishes %q and screen_size's result does not "+
 				"carry it: a client reading the contract asks for a key that is "+
 				"never there", name)
+		}
+		// AND THE DESCRIPTION IS RENDERED, not written. Four of these
+		// six go through fmt.Sprintf over extentTail/originTail, and
+		// nothing in this module asserted on a rendered description
+		// string — so a tail that grows a literal %, or a second verb
+		// added for one axis, ships %!s(MISSING) into a published JSON
+		// Schema with gofmt, vet, -race and every inventory guard
+		// green. That is the silent-staleness failure this file was
+		// built around, arriving through the mechanism the file
+		// introduced to prevent it. Raised in review of #504.
+		d, _ := v.(map[string]any)["description"].(string)
+		if strings.Contains(d, "%!") {
+			t.Errorf("%q's description carries fmt residue (%q): a tail grew a %% "+
+				"and Sprintf shipped it to every generated client", name, d)
+		}
+		if d == "" {
+			t.Errorf("%q publishes an empty description, so the check above "+
+				"ruled on nothing for it", name)
 		}
 	}
 	for name := range got {

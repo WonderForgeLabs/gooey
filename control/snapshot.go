@@ -318,11 +318,16 @@ func (s *Service) islandBounds() (gooey.Rect, bool) {
 // and not Bounded, and an island grant naming one would reach the type
 // assertion. That is why the comma-ok is here and not a bare assertion.
 //
-// It has no test for the same reason it cannot fire here: a fixture would
-// have to declare a type this tree cannot hold, and pinning an arm with a
-// state the subject cannot reach measures the fixture. The honest record
-// is this sentence — and if Component ever grows Bounds, the arm and this
-// paragraph go together. Raised in review of #504.
+// IT IS ALSO TESTED, and this paragraph used to say it could not be:
+// "a fixture would have to declare a type this tree cannot hold". The
+// tree cannot hold one; a _test.go can, and it is ten lines —
+// control_test.go's `boundless` has the three methods and embeds
+// nothing. TestIslandRectAnswersGoneCollapsedAndBoundless drives all
+// three outcomes. An arm argued to be untestable and then tested is the
+// same shape as the "no cheap observable" claims this branch has been
+// retiring, so it is recorded rather than quietly replaced. If Component
+// ever grows Bounds, the arm, the fixture and this paragraph go
+// together. Raised in review of #504.
 //
 // THE REASON IS RE-DERIVED rather than carried out of islandBounds: that
 // costs a second lookup only on the path already building an error, and
@@ -561,23 +566,36 @@ type ScreenSize struct {
 //
 // The reasons that survive measurement:
 //
-//   - A SCOPED session's island genuinely is not the screen, and a client
-//     has to know which of the two it is being told about. The inference
-//     does NOT disagree there — Service.Tree roots a scoped snapshot at
-//     the island and walk emits bounds from the same gooey.Bounded.Bounds()
-//     call islandBounds makes, so the root bound IS this tool's
-//     cols/rows/x/y, and TestATreeSnapshotBoundIsAlreadyAbsolute asserts
-//     that agreement. What the inference cannot supply is the knowledge
-//     that the root it read was the island rather than the screen. This
-//     bullet said the inference returns a WRONG answer for a scoped
-//     session; it was written from reasoning rather than measurement, in
-//     the same doc that retires the margin/Width/alignment claim for
-//     exactly that reason, and this PR's own test measures the opposite.
-//     Raised in review of #504.
+//   - A SCOPED session's island genuinely is not the screen, and this
+//     tool answers which surface you have BY CONTRACT rather than by a
+//     field: the result IS this session's visible surface, whatever its
+//     scope, so a client never has to ask. The inference does NOT
+//     disagree about the numbers — Service.Tree roots a scoped snapshot
+//     at the island and walk emits bounds from the same
+//     gooey.Bounded.Bounds() call islandBounds makes, so the root bound
+//     IS this tool's cols/rows/x/y, and
+//     TestATreeSnapshotBoundIsAlreadyAbsolute asserts that agreement; it
+//     just costs a whole tree to learn two integers.
+//
+//     NOTE x/y DO NOT DISTINGUISH THE TWO. The payload has six fields
+//     and no scope flag, and (0,0) is what an unscoped session reports
+//     AND what a session scoped to an island arranged at the origin
+//     reports — mcpIslandMarkup is that fixture, which is why
+//     islandOffOriginMarkup had to be added for the origin test. This
+//     bullet claimed the tool supplies "the knowledge that the root it
+//     read was the island rather than the screen", which is a claim
+//     about the payload the payload does not support: the same class as
+//     the margin/Width/alignment claim and the "wrong answer for a
+//     scoped session" claim this comment retires three paragraphs up.
+//     The contract is the stronger argument anyway, and it is
+//     measurable. Raised in review of #504, twice.
+//
 //   - screen_text's lines are trailing-trimmed, so the width it implies
 //     is the longest PAINTED line, not the terminal's.
+//
 //   - Both workarounds cost a whole tree or a whole screen to learn two
 //     integers.
+//
 //   - Neither carries the cell metrics at all.
 //
 // A SCOPED SESSION IS TOLD ITS ISLAND'S SIZE, which is the same fiction

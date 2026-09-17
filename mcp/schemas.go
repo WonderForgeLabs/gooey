@@ -199,10 +199,25 @@ const (
 // measurement, which is the move screen_size exists to replace. Two
 // halves of one contract disagreeing is not a thing to assert about; it
 // is a thing to make unwritable. Raised in review of #504.
+//
+// AND THERE ARE TWO SUBSTITUTION SITES, not one. This const named the
+// narrower — and it is the copy that ships to clients, while
+// control.ScreenSize's doc and docs/learn/08-remote-control.md both name
+// both. term.Screen.Detect substitutes DefaultCellW/H on `caps.CellW ==
+// 0` alone, with NO plane test (term/term.go), so a cell-plane app run
+// with WithCapabilityProbe in a terminal that ignores CSI 16 t reports
+// 10x20 too. An agent applying the narrow rule — invented only for a
+// graphics host with a pinned encoder, and this host is neither —
+// concludes the terminal was measured and sizes a picture against a
+// number nobody took. App.caps' backfill is the second site and fires
+// only where the first did not. Raised in review of #504, one round
+// after the direction was.
 const cellProbeRule = "0 MEANS the host never probed the terminal — branch on that " +
-	"rather than dividing by it. The converse does not hold: a graphics host with " +
-	"a pinned encoder substitutes a default, so non-zero means usable, not " +
-	"necessarily measured."
+	"rather than dividing by it. The converse does not hold, at two separate " +
+	"sites: the probe itself substitutes a default whenever the terminal did not " +
+	"answer, whatever the app paints on, and a graphics host with a pinned " +
+	"encoder substitutes one without probing at all — so non-zero means usable, " +
+	"not necessarily measured."
 
 func screenSizeSchema() map[string]any {
 	return object(map[string]any{

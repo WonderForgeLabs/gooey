@@ -322,3 +322,98 @@ func TestVisibleDamageAllocatesNothingWhileTheIslandIsMissing(t *testing.T) {
 			"rect inside it", got)
 	}
 }
+
+// boundless is a legal gooey.Component that is NOT gooey.Bounded: it has
+// Measure/Arrange/Render and embeds no gooey.Base, so it carries no
+// Bounds() method. Ten lines, and it is what makes islandRect's
+// preconditionf arm reachable — the arm whose doc used to say a fixture
+// "would have to declare a type this tree cannot hold". The tree cannot
+// hold one; a test file can, and gooey.Component's three methods
+// (component.go) are the whole requirement. Raised in review of #504.
+type boundless struct{}
+
+func (boundless) Measure(gooey.Size) gooey.Size { return gooey.Size{} }
+func (boundless) Arrange(gooey.Rect)            {}
+func (boundless) Render(*gooey.Frame)           {}
+
+// TestIslandRectAnswersGoneCollapsedAndBoundless pins islandRect's three
+// outcomes in the package that states the rule.
+//
+// Every behavioural assertion about the rule lived in mcp/screensize_test.go,
+// reached through an MCP client in a different module — covered in
+// practice, since CI and CLAUDE.md's loop run both, but the rule Screen
+// and ScreenSize both depend on had no pin beside itself. This is the
+// narrow version rather than a second copy of the tool's suite: three
+// outcomes, no transport. Raised in review of #504.
+func TestIslandRectAnswersGoneCollapsedAndBoundless(t *testing.T) {
+	arranged := &leaf{}
+	arranged.Base.Arrange(gooey.Rect{X: 10, Y: 5, W: 4, H: 2})
+
+	for _, tc := range []struct {
+		name    string
+		named   map[string]gooey.Component
+		want    gooey.Rect
+		wantErr string
+		why     string
+	}{
+		{
+			name:    "gone",
+			named:   map[string]gooey.Component{},
+			wantErr: "names no element in the running tree",
+			why: "an island absent from bind.Named is GONE, and the denial is the " +
+				"shared islandGoneFmt rather than one of the five sentences it " +
+				"replaced",
+		},
+		{
+			name:  "collapsed",
+			named: map[string]gooey.Component{"isle": &leaf{}},
+			want:  gooey.Rect{},
+			why: "a resolved island that is collapsed or not yet arranged is not " +
+				"GONE — it answers 0x0 with NO error, which is what lets " +
+				"ScreenSize report 0x0 and islandGone stay true when it is said",
+		},
+		{
+			name:    "boundless",
+			named:   map[string]gooey.Component{"isle": boundless{}},
+			wantErr: "exposes no bounds",
+			why: "gooey.Component does not require Bounds, so a component that " +
+				"embeds no Base is legal and not Bounded — which is why the type " +
+				"assertion is a comma-ok and not a bare one",
+		},
+		{
+			name:  "arranged",
+			named: map[string]gooey.Component{"isle": arranged},
+			want:  gooey.Rect{X: 10, Y: 5, W: 4, H: 2},
+			why: "the non-vacuity arm: without it every assertion above passes " +
+				"against an islandRect that always fails",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, bind := testService(nil)
+			bind.Named = tc.named
+			svc.grant = &Grant{Island: "isle"}
+
+			got, err := svc.islandRect()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("islandRect = %v, want no error — %s", err, tc.why)
+				}
+				if got != tc.want {
+					t.Errorf("islandRect = %v, want %v — %s", got, tc.want, tc.why)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("islandRect returned %v and no error — %s", got, tc.why)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("islandRect = %q, want it to contain %q — %s",
+					err.Error(), tc.wantErr, tc.why)
+			}
+			if got != (gooey.Rect{}) {
+				t.Errorf("islandRect returned %v alongside an error; a refused "+
+					"resolution has no rect to report", got)
+			}
+		})
+	}
+}
