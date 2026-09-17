@@ -1274,22 +1274,54 @@ func nodeOf(src string) (*node, error) {
 			// same element name, so the rewrite preserves meaning. It is
 			// only the spelling that moves, and no spelling survives a
 			// document model that holds none.
-			// ONE NAMESPACE IS EXEMPT, and it is the one this branch
-			// exists for. The refusal's premise is that the model
-			// cannot hold the namespace, so writing the element back
-			// out renames it. node.Space holds markup.XNamespace, and
-			// the envelope re-derives the prefix from the xmlns the
-			// document declares (declPrefix), so an <x:Property> makes
-			// the round trip under the author's own prefix — that is
-			// the whole of #517. The premise does not hold for it, so
-			// neither does the refusal.
+			// ONE NAMESPACE IS EXEMPT, AND ONLY AS A CHILD OF THE
+			// ENVELOPE. The refusal's premise is that the model cannot
+			// hold the namespace, so writing the element back out
+			// renames it. What answers that premise is envelopeHead
+			// re-deriving the prefix from declPrefix — and that exists
+			// for the envelope's own children and nothing else. Below
+			// the content root node.markup writes n.Elem and the prefix
+			// is gone, exactly as node.Space's own doc says.
 			//
 			// NOT WIDENED TO "any namespace node.Space can hold", which
 			// is every namespace: Space is set on every element and
-			// DROPPED on write for everything but a declaration, which
-			// node.Space's own doc records. Holding the URI is not the
-			// same as writing it back.
-			if t.Name.Space != def && t.Name.Space != markup.XNamespace {
+			// DROPPED on write for everything but a declaration.
+			//
+			// AND THE WIDENING THAT MATTERS IS POSITIONAL, NOT BY URI,
+			// which the paragraph above claimed to have ruled out while
+			// applying the exemption at every DEPTH. Measured on a file
+			// with an <x:Property> under the content root: the document
+			// OPENED, with a build error — and saveOpenFile is not gated
+			// on the build while canSave gates on openPath, which the
+			// open had set. So ctrl+s on a file the editor was reporting
+			// an error for rewrote it to <Property> on disk, losing the
+			// prefix. Before this branch nodeOf refused the open and
+			// nothing could rewrite anything, so the exemption made a
+			// silent data loss out of a refusal. Raised in review of
+			// #522.
+			//
+			// len(stack) == 1 is the test because the envelope is on the
+			// stack and this element is not yet: a direct child of
+			// <Gooey>, which is where a declaration lives and the only
+			// place the save path can put its prefix back.
+			//
+			// AND len(stack) == 0 — the parsed root — because that is
+			// PASTE's shape, where the node is one element with no
+			// envelope and bareDeclWhy owns the refusal with a message
+			// that says what a declaration is. Refusing here instead
+			// replaced it with "element … is namespaced", which is true
+			// and useless to someone who copied an <x:Property> out of
+			// a document. Nothing writes such a node back: pasteMarkup
+			// refuses it before insertSubtree.
+			//
+			// That leaves ONE way a root-position declaration reaches
+			// disk — a FILE whose root element is one — and
+			// openWorkspaceFile refuses that directly, because measuring
+			// it here is what found it: the file opened, was wrapped in
+			// a <Gooey>, and saved as <Property> with the prefix gone.
+			// See the guard there. Raised in review of #522.
+			envelopeChild := len(stack) == 0 || (len(stack) == 1 && stack[0].Elem == "Gooey")
+			if t.Name.Space != def && !(envelopeChild && t.Name.Space == markup.XNamespace) {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
 			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}

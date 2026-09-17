@@ -342,6 +342,25 @@ func TestTheRootCountRefusalSaysWhatItCounted(t *testing.T) {
 			want: []string{"found 0", "its 1 <p:Property> declaration is not a root element"},
 			not:  []string{"<x:Property>", "<Property>", "are not root elements"},
 		},
+		{
+			// TWO DECLARATIONS UNDER TWO BINDINGS, which is the arm
+			// declPrefix exists for and the one none of the four above
+			// has. declPrefix answers a SAVE-path question — which
+			// prefix will the save write, and does the document already
+			// bind it — so its bound=false means "the envelope needs a
+			// binding added at write time", not "the file writes
+			// <Property> unprefixed". Reading it as the second handed a
+			// correctly namespaced document the bare spelling
+			// bareDeclMsg defines as the missing-namespace typo.
+			// Raised in review of #522.
+			name: "two declarations carrying two different bindings",
+			doc: `<Gooey xmlns="wonderforge.io/gooey/2026">` + "\n" +
+				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="A" Type="string"/>` + "\n" +
+				`  <q:Property xmlns:q="` + markup.XNamespace + `" Name="B" Type="string"/>` + "\n" +
+				`</Gooey>` + "\n",
+			want: []string{"found 0", "its 2 <p:Property> declarations are not root elements"},
+			not:  []string{"<x:Property>", "<Property>"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := workspaceFixture(t)
@@ -757,6 +776,93 @@ func TestSeedingDoesNotRunOnTheRemotePath(t *testing.T) {
 	if len(ed.seededDecls) != 0 {
 		t.Errorf("seededDecls is %v on the remote path, so a later local rebuild "+
 			"would retire names that were never installed", ed.seededDecls)
+	}
+}
+
+// TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved is the
+// hole the x-namespace exemption opened, and the shape of it is why the
+// comment defending the exemption was wrong.
+//
+// nodeOf refuses a prefixed element because the model cannot write the
+// prefix back. The exemption for markup.XNamespace is answered by
+// envelopeHead re-deriving the prefix from declPrefix — and that exists
+// for the ENVELOPE's children and nothing else. Applied at every depth,
+// it let a document in that the save path then rewrote. Measured on the
+// branch before this fix:
+//
+//	status:      ✗ markup: unknown element <Property>
+//	openPath:    nest.gooey                  ← the document IS open
+//	after ^S:    <Property Name="T" …/>      ← the prefix is gone from the FILE
+//
+// saveOpenFile is not gated on the build and canSave gates on openPath,
+// which the open had set — so ctrl+s on a file the editor was reporting
+// an error for rewrote it to a different document. Before this branch
+// nodeOf refused the open outright and nothing could rewrite anything,
+// which is what makes this a data loss rather than a message defect.
+//
+// THE ROOT-POSITION ARM IS THE OTHER HALF, and it is the reason the
+// exemption cannot simply be "depth 1". nodeOf still accepts a
+// declaration as the PARSED ROOT, because that is paste's shape and
+// bareDeclWhy owns the refusal there with a message that says what a
+// declaration is. A FILE whose root element is one reaches the same
+// acceptance — measured, it opened, was wrapped in a <Gooey> and saved
+// as <Property> — so openWorkspaceFile refuses that directly.
+//
+// BOTH ARMS ASSERT THE FILE IS UNCHANGED, not just the status, because
+// the status was already a refusal in the nested case and the file was
+// rewritten anyway. Raised in review of #522.
+func TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc string
+		want      string
+	}{
+		{
+			name: "under the content root",
+			doc: `<Gooey xmlns="wonderforge.io/gooey/2026" xmlns:x="` + markup.XNamespace + `">` + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <x:Property Name="T" Type="string"/>` + "\n" +
+				`  </Canvas>` + "\n</Gooey>\n",
+			want: "is namespaced",
+		},
+		{
+			name: "as the whole file",
+			doc:  `<p:Property xmlns:p="` + markup.XNamespace + `" Name="T" Type="string"/>` + "\n",
+			want: "is a dependency property declaration, not a document",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workspaceFixture(t)
+			path := filepath.Join(root, "d.gooey")
+			if err := os.WriteFile(path, []byte(tc.doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("d.gooey")
+
+			if got := ed.status.Get(); !strings.Contains(got, tc.want) {
+				t.Errorf("the refusal reads %q, want it to contain %q", got, tc.want)
+			}
+			// openPath is what canSave gates on, so an empty one is the
+			// mechanism rather than a corollary: it is why the save
+			// below cannot reach this file.
+			if got := ed.openPath.Get(); got != "" {
+				t.Errorf("openPath is %q after a refused open; ctrl+s then writes "+
+					"the editor's document over this file", got)
+			}
+
+			ed.saveOpenFile()
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != tc.doc {
+				t.Errorf("the file on disk changed:\n--- before\n%s--- after\n%s"+
+					"A refused document must not be written back: the prefix the "+
+					"model cannot hold is exactly what a rewrite loses", tc.doc, after)
+			}
+		})
 	}
 }
 
