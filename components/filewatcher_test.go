@@ -473,7 +473,6 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 	// the stalled goroutine. Reachable in precisely the scenario this
 	// helper exists for — a runner that gives the goroutine no slot for
 	// the whole budget and then schedules it in a burst at the boundary.
-	// Raised in review of #511.
 	var got int64
 	for time.Now().Before(deadline) {
 		disp.Drain()
@@ -520,8 +519,17 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	tail := func() { ran++ }
 	second := func() {
 		ran++
-		// Two, so the final drain enqueues more than it runs. One would
-		// leave the honest and the dishonest count equal.
+		// TWO, AND THE MARGIN IS ONE POST. Measured with one tail:
+		// honest got=1, dishonest=2, ran=2 — the honest and dishonest
+		// counts are 1 and 2, not equal; what coincides is the
+		// DISHONEST count and `ran`, which is exactly why `got > ran`
+		// would not fire. The slack is the base offset: drainUntilPosts
+		// samples `base` on entry, after the first c.Post, so `ran`
+		// counts one closure that sits outside the baseline and the
+		// assertion compares two differently-based numbers. The second
+		// tail is what buys that post back — with it, honest got=1,
+		// dishonest=3, ran=2, and a dishonest count fires. Take it out
+		// and this fixture stops discriminating without changing shape.
 		c.Post(tail)
 		c.Post(tail)
 	}
@@ -550,7 +558,7 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 // delegates to, which is the one instant between the two statements. The
 // drain afterwards is not decoration: without it a `post` that enqueued
 // nothing would satisfy the counter assertions and the fixture would pin
-// the order of a post that never happened. Raised in review of #511.
+// the order of a post that never happened.
 func TestCountingPostEnqueuesBeforeItCounts(t *testing.T) {
 	d := gooey.NewDispatcher()
 	c := &countingPost{}
@@ -834,10 +842,16 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
 		// constant. With no hit a cycle posts once, so the two numbers
-		// coincide — but the last post's closure need not have run when
-		// the count reached 40, so "40 polls" claims one scan more than
-		// is guaranteed, and printing the constant would say 40 however
-		// many actually happened.
+		// coincide — but a poll's SCAN FOLLOWS ITS POST, so 40 posts
+		// bound only 39 completed scans, and "40 polls" claims one more
+		// than that however thoroughly the queue is drained. The
+		// overclaim is about the scan after the last post, not about
+		// that post's closure: drainUntilPosts drains once more before
+		// returning and every one of `got` has run, which is the
+		// invariant argued at its return. The count rather than the
+		// constant for a second reason — `got` can EXCEED 40 when
+		// several posts land between drains, and the constant would say
+		// 40 either way.
 		t.Fatalf("a watcher fired %d times over %d poll posts of an unchanged file",
 			hits, posts)
 	}
