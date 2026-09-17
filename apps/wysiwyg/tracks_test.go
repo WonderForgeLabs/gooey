@@ -127,6 +127,21 @@ func TestTheTrackSpecIsShownAgainstTheSpaceItProduces(t *testing.T) {
 	}
 }
 
+// readCells reads n cells of row y from x, through Cell.Text() rather
+// than .Rune: a continuation cell holds render.Continuation, which is
+// rune -1 and encodes as U+FFFD. Raised in review of #524.
+//
+// n IS STILL A CELL COUNT, and the callers pass rune counts of ASCII
+// gutter labels, where the two agree. A caller with a wide glyph in hand
+// wants render.StringWidth of it.
+func readCells(f *gooey.Frame, x, y, n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		b.WriteString(f.Cells.At(x+i, y).Text())
+	}
+	return b.String()
+}
+
 // TestTheKeyboardResizesATrack drives the SHIPPED bindings.
 //
 // Keyboard rather than the divider handle, and not as a courtesy: mouse

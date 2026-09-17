@@ -324,9 +324,16 @@ func fileRow(p string) map[string]any {
 //
 // Pre-existing: the bare 30 had it too, and shortening against the
 // ARRANGED width means moving the call out of fileRow, which builds a
-// row's values before anything is laid out. Written down rather than
-// left reading as a width that follows the pane. Raised in review of
-// #524.
+// row's values before anything is laid out. TRACKED AS [#528], not as
+// this paragraph — a live defect whose only record is a comment in a
+// file nobody opens unless they are already editing shortPath spends
+// the attention that would have caught it, which is CLAUDE.md's "A red
+// suite is yours" argument applied to prose. The issue carries the
+// acceptance criterion: the fixing commit deletes this constant and this
+// comment, because a budget that follows the pane has no constant to
+// name. Raised in review of #524.
+//
+// [#528]: https://github.com/WonderForgeLabs/gooey/issues/528
 const browserNameCols = 30
 
 // shortPath fits a path into w cells by dropping LEADING segments, not
