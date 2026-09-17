@@ -347,8 +347,17 @@ jobs:
       # binaries arrive as pointer text, and a test that reads one fails with
       # a decode error rather than anything that names LFS.
       #
-      # `fetch-depth: 0` ON THIS LEG ONLY, because this is the leg that runs
-      # the root module's suite and one test in it asks git about COMMITS.
+      # `fetch-depth: 0` ON THE `test` LEG ONLY, and that is a MATRIX
+      # EXPRESSION rather than a plain value because it has to be. This
+      # job has one `steps:` block and three legs — discovery packs one
+      # per tier, `vet`, `test` and `race` — so an unconditional
+      # fetch-depth pays the full-history fetch three times per push, on
+      # the shared non-autoscaling pool this file spends four paragraphs
+      # justifying pod counts for, and two of those three legs never run
+      # the suite that wants it.
+      #
+      # The root module tiers to `test` (the `*)` arm of the `case` in
+      # discover), and one test in its suite asks git about COMMITS.
       # TestEveryOwnModulePinNamesACommitThisRepositoryPublished checks that
       # every own-module `require` names a commit this repository actually
       # published — the check that catches a pseudo-version hand-edited or
@@ -358,13 +367,21 @@ jobs:
       # check has nothing to look at. It fails rather than logging that, so
       # this line is what makes it run rather than what keeps it quiet.
       #
-      # Affordable: 216 commits and a 56 MiB pack against the LFS objects
-      # this same step already pulls. The other three checkouts in this file
-      # stay at the default — none of them asks git anything about history.
+      # THE OPERANDS ARE QUOTED STRINGS, and dropping the quotes reverts
+      # the fix silently. In a GitHub expression `0` is FALSY, so
+      # `matrix.mode == 'test' && 0 || 1` evaluates to 1 on every leg
+      # including this one — the root suite then fails with "NOTHING was
+      # checked here", which is the correct failure and a miserable thing
+      # to debug from a bare ternary. Raised in review of #497.
+      #
+      # Affordable on the one leg: 216 commits and a 56 MiB pack against
+      # the LFS objects this same step already pulls. The other three
+      # checkout steps in this file stay at the default — none of them asks
+      # git anything about history.
       - uses: actions/checkout@v4
         with:
           lfs: true
-          fetch-depth: 0
+          fetch-depth: ${{ matrix.mode == 'test' && '0' || '1' }}
 
       # NO actions/setup-go. It installs the go.mod version and puts it on
       # PATH, which looks right and is not: the runner image ships its own

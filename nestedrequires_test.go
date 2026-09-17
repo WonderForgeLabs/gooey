@@ -343,10 +343,20 @@ func skewMsg(g skewGroup, newestRev string, revisions int) string {
 	// it carries spellings of g.rev only for the paths in THIS group,
 	// and the newcomer being pinned back need not require any of them.
 	// Raised in review of #497.
+	//
+	// THE "EITHER DIRECTION" CLAUSE LIVES HERE, not in the base string.
+	// It was unconditional, so at three or more revisions the message
+	// withdrew the second direction in one sentence and offered it in
+	// the next — a reader taking the last clause at its word goes
+	// looking for the direction just retracted. That is the same defect
+	// round 10 fixed one clause over: a remedy outliving its condition.
+	// Raised in review of #497.
 	remedy := fmt.Sprintf(" — or, if the newest is a single module you just "+
 		"added or bumped, pin THAT one back to %s, which is what the rest of "+
 		"the tree names, in its own spelling of it: v0.1.1-0.<stamp>-%s off a "+
-		"tag, v0.0.0-<stamp>-%s off an untagged path", g.rev, g.rev, g.rev)
+		"tag, v0.0.0-<stamp>-%s off an untagged path. This guard is about one "+
+		"revision across the tree, not about which revision, so either "+
+		"direction closes it", g.rev, g.rev, g.rev)
 	count := "two revisions is"
 	if revisions > 2 {
 		remedy = fmt.Sprintf(". With %d revisions in the tree there is no single "+
@@ -359,21 +369,26 @@ func skewMsg(g skewGroup, newestRev string, revisions int) string {
 		"rather than a choice. Behind:\n\t%s\nEither move them up to commit %s, "+
 		"in each module's own spelling of it — a pseudo-version off a tag reads "+
 		"v0.1.1-0.<stamp>-%s and one off an untagged path reads "+
-		"v0.0.0-<stamp>-%s%s. This guard is about one revision across the tree, "+
-		"not about which revision, so either direction closes it. A module "+
-		"requiring an OLDER core than its siblings builds in this workspace "+
-		"and fails for anyone who `go get`s it.",
+		"v0.0.0-<stamp>-%s%s. A module requiring an OLDER core than its "+
+		"siblings builds in this workspace and fails for anyone who "+
+		"`go get`s it.",
 		len(g.at), g.rev, newestRev, count, strings.Join(g.at, "\n\t"),
 		newestRev, newestRev, newestRev, remedy)
 }
 
 type skewGroup struct {
-	// rev is the 12-character COMMIT the group's requires name, and it
-	// is what the remedy prints. version is one spelling of it, kept for
-	// ordering and for the "names %s" half of the message.
-	rev     string
-	version string
-	at      []string
+	// rev is the 12-character COMMIT the group's requires name, and it is
+	// what the remedy prints.
+	//
+	// THERE IS NO version FIELD, and the doc that claimed one named two
+	// uses the code had stopped having: skewFrom orders off its own local
+	// `version` map before any group is built, and the message prints
+	// g.rev — round 13 changed that deliberately, so a reader could not
+	// copy a tagged path's spelling into an untagged module's require.
+	// The only remaining reader was a test arm, which made the field look
+	// covered while nothing depended on it. Raised in review of #497.
+	rev string
+	at  []string
 }
 
 // skewFrom groups the tree's own-module requires by the COMMIT they name
@@ -438,7 +453,7 @@ func skewFrom(seen []ownRequire) (newest, newestRev string, behind []skewGroup, 
 	}
 	sort.Strings(revs) // a report that reorders itself run to run is hard to read
 	for _, rev := range revs {
-		behind = append(behind, skewGroup{rev: rev, version: version[rev], at: byRev[rev]})
+		behind = append(behind, skewGroup{rev: rev, at: byRev[rev]})
 	}
 	return newest, newestRev, behind, tagged
 }
@@ -640,8 +655,10 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	if len(behind) != 1 || len(behind[0].at) != 3 {
 		t.Fatalf("behind = %v, want the three laggards in one group", behind)
 	}
-	if behind[0].version != old {
-		t.Errorf("the group behind names %s, want %s", behind[0].version, old)
+	if want := old[len(old)-12:]; behind[0].rev != want {
+		t.Errorf("the group behind names commit %s, want %s — the COMMIT, which "+
+			"is the fact every spelling of it shares and the only thing the "+
+			"remedy prints", behind[0].rev, want)
 	}
 	// THE REVISION COMES BACK TOO, rather than the caller re-deriving it
 	// from `newest` with the ok dropped. skewFrom already picked the
@@ -746,6 +763,18 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			t.Errorf("the message counts two revisions in a tree holding three:"+
 				"\n\t%s", msg)
 		}
+		// THE CLAUSE THAT OFFERS THE SECOND DIRECTION GOES WITH IT. It
+		// sat in the base format string and so was unconditional, which
+		// left the message withdrawing the direction in one sentence and
+		// recommending it in the next. Neither arm above could see it:
+		// they name the pin-back remedy and the count, and this is
+		// neither. Raised in review of #497.
+		if strings.Contains(msg, "either direction closes it") {
+			t.Errorf("with three revisions the message says there is no single "+
+				"newcomer to pin back and then says either direction closes it, "+
+				"so a reader goes looking for the direction the sentence before "+
+				"just withdrew:\n\t%s", msg)
+		}
 		if !strings.Contains(msg, "3 revisions") {
 			t.Errorf("the message does not say how many revisions there are, so "+
 				"the arms above pass over one that simply dropped the clause:"+
@@ -763,6 +792,11 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	if !strings.Contains(twoRev, "pin THAT one back") {
 		t.Errorf("at two revisions the pin-the-newcomer-back remedy is correct "+
 			"and is gone:\n\t%s", twoRev)
+	}
+	if !strings.Contains(twoRev, "either direction closes it") {
+		t.Errorf("at two revisions BOTH directions are available and the clause "+
+			"saying so is gone, which is how a conditional becomes a deletion:"+
+			"\n\t%s", twoRev)
 	}
 	// AND IT SPELLS THE VERSION, which the arm above cannot see because
 	// a bare hash and a spelled one both contain "pin THAT one back".
@@ -1013,6 +1047,42 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		}
 	}
 
+	// AND THE COVERAGE RULE, which is the one distinction this file
+	// exists to make: "checked nothing" is a failure and "checked some"
+	// is a note. The tree cannot show either — every pin here is an
+	// object — so it is a fixture or it is a hand-run clone in a review
+	// comment, which is not a check. Raised in review of #497.
+	for _, tc := range []struct {
+		name     string
+		pins     int
+		absent   []string
+		wantFail bool
+		want     string // a phrase the message must carry, "" for no message
+	}{
+		{"everything present", 1, nil, false, ""},
+		{"the only pin absent", 1, []string{"a"}, true, "NOTHING was checked here"},
+		{"every pin absent", 3, []string{"a", "b", "c"}, true, "NOTHING was checked here"},
+		{"some absent", 3, []string{"a"}, false, "1 of the 3 pinned revisions"},
+	} {
+		fail, msg := pinCoverage(tc.pins, tc.absent)
+		if fail != tc.wantFail {
+			t.Errorf("%s: pinCoverage fails=%v, want %v — the difference between "+
+				"a run that verified nothing and one that verified most of it is "+
+				"the difference between red and a note `go test` discards",
+				tc.name, fail, tc.wantFail)
+		}
+		if tc.want == "" {
+			if msg != "" {
+				t.Errorf("%s: pinCoverage says %q with nothing absent", tc.name, msg)
+			}
+			continue
+		}
+		if !strings.Contains(msg, tc.want) {
+			t.Errorf("%s: pinCoverage says %q, want it to carry %q",
+				tc.name, msg, tc.want)
+		}
+	}
+
 	// AND THE POPULATION THAT READS IT, on a fixture, because the tree
 	// carries nothing to exclude and so cannot show an exclusion
 	// happening. Three requires in, one revision out: the sentinel and
@@ -1253,37 +1323,75 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 		}
 	}
 
-	// FAILED, NOT LOGGED, WHEN NOTHING WAS CHECKED. t.Logf is invisible
-	// for a passing package — this file measures that itself, at the
-	// `go test` buffering note above — so a run that verified nothing
-	// reported `ok` and said so only under -v. It is not a corner: the
-	// tree holds ONE revision across all its pins today, so `at` has a
-	// single entry and shallowness removes the only one there is, and
-	// ci.yml sets no fetch-depth on any checkout. comparedNothing is the
-	// precedent one test up: "the check reached no comparison at all" is
-	// a failure, not a note. Raised in review of #497.
 	sort.Strings(absent)
+	if fail, msg := pinCoverage(len(at), absent); msg != "" {
+		if fail {
+			t.Error(msg)
+		} else {
+			t.Log(msg)
+		}
+	}
+	// WHICH REASON, because the two are not the same news. On a shallow
+	// clone the absent-revision report above has already said what was
+	// skipped. On a FULL clone the ancestry conjunct is the only thing
+	// dropped and nothing else says so, so it is an error: a checkout
+	// that can see every commit and not the branch they are supposed to
+	// be on is a misconfigured remote, and naming it is cheaper than a
+	// reader discovering later that this test never asked. Raised in
+	// review of #497.
 	switch {
-	case len(absent) == len(at):
-		t.Errorf("NOTHING was checked here: this is a shallow clone "+
-			"(actions/checkout's default is fetch-depth: 1) and not one of the "+
-			"%d pinned revisions is an object in it, so no existence, ancestry "+
-			"or stamp check ran at all: %s. Set fetch-depth: 0 on the checkout "+
-			"that runs this suite", len(at), strings.Join(absent, "; "))
-	case len(absent) > 0:
+	case canReach:
+	case shallow == "true":
+		t.Logf("ancestry of origin/main was NOT checked for any pin: this clone " +
+			"is SHALLOW, and a truncated history answers `merge-base " +
+			"--is-ancestor` wrongly rather than not at all. Existence and stamp " +
+			"ran for every revision present here")
+	default:
+		t.Error("ancestry of origin/main was NOT checked for any pin, and this " +
+			"clone is NOT shallow — it simply has no origin/main ref. Every " +
+			"other conjunct ran, so the one thing unverified is whether these " +
+			"commits are on the published branch at all, which is the half a " +
+			"proxy can serve. `git fetch origin main` fixes it; a remote under " +
+			"another name needs this test taught the name")
+	}
+}
+
+// pinCoverage decides what a run that could not look at every pinned
+// revision should report about it, and whether that is a failure.
+//
+// A PREDICATE, FOR comparedNothing's REASON. The rule it replaces was an
+// inline switch making the distinction this whole file is about —
+// "checked nothing" against "checked some" — and nothing called it, so
+// the only evidence for it was a hand-run `git clone --depth 1` in a
+// review comment. A hand-run clone is not a check. Every other rule here
+// is a function with an arm: revisionOf, stampOf, stampNames,
+// unservableSentinel, pinPopulations, sortedKeys, skewFrom, skewMsg.
+// Raised in review of #497.
+//
+// FAILING WHEN NOTHING RAN is the substance. t.Logf is invisible for a
+// passing package — this file measures that itself, at the `go test`
+// buffering note above — so a run that verified nothing reported `ok`
+// and said so only under -v. It is not a corner: the tree holds ONE
+// revision across all its pins today, so a single absent object removes
+// everything there was to check.
+func pinCoverage(pins int, absent []string) (fail bool, msg string) {
+	switch {
+	case len(absent) == 0:
+		return false, ""
+	case len(absent) >= pins:
+		return true, fmt.Sprintf("NOTHING was checked here: this is a shallow "+
+			"clone (actions/checkout's default is fetch-depth: 1) and not one of "+
+			"the %d pinned revisions is an object in it, so no existence, "+
+			"ancestry or stamp check ran at all: %s. Set fetch-depth: 0 on the "+
+			"checkout that runs this suite", pins, strings.Join(absent, "; "))
+	default:
 		// SAID, NOT PASSED OVER, and named one by one: a reader has to
 		// be able to tell "checked and clean" from "not looked at".
-		t.Logf("this is a SHALLOW clone (actions/checkout's default is "+
-			"fetch-depth: 1) and %d of the %d pinned revisions are not objects "+
-			"here, so their existence, ancestry and stamp were NOT checked: %s. "+
-			"Run with fetch-depth: 0 to check them; everything else above ran",
-			len(absent), len(at), strings.Join(absent, "; "))
-	}
-	if !canReach {
-		t.Logf("ancestry of origin/main was NOT checked for any pin: the clone " +
-			"is shallow or has no origin/main, and a truncated history answers " +
-			"`merge-base --is-ancestor` wrongly rather than not at all. " +
-			"Existence and stamp ran for every revision present here")
+		return false, fmt.Sprintf("this is a SHALLOW clone (actions/checkout's "+
+			"default is fetch-depth: 1) and %d of the %d pinned revisions are "+
+			"not objects here, so their existence, ancestry and stamp were NOT "+
+			"checked: %s. Run with fetch-depth: 0 to check them; everything "+
+			"else above ran", len(absent), pins, strings.Join(absent, "; "))
 	}
 }
 
