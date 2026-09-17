@@ -403,8 +403,13 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// own answer is "unknown language element", and it is the one
 		// the author can act on. Raised in review of #522.
 		if alien := alienDecls(decls); len(alien) > 0 {
-			prefix, _ := declBinding(n.Attrs)
-			ed.status.Set("✗ " + rel + ": " + alienDeclMsg(alien, prefix))
+			// THE BINDING TRAVELS WITH THE PREFIX. Discarding the bool
+			// named declBinding's minted spelling in a file that
+			// contains no such prefix — the same defect the count
+			// branch below states at length, which this arm had
+			// stopped one short of. Raised in review of #522.
+			prefix, bound := declBinding(n.Attrs)
+			ed.status.Set("✗ " + rel + ": " + alienDeclMsg(alien, prefix, bound))
 			return
 		}
 		if len(n.Kids) != 1 {

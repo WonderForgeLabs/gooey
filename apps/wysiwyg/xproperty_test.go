@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -132,12 +133,13 @@ func TestASavedPropertyDocumentStillDeclaresItsProperty(t *testing.T) {
 // "x:Property" under the bug too — the string is not the claim, the
 // loader is.
 func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
-	for _, tc := range []struct{ name, doc string }{
+	for _, tc := range []struct{ name, prefix, doc string }{
 		{
 			// envelopeAttrs drops the envelope's xmlns:x because the
 			// content root repeats it. Redundant for MEANING, and the
 			// one thing envelopeHead cannot do without.
 			"bound on both the envelope and the content root",
+			"x",
 			`<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
 				`  <x:Property Name="Title" Type="string" Default="hi"/>` + "\n" +
 				`  <Canvas Name="Root" xmlns:x="` + markup.XNamespace + `">` + "\n" +
@@ -148,6 +150,7 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			// No prefix anywhere: the declaration names itself with a
 			// default xmlns, which the re-prefixed copy must not keep.
 			"bound as the declaration's own default xmlns",
+			"x", // nothing to keep, so the minted spelling is the answer
 			`<Gooey>` + "\n" +
 				`  <Property xmlns="` + markup.XNamespace + `" Name="Title" Type="string" Default="hi"/>` + "\n" +
 				`  <Canvas Name="Root">` + "\n" +
@@ -158,8 +161,28 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			// The author's own prefix survives, which is what declBinding
 			// was added for and must keep doing.
 			"bound to a prefix that is not x",
+			"p",
 			`<Gooey xmlns:p="` + markup.XNamespace + `">` + "\n" +
 				`  <p:Property Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="B" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n</Gooey>\n",
+		},
+		{
+			// AND THE SECOND LEGAL PLACEMENT. XML scoping lets the
+			// binding sit on the declaration ELEMENT rather than on
+			// <Gooey>; markup/property.go records both and
+			// TestTheXPropertyRefusalNamesTheRoot pins all three. Reading
+			// only the envelope, this round-tripped lossily — p: became a
+			// minted x:, a new xmlns:x appeared on <Gooey>, and the
+			// author's xmlns:p was left on the declaration naming
+			// nothing. It still LOADED, which is why the loader assertion
+			// above cannot see it and the prefix assertion below can.
+			// Raised in review of #522.
+			"bound on the declaration element itself",
+			"p",
+			`<Gooey>` + "\n" +
+				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="Title" Type="string" Default="hi"/>` + "\n" +
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
@@ -204,6 +227,26 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			if strings.Contains(head, `xmlns="`+markup.XNamespace+`"`) {
 				t.Errorf("the re-prefixed declaration kept the default xmlns that "+
 					"used to name it:\n%s", src)
+			}
+			// AND THE AUTHOR'S PREFIX IS THE ONE WRITTEN BACK. The
+			// assertions above pass for any spelling that loads, which
+			// is how the element-level placement round-tripped as a
+			// minted x: with nothing going red. Raised in review of
+			// #522.
+			if !strings.Contains(head, "<"+tc.prefix+":Property") {
+				t.Errorf("the declaration is written under a prefix other than the "+
+					"%q this document binds:\n%s", tc.prefix, src)
+			}
+			// AND NO BINDING IS LEFT NAMING NOTHING. The dead xmlns:p a
+			// re-prefixing leaves behind is the same residue as the
+			// default binding above, one spelling over.
+			for _, m := range regexp.MustCompile(`xmlns:([A-Za-z0-9_.-]+)="`+
+				regexp.QuoteMeta(markup.XNamespace)+`"`).FindAllStringSubmatch(head, -1) {
+				if m[1] != tc.prefix {
+					t.Errorf("the saved head binds %q to the declaration namespace, "+
+						"which names nothing — the declaration is written as %q:\n%s",
+						m[1], tc.prefix, src)
+				}
 			}
 		})
 	}
@@ -727,70 +770,136 @@ func TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer(t *testing.T)
 	// Measured: with the alien arm disabled, the two-child fixture stays
 	// GREEN and this one reports "found 0 root elements (its 1 <x:Foo>
 	// declaration is not a root element)".
-	const doc = `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
-		`  <x:Foo Name="Title"/>` + "\n" +
-		`</Gooey>` + "\n"
+	for _, tc := range []struct {
+		name, doc, elem, absent string
+	}{
+		{
+			// The envelope binds it, so the editor can do better than
+			// markup and use the author's own spelling.
+			name: "bound on the envelope",
+			doc: `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+				`  <x:Foo Name="Title"/>` + "\n</Gooey>\n",
+			elem: "<x:Foo>",
+		},
+		{
+			// AND THE ONE ARRANGEMENT WHERE THERE IS NO PREFIX TO USE.
+			// The envelope binds xmlns:x to something else and the alien
+			// element names the namespace with its own default xmlns, so
+			// declBinding finds nothing and MINTS x2 — a prefix that
+			// appears nowhere in the file. The refusal used to write it,
+			// sending the author to look for <x2:Foo> and to invent a
+			// prefix to fix it with. Unbound, the editor says exactly
+			// what markup says. Raised in review of #522.
+			name: "bound by the element's own default xmlns, under an envelope that binds x elsewhere",
+			doc: `<Gooey xmlns:x="urn:something-else">` + "\n" +
+				`  <Foo Name="Title" xmlns="` + markup.XNamespace + `"/>` + "\n</Gooey>\n",
+			elem:   "<x:Foo>",
+			absent: "x2",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := markupRefuses(t, tc.doc, "unknown language element", "<x:Foo>")
 
+			t.Run("opening", func(t *testing.T) {
+				root := workspaceFixture(t)
+				if err := os.WriteFile(filepath.Join(root, "foo.gooey"), []byte(tc.doc), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				ed, _ := buildPage(t)
+				ed.setDispatcher(gooey.NewDispatcher())
+				ed.setWorkspace(root)
+				ed.openWorkspaceFile("foo.gooey")
+
+				got := ed.status.Get()
+				// NOT "must not mention <x:Property>" — markup's own
+				// sentence names it, as the thing the namespace declares
+				// INSTEAD. The defect was calling it what the document
+				// CONTAINS, which is the count refusal's tail and
+				// nothing else.
+				for _, bad := range []string{"is not a root element", "are not root elements"} {
+					if strings.Contains(got, bad) {
+						t.Errorf("the refusal reads %q and counts the element as a "+
+							"declaration that is not a root element. markup rejects it "+
+							"outright (%v), so there is nothing to count: before the "+
+							"element name was read off decls this also spelled it "+
+							"<x:Property>, an element the document does not contain",
+							got, err)
+					}
+				}
+				assertNames(t, "the refusal", got, tc.elem, tc.absent)
+			})
+
+			t.Run("pasting", func(t *testing.T) {
+				ed, _ := buildPage(t)
+				ed.setDispatcher(gooey.NewDispatcher())
+				ed.pasteMarkup(tc.doc)
+
+				got := ed.status.Get()
+				if strings.Contains(got, "this document declares") {
+					t.Errorf("the paste refusal reads %q and calls the element a "+
+						"declaration; markup rejects it outright, so it has no public "+
+						"surface to merge and the sentence about merging one is about "+
+						"nothing", got)
+				}
+				assertNames(t, "the paste refusal", got, tc.elem, tc.absent)
+			})
+		})
+	}
+}
+
+// TestAPastedAlienElementKeepsItsOwnPrefix is the same rule on the leg
+// that has no envelope to read.
+//
+// bareDeclWhy spelled the prefix "x" outright, so a node pasted with its
+// own xmlns:d — which is how one arrives here, since #472 carries a
+// pasted node's namespace declarations as ordinary attributes — was
+// reported as <x:Foo>, an element the clipboard does not hold. The
+// binding is in n.Attrs, where the other two call sites read it from.
+// Raised in review of #522.
+func TestAPastedAlienElementKeepsItsOwnPrefix(t *testing.T) {
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.pasteMarkup(`<d:Foo xmlns:d="` + markup.XNamespace + `" Name="Title"/>`)
+	assertNames(t, "the paste refusal", ed.status.Get(), "<d:Foo>", "<x:Foo>")
+}
+
+// markupRefuses is the "am I agreeing with anything" gate every arm of
+// the alien tests opens with: markup's own diagnosis has to still exist
+// and still say these words, or the editor is being checked against a
+// sentence nobody writes.
+func markupRefuses(t *testing.T, doc string, wants ...string) error {
+	t.Helper()
 	_, err := markup.Build([]byte(doc), &markup.Context{})
 	if err == nil {
-		t.Fatal("markup now accepts <x:Foo>, so there is nothing for the editor " +
-			"to agree with")
+		t.Fatal("markup now accepts the fixture, so there is nothing for the " +
+			"editor to agree with")
 	}
-	for _, want := range []string{"unknown language element", "<x:Foo>"} {
+	for _, want := range wants {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("markup's own diagnosis no longer contains %q, so this test "+
 				"is checking the editor against nothing: %v", want, err)
 		}
 	}
+	return err
+}
 
-	t.Run("opening", func(t *testing.T) {
-		root := workspaceFixture(t)
-		if err := os.WriteFile(filepath.Join(root, "foo.gooey"), []byte(doc), 0o644); err != nil {
-			t.Fatal(err)
+// assertNames is the pair every refusal arm makes: it names the element
+// the file actually holds, and it does not name a prefix the file does
+// not contain. absent is "" where there is no minted spelling to avoid.
+func assertNames(t *testing.T, what, got, elem, absent string) {
+	t.Helper()
+	for _, want := range []string{"unknown language element", elem} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s reads %q and does not mention %q", what, got, want)
 		}
-		ed, _ := buildPage(t)
-		ed.setDispatcher(gooey.NewDispatcher())
-		ed.setWorkspace(root)
-		ed.openWorkspaceFile("foo.gooey")
-
-		got := ed.status.Get()
-		// NOT "must not mention <x:Property>" — markup's own sentence
-		// names it, as the thing the namespace declares INSTEAD. The
-		// defect was calling it what the document CONTAINS, which is the
-		// count refusal's tail and nothing else.
-		for _, bad := range []string{"is not a root element", "are not root elements"} {
-			if strings.Contains(got, bad) {
-				t.Errorf("the refusal reads %q and counts <x:Foo> as a declaration "+
-					"that is not a root element. markup rejects <x:Foo> outright, so "+
-					"there is nothing to count: before the element name was read off "+
-					"decls this also spelled it <x:Property>, an element the document "+
-					"does not contain", got)
-			}
-		}
-		for _, want := range []string{"unknown language element", "<x:Foo>"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("the refusal reads %q and does not mention %q", got, want)
-			}
-		}
-	})
-
-	t.Run("pasting", func(t *testing.T) {
-		ed, _ := buildPage(t)
-		ed.setDispatcher(gooey.NewDispatcher())
-		ed.pasteMarkup(doc)
-
-		got := ed.status.Get()
-		if strings.Contains(got, "this document declares") {
-			t.Errorf("the paste refusal reads %q and calls <x:Foo> a declaration; "+
-				"markup rejects it outright, so it has no public surface to "+
-				"merge and the sentence about merging one is about nothing", got)
-		}
-		for _, want := range []string{"unknown language element", "<x:Foo>"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("the paste refusal reads %q and does not mention %q", got, want)
-			}
-		}
-	})
+	}
+	if absent != "" && strings.Contains(got, absent) {
+		t.Errorf("%s reads %q and names %q, which this document does not bind — "+
+			"either declBinding's MINTED spelling, which it returns when it "+
+			"finds no binding, or a literal \"x\" written in place of reading "+
+			"one. Both send the author looking for an element nobody wrote",
+			what, got, absent)
+	}
 }
 
 // TestPastingABareDeclarationSaysWhatItIs is the leg unwrapGooey could
