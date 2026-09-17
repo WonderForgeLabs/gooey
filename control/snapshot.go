@@ -561,9 +561,19 @@ type ScreenSize struct {
 //
 // The reasons that survive measurement:
 //
-//   - A SCOPED session's island genuinely is not the screen. That is the
-//     case where the inference returns a wrong answer rather than an
-//     unproven one, and it is what this tool is really for.
+//   - A SCOPED session's island genuinely is not the screen, and a client
+//     has to know which of the two it is being told about. The inference
+//     does NOT disagree there — Service.Tree roots a scoped snapshot at
+//     the island and walk emits bounds from the same gooey.Bounded.Bounds()
+//     call islandBounds makes, so the root bound IS this tool's
+//     cols/rows/x/y, and TestATreeSnapshotBoundIsAlreadyAbsolute asserts
+//     that agreement. What the inference cannot supply is the knowledge
+//     that the root it read was the island rather than the screen. This
+//     bullet said the inference returns a WRONG answer for a scoped
+//     session; it was written from reasoning rather than measurement, in
+//     the same doc that retires the margin/Width/alignment claim for
+//     exactly that reason, and this PR's own test measures the opposite.
+//     Raised in review of #504.
 //   - screen_text's lines are trailing-trimmed, so the width it implies
 //     is the longest PAINTED line, not the terminal's.
 //   - Both workarounds cost a whole tree or a whole screen to learn two
@@ -575,8 +585,19 @@ type ScreenSize struct {
 // its island. Answering with the terminal would break it in the
 // direction that costs something — a guest told the screen is 60x14 when
 // it may only touch a 60x3 border computes coordinates for cells it
-// cannot reach, and SendPointer answers those with silence rather than an
-// error.
+// cannot reach, and every one of them is REFUSED: mayPoint
+// (control/input.go) denies both arms, a coordinate outside the terminal
+// because nothing would receive it and one inside the terminal but
+// outside the island because the target is not in islandSet. The cost is
+// the one the next paragraph states — unreachable rows plus refused rows
+// — not silence. This sentence said "silence rather than an error" while
+// the paragraph thirteen lines below said "mayPoint refuses anything
+// landing outside the island"; a reader who took the first would conclude
+// out-of-island clicks fail open. Silence IS what an UNSCOPED session
+// gets — mayPoint returns nil with no grant and the event is dispatched
+// to nothing, which is the behaviour the PR body books separately — so
+// the sentence was true of the session this paragraph is not about.
+// Raised in review of #504.
 //
 // X and Y carry the island's ORIGIN, and they are what make that fiction
 // usable rather than merely comfortable. SendPointer (control/input.go)

@@ -51,12 +51,19 @@ type Tool struct {
 	Run func(a args) (any, error)
 }
 
-// v1Tools is the tool inventory. Read: tree_snapshot, screen_size,
-// screen_text, list_values, list_styles. Act: invoke_command,
-// set_value, send_keys, send_mouse, focus. Grow and shrink the
-// viewmodel: register_properties (#89), unregister_properties.
-// Mutate structure: swap_markup (optionally registering first),
-// patch_markup. Check: validate_markup.
+// v1Tools is the tool inventory. Read: `tree_snapshot`, `screen_size`,
+// `screen_text`, `list_values`, `list_styles`. Act: `invoke_command`,
+// `set_value`, `send_keys`, `send_mouse`, `focus`. Grow and shrink the
+// viewmodel: `register_properties` (#89), `unregister_properties`.
+// Mutate structure: `swap_markup` (optionally registering first),
+// `patch_markup`. Check: `validate_markup`.
+//
+// The names are in backticks because this paragraph is the SEVENTH prose
+// inventory in the repo and TestTheToolInventoryCommentNamesEveryTool
+// reads it — the six guards beside it read markdown pages, a workflow
+// blob and the instructions string, and none of them could see the list
+// sitting directly above the slice it describes, which is the one a
+// maintainer reads first. Raised in review of #504.
 //
 // Every body is a thin adapter (issue #112): parse the MCP arguments,
 // call the shared control.Service, render the result exactly as this

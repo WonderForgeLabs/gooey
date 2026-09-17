@@ -449,6 +449,51 @@ func TestTheServerInstructionsNameEveryTool(t *testing.T) {
 	assertNamesEveryTool(t, instructions, "the server instructions string")
 }
 
+// TestTheToolInventoryCommentNamesEveryTool closes the seventh surface,
+// and it is the one none of the six above could reach.
+//
+// v1Tools' own doc comment names every tool in prose, directly above the
+// slice literal it describes — which makes it the inventory a maintainer
+// inside this package reads first, and the only one with nothing deriving
+// it from the server. The failure mode is the file header's: the next
+// tool lands, six guards go red and get fixed, and this paragraph goes on
+// describing a fifteen-tool surface that has sixteen. Raised in review of
+// #504.
+//
+// NO pageOrSkip HERE. tools.go is in this module and in the zip a proxy
+// serves, so "out of reach" is not a state this guard has — and a guard
+// whose subject is silent staleness must not acquire a silent skip.
+//
+// THE SLICE IS THE FIRST PARAGRAPH ONLY, ending at the blank comment
+// line. The rest of the doc names no tool, so widening the read would
+// only let a name satisfy this from prose that is not an inventory; and
+// both markers are required rather than defaulted, because a slice that
+// silently became the whole file would pass for reasons that have nothing
+// to do with the inventory.
+func TestTheToolInventoryCommentNamesEveryTool(t *testing.T) {
+	const file = "tools.go"
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("reading %s: %v — this file is in the same module as this test, "+
+			"so it is never out of reach and a read error is a real fault", file, err)
+	}
+	const opens = "// v1Tools is the tool inventory."
+	i := strings.Index(string(src), opens)
+	if i < 0 {
+		t.Fatalf("%s no longer holds a comment opening %q, so this guard is reading "+
+			"nothing. If the inventory paragraph was moved or reworded, point this "+
+			"at it; if it was deleted, delete this guard in the same commit",
+			file, opens)
+	}
+	rest := string(src)[i:]
+	end := strings.Index(rest, "\n//\n")
+	if end < 0 {
+		t.Fatalf("the inventory paragraph in %s does not end at a blank comment "+
+			"line, so this guard cannot tell it from the rest of the doc", file)
+	}
+	assertNamesEveryTool(t, rest[:end], "v1Tools' doc comment")
+}
+
 // assertNamesEveryTool derives the expectation from v1Tools, which is
 // what keeps both callers from becoming lists of their own.
 //

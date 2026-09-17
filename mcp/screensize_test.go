@@ -39,11 +39,22 @@ const screenSizeRootMarkup = `<Gooey>
 // sandwich the root, being nobody's child, never passes through.
 //
 // So the inference was RELIABLE for an unscoped session, and screen_size
-// earns its place for the other three reasons instead: a scoped session's
-// island genuinely is not the screen (the case with a wrong answer, not
-// merely an unproven one), screen_text's lines are trailing-trimmed so
-// the width it implies is the longest PAINTED line, and learning two
-// integers should not cost a whole tree.
+// earns its place for the other reasons instead: screen_text's lines are
+// trailing-trimmed so the width it implies is the longest PAINTED line,
+// learning two integers should not cost a whole tree, and neither
+// workaround carries the cell metrics at all.
+//
+// AND IT IS RELIABLE FOR A SCOPED ONE TOO. This said the scoped case is
+// "the case with a wrong answer, not merely an unproven one". It is not:
+// Service.Tree roots a scoped snapshot at the island and walk emits
+// bounds from the same Bounds() call islandBounds makes, so the root
+// bound IS screen_size's cols/rows/x/y —
+// TestATreeSnapshotBoundIsAlreadyAbsolute below fatals if they ever
+// diverge, which makes this file's header a claim its own test
+// contradicts. What the inference does not supply is that the root it
+// read was the island rather than the screen. Raised in review of #504,
+// and it is the same shape as the claim this test retires: a rationale
+// written from reasoning instead of measurement.
 //
 // If someone ever makes the root honour its own size, this test fails and
 // the old justification becomes true again — which is the point of
@@ -282,8 +293,14 @@ func TestAGuestIsToldWhereItsIslandIs(t *testing.T) {
 // already maintains by cropping, and a size tool that answered with the
 // terminal would break it in the one direction that matters: a client
 // told the screen is 60x14 when it may only touch a 60x3 border computes
-// coordinates for cells it cannot reach, and send_mouse answers those
-// with silence.
+// coordinates for cells it cannot reach, and send_mouse REFUSES every one
+// of them — control's mayPoint denies both arms, the coordinate nothing
+// would receive and the one whose target is outside the island. This said
+// "answers those with silence", which is the reading that makes an
+// out-of-island click look like it fails open. Silence is what an
+// UNSCOPED session gets, where mayPoint returns nil and the event reaches
+// nothing; it is the opposite of what the session this test is named for
+// gets. Raised in review of #504.
 //
 // The assertion that the two DIFFER is not decoration. If the island
 // happened to fill the terminal, both arms would read the same and this

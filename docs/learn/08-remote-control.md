@@ -167,9 +167,11 @@ Before this tool the screen had to be read off `screen_text`, whose lines
 are trailing-trimmed (so the width it implies is the longest *painted*
 line), or inferred from the root's arranged bounds in `tree_snapshot`.
 That inference is reliable for an unscoped session — the composer arranges
-the root to the whole screen whatever it declares — but it says nothing
-about a scoped one, costs a whole tree to learn two integers, and cannot
-report the cell metrics at all.
+the root to the whole screen whatever it declares — and for a scoped one it
+returns the same rect this tool does, because a scoped `tree_snapshot` is
+rooted at the island and reports its bounds from the same call. What it
+does not tell you is *which* of the two you are looking at, and it costs a
+whole tree to learn two integers and cannot report the cell metrics at all.
 
 ```sh
 curl -s http://127.0.0.1:7778/mcp \
