@@ -896,7 +896,7 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // in the tree to live and rides with envAttrs instead, written back
 // here. Added for #517.
 func envelopeHead(attrs map[string]string, decls []*node) string {
-	prefix, bound := declBinding(attrs)
+	prefix, bound := declPrefix(attrs, decls)
 	if len(decls) > 0 && !bound {
 		// THE PREFIX AND THE BINDING TRAVEL TOGETHER. Writing x: without
 		// an xmlns:x on this tag saves a file markup.Build refuses, and
@@ -914,10 +914,55 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 	for _, d := range decls {
 		q := *d
 		q.Elem = prefix + ":" + d.Elem
-		q.Attrs = withoutDefaultNamespace(d.Attrs)
+		q.Attrs = declAttrs(d.Attrs, prefix)
 		b.WriteString(q.markup("  "))
 	}
 	return b.String()
+}
+
+// declPrefix is the prefix these declarations are written back under,
+// and whether the document already binds it somewhere the saved file
+// will still carry — so an envelope binding is added only when there is
+// nothing else naming the namespace.
+//
+// TWO PLACEMENTS ARE LEGAL, which is what this exists for and what
+// declBinding alone could not see. XML scoping puts xmlns:p on <Gooey>
+// OR on the <p:Property> element itself; markup/property.go's own
+// comment records both and TestTheXPropertyRefusalNamesTheRoot pins all
+// three placements. Reading only the envelope, the element-level
+// placement round-tripped LOSSILY: the author's p: became a minted x:,
+// a new xmlns:x appeared on <Gooey>, and the xmlns:p left on the
+// declaration named nothing. The file still loaded, so nothing went
+// red — the PR's stated invariant ("a file that binds p: is saved with
+// p:") simply stopped holding one placement over. Raised in review of
+// #522.
+//
+// The envelope wins when it binds one, because that is the binding
+// every declaration is under. Otherwise the first declaration carrying
+// its own binding names them all, and the envelope gains a binding only
+// if some declaration does not carry that same one — which is the only
+// case where writing the prefix alone would save a file markup refuses.
+func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
+	if p, ok := declBinding(attrs); ok {
+		return p, true
+	}
+	prefix := ""
+	for _, d := range decls {
+		if p, ok := declBinding(d.Attrs); ok {
+			prefix = p
+			break
+		}
+	}
+	if prefix == "" {
+		p, _ := declBinding(attrs) // the minted spelling, collisions avoided
+		return p, false
+	}
+	for _, d := range decls {
+		if p, ok := declBinding(d.Attrs); !ok || p != prefix {
+			return prefix, false
+		}
+	}
+	return prefix, true
 }
 
 // withDeclBinding is attrs plus the envelope's binding for
@@ -933,22 +978,45 @@ func withDeclBinding(attrs map[string]string, prefix string) map[string]string {
 	return out
 }
 
-// withoutDefaultNamespace is a declaration's attributes with a default
-// xmlns binding markup.XNamespace removed.
+// declAttrs is a declaration's attributes with every binding of
+// markup.XNamespace that no longer names it removed: a default xmlns,
+// and any prefixed binding other than the one it is being written under.
 //
 // A declaration is re-emitted PREFIXED, so a default binding it carried
 // is no longer what names it — and left in place it also re-binds the
 // default namespace for the declaration's own attributes, which is a
-// different document from the one that was opened. Returned as a copy
-// for the same reason as withDeclBinding: these attrs belong to the
-// editor's node, not to this write.
-func withoutDefaultNamespace(attrs map[string]string) map[string]string {
-	if attrs["xmlns"] != markup.XNamespace {
+// different document from the one that was opened.
+//
+// THE PREFIXED CASE IS THE SAME SENTENCE, and it was missing: when the
+// envelope binds q: and the element carried its own xmlns:p, the copy
+// went out as <q:Property … xmlns:p="…"> with p: naming nothing. That
+// is the residue declPrefix's doc describes, and dropping it here is
+// what makes the two halves one rule rather than a special case for
+// the default binding. Raised in review of #522.
+//
+// Returned as a copy for the same reason as withDeclBinding: these
+// attrs belong to the editor's node, not to this write.
+func declAttrs(attrs map[string]string, prefix string) map[string]string {
+	dead := func(k, v string) bool {
+		if v != markup.XNamespace {
+			return false
+		}
+		return k == "xmlns" || (strings.HasPrefix(k, "xmlns:") &&
+			strings.TrimPrefix(k, "xmlns:") != prefix)
+	}
+	keep := true
+	for k, v := range attrs {
+		if dead(k, v) {
+			keep = false
+			break
+		}
+	}
+	if keep {
 		return attrs
 	}
 	out := make(map[string]string, len(attrs))
 	for k, v := range attrs {
-		if k == "xmlns" {
+		if dead(k, v) {
 			continue
 		}
 		out[k] = v
@@ -1087,8 +1155,25 @@ func alienDecls(decls []*node) []string {
 //
 // DERIVED FROM markup.XNamespace, like its sibling, so the URI cannot
 // drift from the one splitDeclarations compares against.
-func alienDeclMsg(names []string, prefix string) string {
-	if prefix == "" {
+//
+// bound IS THE AUTHOR'S PREFIX OR NOBODY'S. When the document binds the
+// namespace, the editor can do better than markup — which spells the
+// refusal <x:%s> whatever the file says (markup/property.go) — and name
+// the elements the way the author wrote them. When it does not, the
+// prefix in hand is declBinding's MINTED one, and writing it named a
+// prefix the file does not contain: a declaration bound by its own
+// default xmlns under an envelope binding xmlns:x elsewhere was refused
+// with "<x2:Foo> … declares <x2:Property> only", sending the author to
+// look for an element nobody had written and to invent a prefix to fix
+// it with. Unbound, this says exactly what markup says. That is the
+// same rule the root-count refusal states at length one file over
+// (browser.go), which this arm had stopped one short of.
+//
+// There used to be an `if prefix == "" { prefix = "x" }` here, which
+// could not fire — declBinding never returns "" — and read as the
+// handling that was in fact absent. Raised in review of #522.
+func alienDeclMsg(names []string, prefix string, bound bool) string {
+	if !bound {
 		prefix = "x"
 	}
 	elems := make([]string, len(names))

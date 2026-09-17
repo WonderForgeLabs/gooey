@@ -768,7 +768,13 @@ func (ed *editor) pasteMarkup(src string) {
 func bareDeclWhy(n *node) string {
 	switch {
 	case n.Space == markup.XNamespace && n.Elem != "Property":
-		return alienDeclMsg([]string{n.Elem}, "x")
+		// THE PASTED NODE'S OWN BINDING, not the literal "x". Since
+		// #472 a pasted node carries its xmlns:* declarations as
+		// ordinary attributes, so <d:Foo xmlns:d="…x"/> is reported as
+		// <d:Foo> rather than as an element the clipboard does not
+		// hold. Raised in review of #522.
+		prefix, bound := declBinding(n.Attrs)
+		return alienDeclMsg([]string{n.Elem}, prefix, bound)
 	case n.Space == markup.XNamespace:
 		return "<x:Property> is a dependency property declaration, not an " +
 			"element: it belongs on a document's <Gooey> root, where it " +
@@ -833,6 +839,11 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 		return nil, false, ""
 	}
 	decls, kids, bare := splitDecls(n)
+	// Hoisted rather than called in the guard and again in the body:
+	// two walks are two places that have to keep agreeing about what an
+	// alien is, and openWorkspaceFile already reads it once. Raised in
+	// review of #522.
+	alien := alienDecls(decls)
 	switch {
 	case len(bare) > 0:
 		// Before the declaration arm, because a document whose
@@ -841,13 +852,13 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 		// wrongly — it has no declarations markup can see. Raised in
 		// review of #522.
 		return nil, false, bareDeclMsg(len(bare))
-	case len(alienDecls(decls)) > 0:
+	case len(alien) > 0:
 		// BEFORE THE DECLARATION ARM, because these are not
 		// declarations: markup refuses <x:Foo> outright. Calling them
 		// declarations here would send the author to read about merging
 		// a public surface for an element that has none.
-		prefix, _ := declBinding(n.Attrs)
-		return nil, false, alienDeclMsg(alienDecls(decls), prefix)
+		prefix, bound := declBinding(n.Attrs)
+		return nil, false, alienDeclMsg(alien, prefix, bound)
 	case len(decls) > 0:
 		noun := "declarations"
 		if len(decls) == 1 {
