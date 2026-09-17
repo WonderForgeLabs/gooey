@@ -748,9 +748,23 @@ func bareDeclWhy(n *node) string {
 		// <d:Foo> rather than as an element the clipboard does not
 		// hold. Raised in review of #522.
 		prefix, bound := declBinding(n.Attrs)
-		return alienDeclMsg([]string{n.Elem}, prefix, bound)
+		return alienDeclMsg([]*node{n}, prefix, bound)
 	case n.Space == markup.XNamespace:
-		return "<x:Property> is a dependency property declaration, not an " +
+		// THE SAME BINDING THE ARM ABOVE READS. This one kept the
+		// literal "x" when its sibling was moved onto declBinding, and
+		// the test arm beside it could not see the difference: its
+		// fixture binds x:, so the hardcoded string and the read one
+		// print alike. A p:-bound declaration was reported as
+		// <x:Property> — a prefix the clipboard does not hold, and one
+		// that is actively wrong when the open document binds x: to
+		// something else. Unbound falls back to markup's own literal,
+		// which is what the "unprefixed" case below tells the author to
+		// write. Raised in review of #522.
+		prefix, bound := declBinding(n.Attrs)
+		if !bound {
+			prefix = "x"
+		}
+		return "<" + prefix + ":Property> is a dependency property declaration, not an " +
 			"element: it belongs on a document's <Gooey> root, where it " +
 			"defines that control's public surface, and a paste inserts one " +
 			"element into the selection. Open the file it came from instead."
