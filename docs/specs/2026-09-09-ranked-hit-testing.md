@@ -46,8 +46,15 @@ now what the hit walk asks too, and `hitCandidate.beatenBy` is
 
 1. the lifted layer beats the ordinary one;
 2. within a layer, a higher rank beats a lower one;
-3. only on a tie does position decide, and it is depth-first
-   **pre-order**, the same numbering `c.nodes` carries.
+3. only on a tie does position decide, and it is **visit order among
+   the nodes the walk reaches**. The walk numbers a node after its
+   bounds test, so a miss is never numbered; `c.nodes` numbers every
+   composed node. The two agree on RELATIVE order among the nodes both
+   see, which is all a pairwise comparison needs — and that is the
+   whole of the claim. An earlier version of this line said "the same
+   numbering `c.nodes` carries", which invites moving the increment
+   above the bounds test to restore an index nothing needs, with the
+   suite staying green. Corrected in review of #458.
 
 Three consequences follow from that, and each is a change in its own
 right rather than a detail of the ordering:
@@ -100,9 +107,25 @@ tooltip. That half is quieter and worse to diagnose: a swallowed click
 is a gesture the user repeats and notices, and a tooltip that never
 appears is not.
 
+**Capture now short-circuits the WALK, not just the target.** This is a
+change, not a continuity, and an earlier draft of this record filed it
+under "What is deliberately NOT changed" with the word "still" — which
+would send someone bisecting a drag-hover regression past the very
+branch that introduced it. On the base, `DispatchMouse` called
+`HitTest` unconditionally and capture decided only where the event
+went; the walk ran and both its results were discarded. A `MouseMove`
+with a captor now runs no walk at all, in dispatch and in
+`FocusManager.MouseTarget` alike — the latter matters because
+`control/input.go`'s `Service.mayPoint` asks it per pointer event for
+every guest. Corrected in review of #458.
+
 **An adornment is at the top rank**, above popups and above toasts, and
 `AdornmentLayer`'s own transparency does not reach its children — each
-adornment decides for itself. All three in this repo return true. A
+adornment decides for itself. Every adornment in this repo returns
+true, and that is a CHECK rather than a count in prose:
+`TestEveryAdornmentIsHitTestTransparent` derives the set from source, so
+a fourth comes under it on the commit that adds it — which is why the
+number that used to stand here is gone. A
 third-party one that omits the method is opaque with no load error, no
 vet and no test to say so; that residue is why `Add`'s remedy is written
 at the point of use.
@@ -115,9 +138,6 @@ actual `<Button>` under the pointer and select it, while `DispatchMouse`
 hands the press to the frozen host. Stopping the descent would make
 click-to-select impossible and every freeze test would stay green.
 
-**Capture still short-circuits the walk.** A `MouseMove` with a captor
-is a drag; the target is the captor and the hover update is skipped, so
-no walk runs at all.
 
 ## How the claims here are checked
 
@@ -131,9 +151,11 @@ no walk runs at all.
 | …but a visible child of a hidden parent still is | `TestAVisibleChildOfAHiddenParentIsStillHit` |
 | …and the hidden leaf's own cells are still written | `TestAHiddenLeafStillWritesItsOwnCells` |
 | `Collapsed` is still skipped | `TestHitTestSkipsCollapsed` |
-| Equal ranks still fall back to position | `TestHitTestOverlapPrefersLastPainted` |
+| Equal ranks still fall back to position (overlay layer) | `TestEqualRanksFallBackToPosition`, and `TestEqualRanksKeepDocumentOrder` for paint |
+| Position still decides inside the ORDINARY layer | `TestHitTestOverlapPrefersLastPainted` |
 | A branching cycle terminates instead of hanging | `TestHitTestOnABranchingCycleTerminates` |
 | A drag walks no tree per motion event | `TestADragDoesNotWalkTheTreeOnEveryMove` |
+| …and neither does the QUERY that models the same routing | `TestADragIsNotWalkedForByAQueryEither` |
 | Every adornment in this package is transparent | `TestEveryAdornmentIsHitTestTransparent` |
 | A press inside a frozen subtree reaches the host, not the child | `TestAPressInsideAFrozenSubtreeNeverReachesIt` |
 | The `MenuBar`'s paint agrees with its hit test | `TestMenuBarPaintAgreesWithItsHitTest` |

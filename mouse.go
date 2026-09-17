@@ -224,11 +224,22 @@ type hitWalk struct {
 // last among those found so far. Held by pointer through the recursion
 // rather than returned, so the walk still allocates nothing.
 //
-// order is the node's index in DEPTH-FIRST PRE-ORDER, and it is the LAST
-// question asked rather than the rule: the overlay layer decides first,
-// then the rank within it, and position separates only two components
-// that tie on both. Same numbering c.nodes carries, which is why this
-// walk can run forward where the old one had to run in reverse.
+// order is the node's index in VISIT ORDER AMONG THE NODES THIS WALK
+// REACHES, and it is the LAST question asked rather than the rule: the
+// overlay layer decides first, then the rank within it, and position
+// separates only two components that tie on both.
+//
+// NOT an index into c.nodes, and this said it was. The increment sits
+// after the bounds test (see hitTest), so only nodes whose bounds
+// contain the point are numbered, while c.nodes numbers every composed
+// node. The two agree on RELATIVE order among the nodes both see, which
+// is all beatenBy needs and is why this walk can run forward where the
+// old one had to run in reverse — and the equivalence claim is exactly
+// what the comment at the increment calls the defect it removed. A
+// reader repairing this walk from the old wording moves the increment
+// above the bounds test to "restore the document index", and the suite
+// stays green, which that comment also records. Raised in review of
+// #458.
 type hitCandidate struct {
 	w       Component
 	rank    int
