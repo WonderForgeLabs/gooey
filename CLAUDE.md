@@ -519,11 +519,28 @@ half of the rule only has a reader when the slice is one a container
 PUBLISHES — `ChildComponents()`'s return, or `FocusManager.Order()`'s —
 so those are the sites where the after-form is not merely cheaper.
 
+**The POP `x = x[:len(x)-1]` is the third spelling of the same rule**,
+and the paragraph here used to say the opposite. It claimed the
+compaction shapes appeared on no reused field in the tree, and at the
+commit that wrote it four did: two popped a refused markup subtree off a
+live parent's `Kids` in `apps/wysiwyg`, one popped a scratch component
+off a live `Grid`, and `prop.evalStack` popped a `*node` off a
+package-level stack on the hottest path the framework has.
+`apps/wysiwyg/undo.go` was the counter-evidence in the same tree — it
+zeroes the slot before the pop — so the claim was refuted by a file that
+had already got it right. Review of #456 found them.
+
+For a pop the clear is **one slot**, not the whole tail:
+`x[len(x)-1] = nil` before the pop releases exactly what left, and where
+the pop is hot (`prop/prop.go`) clearing to cap instead would be
+O(depth) per pop. The guard reads both.
+
 `TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
-it — over both spellings above, and not over a compaction
-`x = x[:n]`, whose length is not a literal and which no reused field in
-the tree uses today (`resetBase` carries that scope, and a fixture arm
-pins what the matcher can see). Where that test LIVES is the other half
+it — over all three spellings above, and not over a general compaction
+`x = x[:n]`. That last one is scope rather than a claim about the tree:
+widening to it collects two dozen LOCAL slices the field lookup cannot
+resolve, which says nothing about a reused field (`isPopOf` carries the
+argument, and fixture arms pin what the matcher can and cannot see). Where that test LIVES is the other half
 worth knowing: it walks every
 non-test Go file in the whole tree, **nested modules included**, from the
 ROOT module's suite. So a reset added in `packs/temporal-workflow` reddens
@@ -594,7 +611,7 @@ repo-restructure epic
 relocation and demo-suffix scrub landed in
 [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
 
-**`prop.Set` does not compare values** (`prop/prop.go:134`). Setting a
+**`prop.Set` does not compare values** (`prop/prop.go:142`). Setting a
 property to what it already holds still invalidates every dependent and
 still costs a repaint. Guard at the call site if you need idempotence.
 

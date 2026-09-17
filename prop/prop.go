@@ -106,6 +106,14 @@ func (p *Property[T]) Get() T {
 		p.n.deps = p.n.deps[:0]
 		evalStack = append(evalStack, &p.n)
 		p.value = p.compute()
+		// ZEROED, NOT CLEARED TO CAP, and the difference is the hot
+		// path. A pop releases exactly one slot, and this one runs on
+		// every computed evaluation in the process — clearing to cap
+		// here would be O(depth) per pop and O(depth²) per evaluation.
+		// Without it evalStack holds one *node per level of the deepest
+		// chain the process ever evaluated, for its lifetime. Raised in
+		// review of #456.
+		evalStack[len(evalStack)-1] = nil
 		evalStack = evalStack[:len(evalStack)-1]
 		clear(p.n.deps[len(p.n.deps):cap(p.n.deps)])
 		p.n.dirty = false

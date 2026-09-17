@@ -215,7 +215,13 @@ func (ed *editor) probeUncached(g *components.Grid) [][]gooey.Rect {
 	}
 	scratch := &components.Text{}
 	g.Children = append(g.Children, scratch)
-	defer func() { g.Children = g.Children[:len(g.Children)-1] }()
+	// The pop leaves the scratch Text in the vacated slot of a LIVE
+	// Grid's children, where it outlives the measurement it was made
+	// for. Raised in review of #456.
+	defer func() {
+		g.Children = g.Children[:len(g.Children)-1]
+		clear(g.Children[len(g.Children):cap(g.Children)])
+	}()
 	return ed.cellsThrough(g, scratch)
 }
 

@@ -211,6 +211,9 @@ func (ed *editor) demoteSelected() bool {
 	if ed.remote == nil && ed.docRoot == nil {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		host.Kids = host.Kids[:len(host.Kids)-1]
+		// THE POP RETAINS: the refused subtree stays in the vacated slot
+		// of a LIVE parent's children. Raised in review of #456.
+		clear(host.Kids[len(host.Kids):cap(host.Kids)])
 		insertAt(p, at, n)
 		// BEFORE the rebuild: the refused mutation must not stay on the
 		// undo stack, or one ctrl+z re-enters the docRoot==nil state this

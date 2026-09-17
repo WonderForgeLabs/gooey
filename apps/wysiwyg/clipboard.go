@@ -328,6 +328,11 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	if ed.remote == nil && ed.docRoot == nil {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		into.Kids = into.Kids[:len(into.Kids)-1]
+		// THE POP RETAINS, exactly as the delete-splice did: len drops
+		// and the refused subtree stays in the vacated slot, reachable
+		// from a live parent, with nothing that re-inserts it. Raised in
+		// review of #456.
+		clear(into.Kids[len(into.Kids):cap(into.Kids)])
 		ed.sel = prevSel
 		// BEFORE the rebuild: the refused mutation must not stay on the
 		// undo stack, or one ctrl+z re-enters the docRoot==nil state this

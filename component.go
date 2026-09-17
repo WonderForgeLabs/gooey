@@ -176,15 +176,28 @@ type Overlay interface{ OverlaysPage() }
 // OverlayRankToast and OverlayRankAdornment. They are spaced so an
 // application can sit between them.
 //
-// A RANK IS A STATIC PROPERTY OF THE TYPE. It is sampled by
-// Composer.orderPaint, which runs on composition build and structural
-// re-sync — NOT per frame. A component whose OverlayRank() returned a
-// varying value would restack on some unrelated later re-sync, or never,
-// with no error anywhere. That is the same reason Overlay is a marker
-// rather than a bool: a value that can change needs the
-// observer-and-re-sync machinery Frozen has, and a method returning an
-// int reads as dynamic in a way an empty marker never does. Return a
-// constant. Raised in review of #456.
+// A RANK IS A STATIC PROPERTY OF THE TYPE, and THE TWO PAINT PATHS
+// SAMPLE IT AT DIFFERENT MOMENTS — which is the argument, not a
+// footnote to it.
+//
+// Composer.orderPaint samples it on composition build and structural
+// re-sync, NOT per frame. gooey.Compose samples it per CALL, through
+// collectPaint → overlayOf. So a component whose OverlayRank() varied
+// would be stale on the retained path and live on the one-shot path,
+// and the two paths would then DISAGREE ABOUT Z-ORDER — the exact
+// property TestBothPaintPathsAgreeOnRanks and Compose's own "IT PAINTS
+// IN THE SAME Z-ORDER Composer does" paragraph exist to hold. Nothing
+// in the suite could see it: every fixture returns a constant set at
+// construction, which is what the rule asks for.
+//
+// The earlier version of this paragraph named only orderPaint, and the
+// failure it described — restacking on some unrelated later re-sync, or
+// never — is the milder half. Raised in review of #456.
+//
+// That is the same reason Overlay is a marker rather than a bool: a
+// value that can change needs the observer-and-re-sync machinery Frozen
+// has, and a method returning an int reads as dynamic in a way an empty
+// marker never does. Return a constant.
 //
 // EQUAL RANKS STILL KEEP DOCUMENT ORDER. Two popups paint in the order
 // they were declared rather than the order they were opened; the rank
