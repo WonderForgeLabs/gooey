@@ -909,6 +909,8 @@ func whole()     { clear(x) }
 func toLen()     { clear(x[:len(x)]) }
 func toZero()    { clear(x[:0]) }
 func otherCap()  { clear(x[:cap(y)]) }
+func offsetTail(){ clear(x[2:cap(x)]) }
+func foreignLen(){ clear(x[len(y):cap(x)]) }
 func notAClear() { copy(x[:cap(x)], y) }
 `
 	fset := token.NewFileSet()
@@ -938,6 +940,8 @@ func notAClear() { copy(x[:cap(x)], y) }
 		{"toLen", false, false},
 		{"toZero", false, false},
 		{"otherCap", false, false},
+		{"offsetTail", false, false},
+		{"foreignLen", false, false},
 		{"notAClear", false, false},
 	} {
 		var decl *ast.FuncDecl
@@ -1254,6 +1258,30 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSi
 			if !ok || fn.Name != "cap" || len(hi.Args) != 1 || text(hi.Args[0]) != text(sl.X) {
 				return true
 			}
+			// AND THE LOW MUST BE THE HEAD OR len OF THE SAME BASE.
+			// The paragraph below used to argue the High check made the
+			// whole tail the thing being cleared "whatever Low is", and
+			// that is false for every Low which is neither:
+			// clear(x[2:cap(x)]) passes the cap test and leaves x[0]
+			// and x[1] reachable, which is the partial clear this guard
+			// exists to reject. Measured — writing
+			// components/statusbar.go:75 as clear(s.kids[2:cap(s.kids)])
+			// left a dropped section in s.kids[1] with both guards
+			// green. `len(y)` in the Low of a clear over x went through
+			// for the same reason. Nothing in the tree writes either,
+			// which is why the fixture arms are the pin. Raised in
+			// review of #456, round seven.
+			if sl.Low != nil {
+				lo, ok := sl.Low.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				lf, ok := lo.Fun.(*ast.Ident)
+				if !ok || lf.Name != "len" || len(lo.Args) != 1 ||
+					text(lo.Args[0]) != text(sl.X) {
+					return true
+				}
+			}
 		}
 		// LOW MUST BE NIL ON THE clearToCap ARM, and the justification
 		// is why. Stripping the slice expression off the argument rests
@@ -1268,9 +1296,11 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSi
 		// of this narrowing made: `clear(x[len(x):cap(x)])` is the
 		// canonical spelling in this tree and its Low is len(x), so a
 		// blanket Low == nil dropped fourteen live exemptions at once.
-		// That arm is already pinned from both ends by the High check
-		// above — cap() over the same base — which is what makes the
-		// whole tail the thing being cleared whatever Low is.
+		// That arm is pinned from both ends INSTEAD — cap() over the
+		// same base in the High, and nil or len() over the same base in
+		// the Low. The sentence that stood here said the High check
+		// alone made the whole tail the thing being cleared "whatever
+		// Low is", and an offset Low is exactly the counterexample.
 		ordered := false
 		if sliced {
 			if id.Name == "clearToCap" && sl.Low != nil {
@@ -1288,6 +1318,101 @@ func clearsToCapIn(fn ast.Node, text func(ast.Expr) string) map[string][]clearSi
 		return true
 	})
 	return found
+}
+
+// localSlices is every name fn DECLARES in its own body — `var x []T`
+// and `x := …` alike.
+//
+// It exists because this guard's subject is a REUSED FIELD, and a bare
+// identifier reset inside a function is not one: the backing array a
+// local names dies with the call frame, so truncating it retains
+// nothing past the call. CLAUDE.md says the same about the general
+// `x = x[:n]` compaction the guard deliberately does not cover.
+//
+// It was not needed while sliceFieldsByDir indexed locals, because the
+// local's own declaration resolved its element type and a value-typed
+// one took the safe arm — accidentally, and by the same mechanism that
+// let a local resolve a FIELD of the same name. Taking locals out of
+// that index (round seven) left cmd/browser/markdown.go:74's
+// `para = para[:0]` — a []string local in renderMarkdown — reported as
+// a retaining reset. This is the deliberate half of that change rather
+// than a hole it opened: a local is skipped because it is a local, not
+// because its elements happened to be values.
+//
+// A SELECTOR IS NEVER SKIPPED here, whatever names collide: the check
+// is on the reset's own base text, so `c.kids` is a field even in a
+// function that also declares a local `kids`.
+func localSlices(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.ValueSpec:
+			for _, nm := range d.Names {
+				out[nm.Name] = true
+			}
+		case *ast.AssignStmt:
+			if d.Tok != token.DEFINE {
+				return true
+			}
+			for _, lhs := range d.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok {
+					out[id.Name] = true
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// TestALocalIsSeenHoweverItIsDeclared is localSlices' own fixture.
+//
+// The guard's live pin for the skip is cmd/browser/markdown.go's
+// `para = para[:0]`, and para is a `var`. Nothing in the tree resets a
+// `:=` local, so that arm is unexercised by the corpus and a mutation
+// of it is silent — which is the shape a fixture test is for.
+func TestALocalIsSeenHoweverItIsDeclared(t *testing.T) {
+	const src = `package p
+
+var pkgLevel []int
+
+func f(param []int) {
+	var declared []int
+	short := []int{}
+	pair, _ := g()
+	_, _, _, _ = declared, short, pair, param
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	var fn *ast.FuncDecl
+	for _, d := range file.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "f" {
+			fn = fd
+		}
+	}
+	if fn == nil {
+		t.Fatal("the fixture has no func f")
+	}
+	got := localSlices(fn)
+	for _, name := range []string{"declared", "short", "pair"} {
+		if !got[name] {
+			t.Errorf("localSlices does not see %q. A reset on it would be "+
+				"classified as a reused field, and the element type that "+
+				"answers for it is whatever else in the directory carries "+
+				"that name", name)
+		}
+	}
+	for _, name := range []string{"pkgLevel", "param"} {
+		if got[name] {
+			t.Errorf("localSlices sees %q, which fn does not declare. A "+
+				"package-level slice reset in this function would be skipped "+
+				"as a local — and prop.evalStack is exactly that shape", name)
+		}
+	}
 }
 
 // clearSite is one tail-clear: where it is, and whether that matters.
@@ -1344,6 +1469,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 			}
 			clears := clearsIn(fn)
 			zeroesTop := zeroesTopIn(fn, text)
+			locals := localSlices(fn)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				as, ok := n.(*ast.AssignStmt)
 				// PAIRWISE — see the composer-only guard above, which had
@@ -1354,6 +1480,10 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 				for i, rhs := range as.Rhs {
 					base, kind := resetBase(rhs, text)
 					if base == "" {
+						continue
+					}
+					// A LOCAL IS NOT A REUSED FIELD — see localSlices.
+					if !strings.Contains(base, ".") && locals[base] {
 						continue
 					}
 					// The element type is looked up by the LAST segment:
@@ -1554,6 +1684,60 @@ func importDirs(f *ast.File) map[string]string {
 	return out
 }
 
+// TestAFunctionLocalIsNotAField is the other half of sliceFieldsByDir's
+// scope, and the tree cannot pin it either — a local that collides with
+// a field name is a thing a contributor writes next, not a thing the
+// tree holds today.
+//
+// Both directions are here. The NOISY one is what the measurement in
+// review of #458 showed: a local `var sizes []int` anywhere in
+// components/ conflicted with ButtonBar's `sizes []gooey.Size` and
+// reddened four correct resets three files away. The one that matters
+// is the FAIL-OPEN mirror, and it is the arm below: where the local is
+// a name's only declaration in the directory, it supplied the
+// resolution for a reset on a field of that name promoted from a type
+// declared in another package — a value-typed local waving a
+// reference-typed field through. Raised in review of #456.
+func TestAFunctionLocalIsNotAField(t *testing.T) {
+	const src = `package p
+
+type holder struct{ kids []*int }
+
+func f() {
+	var kids []int
+	spare := []int{}
+	_, _ = kids, spare
+}
+`
+	fset := token.NewFileSet()
+	path := filepath.Join("dir", "f.go")
+	f, err := parser.ParseFile(fset, path, src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	got := sliceFieldsByDir([]goFile{{path: path, src: []byte(src), fset: fset, file: f}})["dir"]
+
+	if _, ok := got["spare"]; ok {
+		t.Errorf("a local declared with := was indexed as a field (%v). Every "+
+			"name in a function body would be, and a value-typed one supplies "+
+			"a resolution for any FIELD of the same name in the directory",
+			got["spare"])
+	}
+	// `kids` is declared twice here: once as a field of []*int, once as a
+	// local of []int. Indexing the local makes them conflict, which is
+	// the noisy direction; the field's own resolution is what must
+	// survive.
+	if got["kids"] == nil {
+		t.Errorf("holder.kids resolved to nothing. The local `var kids []int` " +
+			"in the same directory conflicted with it, so an ordinary local " +
+			"turns every reset on a field of that name red")
+	} else if el := src[fset.Position(got["kids"].Pos()).Offset:fset.Position(got["kids"].End()).Offset]; el != "*int" {
+		t.Errorf("holder.kids resolved to %q, want *int — the local's element "+
+			"type answered for the field, so a value-typed local waves a "+
+			"reference-typed field through", el)
+	}
+}
+
 // A THREE-DECLARATION SEQUENCE, which is the ordering the conflict
 // marker used to lose.
 //
@@ -1599,7 +1783,20 @@ func TestAnAmbiguousFieldStaysAmbiguous(t *testing.T) {
 }
 
 // sliceFieldsByDir maps a directory to the slice ELEMENT type of every
-// name declared in it — struct fields and package-level vars alike.
+// name declared in it — struct fields and FILE-LEVEL vars alike.
+//
+// File-level, and the emphasis is a repair. The var arm ran under the
+// same ast.Inspect as the struct one, so every `var x []T` inside a
+// function body was recorded as if it were a field — the collision
+// round four closed for function PARAMETERS, reopened one node type
+// over. Measured: `func reviewProbe() { var sizes []int; _ = sizes }`
+// added to components/canvas.go reddens four correct, value-typed
+// resets in buttonbar.go, canvas.go, hstack.go and vstack.go. The noisy
+// direction is the visible one; the direction that matters is the
+// mirror, where a name's only declaration in a directory is a
+// value-typed local and it supplies the resolution for a reset on a
+// field promoted from a type declared elsewhere — there the local waves
+// the reset through. Raised in review of #456, round seven.
 //
 // By directory rather than by file because a package is a directory:
 // c.gonePlacements is declared in composer.go and reset in
@@ -1649,6 +1846,23 @@ func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 			shape[key] = s
 			out[dir][name] = arr.Elt
 		}
+		// FILE-LEVEL VARS ONLY, walked off Decls rather than found by
+		// the Inspect below — see this function's doc.
+		for _, decl := range p.file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				vs, ok := sp.(*ast.ValueSpec)
+				if !ok || vs.Type == nil {
+					continue
+				}
+				for _, nm := range vs.Names {
+					record(nm.Name, vs.Type)
+				}
+			}
+		}
 		ast.Inspect(p.file, func(n ast.Node) bool {
 			switch d := n.(type) {
 			case *ast.StructType:
@@ -1675,13 +1889,6 @@ func sliceFieldsByDir(files []goFile) map[string]map[string]ast.Expr {
 					for _, nm := range f.Names {
 						record(nm.Name, f.Type)
 					}
-				}
-			case *ast.ValueSpec:
-				if d.Type == nil {
-					return true
-				}
-				for _, nm := range d.Names {
-					record(nm.Name, d.Type)
 				}
 			}
 			return true
@@ -1999,6 +2206,25 @@ func notAPop()   { x[len(x)-n] = nil }
 // callers walk a function's resets with ast.Inspect over its body, which
 // visits statements in source order, so the entry spent is the earliest
 // unspent zeroing that precedes this pop.
+//
+// SOURCE ORDER, NOT EXECUTION ORDER, and the difference is scope rather
+// than a miss. Both comparisons are on token.Pos, so "after the reset"
+// means further down the file — a clear below an early return, or
+// inside a conditional past the reset, exempts it on paths where it
+// never runs:
+//
+//	x = x[:0]
+//	if cond {
+//		return // nothing released on this path
+//	}
+//	clear(x[len(x):cap(x)]) // exempts the reset anyway
+//
+// No live site is shaped that way: every reset in the tree and the
+// clear or zeroing that covers it are straight-line in one block.
+// Making the check flow-sensitive is a reaching-definitions pass, a
+// different instrument from this file. Stated rather than left to be
+// inferred, which is the standard CLAUDE.md's `x = x[:n]` scope
+// paragraph sets. Raised in review of #456, round seven.
 func resetIsExempt(base, lhs, kind string, at token.Pos, clears map[string][]clearSite, zeroesTop map[string][]token.Pos) bool {
 	// AN ORDERED CLEAR HAS TO FOLLOW THE RESET — see clearsToCapIn: the
 	// `clear(x[len(x):cap(x)])` spelling reads len, and len is what the

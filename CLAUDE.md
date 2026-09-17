@@ -545,6 +545,17 @@ subtrahend and the zeroed index must both be `1`, because the evidence
 is about the ONE slot that left `[0, len)`. Review of #456 measured all
 three.
 
+**"Before" and "after" there mean SOURCE ORDER, not execution order**,
+and the same is true of the after-the-refill requirement two paragraphs
+up. The guard compares positions in the file, so a clear below an early
+`return`, or inside a conditional past the reset, exempts the reset on
+paths where it never runs. Nothing in the tree is shaped that way —
+every reset and the clear or zeroing that covers it are straight-line in
+one block — and making it flow-sensitive is a reaching-definitions pass,
+a different instrument. It is written here because a reader who takes
+the two paragraphs above as execution claims would be over-crediting the
+guard, which is the failure mode this file's own history is about.
+
 `TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
 it — over all three spellings above, and not over a general compaction
 `x = x[:n]`. That last one is scope rather than a claim about the tree:
