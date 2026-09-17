@@ -133,8 +133,17 @@ func TestCIMatrixPackingPartitionsEveryModule(t *testing.T) {
 	// fetch-depth <= 0. It was keyed on the tier NAME in the checkout
 	// step instead, which couples the step to the `case` in discover
 	// across two places in one file — and that `case` carries its own
-	// proposal to invert itself. The fixture above puts `.` in the
-	// `test` tier precisely so this arm is not measuring the name.
+	// proposal to invert itself.
+	//
+	// THIS ARM ALONE CANNOT SEE THAT, and the sentence that stood here
+	// claimed the opposite: it said the fixture puts `.` in the `test`
+	// tier "precisely so this arm is not measuring the name". Putting
+	// it there is what makes the name and the fact COINCIDE — measured,
+	// the real jq and the tier-name-keyed defect it replaces emit
+	// byte-identical output over this fixture, so reverting discover to
+	// `matrix.mode == "test"` leaves this green. The second run below
+	// is the discriminator; this one covers the ordinary arrangement.
+	// Raised in review of #497.
 	for _, l := range legs {
 		want := 1
 		if slices.Contains(strings.Fields(l.Modules), ".") {
@@ -168,6 +177,37 @@ func TestCIMatrixPackingPartitionsEveryModule(t *testing.T) {
 		t.Errorf("per-leg counts sum to %d, want 5. This sum IS the coverage "+
 			"check that replaced `legs == modules`; if it can disagree with the "+
 			"input, discovery can drop a module and CI stays green (#207).", total)
+	}
+
+	// THE ROOT MODULE IN A TIER THAT IS NOT `test`, which is the only
+	// fixture that tells the derivation from the coupling it replaced.
+	// It is the inversion the `case` in discover proposes for itself,
+	// and a SECOND run rather than an edit above, because the arms
+	// there are written against that fixture's shape. Raised in review
+	// of #497.
+	inverted := strings.Join([]string{
+		".\trace",
+		"grpc\trace",
+		"apps/one\tvet",
+	}, "\n") + "\n"
+	cmd = exec.Command("jq", "-Rnc", m[1])
+	cmd.Stdin = strings.NewReader(inverted)
+	out, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("running ci.yml's own matrix program over the inverted fixture: %v", err)
+	}
+	for _, l := range parseLegs(t, string(out)) {
+		want := 1
+		if slices.Contains(strings.Fields(l.Modules), ".") {
+			want = 0
+		}
+		if l.Depth != want {
+			t.Errorf("with the root module in the %q tier, that leg (%q) carries "+
+				"depth %d, want %d — the depth is derived from WHICH LEG HOLDS "+
+				"THE ROOT MODULE, not from the tier being called test, and a "+
+				"program keyed on the name answers the other way here",
+				l.Mode, l.Modules, l.Depth, want)
+		}
 	}
 
 	want := []string{".", "apps/one", "apps/three", "apps/two", "imagefmt/svg"}

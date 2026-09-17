@@ -89,68 +89,8 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	seen := pinsOf(all)
 	{
 		for _, r := range all {
-			dir := r.dir
-			shape := classifyRequire(r.version)
-			// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
-			// on a module the workspace replaces writes the canonical
-			// spelling `v0.0.0-00010101000000-000000000000`, which is the
-			// same unservable revision wearing a pseudo-version's shape —
-			// and apps/wysiwyg carried three of them while the plain
-			// sentinel elsewhere carried the rest.
-			if shape == shapeSentinel {
-				t.Errorf("%s requires %s %s, which is neither a tag nor a "+
-					"pseudo-version any proxy can serve: `go get` of this module "+
-					"fails with \"unknown revision\" for everybody outside this "+
-					"workspace. Point it at a published commit, and note that "+
-					"`go mod edit -require` writes LITERALLY what you hand it: a "+
-					"bare short hash stays a bare short hash and fails this test "+
-					"again. Get a real pseudo-version with `GOWORK=off go list -m "+
-					"-f '{{.Version}}' %s@$(git rev-parse origin/main)` (needs the "+
-					"network; GOWORK=off is load-bearing — inside the workspace the "+
-					"committed vendor/ forces -mod=vendor and the query is refused, "+
-					"and -mod=mod is not allowed in workspace mode), or copy the "+
-					"one the rest of the tree already names, or derive it with no "+
-					"network at all: `TZ=UTC git -c core.abbrev=12 log -1 "+
-					"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
-					"origin/main` (TZ=UTC is load-bearing, and the form is exact "+
-					"only while the module is untagged). "+
-					"Keep any `replace` line, which is what makes local development "+
-					"use the checkout.",
-					dir, r.path, r.version, r.path)
-				continue
-			}
-			// Not a resolution check (no network here), just the shape: a
-			// version the proxy could be asked for at all.
-			if shape == shapeNotAVersion {
-				t.Errorf("%s requires %s %q, which is not a version", dir, r.path, r.version)
-				continue
-			}
-			// AND A PSEUDO-VERSION THAT IS NOT ONE IS NOT A TAG. Without
-			// this the failure had no reporter at all: revisionOf wants
-			// exactly twelve hex characters, so a short or clipped tail
-			// returns ok=false, skewFrom files it under `tagged` — "a
-			// require naming a plain tag", legitimate and merely
-			// unorderable — and that is reported through a t.Logf this
-			// same file measures to be invisible for a passing package.
-			// pinPopulations drops it too, so the existence check never
-			// asks whether the commit is real. Green, silent, and `go
-			// get` cannot resolve it: Go does not recognise a short tail
-			// as a pseudo-version, so it asks for a TAG of that name.
-			// Measured on this tree, revisionOf("v0.0.0-20260913132232-
-			// e5cdb56") = ("", false) with stampOf = "20260913132232".
-			// Raised in review of #497.
-			if shape == shapeMalformed {
-				t.Errorf("%s requires %s %q, which carries a pseudo-version's "+
-					"14-digit stamp and NOT its twelve-hex-character revision — so "+
-					"it is a malformed pseudo-version, not a plain tag, and no "+
-					"proxy can serve it: Go asks for a tag of that name instead and "+
-					"gets \"unknown revision\". Twelve is the whole of it and git's "+
-					"default abbreviation is seven, so the remedy this file prints "+
-					"elsewhere produces exactly this string with its `-c "+
-					"core.abbrev=12` dropped: `TZ=UTC git -c core.abbrev=12 log -1 "+
-					"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
-					"origin/main`. A `sed` across the tree that clips one character "+
-					"lands here too", dir, r.path, r.version)
+			if msg := shapeMsg(classifyRequire(r.version), r); msg != "" {
+				t.Error(msg)
 				continue
 			}
 		}
@@ -323,6 +263,83 @@ func comparedNothing(seen []ownRequire, tagged []string) bool {
 // ownRequire is one require of a module in this repository, by the module
 // that names it.
 type ownRequire struct{ dir, path, version string }
+
+// shapeMsg is what a require of this shape is wrong about, and "" for
+// one that is fine.
+//
+// RENDER THEN DISPATCH, which is the idiom skewMsg, pinCoverage and
+// emptyPopulationMsg already use here — and the reason is measured
+// rather than stylistic. The three arms were three `if shape == …`
+// blocks in the loop, and disabling any of them, or all three at once,
+// left the whole root package GREEN: pinsOf has already taken a
+// rejected require out of the skew and existence populations, so with
+// its reporter gone nothing downstream notices and a v0.0.0 sentinel
+// would sit in the tree in silence. One renderer cannot lose one arm
+// without losing all of them, the `continue` in the caller becomes
+// structural — which pinsOf's doc calls load-bearing — and each shape's
+// own remedy becomes assertable from a table. Raised in review of #497.
+func shapeMsg(shape requireShape, r ownRequire) string {
+	dir := r.dir
+	switch shape {
+	// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
+	// on a module the workspace replaces writes the canonical
+	// spelling `v0.0.0-00010101000000-000000000000`, which is the
+	// same unservable revision wearing a pseudo-version's shape —
+	// and apps/wysiwyg carried three of them while the plain
+	// sentinel elsewhere carried the rest.
+	case shapeSentinel:
+		return fmt.Sprintf("%s requires %s %s, which is neither a tag nor a "+
+			"pseudo-version any proxy can serve: `go get` of this module "+
+			"fails with \"unknown revision\" for everybody outside this "+
+			"workspace. Point it at a published commit, and note that "+
+			"`go mod edit -require` writes LITERALLY what you hand it: a "+
+			"bare short hash stays a bare short hash and fails this test "+
+			"again. Get a real pseudo-version with `GOWORK=off go list -m "+
+			"-f '{{.Version}}' %s@$(git rev-parse origin/main)` (needs the "+
+			"network; GOWORK=off is load-bearing — inside the workspace the "+
+			"committed vendor/ forces -mod=vendor and the query is refused, "+
+			"and -mod=mod is not allowed in workspace mode), or copy the "+
+			"one the rest of the tree already names, or derive it with no "+
+			"network at all: `TZ=UTC git -c core.abbrev=12 log -1 "+
+			"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
+			"origin/main` (TZ=UTC is load-bearing, and the form is exact "+
+			"only while the module is untagged). "+
+			"Keep any `replace` line, which is what makes local development "+
+			"use the checkout.",
+			dir, r.path, r.version, r.path)
+	// Not a resolution check (no network here), just the shape: a
+	// version the proxy could be asked for at all.
+	case shapeNotAVersion:
+		return fmt.Sprintf("%s requires %s %q, which is not a version", dir, r.path, r.version)
+	// AND A PSEUDO-VERSION THAT IS NOT ONE IS NOT A TAG. Without
+	// this the failure had no reporter at all: revisionOf wants
+	// exactly twelve hex characters, so a short or clipped tail
+	// returns ok=false, skewFrom files it under `tagged` — "a
+	// require naming a plain tag", legitimate and merely
+	// unorderable — and that is reported through a t.Logf this
+	// same file measures to be invisible for a passing package.
+	// pinPopulations drops it too, so the existence check never
+	// asks whether the commit is real. Green, silent, and `go
+	// get` cannot resolve it: Go does not recognise a short tail
+	// as a pseudo-version, so it asks for a TAG of that name.
+	// Measured on this tree, revisionOf("v0.0.0-20260913132232-
+	// e5cdb56") = ("", false) with stampOf = "20260913132232".
+	// Raised in review of #497.
+	case shapeMalformed:
+		return fmt.Sprintf("%s requires %s %q, which carries a pseudo-version's "+
+			"14-digit stamp and NOT its twelve-hex-character revision — so "+
+			"it is a malformed pseudo-version, not a plain tag, and no "+
+			"proxy can serve it: Go asks for a tag of that name instead and "+
+			"gets \"unknown revision\". Twelve is the whole of it and git's "+
+			"default abbreviation is seven, so the remedy this file prints "+
+			"elsewhere produces exactly this string with its `-c "+
+			"core.abbrev=12` dropped: `TZ=UTC git -c core.abbrev=12 log -1 "+
+			"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
+			"origin/main`. A `sed` across the tree that clips one character "+
+			"lands here too", dir, r.path, r.version)
+	}
+	return ""
+}
 
 // requireShape is what the three shape gates decide about one require,
 // and the reason it is a value rather than three `if`s in the loop.
@@ -1244,10 +1261,16 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		// BOTH REMEDIES, ON BOTH ARMS. The nothing-ran arm is a
 		// t.Error, so `git clone --depth 1` of this repo reds the root
 		// suite — and a reader at a terminal has no checkout step to
-		// set fetch-depth on. A message that names only the CI knob
+		// set fetch-depth on. A message that names only the CI remedy
 		// spends the attention "a red suite is yours" exists to buy, on
 		// a failure that is not theirs. Raised in review of #497.
-		for _, want := range []string{"--unshallow", "fetch-depth: 0"} {
+		//
+		// AND THE CI HALF IS `matrix.depth`, NOT `fetch-depth: 0`. The
+		// literal this asked for stopped being in the workflow when the
+		// depth became derived — it survives only in ci.yml's comments
+		// — so this arm was pinning the one spelling a reader could not
+		// find. Raised in review of #497, round after.
+		for _, want := range []string{"--unshallow", "matrix.depth"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("%s: pinCoverage's message does not name %q. Both the "+
 					"local and the CI remedy have to be there: the reader who "+
@@ -1620,9 +1643,22 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 // carries the requirement too, because it lived only inside this string
 // and a ci.yml comment. Raised in review of #497.
 func pinCoverage(pins int, absent []string) (fail bool, msg string) {
+	// THE CI REMEDY IS NO LONGER A KNOB TO SET, and this said it was:
+	// after the matrix-depth change `fetch-depth: 0` appears in ci.yml
+	// only inside comments — the checkout step reads
+	// `fetch-depth: ${{ matrix.depth }}`. A reader who hit this in CI
+	// and grepped for the string found prose rather than the line, and
+	// the arm below hard-asserted that spelling, so the stale one was
+	// the pinned one. A leg that reds here now means the DERIVATION
+	// broke — the leg running this suite did not get the root module —
+	// which is a different action from the local deepen. Raised in
+	// review of #497.
 	const remedy = "Deepen the clone: `git fetch --unshallow` locally (or " +
-		"`--deepen=50`, which reaches these while the clone stays shallow), " +
-		"or `fetch-depth: 0` on the checkout step in CI"
+		"`--deepen=50`, which reaches these while the clone stays shallow). " +
+		"In CI there is nothing to set by hand: the checkout step takes " +
+		"`fetch-depth: ${{ matrix.depth }}`, and discover gives depth 0 to " +
+		"the leg carrying the root module — so this failing there means that " +
+		"derivation broke, not that a depth wants editing"
 	switch {
 	case len(absent) == 0:
 		return false, ""
@@ -1703,11 +1739,23 @@ func ownModule(path string) bool {
 // package green. Measured in review of #497, round sixteen, on
 // malformedPseudo's block.
 //
-// The two halves are separate assertions because they are separate
-// claims. classifyRequire is the rule; pinsOf is the wiring, and it is
-// the one that says a rejected require never reaches the skew and
-// existence checks — the ordering the comment in the caller calls
+// The three halves are separate assertions because they are separate
+// claims. classifyRequire is the rule; shapeMsg is what turns a
+// classification into something a human reads; pinsOf is the wiring,
+// and it is the one that says a rejected require never reaches the skew
+// and existence checks — the ordering the comment in the caller calls
 // load-bearing and nothing read.
+//
+// THE MIDDLE ONE WAS MISSING, and its absence was measured rather than
+// argued: with the reporting arms three `if shape == …` blocks in the
+// loop, disabling any one of them — or all three at once — left the
+// whole root package green, because pinsOf had already taken the
+// rejected require out of every downstream population. The rule was
+// pinned and the DISPATCH was not, which is round sixteen's finding one
+// refactor on. Each arm is asserted by its own distinguishing REMEDY
+// rather than by being non-empty: two shapes sharing one message is the
+// state that makes a lost arm invisible again. Raised in review of
+// #497.
 func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 	const good = "v0.0.0-20260913132232-e5cdb56ececd"
 	for _, tc := range []struct {
@@ -1729,6 +1777,37 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 	} {
 		if got := classifyRequire(tc.v); got != tc.want {
 			t.Errorf("classifyRequire(%q) = %s, want %s — %s", tc.v, got, tc.want, tc.why)
+		}
+	}
+
+	// THE RENDERER. A remedy per shape, and "" for a pin — asserted by a
+	// string only that shape's message carries, so two arms cannot
+	// collapse into one without this noticing.
+	for _, tc := range []struct {
+		shape requireShape
+		carry string
+		why   string
+	}{
+		{shapePin, "", "a pin is not wrong about anything, so it has nothing to say"},
+		{shapeSentinel, "GOWORK=off go list -m",
+			"the sentinel's remedy is to go and get a real pseudo-version"},
+		{shapeNotAVersion, "is not a version",
+			"a bare hash is not a shape any remedy can repair in place"},
+		{shapeMalformed, "core.abbrev=12",
+			"the malformed one is this file's own offline remedy with a flag " +
+				"dropped, so naming the flag IS the fix"},
+	} {
+		msg := shapeMsg(tc.shape, ownRequire{"mcp", coreModule, "v0.0.0-20260913132232-e5cdb56"})
+		if tc.carry == "" {
+			if msg != "" {
+				t.Errorf("shapeMsg(%s) = %q, want the empty string — %s", tc.shape, msg, tc.why)
+			}
+			continue
+		}
+		if !strings.Contains(msg, tc.carry) {
+			t.Errorf("shapeMsg(%s) does not carry %q, so this shape cannot be told "+
+				"from the others by what it tells the reader to do — %s. Got: %q",
+				tc.shape, tc.carry, tc.why, msg)
 		}
 	}
 

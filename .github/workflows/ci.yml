@@ -362,17 +362,26 @@ jobs:
       # binaries arrive as pointer text, and a test that reads one fails with
       # a decode error rather than anything that names LFS.
       #
-      # `fetch-depth: 0` ON THE `test` LEG ONLY, and that is a MATRIX
-      # EXPRESSION rather than a plain value because it has to be. This
-      # job has one `steps:` block and three legs — discovery packs one
-      # per tier, `vet`, `test` and `race` — so an unconditional
-      # fetch-depth pays the full-history fetch three times per push, on
-      # the shared non-autoscaling pool this file spends four paragraphs
-      # justifying pod counts for, and two of those three legs never run
-      # the suite that wants it.
+      # FULL HISTORY ON THE LEG THAT CARRIES THE ROOT MODULE, whichever
+      # tier that turns out to be, and that is a MATRIX EXPRESSION rather
+      # than a plain value because it has to be. This job has one
+      # `steps:` block and three legs — discovery packs one per tier,
+      # `vet`, `test` and `race` — so an unconditional fetch-depth pays
+      # the full-history fetch three times per push, on the shared
+      # non-autoscaling pool this file spends four paragraphs justifying
+      # pod counts for, and two of those three legs never run the suite
+      # that wants it.
       #
-      # The root module tiers to `test` (the `*)` arm of the `case` in
-      # discover), and one test in its suite asks git about COMMITS.
+      # THE TIER NAME IS NOT THE RULE, which is what this heading said
+      # until #497's review: it read "on the `test` leg ONLY" and "the
+      # root module tiers to `test`". Both are true today and both stop
+      # being true under the race-by-default inversion the `case` above
+      # proposes for itself — after which the derived depth is still
+      # right and a reader meeting this paragraph first is sent to a leg
+      # that no longer holds the root module. The property is the leg's
+      # CONTENTS, and the jq below derives it from them.
+      #
+      # The root module's suite is the one that asks git about COMMITS.
       # TestEveryOwnModulePinNamesACommitThisRepositoryPublished checks that
       # every own-module `require` names a commit this repository actually
       # published — the check that catches a pseudo-version hand-edited or
