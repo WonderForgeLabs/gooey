@@ -158,16 +158,15 @@ func TestValidationLoopDamage(t *testing.T) {
 // re-adding gesture exists — and showing the field brings it back
 // through plain layout, no structural walk required.
 // THE POINTER IS THE ONLY OBSERVABLE THIS TEST HAS THAT SEES THE DROP,
-// and the scope of that sentence is load-bearing: flipping
-// markerPopup.AdornmentPersists to false reddens nothing ELSE HERE. The
-// drop is self-healing within one frame — orphaned() nils m.pop and the
-// same frame's ensurePlaced builds a fresh popup — so `m.pop == nil`
-// could not see it, and neither can the cell plane or the layer's
-// count. This test's only count assertion is the SETTLED zero, which
-// stays zero either way; its frozen sibling asserts the HIDE frame's
-// count and that one moves 3→2. So it is a property of these
-// assertions rather than of the drop, and writing it as the latter
-// would make the frozen sibling read as a contradiction.
+// and the scope of that sentence is load-bearing. The drop is
+// self-healing within one frame — orphaned() nils m.pop and the same
+// frame's ensurePlaced builds a fresh popup — so `m.pop == nil` cannot
+// see it, and neither can the cell plane or the layer's count. This
+// test's only count assertion is the SETTLED zero, which stays zero
+// either way; its frozen sibling asserts the HIDE frame's count, and
+// that one does move. So it is a property of THESE assertions rather
+// than of the drop, and writing it as the latter would make the frozen
+// sibling read as a contradiction.
 //
 // So the check below is an identity comparison against the popup taken
 // before the anchor was hidden. The same seam is pinned
@@ -213,23 +212,26 @@ func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 		t.Fatalf("row 1 = %q, want %q — the filler restored AND the message "+
 			"gone while the field is hidden", got, want)
 	}
-	if _, painted := c.Frame(); painted != 0 {
-		t.Errorf("the frame after the anchor was hidden repainted %d "+
-			"component(s), want a settled page: the hide is one damage event, "+
-			"not a loop", painted)
-	}
-	if m.pop != kept {
-		t.Fatal("hiding the anchor REPLACED the persistent marker's popup " +
-			"instead of keeping it — the layer dropped it and the same " +
-			"frame's ensurePlaced built a fresh one, which is the drop " +
-			"AdornmentPersists opts out of. Read after a SECOND frame, so a " +
-			"rebuild deferred to the next layout pass is caught too")
-	}
+	// THE SETTLED FRAME AND THE POINTER, which are one claim — see held.
+	// The policy under test here is markerPopup.AdornmentPersists opting
+	// out of the layer's drop-on-invisible sweep.
+	held(t, c, m, kept, "hiding the anchor")
 
 	gooey.LayoutOf(tb).Visibility = gooey.Visible
 	c.Frame()
-	if got := row(c.Cells(), 1); !strings.Contains(got, " required ") {
-		t.Fatalf("row 1 = %q, want the message back with its anchor", got)
+	// WHOLE HERE TOO, and this is the side where Contains was sharpest.
+	// The argument three assertions up — a popup at a PARTIAL rect
+	// painting `requir` satisfies the loose form — applies to the restore
+	// unchanged, and worse: " required ####…" is the EXACT row the
+	// a.Place(ab, b) regression named at the top of this test produces,
+	// so the one assertion still written with the blind instrument had
+	// the regression's own signature as a passing condition. The row is
+	// the same constant, message over formPage's filler. Raised in
+	// review of #498.
+	if got, want := row(c.Cells(), 1),
+		" required "+strings.Repeat("#", 30-len(" required ")); got != want {
+		t.Fatalf("row 1 = %q, want %q — the message back with its anchor, over "+
+			"the filler it does not cover", got, want)
 	}
 	if _, painted := c.Frame(); painted != 0 {
 		t.Fatalf("settled frame painted %d, want 0", painted)
@@ -339,7 +341,7 @@ func TestMarkerEmptyToMessageSchedulesItsOwnFrame(t *testing.T) {
 	// Exactly ONE: appearing is zero rect → a rect, which is paint damage
 	// on the marker's own node and nothing else. The filler underneath is
 	// covered, not vacated, so it stays clean — the same appear cost the
-	// tooltip and the toast pin. (The 5 in TestValidationLoopDamage is a
+	// tooltip and the toast pin. (The 3 in TestValidationLoopDamage is a
 	// RESIZE, where cells are also given back.)
 	if painted != 1 {
 		t.Fatalf("empty→message painted %d components, want 1 (the marker alone)", painted)
@@ -447,7 +449,19 @@ type frozenMarkerFixture struct {
 func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) frozenMarkerFixture {
 	t.Helper()
 	name := prop.NewSource("")
-	tb := &TextBox{Text: name, Error: validate.Field(name, validate.Required("required"))}
+	// TWO RULES, because one of them cannot make the message CHANGE.
+	// With Required alone the error only ever moves between "required"
+	// and "", and both of those move the popup's RECT — size() is
+	// gooey.Size{} on an empty message and Render returns early on
+	// b.W <= 0 — so every cell read in the tracking test is satisfied by
+	// geometry, and a popup whose text() had gone stale would repaint the
+	// correct string on the way back because the stale value and the
+	// correct one are the same. Len gives the one transition where both
+	// values are non-empty and only the CONTENT differs, which is the
+	// transition that test is named for. formPage already pairs the two.
+	// Raised in review of #498.
+	tb := &TextBox{Text: name, Error: validate.Field(name,
+		validate.Required("required"), validate.Len(3, 0, ""))}
 	m := &ValidationMarker{}
 	tb.Attach(m)
 	// Assigned unconditionally: Frozen.Active is a *prop.Property[bool]
@@ -685,6 +699,43 @@ func keepPopup(t *testing.T, m *ValidationMarker) *markerPopup {
 	return m.pop
 }
 
+// held is keepPopup's other half: take the second frame, assert the page
+// settled at zero on it, and compare the pointer against what keepPopup
+// held.
+//
+// ONE FUNCTION BECAUSE THE TWO ASSERTIONS ARE ONE CLAIM, and they were
+// written out at four sites with four bespoke fatals saying the same
+// thing. Both halves are about one window: the drop is self-healing
+// WITHIN a frame — the layer calls orphaned() and that same frame's
+// ensurePlaced builds a fresh popup — so a second frame is the whole of
+// what the identity check can see, and the settled count is free at that
+// read. That is the same duplication keepPopup was extracted for on the
+// nil-guard half, and frozenMarkerPage's closures on the prologue.
+// Raised in review of #498.
+//
+// THE COUNT IS PART OF THE CLAIM, not a neighbour of it: a rebuilt popup
+// is a fresh component, so the frame that rebuilt it does not settle —
+// it is the one observable besides the pointer that can see a rebuild at
+// all. pop != nil, IsShown, the layer's count and the cell plane all
+// read identically for a popup that survived and one dropped and rebuilt
+// in the same frame, which the table in
+// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden measured.
+//
+// ZERO AT EVERY CALLER, so `when` is the only thing that varies.
+func held(t *testing.T, c *gooey.Composer, m *ValidationMarker, kept *markerPopup, when string) {
+	t.Helper()
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("the frame after %s repainted %d component(s), want a settled "+
+			"page: it is one damage event, not a loop", when, painted)
+	}
+	if m.pop != kept {
+		t.Errorf("%s REPLACED the marker's popup instead of keeping it — the "+
+			"layer dropped it and the same frame's ensurePlaced built a fresh "+
+			"one. Read after a SECOND frame, so a rebuild deferred to the next "+
+			"layout pass is caught too", when)
+	}
+}
+
 // TestAValidationMarkerSurvivesAFreezeTurningOn is the designer's actual
 // case, and it is a different code path.
 //
@@ -693,14 +744,19 @@ func keepPopup(t *testing.T, m *ValidationMarker) *markerPopup {
 // FocusManager.evictFrozen, which clears hover, captor, prev and
 // lastClick. Nothing there drops adornments today.
 //
-// SO THIS IS A FORWARD GUARD, and what it is forward OF was measured:
-// the obvious eviction to write next — evictFrozen walking a frozen
-// host's attachments and handing each a nil manager — leaves it green,
-// because ensurePlaced returns early while m.pop is non-nil. Dropping a
-// PLACED adornment needs the layer's own orphaned(), unexported here and
-// unreachable from the framework side, so no one-line edit in
-// evictFrozen reddens this today. It holds the door for the seam that
-// would have to be added.
+// SO THIS IS A FORWARD GUARD, and what it is forward OF is stated in the
+// commit message rather than here: a mutation result is a sample taken
+// once, and this paragraph described what a hypothetical edit to a file
+// this test does not touch would do — unfalsifiable from inside the
+// suite, and silently wrong the day somebody makes a different edit.
+// CLAUDE.md's Verify section legislates the same thing one level up
+// about counts in prose. What survives is why the assertion exists.
+// Raised in review of #498.
+//
+// What it guards is a seam that does not exist yet: dropping a PLACED
+// adornment needs the layer's own orphaned(), which is unexported and
+// unreachable from the framework side. The assertion holds the door for
+// the day something reaches it.
 //
 // THE FLIP ALONE: the freeze turns on, evictFrozen runs, and the marker
 // is still placed and still painting. Hiding the anchor is
@@ -737,27 +793,11 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 			painted)
 	}
 	shows("after the freeze turned on")
-	// A SECOND FRAME BEFORE THE POINTER, for the reason
-	// TestMarkerPersistsThroughHiddenAnchor gives: the drop is
-	// self-healing within a frame, so one frame is the whole window the
-	// identity check can see. It is also where the settled count is
-	// taken.
-	if _, painted := c.Frame(); painted != 0 {
-		t.Errorf("the frame after the freeze flip repainted %d component(s), "+
-			"want a settled page", painted)
-	}
-	// IDENTITY, because the three observables above cannot see the
-	// failure this test is named for. The table in
-	// TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden measured it:
-	// IsShown, the layer's count and the cell plane all read the same for
-	// a popup that SURVIVED and for one dropped and rebuilt in the same
-	// frame. A forward guard asserting with the one instrument known to
-	// be blind to its own subject is not a guard.
-	if m.pop != kept {
-		t.Error("the freeze flip REPLACED the marker's popup instead of keeping " +
-			"it: evictFrozen must not drop a placed adornment, and a rebuild in " +
-			"the same frame is invisible to every other assertion here")
-	}
+	// THE SETTLED FRAME AND THE POINTER — see held. What this one is a
+	// forward guard for is evictFrozen: it must not drop a placed
+	// adornment, and a rebuild in the same frame is invisible to every
+	// other assertion here.
+	held(t, c, m, kept, "the freeze flip")
 }
 
 // TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden is the drop policy
@@ -837,22 +877,9 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 		t.Errorf("row 1 = %q while the frozen field is hidden, want it vacated: "+
 			"the message is still painting over cells its anchor has given up", got)
 	}
-	// A SECOND FRAME BEFORE THE POINTER, and the settled count with it —
-	// see TestMarkerPersistsThroughHiddenAnchor.
-	if _, painted := c.Frame(); painted != 0 {
-		t.Errorf("the frame after the hide repainted %d component(s), want a "+
-			"settled page", painted)
-	}
-	if m.pop != kept {
-		t.Error("hiding the frozen field's anchor REPLACED the marker's popup " +
-			"instead of keeping it. markerPopup.AdornmentPersists opts out of " +
-			"the adornment layer's drop-on-invisible policy; without it the " +
-			"layer calls orphaned() and the next ensurePlaced builds a new one, " +
-			"which every other observable — pop != nil, IsShown, the layer's " +
-			"count, the cell plane — cannot tell from the popup surviving. The " +
-			"damage count above is the one other observable that can: a " +
-			"rebuilt popup is a fresh component, so the hide paints two")
-	}
+	// THE SETTLED FRAME AND THE POINTER — see held. The policy is
+	// markerPopup.AdornmentPersists again, here on the frozen path.
+	held(t, c, m, kept, "hiding the frozen field's anchor")
 }
 
 // The leg the other three do not hold: the error MOVING while the
@@ -871,13 +898,21 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 //
 // THE COUNTS ARE THE POINT, not decoration. Measured on this fixture:
 //
-//	name.Set("abc")   row 1 = ""            IsShown=false   painted=3
-//	name.Set("")      row 1 = " required"   IsShown=true    painted=2
+//	name.Set("ab")    row 1 = " at least 3 characters"  IsShown=true   painted=3
+//	name.Set("abc")   row 1 = ""                        IsShown=false  painted=3
+//	name.Set("")      row 1 = " required"               IsShown=true   painted=2
 //
 // Three going valid — the field, the adornment, and the stack refilling
 // the cells the message vacates — and two coming back, because the
 // stack's row is already blank. A change that repainted the whole page
 // would satisfy the cell reads and IsShown alike.
+//
+// AND THE FIRST ROW IS THE LEG THE OTHER TWO CANNOT HOLD. Both of those
+// move the error between a string and nothing, which moves the popup's
+// RECT, so a popup frozen at its CONTENT satisfies them by repainting
+// the string it is stuck on. Only a transition with BOTH values
+// non-empty separates the two, which is why the fixture carries a
+// second rule. Raised in review of #498.
 func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	active := prop.NewSource(false)
 	f := frozenMarkerPage(t, active)
@@ -925,6 +960,37 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	// this file already carry.
 	kept := keepPopup(t, m)
 
+	// THE MESSAGE CHANGING, WITH BOTH VALUES NON-EMPTY. The three legs
+	// below move the error between a string and nothing, and both of
+	// those move the popup's rect — so a popup frozen at its CONTENT
+	// would satisfy every one of them, repainting the same string it was
+	// stuck on. "required" to "at least 3 characters" is the only
+	// transition in which the two are distinguishable, and it is the one
+	// this test is named for. Raised in review of #498.
+	name.Set("ab")
+	// THREE, measured — the same number as the going-valid frame below,
+	// and for the same reason TestValidationLoopDamage's resize is three:
+	// a message that changes width hands cells back and takes others,
+	// so the row underneath repaints with the field and the adornment.
+	if _, painted := c.Frame(); painted != 3 {
+		t.Errorf("the frozen field's message CHANGING repainted %d "+
+			"component(s), want 3 (the field, the adornment, and the row the "+
+			"resized message hands cells back to)", painted)
+	}
+	if got, want := row(c.Cells(), 1), " at least 3 characters"; got != want {
+		t.Errorf("row 1 = %q while the frozen field's error moved, want %q — "+
+			"the popup is painting a message about a value the field no "+
+			"longer holds", got, want)
+	}
+	if !m.IsShown() {
+		t.Error("the marker stopped reporting itself shown while its message " +
+			"merely changed")
+	}
+	if _, painted := c.Frame(); painted != 0 {
+		t.Errorf("the frame after the message changed repainted %d "+
+			"component(s), want a settled page", painted)
+	}
+
 	name.Set("abc")
 	if _, painted := c.Frame(); painted != 3 {
 		t.Errorf("the value going VALID under a freeze repainted %d "+
@@ -959,16 +1025,8 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	// diagnosis the first line of this test already paid for. shows()
 	// FATALS, which is what the cleanup above is positioned to survive.
 	shows("after the error returned")
-	if m.pop != kept {
-		t.Error("the error going empty and coming back REPLACED the marker's " +
-			"popup: the layer dropped it at the zero rect and a later " +
-			"ensurePlaced built a fresh one. Every other assertion in this " +
-			"test reads the same either way — that is what the hidden-anchor " +
-			"test's own table measured — so the pointer is the only thing " +
-			"that can see it")
-	}
-	if _, painted := c.Frame(); painted != 0 {
-		t.Errorf("the frame after the error returned repainted %d component(s), "+
-			"want a settled page", painted)
-	}
+	// THE SETTLED FRAME AND THE POINTER — see held. Here the window the
+	// identity check watches is the error going empty and back, which
+	// arranges this popup to a zero rect and out of it again.
+	held(t, c, m, kept, "the error going empty and coming back")
 }
