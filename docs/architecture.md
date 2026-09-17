@@ -1270,8 +1270,16 @@ field with its reason, checked against `Context` in both directions. This
 paragraph named six of them and called that the environment, which is
 [#314](https://github.com/WonderForgeLabs/gooey/issues/314) in the file
 the fix for #314 edited 110 lines further down: the six it left out —
-`Elements`, `Rules`, `Declared`, `Dispatcher`, `Dir`, `Variant` — are the
-six that report was about. A list is not the shape of this answer.
+`Elements`, `Rules`, `Declared`, `Dispatcher`, `Dir`, `Variant` — are six
+the partition accounts for and this sentence did not. Two of them,
+`Rules` and `Dir`, are the ones that report named; `Declared` and
+`Dispatcher` already crossed correctly before the fix, and #314 argues
+explicitly that `Variant` does not break. (An earlier draft of this
+sentence said all six "are the six that report was about", which is a
+hand-written claim about an issue's scope — the same shape as the list
+it replaced, and wrong in four places. Corrected in review of
+[#490](https://github.com/WonderForgeLabs/gooey/pull/490).) A list is not
+the shape of this answer.
 
 `bindText` turns mixed content like `count: {{.Count}}` into a
 `prop.NewComputed[string]` that concatenates literal parts and property

@@ -550,13 +550,17 @@ func contextFields(t *testing.T) []string {
 	return out
 }
 
-// fieldNames returns the declared names of one struct field, which is a
-// list rather than a name because `a, b int` is one ast.Field. An
-// EMBEDDED field has none, and is skipped: Context declares none today,
-// and one added later would need its own decision here rather than a
-// name invented from its type.
-// fieldNames is the names a struct field declares — and for an EMBEDDED
-// field, the type's own name, which is the name Go gives it.
+// fieldNames is the names a struct field declares — a list rather than a
+// name because `a, b int` is one ast.Field — and for an EMBEDDED field,
+// the type's own name, which is the name Go gives it.
+//
+// This comment carried its own superseded first paragraph above this
+// one for two rounds, saying embedded fields are SKIPPED and arguing
+// that inventing a name from the type is wrong. embeddedName below does
+// exactly that. Godoc renders both, stale one first, so the rule a
+// reader took away was the one the code had stopped following — in the
+// file whose whole thesis is that a sentence outliving its behaviour is
+// the defect. Removed in review of #490.
 //
 // f.Names is empty for an embedded field, so returning it alone dropped
 // one silently: a Context growing `armScope` or a `*Dispatcher` inline

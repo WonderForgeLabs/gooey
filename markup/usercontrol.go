@@ -366,11 +366,11 @@ func control(fsys fs.FS, name string, setup func(e Element, parent *Context) (*C
 		// against — the wording this branch corrected on Context.Dir and
 		// in companion.go for leaving WHICH document ambiguous exactly
 		// where the answer stops being obvious, and then left standing
-		// here. Raised in review of #490. Unpropagated it was "", and hostPath falls back to
-		// filepath.Clean — the process working directory — so a
-		// companion declared in a control file quietly ran somewhere
-		// else. Nothing restricts <Companion> to page level, so this was
-		// reachable (issue #314).
+		// here. Raised in review of #490. Unpropagated it was "", and
+		// hostPath falls back to filepath.Clean — the process working
+		// directory — so a companion declared in a control file quietly
+		// ran somewhere else. Nothing restricts <Companion> to page
+		// level, so this was reachable (issue #314).
 		if child.Dir == "" {
 			child.Dir = parent.Dir
 		}

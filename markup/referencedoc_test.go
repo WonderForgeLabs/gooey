@@ -250,6 +250,55 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 	}
 }
 
+// answersWhatCrosses is the trigger both boundary guards share: a
+// paragraph that makes a claim about what inherits across, or crosses, a
+// control boundary.
+//
+// TWO VOCABULARIES, ONE TRIGGER, because the question gets asked both
+// ways and a guard that hears one can be switched off by word choice.
+// The forbid guard heard only "inherit" until review of #490 measured
+// the hole: docs/architecture.md:1264 asks "which half of it CROSSES a
+// control boundary", contains no form of "inherit", and was written by
+// the same branch to replace a stale enumeration.
+//
+// \b, NOT strings.Contains, and that is not style. "across" contains
+// "cross": with a substring test, docs/markup-reference.md:889 —
+// "including across the control boundary", backticking `Components`,
+// `Handlers` and `Rules` as an ANALOGY — is reported as an enumeration
+// leaving out seven fields. Measured, one false positive across the
+// whole corpus, which is one more than a guard like this survives.
+var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
+
+// backtickedInheriting is every INHERITING partition field a paragraph
+// names in backticks, which is the half of the adjudication both guards
+// have to agree on. Shared rather than spelled twice for the reason this
+// file keeps running into: a rule written in two places is a rule only
+// half the callers receive the next fix for.
+func backtickedInheriting(flat string) map[string]bool {
+	named := map[string]bool{}
+	for _, m := range regexp.MustCompile("`([A-Za-z]+)`").FindAllStringSubmatch(flat, -1) {
+		if r, ok := boundaryPartition[m[1]]; ok && r.inherit && isExportedField(m[1]) {
+			named[m[1]] = true
+		}
+	}
+	return named
+}
+
+// enumeratesThePartition reports that a paragraph answers the crossing
+// question BY LISTING — the conjunction the forbid guard adjudicates on,
+// and the same one the require guard demands a citation for, so the two
+// cannot disagree about which paragraphs are in scope.
+func enumeratesThePartition(flat string) bool {
+	if !answersWhatCrosses.MatchString(flat) {
+		return false
+	}
+	named := backtickedInheriting(flat)
+	for _, name := range partitionRun(flat) {
+		named[name] = true
+	}
+	return len(named) >= 2
+}
+
 // TestNoPageEnumeratesTheBoundaryPartition is the guard widened past the
 // one page that had it.
 //
@@ -301,7 +350,6 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 	}
 	sort.Strings(everyInheriting)
 
-	backticked := regexp.MustCompile("`([A-Za-z]+)`")
 	checked := 0
 	for _, page := range pages {
 		b, err := os.ReadFile(page)
@@ -320,15 +368,29 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// headings this section, so a title-case rewrite of one
 			// heading would have switched the guard off for it. Raised
 			// in review of #490.
-			if !strings.Contains(strings.ToLower(flat), "inherit") {
+			//
+			// AND THE OTHER VOCABULARY. The crossing question gets asked
+			// two ways and this guard heard one: "which half of it
+			// CROSSES a control boundary" contains no form of "inherit",
+			// so docs/architecture.md:1264 — written by this very branch
+			// to replace a stale enumeration — could have its citation
+			// deleted with both guards green. Measured in review of
+			// #490.
+			//
+			// A WORD BOUNDARY, NOT strings.Contains("cross"). The
+			// obvious widening was measured first and is wrong:
+			// "across" contains "cross", and
+			// docs/markup-reference.md:889 says "including across the
+			// control boundary" while backticking `Components`,
+			// `Handlers` and `Rules` as an ANALOGY rather than an
+			// enumeration. With a substring trigger that paragraph is
+			// reported as leaving out seven fields — one false positive
+			// out of the whole corpus, and noise a reader learns to
+			// widen is the failure this guard's own doc warns about.
+			if !answersWhatCrosses.MatchString(flat) {
 				continue
 			}
-			named := map[string]bool{}
-			for _, m := range backticked.FindAllStringSubmatch(flat, -1) {
-				if r, ok := boundaryPartition[m[1]]; ok && r.inherit && isExportedField(m[1]) {
-					named[m[1]] = true
-				}
-			}
+			named := backtickedInheriting(flat)
 			// AND THE UNFORMATTED SPELLING OF THE SAME LIST. Requiring
 			// backticks made the guard a check on markup: "styles,
 			// registered components, handlers, includes" is the four-of-
@@ -453,6 +515,28 @@ func partitionRun(flat string) []string {
 // fields: a page that stops existing fails this closed at the read, and
 // a new page answering the question is caught by the guard above rather
 // than by silence here.
+//
+// EVERY ENUMERATING PARAGRAPH, NOT THE FIRST ONE ON THE PAGE. This set
+// `cited` and broke at the first match, and docs/architecture.md has two
+// answering paragraphs (:1264 and :1388) — so deleting the citation from
+// the second was invisible here, and invisible to the forbid guard too
+// because that one stands down on a paragraph naming no fields. A
+// per-page flag for a per-paragraph defect. Raised in review of #490.
+//
+// THE PER-PARAGRAPH BAR IS enumeratesThePartition, NOT THE TRIGGER, and
+// the difference was measured rather than chosen. Requiring a citation
+// from every paragraph matching the trigger flags 47 of the 53 such
+// paragraphs across these four pages — every sentence that happens to
+// use the word "inherits" — which is noise, not a guard. Requiring it
+// from every paragraph the FORBID guard adjudicates flags none today and
+// is exactly the set where a hand-written list can go stale: it turns
+// that guard's "or cite the partition" escape into an obligation, so the
+// two agree about which paragraphs are in scope instead of one of them
+// having a quieter rule.
+//
+// BOTH CLAUSES SURVIVE. The per-page floor still runs, because a page
+// that loses its only citation may also have lost the enumeration with
+// it, and then no paragraph is in scope for the per-paragraph clause.
 func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 	for _, page := range []string{
 		"../docs/architecture.md",
@@ -469,13 +553,20 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 		cited := false
 		for _, para := range strings.Split(string(b), "\n\n") {
 			flat := strings.Join(strings.Fields(para), " ")
-			if !strings.Contains(strings.ToLower(flat), "inherit") &&
-				!strings.Contains(strings.ToLower(flat), "cross") {
+			if !answersWhatCrosses.MatchString(flat) {
 				continue
 			}
 			if strings.Contains(flat, "boundaryPartition") {
 				cited = true
-				break
+				continue
+			}
+			if enumeratesThePartition(flat) {
+				t.Errorf("%s answers what crosses a control boundary by naming "+
+					"fields and does not cite markup.boundaryPartition:\n\t%s\n"+
+					"Every such paragraph has to point at the partition, not just "+
+					"the first one on the page — this guard used to stop at the "+
+					"first citation, so a second answering paragraph could lose "+
+					"its own with both boundary guards green", page, flat)
 			}
 		}
 		if !cited {
