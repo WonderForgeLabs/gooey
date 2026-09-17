@@ -175,7 +175,10 @@ func validateMarkupSchema() map[string]any {
 const (
 	extentTail = " in cells. For a scoped session this is the island's %s, not the " +
 		"terminal's. 0 is a real answer, not an error: a scoped session whose island " +
-		"is collapsed or not yet arranged reports 0x0 and shows nothing."
+		"is collapsed or not yet arranged reports 0x0 and shows nothing. It may also " +
+		"EXCEED the terminal's: the island's arranged rect is reported unclipped, so " +
+		"one arranged partly offscreen names cells no terminal has, and the far " +
+		"corner converted through x/y is outside the screen."
 	originTail = " of the surface's %s edge — add it to a position within the surface " +
 		"to put the coordinate in the space send_mouse reads. 0 when unscoped. It " +
 		"fixes the coordinate space, not the outcome: whether a point is acted on " +

@@ -106,13 +106,32 @@ func paragraphWith(body, marker string) (string, bool) {
 // counterfactual below said so: an em dash is ordinary punctuation in
 // this repo's prose, so "Prose about `gamma` — which is a mention"
 // scored as an entry for gamma. An entry OPENS with its subject — a
-// list marker, a bold lead-in, or the backticked name itself — and a
-// sentence about something else does not.
+// list marker or a bold lead-in — and a sentence about something else
+// does not. NOT "or the backticked name itself", which this said until
+// review of #504: prose wraps, so a continuation line can open with one,
+// and one on the guarded page did. See the prefix test for the
+// measurement.
 func declaresTool(body, name string) bool {
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
+		// A BARE BACKTICK IS NOT AN ENTRY SHAPE, and dropping it is not
+		// tightening for its own sake — it closes a page-wide vacuous
+		// pass that was live on the page this guards. Prose WRAPS, and a
+		// continuation line can land a backticked tool name in column 0:
+		// docs/specs/2026-08-10-mcp-server.md carries
+		//
+		//	`set_value` — the #112 ceiling-lift follow-up remains its own deliberate
+		//
+		// as the tail of the register_properties paragraph. That scored
+		// as set_value's entry, so deleting set_value's REAL entry left
+		// TestTheMCPSpecsToolInventoryIsComplete green — measured, by
+		// deleting it. Any tool could acquire that at any reflow, with
+		// nothing said, which is the class this whole file exists to
+		// close. Every real entry on that page opens with a list marker
+		// or a bold lead-in, and all of them still resolve without this
+		// prefix. Raised in review of #504.
 		if !strings.HasPrefix(l, "- ") && !strings.HasPrefix(l, "* ") &&
-			!strings.HasPrefix(l, "**`") && !strings.HasPrefix(l, "`") {
+			!strings.HasPrefix(l, "**`") {
 			continue
 		}
 		head, _, ok := strings.Cut(l, " — ")
@@ -209,10 +228,18 @@ func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
 			"so deleting a tool from the list would still read as documented")
 	}
 
+	// THE WRAPPED LINE IS THE SECOND MENTION SHAPE, and it is the one
+	// that was live rather than hypothetical: a paragraph reflowed so a
+	// backticked name lands in column 0 reads as an entry under any rule
+	// that accepts a bare backtick. docs/specs/2026-08-10-mcp-server.md
+	// had exactly that for set_value, and deleting set_value's real
+	// entry left TestTheMCPSpecsToolInventoryIsComplete green. Mid-line
+	// alone could not see it. Raised in review of #504.
 	const record = "- `alpha` — the first one\n" +
 		"- `send_keys` / `send_mouse` — two on one entry\n" +
 		"**`delta(source)`** — a bold lead-in with an argument\n" +
 		"Prose about `gamma` — which is a mention and not an entry.\n" +
+		"`zeta` — the tail of a paragraph that happened to wrap\n" +
 		"- `unregister_epsilon` — the inverse\n"
 	for _, name := range []string{"alpha", "send_mouse", "delta"} {
 		if !declaresTool(record, name) {
@@ -223,6 +250,12 @@ func TestTheInventoryReadsAreNarrowerThanThePage(t *testing.T) {
 	if declaresTool(record, "gamma") {
 		t.Error("a sentence mentioning `gamma` counts as an entry, which is the " +
 			"page-wide vacuous pass this shape exists to close")
+	}
+	if declaresTool(record, "zeta") {
+		t.Error("a WRAPPED prose line opening with a backticked name counts as " +
+			"an entry. That is not hypothetical: it was live for set_value on " +
+			"docs/specs/2026-08-10-mcp-server.md, and it let that tool's real " +
+			"entry be deleted with this guard still green")
 	}
 	if declaresTool(record, "epsilon") {
 		t.Error("`unregister_epsilon` counts as an entry for epsilon — the same " +
@@ -421,12 +454,18 @@ func TestTheServerInstructionsNameEveryTool(t *testing.T) {
 //
 // IT ASKS FOR THE NAME IN BACKTICKS, and that is the finding rather than
 // a style preference. `strings.Contains` was the first spelling and it
-// passed vacuously for two of the fifteen names: `register_properties`
+// passed vacuously for two of the names then registered: `register_properties`
 // is a substring of the `unregister_properties` that sits beside it in
 // both surfaces, and `focus` is an ordinary English word that appears in
 // prose about focus whether or not a tool has that name. So a guard
-// written to end prose inventories going stale was itself checking
-// thirteen of fifteen — the same shape of defect, one level up.
+// written to end prose inventories going stale was itself checking all
+// but two — the same shape of defect, one level up.
+//
+// NO DENOMINATOR, deliberately. The measurement is historical and worth
+// keeping; the total it was taken against is a sample, in the file whose
+// whole subject is that a count in prose goes stale silently, and
+// CLAUDE.md's Verify section refuses one for the same reason. Every
+// guard here derives its set from v1Tools(). Raised in review of #504.
 //
 // A non-identifier BOUNDARY closes the first half and not the second:
 // "…, send_mouse and focus act on it" delimits the word exactly as a

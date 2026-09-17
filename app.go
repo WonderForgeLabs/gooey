@@ -727,7 +727,14 @@ func (a *App) reload() {
 // black rectangle, which is the worst failure a graphics stack can have.
 //
 // term.Screen.Detect already refuses to return a zero cell size for the
-// same reason (term/term.go:291). Every host that pins a protocol by hand
+// same reason — its own `caps.CellW == 0` substitution, which is one of
+// the rule's TWO sites and is named rather than numbered: this sentence
+// cited term/term.go:291 until review of #504 found that line had
+// become the middle of DecoderDone's doc comment, sending a reader
+// checking the cell-metrics rule to the decoder tripwire instead. The
+// other surfaces that carry this rule (mcp's cellProbeRule,
+// control.ScreenSize's doc, docs/learn/08-remote-control.md) all cite by
+// name already. Every host that pins a protocol by hand
 // had to reproduce that rule — cmd/pixels, cmd/toolkit and cmd/colors
 // each carried their own "a forced protocol still needs a cell size"
 // 10×20 — which is the framework asking for the rule to live here instead.
