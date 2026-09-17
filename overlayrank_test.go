@@ -1,7 +1,6 @@
 package gooey
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -364,11 +363,11 @@ func citingPages(t *testing.T, testName string) []string {
 		if isTheDivergencePin(p) {
 			continue
 		}
-		b, err := os.ReadFile(p)
+		b, err := docText(p)
 		if err != nil {
 			t.Fatalf("reading %s: %v", p, err)
 		}
-		if strings.Contains(string(b), testName) {
+		if strings.Contains(b, testName) {
 			out = append(out, filepath.ToSlash(p))
 		}
 	}

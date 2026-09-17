@@ -60,7 +60,12 @@ func receiverName(e ast.Expr) string {
 // the Adornment interface's own methods — Anchor() and Place() — which
 // is a question only the source can answer, not a table here. A fourth
 // adornment added next quarter comes under this guard on the commit that
-// adds it.
+// adds it, whether it declares those methods or EMBEDS a type that does —
+// the promotion pass below is what makes the second half true, and it was
+// not true when this sentence was first written. Its limit is the package
+// boundary: a type embedding one declared elsewhere is still invisible
+// here, which is stated beside the pass rather than left to be
+// discovered. Raised in review of #458.
 //
 // NOT asked of the type system through a list of values, because the
 // values are the list: gooey.HitTestTransparent is satisfied by
@@ -73,6 +78,8 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	}
 	// receiver -> set of methods it declares, over the non-test files.
 	methods := map[string]map[string]bool{}
+	// type -> the types it embeds, for the promotion pass below.
+	embeds := map[string][]string{}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -83,6 +90,36 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 			t.Fatalf("parsing %s: %v", f, err)
 		}
 		for _, d := range file.Decls {
+			// EMBEDDING, collected in the same pass, because a method
+			// set is not the same thing as a set of declarations and
+			// this scan could only see the second. `type badge struct {
+			// DragGhost }` declares neither Anchor nor Place, has both,
+			// and was invisible here — and invisible to the floor below
+			// too, which catches the scan collapsing to nothing rather
+			// than one type going missing. Promoting an embedded type's
+			// methods onto the embedder is what makes the derived set a
+			// method-set question again. Raised in review of #458.
+			if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+				for _, sp := range gd.Specs {
+					ts, ok := sp.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					st, ok := ts.Type.(*ast.StructType)
+					if !ok || st.Fields == nil {
+						continue
+					}
+					for _, f := range st.Fields.List {
+						if len(f.Names) != 0 {
+							continue // a named field promotes nothing
+						}
+						if e := receiverName(f.Type); e != "" {
+							embeds[ts.Name.Name] = append(embeds[ts.Name.Name], e)
+						}
+					}
+				}
+				continue
+			}
 			fn, ok := d.(*ast.FuncDecl)
 			if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
 				continue
@@ -110,6 +147,42 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 				methods[name] = map[string]bool{}
 			}
 			methods[name][fn.Name.Name] = true
+		}
+	}
+
+	// PROMOTION TO A FIXED POINT, because embedding chains: a type
+	// embedding a type embedding DragGhost has Anchor and Place too, and
+	// one pass would stop at the middle. The loop runs until nothing
+	// changes, which terminates because Go forbids a cycle of embedded
+	// struct types.
+	//
+	// AN EMBEDDER IS NOT EXEMPTED BY INHERITING HitTestTransparent. It
+	// lands in `adornments` carrying the promoted method, so the call
+	// table below demands an entry for it — an error naming the type,
+	// which is the behaviour that table's paragraph asks for. What
+	// embedding must not do is make the type disappear.
+	//
+	// WHAT THIS STILL CANNOT SEE, stated rather than glossed: a type
+	// embedding one declared in ANOTHER package. The scan parses *.go
+	// here and nothing else, so promotion stops at the package boundary.
+	// That residue is narrower than the gap it closes — every adornment
+	// this package ships is declared in it — but it is a residue, and
+	// the doc's claim is scoped to match rather than left absolute.
+	for changed := true; changed; {
+		changed = false
+		for outer, inner := range embeds {
+			for _, e := range inner {
+				for name := range methods[e] {
+					if methods[outer][name] {
+						continue
+					}
+					if methods[outer] == nil {
+						methods[outer] = map[string]bool{}
+					}
+					methods[outer][name] = true
+					changed = true
+				}
+			}
 		}
 	}
 
@@ -158,8 +231,8 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	}
 	for _, a := range adornments {
 		if !methods[a]["HitTestTransparent"] {
-			t.Errorf("%s declares Anchor and Place — it is an Adornment — and "+
-				"does not declare HitTestTransparent. It is therefore OPAQUE at "+
+			t.Errorf("%s has Anchor and Place — it is an Adornment — and neither "+
+				"declares nor inherits HitTestTransparent. It is therefore OPAQUE at "+
 				"OverlayRankAdornment, the top overlay rank, and takes the press "+
 				"and the hover over whatever it is pinned beside for as long as its "+
 				"anchor is invalid. See AdornmentLayer.HitTestTransparent in "+

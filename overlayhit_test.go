@@ -678,3 +678,56 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 			"the dispatch rather than only its cost")
 	}
 }
+
+// The same skip, on the query — which is the caller that pays for it
+// most and was the last to get it.
+//
+// MouseTarget is documented as "the query that models where an event
+// would actually route", and control/input.go's Service.mayPoint asks it
+// once per pointer event for every guest. While DispatchMouse skipped
+// the walk for a captured move and MouseTarget did not, a guest dragging
+// inside an island paid a whole-tree walk per cell crossed for an answer
+// target() discards — the cost #465 made dearest, on the caller furthest
+// from the change.
+//
+// THE DELTA, NOT THE TOTAL, and the uncaptured arm is the non-vacuity
+// floor, for the reasons TestADragDoesNotWalkTheTreeOnEveryMove gives.
+// The returned component is asserted in both arms as well: a skip that
+// changed the ANSWER rather than only its cost would satisfy a walk
+// count on its own. Raised in review of #458.
+func TestADragIsNotWalkedForByAQueryEither(t *testing.T) {
+	sink := &dragSink{stripe: stripe{ch: 'S'}}
+	box := &countingBox{kids: []Component{sink}}
+	c := NewComposer(box, 12, 3)
+	t.Cleanup(c.Close)
+	c.Frame()
+	m := NewFocusManager(box)
+
+	move := input.MouseEvent{Kind: input.MouseMove, X: 0, Y: 0}
+
+	before := box.walks
+	if got := m.MouseTarget(move); got != Component(sink) {
+		t.Fatalf("an UNCAPTURED move targets %#v, want the sink under it — the "+
+			"fixture this test measures is not the one being walked", got)
+	}
+	if box.walks == before {
+		t.Fatalf("an UNCAPTURED move asked the tree for its children %d times, "+
+			"want more than 0 — the walk this test is about does not reach this "+
+			"fixture, so the captured arm below would pass over nothing",
+			box.walks-before)
+	}
+
+	if !m.CaptureMouse(sink) {
+		t.Fatal("the captor refused the capture, so the arm below is not a drag")
+	}
+	before = box.walks
+	if got := m.MouseTarget(move); got != Component(sink) {
+		t.Fatalf("a CAPTURED move targets %#v, want the captor: skipping the "+
+			"walk has changed the answer, not only its cost", got)
+	}
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a CAPTURED move walked the tree %d times for a hit nothing "+
+			"reads: MouseTarget discards it in target(), and control's "+
+			"Service.mayPoint asks this per pointer event for every guest", n)
+	}
+}

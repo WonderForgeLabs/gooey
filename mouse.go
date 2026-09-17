@@ -202,15 +202,6 @@ func (m *FocusManager) HitTest(x, y int) Component {
 	return best.w
 }
 
-// hitCandidate is the running best of the walk: the component that paints
-// last among those found so far. Held by pointer through the recursion
-// rather than returned, so the walk still allocates nothing.
-//
-// order is the node's index in DEPTH-FIRST PRE-ORDER, and it is the LAST
-// question asked rather than the rule: the overlay layer decides first,
-// then the rank within it, and position separates only two components
-// that tie on both. Same numbering c.nodes carries, which is why this
-// walk can run forward where the old one had to run in reverse.
 // hitWalk is the state one HitTest threads through the whole walk: how
 // many nodes have been numbered, the best candidate so far, and whether
 // the depth cap has given up.
@@ -229,6 +220,15 @@ type hitWalk struct {
 	aborted bool
 }
 
+// hitCandidate is the running best of the walk: the component that paints
+// last among those found so far. Held by pointer through the recursion
+// rather than returned, so the walk still allocates nothing.
+//
+// order is the node's index in DEPTH-FIRST PRE-ORDER, and it is the LAST
+// question asked rather than the rule: the overlay layer decides first,
+// then the rank within it, and position separates only two components
+// that tie on both. Same numbering c.nodes carries, which is why this
+// walk can run forward where the old one had to run in reverse.
 type hitCandidate struct {
 	w       Component
 	rank    int
@@ -703,6 +703,28 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 //
 // UI-goroutine only, like every other query on this type.
 func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
+	// THE SAME SKIP DISPATCH TAKES. A captured MouseMove routes to the
+	// captor whatever the hit is — target() returns m.captor, and the
+	// press arm below cannot fire for a move — so the walk's result is
+	// discarded here exactly as it was there, and the answer is
+	// identical by construction rather than by agreement.
+	//
+	// Mirroring it is what keeps this function the thing its own doc
+	// above calls it: "the query that models where an event would
+	// actually route". It also matters where it is called from.
+	// control/input.go's Service.mayPoint asks this per pointer event
+	// for every guest, so a guest dragging inside an island paid the
+	// whole-tree walk the local path had just stopped paying — the one
+	// path #465 made dearest, on the one caller furthest from the
+	// change. TestADragIsNotWalkedForByAQueryEither pins it.
+	//
+	// It is also what makes docs/learn/concepts/input-routing.md's "a
+	// MouseMove arriving with the pointer captured performs no hit test
+	// at all" a statement about the framework rather than about one
+	// function. Raised in review of #458.
+	if ev.Kind == input.MouseMove && m.captor != nil {
+		return m.captor
+	}
 	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y), AllowPointer)
 	if ev.Kind == input.MousePress && !m.held {
 		return hit

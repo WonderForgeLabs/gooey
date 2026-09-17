@@ -188,7 +188,7 @@ func scanFilesForRetiredRule(t testing.TB, files []string, states func(string) b
 func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) ([]string, error) {
 	var problems []string
 	{
-		body, err := os.ReadFile(f)
+		body, err := docText(f)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", f, err)
 		}
@@ -197,7 +197,7 @@ func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []strin
 		// .go/.md/.gooey file in the tree. Raised in review of #458,
 		// with a claim that this drops the cost "to near-nothing".
 		//
-		// IT DOES NOT, and the ORDER of the three attempts is what is
+		// IT DOES NOT, and the ORDER of the four attempts is what is
 		// worth keeping, so the next person does not repeat them:
 		//
 		//   - Substring prefiltering helped, but modestly: the loop is
@@ -210,6 +210,12 @@ func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []strin
 		//   - What actually moved the number was running the files in
 		//     PARALLEL, not filtering harder. The filter is still worth
 		//     keeping, because it is what makes each worker cheap.
+		//   - Reading the tree ONCE (docCorpus) moved it again, and is
+		//     the only one of the four that helps the other guards too:
+		//     five of them walked and read the same tracked files
+		//     independently. It does NOT touch the loop, which is still
+		//     the cost — so it is a smaller win than the parallelism and
+		//     a real one. Raised in review of #458.
 		//
 		// NO SECONDS ARE WRITTEN HERE ANY MORE, and that is the fix
 		// rather than an omission. This comment carried four timings and
@@ -262,10 +268,10 @@ func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []strin
 		// per-pattern fire tests cannot see it, because they hand the
 		// patterns single lines and never run the prefilter. Raised in
 		// review of #458.
-		if !containsAny(prefilterText(string(body)), prefilter) {
+		if !containsAny(prefilterText(body), prefilter) {
 			return nil, nil
 		}
-		lines := strings.Split(string(body), "\n")
+		lines := strings.Split(body, "\n")
 		if declaresItselfSuperseded(lines, of) {
 			return nil, nil
 		}
@@ -602,11 +608,10 @@ func TestAStrippedCitationBannerIsTrue(t *testing.T) {
 		if filepath.Ext(path) != ".md" {
 			return nil
 		}
-		body, rerr := os.ReadFile(path)
+		text, rerr := docText(path)
 		if rerr != nil {
 			return rerr
 		}
-		text := string(body)
 		if !strings.Contains(text, claim) {
 			return nil
 		}
@@ -1573,9 +1578,10 @@ func docFiles(t *testing.T) []string { return docFilesIn(t, ".") }
 // the same defect #475 found in the citation guard: an honesty arm that
 // drives the check through a stub exercises everything except the
 // production path.
-func docFilesIn(t *testing.T, root string) []string {
-	t.Helper()
-
+// walkDocFiles is docFilesIn without a *testing.T, so the shared corpus
+// below can build itself off any goroutine. The floor and the failure
+// reporting stay with the caller, which is the half that needs the T.
+func walkDocFiles(root string) ([]string, error) {
 	// TRACKED FILES ONLY, FOR THE REPO WALK. The prune covers the two
 	// untracked offenders CLAUDE.md names, and nothing else: a stray
 	// notes.md, a CLAUDE-old.md kept beside a conflict resolution, any
@@ -1634,6 +1640,69 @@ func docFilesIn(t *testing.T, root string) []string {
 		}
 		return nil
 	})
+	return out, err
+}
+
+// docCorpus is the repo's doc tree read ONCE per process: path -> body.
+//
+// Five guards scan the whole tree — the two retired-rule sweeps, the hit
+// contract, the stable-sort rule and citingPages — and each was
+// re-running `git ls-files`, re-walking, and re-reading every tracked
+// .go/.md/.gooey file. The scan loops still dominate (the comment on
+// retiredRuleProblems is the record of that, and of the two attempts
+// that did NOT help), so this is not sold as a rewrite of the cost. It
+// removes the one part that is unambiguously repeated work, and the
+// before/after is measured with the command that comment names rather
+// than assumed.
+//
+// A FAILURE TO BUILD IS NOT A FAILURE. docText falls back to the disk,
+// so a tree where the walk cannot run behaves exactly as it did before
+// this cache existed — and the floor in docFilesIn is still what says
+// the walk found nothing.
+//
+// ONLY THE REPO ROOT IS CACHED. The honesty arms point these same
+// scanners at fixture directories written during the run, and a
+// path->body map cannot tell a fixture rewritten in place from one it
+// has already read. Fixture paths are simply absent from the map and go
+// to disk — every honesty arm in this file writes under t.TempDir(), so
+// none of them is served from here. The residual limit, stated rather
+// than discovered: a test that rewrote a TRACKED file in place would
+// read the bytes this map took at first use. Nothing here does.
+// Raised in review of #458.
+var docCorpus = sync.OnceValues(func() (map[string]string, error) {
+	paths, err := walkDocFiles(".")
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]string, len(paths))
+	for _, p := range paths {
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil, rerr
+		}
+		m[filepath.ToSlash(p)] = string(b)
+	}
+	return m, nil
+})
+
+// docText is os.ReadFile through the corpus above, returning a string
+// because every caller wanted one. A path the corpus does not hold — a
+// fixture file, or anything at all when the corpus failed to build — is
+// read from disk.
+func docText(path string) (string, error) {
+	if m, err := docCorpus(); err == nil {
+		if body, ok := m[filepath.ToSlash(path)]; ok {
+			return body, nil
+		}
+	}
+	b, err := os.ReadFile(path)
+	return string(b), err
+}
+
+func docFilesIn(t *testing.T, root string) []string {
+	t.Helper()
+
+	out, err := walkDocFiles(root)
 	if err != nil {
 		t.Fatalf("walking the tree: %v", err)
 	}
@@ -1854,7 +1923,7 @@ func TestEveryStatementOfTheHitContractNamesTheAncestorClause(t *testing.T) {
 func hitContractProblems(t testing.TB, files []string) (problems []string, found int) {
 	t.Helper()
 	for _, f := range files {
-		body, err := os.ReadFile(f)
+		body, err := docText(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
 		}
@@ -1894,11 +1963,11 @@ func hitContractProblems(t testing.TB, files []string) (problems []string, found
 		// `**deepest**` still contains it. Only the multi-word entry is
 		// exposed, which is the same shape as the paint prefilter above.)
 		// Raised in review of #458.
-		low := strings.Join(strings.Fields(unemphasize(strings.ToLower(string(body)))), " ")
+		low := strings.Join(strings.Fields(unemphasize(strings.ToLower(body))), " ")
 		if !containsAny(low, hitContractPrefilter) {
 			continue
 		}
-		lines := strings.Split(string(body), "\n")
+		lines := strings.Split(body, "\n")
 		// THE SAME HEAD-BANNER EXEMPTION the retired-rule scans honour,
 		// and it was missing here — so a dated decision record had no
 		// way to declare its own statement of this contract dead except
@@ -2523,11 +2592,11 @@ func TestNoDocCallsTheRankPassAStableSort(t *testing.T) {
 
 	var problems []string
 	for _, f := range docFiles(t) {
-		body, err := os.ReadFile(f)
+		body, err := docText(f)
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
 		}
-		problems = append(problems, stableSortProblems(f, string(body))...)
+		problems = append(problems, stableSortProblems(f, body)...)
 	}
 	for _, p := range problems {
 		t.Error(p)

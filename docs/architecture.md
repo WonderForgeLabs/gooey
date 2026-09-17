@@ -1185,14 +1185,21 @@ tracking is high-frequency — except to components that opt in via
 through hover.
 
 Focus-follows-click and hover tracking are both skipped while the
-pointer is **captured**, and so is the retarget: it decides what "the
-hit" means, and a captured move has no hit for it to decide about. The
-retarget's answer is nevertheless what usually routes, because the press
-that captured ran it — but only for an implicit capture. A component
-that took the pointer through `CaptureMouse` holds it verbatim, so a
-frozen descendant captured explicitly receives the events itself. This
-paragraph and the one above it each claimed the retarget still ran
-during a drag, one of them "every time"; corrected in review of #458.
+pointer is **captured**. The retarget is skipped for a captured
+**move**, and only for that: it decides what "the hit" means, and a
+captured move has no hit for it to decide about. A `MouseRelease` while
+captured still hit-tests and still retargets — and the answer is
+load-bearing there rather than incidental, because `within(captor, hit)`
+is asked of the retargeted hit to decide whether a click is synthesized
+at all. The retarget's answer is also what usually routes a drag,
+because the press that captured ran it — but only for an implicit
+capture. A component that took the pointer through `CaptureMouse` holds
+it verbatim, so a frozen descendant captured explicitly receives the
+events itself. This paragraph and the one above it each claimed the
+retarget still ran during a drag, one of them "every time"; the
+correction then overshot the other way and scoped the skip to capture
+rather than to a captured move, which no reader could reconcile with the
+release path. Corrected in review of #458, twice.
 
 A press captures the component it landed on, and until the release every
 pointer event routes to that captor regardless of what the pointer is
