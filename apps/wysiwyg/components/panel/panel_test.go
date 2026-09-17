@@ -184,8 +184,12 @@ func TestPixelTierTitleIsOnTheCellPlane(t *testing.T) {
 	c, p, _ := page(graphics.Kitty{})
 	c.Frame()
 	b := p.Bounds()
-	if got := rowText(c, b.Y, b.X+2, render.StringWidth(" Files ")); got != " Files " {
-		t.Errorf("the top edge reads %q, want the title on the cell plane", got)
+	var got strings.Builder
+	for x := b.X + 2; x < b.X+2+render.StringWidth(" Files "); x++ {
+		got.WriteString(c.Cells().At(x, b.Y).Text())
+	}
+	if got.String() != " Files " {
+		t.Errorf("the top edge reads %q, want the title on the cell plane", got.String())
 	}
 }
 
@@ -294,42 +298,72 @@ func TestCellTierDrawsTheSameShapeInRunes(t *testing.T) {
 //
 // The assertions are on the pane's OWN top row rather than on a rune count,
 // so they stay true if the label's budget is ever re-derived.
+//
+// TWO TITLES OF THE SAME SHAPE AND DIFFERENT ARITHMETIC, because an ASCII
+// fixture agrees with itself under either rule and passes against the bug
+// CLAUDE.md's column-count invariant is about. The wide arm is what makes
+// the readback below load-bearing: a per-rune read renders every
+// render.Continuation as U+FFFD, so the ASCII arm cannot tell Cell.Text()
+// from Cell.Rune and the wide one fails on the prefix and on the width.
+// Measured: the row reads "╭─ 世界…世界 ─╮" through Text() and
+// "╭─ 世\ufffd界\ufffd…" through Rune. Raised in review of #524.
 func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
-	const title = "Files And Folders And More Files"
+	for _, tc := range []struct {
+		name, title, wantPrefix string
+	}{
+		{"an ASCII title", "Files And Folders And More Files", "╭─ Files"},
+		{"a wide-glyph title", "世界世界世界世界世界世界世界世界", "╭─ 世界"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Pane{
+				Title: tc.title,
+				Child: &components.Text{Content: components.Str("inside")},
+				art:   NewArt(),
+				style: render.Style{Fg: render.RGB(0x6c, 0x9c, 0xff)},
+			}
+			p.LayoutProps().Height = 8
+			c := gooey.NewComposer(&components.VStack{Children: []gooey.Component{p}}, 30, 10)
+			c.SetCaps(term8x16(30, 10))
+			c.Frame()
 
-	p := &Pane{
-		Title: title,
-		Child: &components.Text{Content: components.Str("inside")},
-		art:   NewArt(),
-		style: render.Style{Fg: render.RGB(0x6c, 0x9c, 0xff)},
-	}
-	p.LayoutProps().Height = 8
-	c := gooey.NewComposer(&components.VStack{Children: []gooey.Component{p}}, 30, 10)
-	c.SetCaps(term8x16(30, 10))
-	c.Frame()
+			b := p.Bounds()
+			// COLUMNS, not len: the wide arm is 16 runes, 48 bytes and 32
+			// columns, and only the last of those is what the pane has to
+			// fit.
+			if render.StringWidth(tc.title) <= b.W {
+				t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
+			}
 
-	b := p.Bounds()
-	if render.StringWidth(title) <= b.W {
-		t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
-	}
+			var row strings.Builder
+			for x := b.X; x < b.X+b.W; x++ {
+				row.WriteString(c.Cells().At(x, b.Y).Text())
+			}
+			got := row.String()
 
-	got := rowText(c, b.Y, b.X, b.W)
-
-	// Not dropped: the label is there, inset one border cell and one pad.
-	if !strings.HasPrefix(got, "╭─ Files") {
-		t.Errorf("top row is %q; a title too wide is now clipped, not skipped, so it "+
-			"should open ╭─ then the start of %q", got, title)
-	}
-	// Clipped, not overrun: the far corner and the cell before it are still
-	// border. This is what fails if the label is written past its budget.
-	if !strings.HasSuffix(got, "─╮") {
-		t.Errorf("top row is %q; the title has run into the far corner, which paints "+
-			"outside the pane's damage rect", got)
-	}
-	// And the whole label really was truncated.
-	if strings.Contains(got, title) {
-		t.Errorf("top row is %q; it carries the full %d-column title inside a %d-column pane",
-			got, render.StringWidth(title), b.W)
+			// Not dropped: the label is there, inset one border cell and one pad.
+			if !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Errorf("top row is %q; a title too wide is now clipped, not skipped, so it "+
+					"should open ╭─ then the start of %q", got, tc.title)
+			}
+			// Clipped, not overrun: the far corner and the cell before it are still
+			// border. This is what fails if the label is written past its budget.
+			if !strings.HasSuffix(got, "─╮") {
+				t.Errorf("top row is %q; the title has run into the far corner, which paints "+
+					"outside the pane's damage rect", got)
+			}
+			// And the whole label really was truncated.
+			if strings.Contains(got, tc.title) {
+				t.Errorf("top row is %q; it carries the full %d-column title inside a %d-column pane",
+					got, render.StringWidth(tc.title), b.W)
+			}
+			// THE ROW IS AS WIDE AS THE PANE, which a read that turns each
+			// continuation cell into its own glyph is not: b.W cells of a
+			// half-CJK row measure b.W + one column per wide glyph.
+			if w := render.StringWidth(got); w != b.W {
+				t.Errorf("the %d cells of the pane's top row read back as %d columns: %q",
+					b.W, w, got)
+			}
+		})
 	}
 }
 
