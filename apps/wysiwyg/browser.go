@@ -307,10 +307,26 @@ func fileRow(p string) map[string]any {
 	}
 }
 
-// browserNameCols is the explorer column's budget, in CELLS. It was
-// written as a bare 30 at the call above, which is the spelling that let
-// shortPath measure in runes without the disagreement being visible from
-// either end.
+// browserNameCols is the budget shortPath shortens a row's Name to, in
+// CELLS. It was written as a bare 30 at the call above, which is the
+// spelling that let shortPath measure in runes without the disagreement
+// being visible from either end.
+//
+// IT IS THE DECLARED PANE, NOT THE LIVE ONE, and the first version of
+// this comment called it "the explorer column's budget" as though it
+// tracked the column. It does not: the number is fitted to
+// <DockPane Id="explorer" … Size="34"> in wysiwyg.gooey less its chrome,
+// and dockModel.Resize (dock.go) moves that width at run time. Drag the
+// splitter narrower and the row is 30 columns inside a Text arranged in
+// fewer, so the composer's clip takes the TAIL — which is the half
+// shortPath exists to keep, and is #523's symptom reproduced with
+// nothing but ASCII.
+//
+// Pre-existing: the bare 30 had it too, and shortening against the
+// ARRANGED width means moving the call out of fileRow, which builds a
+// row's values before anything is laid out. Written down rather than
+// left reading as a width that follows the pane. Raised in review of
+// #524.
 const browserNameCols = 30
 
 // shortPath fits a path into w cells by dropping LEADING segments, not
