@@ -567,37 +567,43 @@ func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
 }
 
 // TestTheRowHelpersRefuseWhatTheyCannotAnswerFor covers every Fatal
-// branch the two helpers have — FOUR, not the two the first version of
-// this doc counted, which is the arithmetic a "covers the branches with
-// no fixture" claim invites and cannot settle on its own.
+// branch the two helpers have: four of them, which is the arithmetic a
+// "covers the branches with no fixture" claim invites and cannot settle
+// on its own. Five arms, because dropdownRow's single guard fails in two
+// directions and a fixture can only be on one side of it at a time.
 //
-// Both are reachable, and the second is reachable from the REAL menus
-// rather than only synthetically: `total < 4` is what fires if the
-// dropdown ever loses its two-column indent. It is a Fatal raised from
-// TestTheCheckBoxIsDrawn's FIRST assertion, so in that regression the
-// $EDITOR and "Next Pane" arms below it never run and the failure
-// reports one row of a three-row story — which is why the message is
-// worth pinning rather than left to be read once.
+// NAMED, NOT NUMBERED. The ordinals this paragraph used to carry did not
+// survive their own list — "both are reachable" with no first, a third,
+// a fourth, and then one more appended outside the count — and a reader
+// could map them onto neither the table nor the Fatalfs. The arms are
+// the enumeration; each is described by what it reaches.
 //
-// The within-row uniqueness guard is the third: boxBefore's doc argues
-// it is "the within-row half of dropdownRow's guarantee, asserted rather
-// than documented as out of scope", and no fixture put a label twice on
-// one row, so the arm had never run. dropdownRow takes `rows []string`
-// precisely to make a fixture like this cheap.
+// THE LABEL TWICE ON ONE ROW is the within-row uniqueness guard, which
+// boxBefore's doc argues is "the within-row half of dropdownRow's
+// guarantee, asserted rather than documented as out of scope". No
+// fixture put a label twice on one row, so it had never run.
 //
-// THE STRADDLE IS THE FOURTH, and its own comment is the reason it went
-// uncovered: "reachable only if a glyph STRADDLES the four-cell
-// boundary, which no check box can". True of the menus, and the helper
-// takes `rows []string` exactly so a synthetic row can reach what the
-// menus cannot — which is the argument the other three arms rest on. A
-// branch excused because production cannot reach it, in a helper built
-// to be driven directly, is the shape this test exists to close.
+// THE LABEL WITHIN FOUR COLUMNS OF THE ROW is `total < 4`, and it is the
+// one branch reachable from the REAL menus rather than only
+// synthetically: it fires if the dropdown ever loses its two-column
+// indent. It is a Fatal raised from TestTheCheckBoxIsDrawn's FIRST
+// assertion, so in that regression the $EDITOR and "Next Pane" arms
+// below it never run and the failure reports one row of a three-row
+// story — which is why the message is worth pinning rather than left to
+// be read once.
 //
-// AND dropdownRow's OWN GUARD, in both directions. The "exactly one is
-// the assertion, not a convenience" paragraph rests on it and every
-// fixture in this file hands it exactly one hit, so neither the
-// zero-row nor the two-row side had ever run. Raised in review of
-// #502.
+// THE STRADDLE's own comment is the reason it went uncovered:
+// "reachable only if a glyph STRADDLES the four-cell boundary, which no
+// check box can". True of the menus, and boxBefore takes `rows []string`
+// exactly so a synthetic row can reach what the menus cannot — which is
+// the argument every arm here rests on. A branch excused because
+// production cannot reach it, in a helper built to be driven directly,
+// is the shape this test exists to close.
+//
+// NO ROW AND TWO ROWS are dropdownRow's own guard, one branch from each
+// side. The "exactly one is the assertion, not a convenience" paragraph
+// rests on it and every fixture in this file hands it exactly one hit,
+// so neither side had ever run. Raised in review of #502.
 func TestTheRowHelpersRefuseWhatTheyCannotAnswerFor(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -737,8 +743,16 @@ func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
 // #502.
 func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	const acute = "\u0301"
-	rows := []string{"世abce" + acute + "Wrap", "  ( ) Other"}
-	prefix := "世abce" + acute
+	// ONE SOURCE, and rows[0] is built FROM it. The prefix was spelled a
+	// second time beside the row, and the fixture guard below plus the
+	// counterexample both measured that copy — so dropping 世 from the
+	// row would leave the guard measuring a six-column, six-rune string
+	// the helper never sees, boxBefore returning the hand-spelled want,
+	// and the test green over a fixture with no wide glyph in it at all.
+	// That is the rule the comment below states, applied to itself.
+	// Raised in review of #502.
+	const prefix = "世abce" + acute
+	rows := []string{prefix + "Wrap", "  ( ) Other"}
 	if cols, runes := render.StringWidth(prefix), len([]rune(prefix)); cols != runes {
 		t.Fatalf("the fixture prefix %q measures %d columns and %d runes. They must be "+
 			"EQUAL, or this arm proves only that an unequal prefix is handled, where "+
@@ -754,10 +768,16 @@ func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	r := []rune(prefix)
 	runeSlice := string(r[len(r)-4:])
 	if want := "abce" + acute; box != want {
+		// NO CLOSING CLAUSE NAMING THE CELLS. It printed want a fourth
+		// time as "the four CELLS are %q", in the one branch where box
+		// != want — so on a real failure the message said two different
+		// things about the same four cells and the second was false.
+		// box is the four cells by the helper's contract, and it opens
+		// the message. The contrast the sentence wanted is the widths.
+		// Raised in review of #502.
 		t.Errorf("boxBefore read %q in front of %q on %q, want %q. Four RUNES back "+
-			"from the label is %q, which is %d columns; the four CELLS are %q.",
-			box, "Wrap", row, want, runeSlice,
-			render.StringWidth(runeSlice), want)
+			"from the label is %q, which is %d columns, not four.",
+			box, "Wrap", row, want, runeSlice, render.StringWidth(runeSlice))
 	}
 	if got := render.StringWidth(box); got != 4 {
 		t.Errorf("boxBefore returned %q, %d columns — the contract is the four CELLS "+
