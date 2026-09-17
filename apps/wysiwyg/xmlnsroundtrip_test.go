@@ -411,8 +411,8 @@ func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
 // what is REJECTED — leaving the plain form implemented twice and
 // asserted nowhere. It is not cosmetic: Go's decoder applies a default
 // namespace to ELEMENT names, so keeping one sets Element.Space for the
-// whole subtree, and markup compares that against XNamespace
-// (markup/markup.go:1073).
+// whole subtree, and markup compares that against XNamespace (build's
+// `e.Space == markup.XNamespace` arm, markup/markup.go).
 //
 // WHICH ELEMENT CARRIES IT is the assertion, not merely that the URI
 // appears. This was named "…IsCarriedToo" and checked only
@@ -637,43 +637,63 @@ func TestAnAmpersandInAnAttributeSurvivesASave(t *testing.T) {
 // map, so this is fidelity rather than meaning — and it is exactly the
 // class envelopeAttrs' comment claimed immunity from. Raised in review
 // of #501.
+//
+// BOTH URI ARRANGEMENTS, and the second is the one three rounds of this
+// finding kept missing. carryDeclarations decides by KEY PRESENCE and
+// envelopeAttrs decided by VALUE EQUALITY, so they agreed everywhere
+// except a prefix declared at both levels with the SAME URI — skipped by
+// the first, dropped by the second, envelope declaration gone. The
+// coverage bracketed it without touching it: this test used two URIs,
+// and TestAnElementPrefixSurvivesBeingDeclaredAtBothLevels uses one URI
+// but only markup.XNamespace, which the old exception short-circuited
+// before the comparison. envelopeAttrs now takes the SET
+// carryDeclarations moved, so there is no second predicate to disagree
+// with. Raised in review of #501.
 func TestABothLevelsDeclarationKeepsTheEnvelopesCopy(t *testing.T) {
-	handlerNS(t, "urn:B")
-	root := workspaceFixture(t)
-	doc := `<Gooey xmlns:t="urn:A">` + "\n" +
-		`  <Canvas Name="Root" xmlns:t="urn:B">` + "\n" +
-		`    <Button Name="B" Content="go"/>` + "\n" +
-		`  </Canvas>` + "\n" +
-		`</Gooey>` + "\n"
-	if err := os.WriteFile(filepath.Join(root, "both.gooey"), []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct{ name, envURI, rootURI string }{
+		{"different URIs at the two levels", "urn:A", "urn:B"},
+		{"the SAME URI at the two levels", "urn:a", "urn:a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handlerNS(t, tc.rootURI)
+			root := workspaceFixture(t)
+			doc := `<Gooey xmlns:t="` + tc.envURI + `">` + "\n" +
+				`  <Canvas Name="Root" xmlns:t="` + tc.rootURI + `">` + "\n" +
+				`    <Button Name="B" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n" +
+				`</Gooey>` + "\n"
+			if err := os.WriteFile(filepath.Join(root, "both.gooey"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	ed, _ := buildPage(t)
-	ed.setDispatcher(gooey.NewDispatcher())
-	ed.setWorkspace(root)
-	ed.openWorkspaceFile("both.gooey")
-	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
-		t.Fatalf("opening the fixture reports %q, want a build", got)
-	}
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("both.gooey")
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+				t.Fatalf("opening the fixture reports %q, want a build", got)
+			}
 
-	src := ed.source.Get()
-	envelope, below, _ := strings.Cut(src, "\n")
-	if !strings.Contains(envelope, `xmlns:t="urn:A"`) {
-		t.Errorf("the envelope's own declaration is gone from the file. "+
-			"carryDeclarations declined to move it because the root already "+
-			"declares the prefix, and envelopeAttrs dropped it anyway:\n%s", src)
-	}
-	if !strings.Contains(below, `xmlns:t="urn:B"`) {
-		t.Errorf("the root's own declaration did not survive:\n%s", src)
-	}
+			src := ed.source.Get()
+			envelope, below, _ := strings.Cut(src, "\n")
+			if !strings.Contains(envelope, `xmlns:t="`+tc.envURI+`"`) {
+				t.Errorf("the envelope's own declaration is gone from the file. "+
+					"carryDeclarations declined to move it because the root already "+
+					"declares the prefix, and envelopeAttrs dropped it anyway:\n%s", src)
+			}
+			if !strings.Contains(below, `xmlns:t="`+tc.rootURI+`"`) {
+				t.Errorf("the root's own declaration did not survive:\n%s", src)
+			}
 
-	// AND IT IS STABLE, so keeping the envelope's copy is a fixed point
-	// rather than a second document that reopens differently again.
-	ed.openWorkspaceFile("both.gooey")
-	if second := ed.source.Get(); second != src {
-		t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
-			src, second)
+			// AND IT IS STABLE, so keeping the envelope's copy is a fixed
+			// point rather than a second document that reopens differently
+			// again.
+			ed.openWorkspaceFile("both.gooey")
+			if second := ed.source.Get(); second != src {
+				t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
+					src, second)
+			}
+		})
 	}
 }
 
@@ -681,8 +701,9 @@ func TestABothLevelsDeclarationKeepsTheEnvelopesCopy(t *testing.T) {
 // pointed at the one namespace markup reserves.
 //
 // A default xmlns of wonderforge.io/gooey/x puts XNamespace on every
-// element beneath the root, and markup.build refuses those by name
-// (markup/markup.go:1073). Before the carry-down the editor dropped the
+// element beneath the root, and markup.build refuses those by name (its
+// `e.Space == markup.XNamespace` arm). Before the carry-down the editor
+// dropped the
 // declaration and so opened a document markup.Build itself will not
 // load; now the two agree. That is an improvement rather than a
 // regression, which is exactly why it is worth an assertion — a later
@@ -1938,8 +1959,8 @@ func editorIdents(d ast.Node) map[string]bool {
 //
 //	func (ed *editor) …            receiver
 //	func writeX(ed *editor, …)     parameter, incl. a package-level literal
-//	ed := newEditor(root)          main.go:348
-//	ed := &editor{…}               main.go:1512
+//	ed := newEditor(root)          newEditor's caller, main.go
+//	ed := &editor{…}               the &editor literal in main.go
 //
 // The NEGATIVE arm is the one that keeps this from being a tautology: a
 // binding of some other type must NOT be collected, or onEd stops

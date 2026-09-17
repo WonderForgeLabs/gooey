@@ -380,13 +380,13 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// the rule for doing that is carryDeclarations (main.go) rather
 		// than a loop here: paste unwraps an envelope too, and this was
 		// the only one of the two that carried anything.
-		carryDeclarations(n, n.Kids[0])
+		moved := carryDeclarations(n, n.Kids[0])
 		// AND EVERYTHING ELSE ON THE ENVELOPE STAYS ON THE ENVELOPE.
 		// Only the prefixed declarations move down; a plain xmlns and a
 		// Graphics both belong where the author wrote them, and
 		// markup.parse skips a plain xmlns outright, so moving it bought
 		// nothing but a diff on the first save of every existing file.
-		env = envelopeAttrs(n, n.Kids[0])
+		env = envelopeAttrs(n, moved)
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}

@@ -770,15 +770,27 @@ func (n *node) markup(indent string) string {
 // expression it had just rendered. A fix applied at one of two
 // identical seams is the shape that leaves the other one open. Raised
 // in review of #501.
-func carryDeclarations(env, root *node) {
+//
+// IT RETURNS WHAT IT MOVED, which is the only way its complement can be
+// exact. envelopeAttrs re-derived the answer from values and the two
+// predicates disagreed in one place — a prefix declared at both levels
+// with the SAME URI, which this function skips on key presence and that
+// one dropped on value equality. See there. Raised in review of #501.
+func carryDeclarations(env, root *node) map[string]bool {
+	var moved map[string]bool
 	for k, v := range env.Attrs {
 		if !isNamespaceAttr(k) || v == markup.XNamespace {
 			continue
 		}
 		if _, ok := root.Attrs[k]; !ok {
 			root.Attrs[k] = v
+			if moved == nil {
+				moved = map[string]bool{}
+			}
+			moved[k] = true
 		}
 	}
+	return moved
 }
 
 // envelopeAttrs is everything on a <Gooey> that did NOT move down with
@@ -810,13 +822,24 @@ func carryDeclarations(env, root *node) {
 //	rebuilt  = "<Gooey>"  over  <Canvas … xmlns:x="…">
 //
 // — the exact relocation the sibling guard exists to prevent, reached
-// through the complement instead. Value-equality is not the question;
-// "did carryDeclarations put it there" is, and for this one URI the
-// answer is always no. Raised in review of #501.
-func envelopeAttrs(env, root *node) map[string]string {
+// through the complement instead. Raised in review of #501.
+//
+// SO IT IS NO LONGER DERIVED AT ALL. Both repairs above narrowed a
+// re-derivation of the sibling's decision, and a third route was left:
+// an ordinary prefix declared at both levels with the SAME URI.
+// carryDeclarations skips it on key presence and this dropped it on
+// value equality, so <Gooey xmlns:t="urn:a"> over <Canvas
+// xmlns:t="urn:a"> saved as a bare <Gooey> — the same relocation again,
+// bracketed on both sides by tests that could not see it (one uses two
+// URIs, the other uses one URI but only markup.XNamespace, which the
+// exception short-circuits). Two predicates cannot be kept in agreement
+// by a comment saying they agree; this now takes the SET
+// carryDeclarations actually moved, so there is one decision and no
+// complement to get wrong. Raised in review of #501, three times.
+func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 	out := make(map[string]string, len(env.Attrs))
 	for k, v := range env.Attrs {
-		if isNamespaceAttr(k) && v != markup.XNamespace && root.Attrs[k] == v {
+		if moved[k] {
 			continue
 		}
 		out[k] = v
