@@ -1216,7 +1216,6 @@ Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattab
      it by symbol on the grounds that nothing checks it; measured, the
      opposite is true, and the guard is what caught the change. -->
 
-
 | Handle | Plain value | Rendered as |
 |---|---|---|
 | `*prop.Property[string]` | `string` | verbatim |

@@ -964,6 +964,26 @@ func nodeOf(src string) (*node, error) {
 			// "Property"` arm (markup/property.go) refuses.
 			// Raised in review of #501.
 			//
+			// IT ALSO CHANGES WHICH REFUSAL FIRES TODAY, on files in
+			// this tree, and the paragraph above read as though the
+			// consequence were entirely forward-looking. nodeOf runs
+			// BEFORE openWorkspaceFile's `len(n.Kids) != 1` check
+			// (browser.go), so every document here that declares a
+			// dependency property now gets this message instead of "a
+			// <Gooey> document needs exactly one root element, found N".
+			// Which documents those are is a grep, not a list —
+			//
+			//	git grep -l "<x:Property" -- "*.gooey"
+			//
+			// — and both messages refuse a document the loader accepts,
+			// so this is a wording change rather than a regression:
+			// #517 is the refusal itself and predates this branch. What
+			// is worth recording is that the new wording reads as a
+			// fault in the author's file where the old one read as the
+			// designer's own gap, and that the window is the life of
+			// this branch: #522's markup.XNamespace exemption removes
+			// it. Raised in review of #501, round after.
+			//
 			// THE TEST IS NOT `t.Name.Space != ""`, and that is the
 			// whole reason this needs a scope stack. encoding/xml
 			// RESOLVES a name to its URI and hands back no prefix, so
