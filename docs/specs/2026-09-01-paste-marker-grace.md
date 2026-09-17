@@ -198,9 +198,17 @@ pins it. Raised in review of #445.
 `input/decodefinal_test.go`, and new tests in `term/strand_linux_test.go` —
 one per route to the last-chance pass, one for the constant's behaviour, a
 deterministic floor under it, one for the stall counter's reset on the chunks
-branch, and one for the ordinary first-timeout pass. (A count stood here and
+branch, one for the ordinary first-timeout pass, and one for the
+partial-progress reset inside the timer branch
+(`TestPartialProgressGivesTheRemainderItsOwnGrace`). (A count stood here and
 was wrong the moment the last two were added; the table below is the list that
-cannot go stale without a mutation disagreeing with it.)
+cannot go stale without a mutation disagreeing with it. **And then the list
+that replaced the count went stale in the next commit but one** — the commit
+that added the partial-progress test edited the paragraph five lines below
+this one and left the enumeration at six, which is the class this record is
+about, arriving in the sentence that argues a list is the safe form. It is not
+safe; it is only *cheaper to check*, and the table below is the half that
+cannot go quiet. Raised in review of #445.)
 
 **Every clause but one is pinned**, and the exception is named in the table
 rather than glossed: the conditional re-arm turns nothing red. An earlier
@@ -224,12 +232,12 @@ happening again. Mutation-tested, each mutation turning its own tests red:
 | the loop never escalates to the final pass | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
 | the stall counter resets on every timeout instead of counting | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
 | the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
-| `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
+| `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestPartialProgressGivesTheRemainderItsOwnGrace` (BEHAVIOURAL and deterministic - it fails on attempt 1 in ~0.09s, three runs of three, reaching its assertion rather than exhausting the loop); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
 | the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
 | `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` |
 | the first timeout's pass is neutered (`d := drainIdle` -> `drainLive`) | `TestALoneEscResolvesOnTheFirstTimeout` |
 | the partial-progress reset in the timer branch is deleted | `TestPartialProgressGivesTheRemainderItsOwnGrace` (three runs of three; the remainder resolves to Esc on the very next timeout) |
-| `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages |
+| `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages. `TestPartialProgressGivesTheRemainderItsOwnGrace` reddens too, but by EXHAUSTING its 40 attempts in ~2.5s rather than by asserting - so it is listed with that caveat: its terminal message names the constant as a third cause alongside a loaded runner and a deleted reset, because a test that dies through its inconclusive path has not measured what its name says. `TestASplitPasteMarkerStillPastes` and `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` stay green |
 
 **Every row is re-derived by running its mutation**, never edited by hand, and
 the difference is not cosmetic. Earlier versions said "the term strand test" -
@@ -307,11 +315,19 @@ above used to say it was.** Lowering `PasteMarkerGrace` to 1 does turn it red,
 re-measured three runs out of three after the window was rebalanced - but a
 vacuous attempt pastes under the mutation too, so that row holds
 probabilistically. `TestPasteMarkerGraceHasAFloor` is the deterministic guard
-on the constant and is what the mutation table credits first. There is no
-cheap observable for "the first idle timeout fired" - nothing is emitted at
-`stalls = 1` - so a symmetric guard is not available today, and the record
-says that rather than implying one. Corrected in review of #445, and the
-half-claim in the heading corrected in round eleven.
+on the constant and is what the mutation table credits first.
+
+**And the sentence that followed this is retired, by a test the same branch
+wrote.** It said there is no cheap observable for "the first idle timeout
+fired" - nothing is emitted at `stalls = 1` - so no symmetric guard was
+available. `TestPartialProgressGivesTheRemainderItsOwnGrace` is one: at
+`PasteMarkerGrace = 1` the remainder's own grace is the FIRST timeout, so the
+mutation resolves the prefix to Esc and the test reaches its assertion and
+fails in ~0.09s, three runs of three - a behavioural kill on the constant that
+does not depend on an attempt being non-vacuous. The conclusion was written
+before the test existed and was left standing by the commit that created its
+counterexample. Corrected in review of #445; the half-claim in the heading was
+corrected in round eleven.
 
 Getting the measurement itself right took the run of corrections below, all
 from review. There is no count in that sentence on purpose: it said *seven*

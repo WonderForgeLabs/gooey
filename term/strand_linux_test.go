@@ -943,12 +943,17 @@ func TestPartialProgressGivesTheRemainderItsOwnGrace(t *testing.T) {
 	// gives: the mutation this test exists to catch resolves the prefix
 	// EARLY on every attempt rather than never, so an exhausted loop is
 	// as likely to be the defect as the runner.
-	t.Fatalf("could not measure the remainder's grace in %d attempts. Either "+
-		"this machine is too loaded to place a write inside a 40ms window, or "+
-		"the partial-progress reset in keys.go (`if len(pend) != before { "+
-		"stalls = 0 }`) is gone and the prefix left behind by an idle pass is "+
-		"resolved on the very next timeout — which is #419, a real paste torn "+
-		"into keystrokes", attempts)
+	t.Fatalf("could not measure the remainder's grace in %d attempts. Three "+
+		"causes, and this path cannot tell them apart: this machine is too "+
+		"loaded to place a write inside a 40ms window; or the partial-progress "+
+		"reset in keys.go (`if len(pend) != before { stalls = 0 }`) is gone and "+
+		"the prefix left behind by an idle pass is resolved on the very next "+
+		"timeout — which is #419, a real paste torn into keystrokes; or "+
+		"PasteMarkerGrace is 0, in which case the escape timeout has stopped "+
+		"existing rather than firing early and TestPasteMarkerGraceHasAFloor's "+
+		"zero arm is the message to read. The third was added in review of "+
+		"#445: the spec's zero row lists this test, and a row naming a test "+
+		"that dies through its INCONCLUSIVE path has to say so", attempts)
 }
 
 // partialProgressAttempt returns false when the attempt could not be made
