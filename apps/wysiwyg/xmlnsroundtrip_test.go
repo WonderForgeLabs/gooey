@@ -1660,9 +1660,38 @@ func TestOnlyOneFunctionWritesADocumentEnvelope(t *testing.T) {
 				// document needs exactly one root element", which is
 				// prose about an envelope and not one. lit.Value keeps
 				// the quote, so [1:] drops either kind of it.
+				//
+				// AND "IT" IS THE WHOLE MESSAGE, NOT A LINE OF ONE.
+				// Go concatenation makes one string out of several
+				// BasicLits, so a prose message wrapped across lines
+				// can put "<Gooey>" at the start of a CONTINUATION —
+				// and testing each literal on its own then reports the
+				// function as writing an envelope. unwrapGooey's
+				// declaration refusal does exactly that ("… declares %d
+				// property %s on its " + "<Gooey>, and a paste lands
+				// inside a document …"), and the guard flagged it the
+				// moment #501 and #522 met in a merge: a false positive
+				// whose only remedy would have been to reflow a
+				// sentence, which the next gofmt could undo. Every
+				// literal reachable to the RIGHT of a `+` is a
+				// continuation, so only the leftmost one answers.
+				cont := map[*ast.BasicLit]bool{}
+				ast.Inspect(d, func(n ast.Node) bool {
+					be, ok := n.(*ast.BinaryExpr)
+					if !ok || be.Op != token.ADD {
+						return true
+					}
+					ast.Inspect(be.Y, func(m ast.Node) bool {
+						if l, isLit := m.(*ast.BasicLit); isLit && l.Kind == token.STRING {
+							cont[l] = true
+						}
+						return true
+					})
+					return true
+				})
 				ast.Inspect(d, func(n ast.Node) bool {
 					if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING &&
-						strings.HasPrefix(lit.Value[1:], "<Gooey") {
+						!cont[lit] && strings.HasPrefix(lit.Value[1:], "<Gooey") {
 						seen[owner] = true
 					}
 					return true
