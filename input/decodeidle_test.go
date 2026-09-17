@@ -131,10 +131,19 @@ func TestIdleDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 // had not yet timed out.
 func TestIdleDecodeMakesProgressOnEscBeforeAMouseReport(t *testing.T) {
 	for _, seq := range []string{
-		"\x1b\x1b[<0;10;5M",   // Esc, then an SGR press — decodes, but is not a key
-		"\x1b\x1b[<0;10;5m",   // Esc, then the matching release
-		"\x1b\x1b[<64;1;1M",   // Esc, then a wheel report
-		"\x1b\x1b[200~",       // Esc, then bracketed paste — a known shape, unmapped
+		"\x1b\x1b[<0;10;5M", // Esc, then an SGR press — decodes, but is not a key
+		"\x1b\x1b[<0;10;5m", // Esc, then the matching release
+		"\x1b\x1b[<64;1;1M", // Esc, then a wheel report
+		// Esc, then an OPEN paste — the tail waits, and the LEADING Esc
+		// is what makes progress. Not "a known shape, unmapped", which
+		// is what this line said and which the paragraph above retires:
+		// decodeCSI routes params=="200" && final=='~' to decodePaste
+		// (input/decode.go), and a payload with no end marker answers
+		// (0, false). The unmapped arm is somewhere else entirely and
+		// this input never reaches it. A reader who trusted the old
+		// label concluded the tail is consumed, which is the premise
+		// that paragraph exists to remove. Raised in review of #445.
+		"\x1b\x1b[200~",
 		"\x1b\x1b[?1000;1006", // Esc, then a truncated mode report
 	} {
 		assertProgress(t, []byte(seq))

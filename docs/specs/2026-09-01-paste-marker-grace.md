@@ -206,7 +206,16 @@ cannot go stale without a mutation disagreeing with it.)
 rather than glossed: the conditional re-arm turns nothing red. An earlier
 version of this sentence said "every clause is pinned" directly above the row
 reporting that, which is the kind of contradiction a reader resolves by
-trusting the prose. Mutation-tested, each mutation turning its own tests red:
+trusting the prose.
+
+**It was wrong a second time in the same direction.** There were TWO unpinned
+clauses, not one: the partial-progress reset inside the timer branch
+(`if len(pend) != before { stalls = 0 }`) could be deleted with `./term`,
+`./input` and the root suite all green, and its deletion ships #419 rather than
+#440 — a real paste torn into keystrokes, in the one buffer shape the grace
+exists to protect. `TestPartialProgressGivesTheRemainderItsOwnGrace` pins it
+and the row is below. Raised in review of #445, which is the paragraph above
+happening again. Mutation-tested, each mutation turning its own tests red:
 
 | mutation | what goes red |
 |---|---|
@@ -219,6 +228,7 @@ trusting the prose. Mutation-tested, each mutation turning its own tests red:
 | the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
 | `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` |
 | the first timeout's pass is neutered (`d := drainIdle` -> `drainLive`) | `TestALoneEscResolvesOnTheFirstTimeout` |
+| the partial-progress reset in the timer branch is deleted | `TestPartialProgressGivesTheRemainderItsOwnGrace` (three runs of three; the remainder resolves to Esc on the very next timeout) |
 | `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages |
 
 **Every row is re-derived by running its mutation**, never edited by hand, and

@@ -900,3 +900,162 @@ func TestPasteMarkerGraceHasAFloor(t *testing.T) {
 			PasteMarkerGrace)
 	}
 }
+
+// TestPartialProgressGivesTheRemainderItsOwnGrace is the THIRD line the
+// conditional re-arm made load-bearing, and the only one of the three
+// whose deletion ships #419 rather than #440.
+//
+//	before := len(pend)
+//	…
+//	drain(d)
+//	if len(pend) != before {
+//	    stalls = 0        // ← delete this and the whole tree stays green
+//	}
+//
+// drainIdle can make PARTIAL progress: it resolves something and leaves
+// a marker prefix behind. The canonical shape is a dangling Esc followed
+// immediately by a split marker in one read — `ESC` `ESC [ 2` —
+// where decodeEsc's nested-escape arm consumes the LEADING Esc under
+// idle and leaves `ESC [ 2` in pend. That is progress, so the prefix is
+// entitled to its own full grace. Without the reset it inherits a
+// counter already at 1, and the next timeout is the PasteMarkerGrace'th:
+// drainFinal resolves the prefix to Esc and the payload arrives as the
+// keystroke burst mode 2004 exists to prevent.
+//
+// A/B measured on a pty before this test existed: with the reset, one
+// PasteEvent carrying the payload; without it, the first event is the
+// Esc key, three times out of three, while `go test ./term/ ./input/ ./`
+// stayed green. Raised in review of #445.
+//
+// The spec's "Every clause but one is pinned" sentence named only the
+// conditional re-arm as the exception; it is corrected in the same
+// commit as this test.
+func TestPartialProgressGivesTheRemainderItsOwnGrace(t *testing.T) {
+	const attempts = 40
+	for i := range attempts {
+		if partialProgressAttempt(t) {
+			return
+		}
+		t.Logf("attempt %d could not land the tail inside the remainder's own "+
+			"grace window; retrying", i+1)
+	}
+	// BOTH CAUSES NAMED, for the reason TestALoneEscResolvesOnTheFirstTimeout
+	// gives: the mutation this test exists to catch resolves the prefix
+	// EARLY on every attempt rather than never, so an exhausted loop is
+	// as likely to be the defect as the runner.
+	t.Fatalf("could not measure the remainder's grace in %d attempts. Either "+
+		"this machine is too loaded to place a write inside a 40ms window, or "+
+		"the partial-progress reset in keys.go (`if len(pend) != before { "+
+		"stalls = 0 }`) is gone and the prefix left behind by an idle pass is "+
+		"resolved on the very next timeout — which is #419, a real paste torn "+
+		"into keystrokes", attempts)
+}
+
+// partialProgressAttempt returns false when the attempt could not be made
+// inside the window, never a pass — the discipline splitMarkerAttempt and
+// loneEscAttempt use.
+//
+// THE CLOCK IS THE ESC'S ARRIVAL, not the write, because the remainder's
+// timer is armed after the pass that produced the Esc. `wrote` is a
+// lower bound on that arm at one remove: the decoder's timer cannot fire
+// before its own deadline, so the Esc's SEND is at or after
+// wrote+EscTimeout, and the arm is at or after the send. That is what
+// makes the drift bail below derivable rather than assumed — if the Esc
+// is read within EscTimeout+EscTimeout/4 of `wrote`, it is read within
+// EscTimeout/4 of the send.
+func partialProgressAttempt(t *testing.T) bool {
+	t.Helper()
+	master, slave := openPTY(t)
+	s := FromFile(slave)
+	if err := s.Raw(); err != nil {
+		t.Fatalf("raw: %v", err)
+	}
+	defer func() {
+		s.Restore()
+		master.Close()
+	}()
+	evs := s.Events(16)
+
+	// Handshake, dangling Esc and marker prefix in ONE write. The
+	// handshake byte's read-back proves the decoder consumed this read,
+	// so the whole of `\x1b\x1b[2` is in pend when its timer arms.
+	wrote := time.Now()
+	if _, err := master.Write([]byte("b\x1b\x1b[2")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	if ev := next(t, evs, "the decoder never delivered a keystroke, so this test "+
+		"is measuring a decoder that never lived"); !ev.IsKey() || ev.Key.Rune != 'b' {
+		t.Fatalf("got %#v, want the 'b' we typed", ev)
+	}
+
+	// THE FIRST IDLE PASS, which is the partial progress itself: the
+	// leading Esc resolves and `ESC [ 2` stays in pend. If this does not
+	// arrive the premise is gone, and that is a fact about the decoder
+	// rather than about the machine — but a late one is the machine, so
+	// a miss is inconclusive rather than a failure.
+	ev, got := nextOrNone(evs, EscTimeout+EscTimeout/2-time.Since(wrote))
+	if !got {
+		return false // late; a retry is expected to say whether it is the machine
+	}
+	if !ev.IsKey() || ev.Key.Key != input.KeyEsc {
+		t.Fatalf("the first event after `b ESC ESC [ 2` was %#v, want the Esc "+
+			"key — the nested-escape arm is what leaves the marker prefix "+
+			"behind, and without it this test measures nothing", ev)
+	}
+	escAt := time.Now()
+	if escAt.Sub(wrote) > EscTimeout+EscTimeout/4 {
+		return false // escAt may be well past the send; attribute nothing
+	}
+
+	// INSIDE THE REMAINDER'S OWN WINDOW, AT BOTH ENDS. The prefix is
+	// entitled to (arm+EscTimeout, arm+2*EscTimeout), and escAt sits
+	// within EscTimeout/4 of the arm on either side — above it by the
+	// drift bail, below it by the same send-then-Reset ordering
+	// splitMarkerAttempt's comment works through.
+	//
+	// A quarter-timeout past one therefore clears the first pass even
+	// when escAt is a quarter-timeout LATE (arm+EscTimeout is already
+	// behind us) and when it is a quarter-timeout EARLY (the write lands
+	// at arm+EscTimeout, which is the boundary the budget below keeps
+	// off). The first pass is what the mutation makes fatal, so the
+	// lower end is the half that must not be cut fine.
+	//
+	// IT IS SHORTER THAN splitMarkerAttempt'S, and deliberately: that
+	// helper's clock is `wrote`, which is provably not after the arm,
+	// and this one's is escAt, which may be a quarter-timeout past it.
+	// The budget below has to leave room for that drift AND for the
+	// decoder's read, so the sleep gives back what the weaker anchor
+	// costs. The first draft slept 1.5 timeouts against a 1.5-timeout
+	// budget and every attempt bailed — an inconclusive test that reads
+	// exactly like a loaded machine.
+	time.Sleep(EscTimeout + EscTimeout/4)
+	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
+		t.Fatalf("write to master: %v", err)
+	}
+	// ONE BUDGET measured from escAt, covering the sleep and the write
+	// together — the stacking argument splitMarkerAttempt's budget
+	// comment sets out, with escAt in the place of `wrote`. A quarter
+	// timeout of the window is left for the decoder to read the bytes,
+	// and a further quarter for escAt's own drift past the arm.
+	if elapsed := time.Since(escAt); elapsed >= 2*EscTimeout-EscTimeout/2 {
+		return false // the remainder's grace may already have expired
+	}
+
+	ev = next(t, evs, "no event arrived after the marker's tail")
+	if !ev.IsPaste() {
+		if ev.IsKey() && ev.Key.Key == input.KeyEsc {
+			t.Fatalf("the remainder of a partially-drained buffer was resolved " +
+				"to Esc rather than held for its own grace: the idle pass that " +
+				"consumed the leading Esc left `ESC [ 2` in pend and made " +
+				"progress, so the prefix is entitled to a full " +
+				"PasteMarkerGrace of its own. It inherited a spent counter " +
+				"instead, and this paste arrived as a stray Esc followed by " +
+				"its payload as keystrokes — which is #419")
+		}
+		t.Fatalf("event after the marker's tail was %#v, want a PasteEvent", ev)
+	}
+	if p := ev.Paste; p.Text != "payload" {
+		t.Errorf("pasted text is %q, want %q", p.Text, "payload")
+	}
+	return true
+}
