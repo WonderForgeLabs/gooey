@@ -720,11 +720,9 @@ func (ed *editor) pasteMarkup(src string) {
 	n, err := nodeOf(src)
 	var envelopeWhy string
 	if err == nil {
-		inner, ok, why := unwrapGooey(n)
-		switch {
-		case ok:
+		if inner, ok, why := unwrapGooey(n); ok {
 			n = inner
-		default:
+		} else {
 			envelopeWhy = why
 		}
 	}
@@ -744,7 +742,42 @@ func (ed *editor) pasteMarkup(src string) {
 		ed.status.Set("✗ not pasted: " + envelopeWhy)
 		return
 	}
+	// A DECLARATION PASTED ON ITS OWN NEVER REACHED unwrapGooey. It
+	// returns immediately when n.Elem != "Gooey", so <x:Property/> with
+	// no envelope is not an envelope refusal: it fell through to
+	// insertSubtree, planAdd found no spec for "Property", node.markup
+	// wrote it with no prefix, and the rebuild answered "markup: unknown
+	// element <Property>" — verbatim the string splitDecls' own doc
+	// calls out as the one the author must not be shown. The document
+	// survives (the revert-on-failed-rebuild guard above holds), so this
+	// was a message defect rather than a data one.
+	//
+	// THIS BRANCH IS WHAT MADE IT DETECTABLE: n.Space now survives
+	// deepCopy, so the namespace is still here to test. Raised in review
+	// of #522.
+	if why := bareDeclWhy(n); why != "" {
+		ed.status.Set("✗ not pasted: " + why)
+		return
+	}
 	ed.insertSubtree(n, "pasted markup:")
+}
+
+// bareDeclWhy is the refusal for a declaration pasted WITHOUT an
+// envelope, and "" for anything else. It is the same three-arm question
+// splitDecls asks of an envelope's children, asked of a lone node.
+func bareDeclWhy(n *node) string {
+	switch {
+	case n.Space == markup.XNamespace && n.Elem != "Property":
+		return alienDeclMsg([]string{n.Elem}, "x")
+	case n.Space == markup.XNamespace:
+		return "<x:Property> is a dependency property declaration, not an " +
+			"element: it belongs on a document's <Gooey> root, where it " +
+			"defines that control's public surface, and a paste inserts one " +
+			"element into the selection. Open the file it came from instead."
+	case n.Elem == "Property":
+		return bareDeclMsg(1)
+	}
+	return ""
 }
 
 // unwrapGooey strips a <Gooey> envelope with exactly one element in it.
@@ -808,6 +841,13 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 		// wrongly — it has no declarations markup can see. Raised in
 		// review of #522.
 		return nil, false, bareDeclMsg(len(bare))
+	case len(alienDecls(decls)) > 0:
+		// BEFORE THE DECLARATION ARM, because these are not
+		// declarations: markup refuses <x:Foo> outright. Calling them
+		// declarations here would send the author to read about merging
+		// a public surface for an element that has none.
+		prefix, _ := declBinding(n.Attrs)
+		return nil, false, alienDeclMsg(alienDecls(decls), prefix)
 	case len(decls) > 0:
 		noun := "declarations"
 		if len(decls) == 1 {
@@ -827,8 +867,15 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 			"elements, and a paste inserts ONE element into the selection. "+
 			"Open the file instead, or copy just the element you want.", len(kids))
 	}
-	carryDeclarations(n, n.Kids[0])
-	return n.Kids[0], true, ""
+	// kids[0], NOT n.Kids[0]. The two are equal only because the arms
+	// above returned on every child splitDecls filed elsewhere, which
+	// makes this line's correctness a property of the arm ORDERING —
+	// and the ordering is exactly what the comments above it argue
+	// about. Add or reorder an arm and carryDeclarations silently starts
+	// carrying the envelope's binding onto a declaration and returning a
+	// declaration as the pasted element. Raised in review of #522.
+	carryDeclarations(n, kids[0])
+	return kids[0], true, ""
 }
 
 // reconcileNamespaces settles a pasted subtree's namespace declarations

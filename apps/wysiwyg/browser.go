@@ -395,6 +395,18 @@ func (ed *editor) openWorkspaceFile(rel string) {
 			ed.status.Set("✗ " + rel + ": " + bareDeclMsg(len(bare)))
 			return
 		}
+		// AND AN x-NAMESPACED ELEMENT THAT IS NOT Property IS ITS OWN
+		// FAULT TOO. splitDecls keys on the namespace, so <x:Foo> lands
+		// in decls, and the count message below then named it
+		// <x:Property> — an element this file does not contain — and
+		// called a thing markup rejects outright a declaration. markup's
+		// own answer is "unknown language element", and it is the one
+		// the author can act on. Raised in review of #522.
+		if alien := alienDecls(decls); len(alien) > 0 {
+			prefix, _ := declBinding(n.Attrs)
+			ed.status.Set("✗ " + rel + ": " + alienDeclMsg(alien, prefix))
+			return
+		}
 		if len(n.Kids) != 1 {
 			// NAMING THE DECLARATIONS SEPARATELY, so the count the
 			// author is given is the one they can act on. "found 2" for
@@ -424,10 +436,19 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// x: anywhere. Naming <x:Property> there sends the
 				// author looking for an element they never wrote.
 				// Raised in review of #522.
+				//
+				// AND THE NAME COMES FROM THE ELEMENT, not from the
+				// word "Property". It was spelled literally here while
+				// splitDecls files every x-namespaced child into decls,
+				// so <x:Foo> was reported as <x:Property>. The alien arm
+				// above now returns before this line, which is what
+				// makes every remaining decl a Property — this reads
+				// decls[0].Elem anyway, so the two cannot drift apart
+				// again. Raised in review of #522.
 				prefix, bound := declBinding(n.Attrs)
-				elem := "<Property>"
+				elem := "<" + decls[0].Elem + ">"
 				if bound {
-					elem = "<" + prefix + ":Property>"
+					elem = "<" + prefix + ":" + decls[0].Elem + ">"
 				}
 				noun := " declarations are not root elements"
 				if len(decls) == 1 {

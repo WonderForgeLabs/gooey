@@ -699,3 +699,147 @@ func TestSeedingDoesNotRunOnTheRemotePath(t *testing.T) {
 			"would retire names that were never installed", ed.seededDecls)
 	}
 }
+
+// TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer covers
+// the arm splitDecls' namespace key created and every message built from
+// it then mis-described.
+//
+// splitDecls files a child by its NAMESPACE, exactly as markup's
+// splitDeclarations does, so <x:Foo> lands in `decls`. Both readers then
+// called it a declaration, and the open path spelled the element
+// literally: a file holding <x:Foo/> was refused with "its 1
+// <x:Property> declaration is not a root element", naming an element the
+// file does not contain. markup's own answer is "unknown language
+// element <x:Foo>", and the editor now says that — which is the whole
+// premise of bareDeclMsg one arm over.
+//
+// THE LOADER IS THE REFERENCE, not a copy of its sentence: the arms read
+// markup.Build's own error first and fail if it stops containing the
+// words this checks the editor for. Raised in review of #522.
+func TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer(t *testing.T) {
+	// NO CONTENT ROOT BESIDE IT, and that is the discriminator rather
+	// than a simpler fixture. splitDecls files <x:Foo> under decls, so a
+	// document with one content root has kids == 1, the count branch is
+	// never reached, and the open path falls through to markup.Build —
+	// which answers correctly on its own. The editor's own message is
+	// only reachable when the count branch fires, so a fixture that
+	// carries a root measures the loader and calls it the editor.
+	// Measured: with the alien arm disabled, the two-child fixture stays
+	// GREEN and this one reports "found 0 root elements (its 1 <x:Foo>
+	// declaration is not a root element)".
+	const doc = `<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
+		`  <x:Foo Name="Title"/>` + "\n" +
+		`</Gooey>` + "\n"
+
+	_, err := markup.Build([]byte(doc), &markup.Context{})
+	if err == nil {
+		t.Fatal("markup now accepts <x:Foo>, so there is nothing for the editor " +
+			"to agree with")
+	}
+	for _, want := range []string{"unknown language element", "<x:Foo>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("markup's own diagnosis no longer contains %q, so this test "+
+				"is checking the editor against nothing: %v", want, err)
+		}
+	}
+
+	t.Run("opening", func(t *testing.T) {
+		root := workspaceFixture(t)
+		if err := os.WriteFile(filepath.Join(root, "foo.gooey"), []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ed, _ := buildPage(t)
+		ed.setDispatcher(gooey.NewDispatcher())
+		ed.setWorkspace(root)
+		ed.openWorkspaceFile("foo.gooey")
+
+		got := ed.status.Get()
+		// NOT "must not mention <x:Property>" — markup's own sentence
+		// names it, as the thing the namespace declares INSTEAD. The
+		// defect was calling it what the document CONTAINS, which is the
+		// count refusal's tail and nothing else.
+		for _, bad := range []string{"is not a root element", "are not root elements"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("the refusal reads %q and counts <x:Foo> as a declaration "+
+					"that is not a root element. markup rejects <x:Foo> outright, so "+
+					"there is nothing to count: before the element name was read off "+
+					"decls this also spelled it <x:Property>, an element the document "+
+					"does not contain", got)
+			}
+		}
+		for _, want := range []string{"unknown language element", "<x:Foo>"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the refusal reads %q and does not mention %q", got, want)
+			}
+		}
+	})
+
+	t.Run("pasting", func(t *testing.T) {
+		ed, _ := buildPage(t)
+		ed.setDispatcher(gooey.NewDispatcher())
+		ed.pasteMarkup(doc)
+
+		got := ed.status.Get()
+		if strings.Contains(got, "this document declares") {
+			t.Errorf("the paste refusal reads %q and calls <x:Foo> a declaration; "+
+				"markup rejects it outright, so it has no public surface to "+
+				"merge and the sentence about merging one is about nothing", got)
+		}
+		for _, want := range []string{"unknown language element", "<x:Foo>"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the paste refusal reads %q and does not mention %q", got, want)
+			}
+		}
+	})
+}
+
+// TestPastingABareDeclarationSaysWhatItIs is the leg unwrapGooey could
+// not reach.
+//
+// It returns the moment n.Elem != "Gooey", so a declaration copied on
+// its OWN — which is what you get selecting one line in a file — was
+// never an envelope refusal. It fell through to insertSubtree: planAdd
+// finds no spec for "Property", node.markup writes it with no prefix,
+// and the rebuild answers "markup: unknown element <Property>" — the
+// exact string splitDecls' doc calls out as the one the author must not
+// be shown. The document survives, so this is a message defect; the
+// branch that made it DETECTABLE is this one, because n.Space now
+// survives deepCopy. Raised in review of #522.
+func TestPastingABareDeclarationSaysWhatItIs(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      []string
+	}{
+		{
+			name: "prefixed, no envelope",
+			src:  `<x:Property xmlns:x="` + markup.XNamespace + `" Name="Title" Type="string"/>`,
+			want: []string{"<x:Property>", "declaration"},
+		},
+		{
+			name: "unprefixed, no envelope",
+			src:  `<Property Name="Title" Type="string"/>`,
+			want: []string{"<x:Property>", `xmlns:x="` + markup.XNamespace + `"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.pasteMarkup(tc.src)
+
+			got := ed.status.Get()
+			if !strings.HasPrefix(got, "✗") {
+				t.Fatalf("a bare declaration was pasted into the document: %q", got)
+			}
+			if strings.Contains(got, "unknown element <Property>") {
+				t.Fatalf("the paste still reports %q — the element is not unknown, "+
+					"it is a declaration in the wrong place, and that message is "+
+					"the one this branch exists to stop showing", got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("the refusal reads %q and does not mention %q", got, want)
+				}
+			}
+		})
+	}
+}
