@@ -201,10 +201,17 @@ func TestMarkerPersistsThroughHiddenAnchor(t *testing.T) {
 	// straight over it because the message is shorter than the filler,
 	// so the FROZEN test reddens and this one does not. The two-sided
 	// form is what TestValidationLoopDamage already uses.
-	if got := row(c.Cells(), 1); !strings.Contains(got, "####") ||
-		strings.Contains(got, "required") {
-		t.Fatalf("row 1 = %q, want the filler restored AND the message gone while "+
-			"the field is hidden", got)
+	//
+	// AND THE ROW IS COMPARED WHOLE, which is the same argument one step
+	// further. Contains("####") && !Contains("required") accepts a popup
+	// arranged at a PARTIAL rect painting `requir` — neither clause
+	// fires, and the test is green over a message painting on top of a
+	// field that is not on screen. The row here is a known constant,
+	// formPage's own strings.Repeat("#", w), so equality costs no new
+	// fixture.
+	if got, want := row(c.Cells(), 1), strings.Repeat("#", 30); got != want {
+		t.Fatalf("row 1 = %q, want %q — the filler restored AND the message "+
+			"gone while the field is hidden", got, want)
 	}
 	if _, painted := c.Frame(); painted != 0 {
 		t.Errorf("the frame after the anchor was hidden repainted %d "+
@@ -392,11 +399,30 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 	}
 }
 
+// frozenMarkerFixture is what frozenMarkerPage hands back, and it is a
+// STRUCT because the positional form does not survive growth. Each new
+// value rewrote every call site and left callers discarding the rest
+// with `_`; the two funcs have different signatures, so mis-ordering
+// THOSE is a compile error, but the three pointers are interchangeable
+// and a swap of them is not. Named fields make an addition additive and
+// the ordering hazard unspellable.
+type frozenMarkerFixture struct {
+	tb   *TextBox
+	name *prop.Property[string]
+	m    *ValidationMarker
+	c    *gooey.Composer
+	// shows is both halves of "the user can see it": IsShown() and the
+	// rendered row, bound to this fixture's own composer and layer.
+	shows func(when string)
+	// freeze flips Active, takes the flip frame and confirms the
+	// refusal, returning that frame's painted count.
+	freeze func() int
+}
+
 // frozenMarkerPage is the tree every frozen-marker test in this file
-// needs: a
-// TextBox with a required validator, a ValidationMarker attached to it,
-// the pair inside a <Frozen>, and the AdornmentLayer that places the
-// popup beside them. A nil active gives a plain <Frozen> — AllowNone
+// needs: a TextBox with a required validator, a ValidationMarker
+// attached to it, the pair inside a <Frozen>, and the AdornmentLayer
+// that places the popup beside them. A nil active gives a plain <Frozen> — AllowNone
 // from the first frame; a handle gives one whose freeze can be flipped.
 //
 // Written once because three copies of a fixture drift silently: one
@@ -414,14 +440,11 @@ func TestMarkerAdoptsHostError(t *testing.T) {
 // nothing to do with freezing. Without the layer in hand, a caller would
 // report a broken fixture as a Frozen gating bug.
 //
-// NO COUNT IN EITHER SENTENCE. Both said "three" and there were four:
-// TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen arrived after them
-// and the prose did not move with it — the counted-in-prose failure
-// CLAUDE.md's Verify section is explicit about, in the one file whose
-// review history is entirely about claims outrunning what is enforced.
-// The next caller would have made it wrong again. Raised in review of
-// #498.
-func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *prop.Property[string], *ValidationMarker, *gooey.Composer, func(when string), func() int) {
+// NO COUNT IN EITHER SENTENCE, because the next caller makes one wrong.
+// That is the counted-in-prose failure CLAUDE.md's Verify section is
+// explicit about, in the one file whose review history is entirely
+// about claims outrunning what is enforced.
+func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) frozenMarkerFixture {
 	t.Helper()
 	name := prop.NewSource("")
 	tb := &TextBox{Text: name, Error: validate.Field(name, validate.Required("required"))}
@@ -511,83 +534,89 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 	// would have written a third.
 	//
 	// IT RETURNS THE FLIP FRAME'S PAINTED COUNT, which is what lets
-	// TestAValidationMarkerSurvivesAFreezeTurningOn use it. That test
-	// owns the painted==1 claim, so the first version left it
-	// hand-writing the prologue — and therefore left the second copy of
-	// the refusal message the extraction existed to remove. Handing the
-	// count back collapses both: one prologue, one message, and the flip
-	// test keeps its claim. Callers with no count to make ignore it.
-	// Raised in review of #498.
-	return tb, name, m, c, func(when string) {
-			t.Helper()
-			if !m.IsShown() {
-				// IsShown() is a CONJUNCTION — a popup in a layer AND a non-empty
-				// error string — so "not shown" is two states, and blaming one of
-				// them sends the reader to the wrong file. Say which.
-				switch {
-				case m.pop == nil && len(layer.Adornments()) == 0:
-					// AN EMPTY LAYER IS NOT PROOF OF A BROKEN FIXTURE, and which
-					// of the two things it means depends on whether this
-					// caller's fixture checked placement before now.
-					// frozenMarkerPage can only check it for a caller whose
-					// first frame is UNFROZEN, so the flagship test — which
-					// passes nil, and is frozen from the first frame — has no
-					// earlier success to contradict. Telling that reader a
-					// build-time assertion passed or failed names two legs
-					// neither of which happened.
-					if !prechecked {
-						t.Fatalf("the marker did not place %s and the layer hosts NO "+
-							"adornment. This caller's FIRST frame was already frozen, so "+
-							"no placement was asserted before now and there is no earlier "+
-							"success to contradict: either the freeze is gating placement "+
-							"— FocusManager.walk's unconditional SetFocusManager call on "+
-							"attachments is where a new `allow` gate would do this — or "+
-							"the page never had a marker at all", when)
-					}
-					t.Fatalf("the marker did not place %s and the layer hosts NO adornment. "+
-						"frozenMarkerPage asserted a placement at build time for this "+
-						"caller and it passed, so one WAS placed and something dropped it "+
+	// TestAValidationMarkerSurvivesAFreezeTurningOn use it rather than
+	// hand-write the prologue for the sake of counting the frame: one
+	// prologue, one refusal message, and the flip test keeps its
+	// painted==1 claim. Callers with no count to make ignore it.
+	f := frozenMarkerFixture{tb: tb, name: name, m: m, c: c}
+	f.shows = func(when string) {
+		t.Helper()
+		if !m.IsShown() {
+			// IsShown() is a CONJUNCTION — a popup in a layer AND a non-empty
+			// error string — so "not shown" is two states, and blaming one of
+			// them sends the reader to the wrong file. Say which.
+			switch {
+			case m.pop == nil && len(layer.Adornments()) == 0:
+				// AN EMPTY LAYER IS NOT PROOF OF A BROKEN FIXTURE, and which
+				// of the two things it means depends on whether this
+				// caller's fixture checked placement before now.
+				// frozenMarkerPage can only check it for a caller whose
+				// first frame is UNFROZEN, so the flagship test — which
+				// passes nil, and is frozen from the first frame — has no
+				// earlier success to contradict. Telling that reader a
+				// build-time assertion passed or failed names two legs
+				// neither of which happened.
+				if !prechecked {
+					t.Fatalf("the marker did not place %s and the layer hosts NO "+
+						"adornment. This caller's FIRST frame was already frozen, so "+
+						"no placement was asserted before now and there is no earlier "+
+						"success to contradict: either the freeze is gating placement "+
 						"— FocusManager.walk's unconditional SetFocusManager call on "+
-						"attachments is where a new `allow` gate would do this", when)
-				case m.pop == nil:
-					t.Fatalf("the marker did not place %s: the layer hosts %d adornment(s) "+
-						"and this marker's popup is nil, so it is THIS marker that was not "+
-						"placed rather than the layer being empty",
-						when, len(layer.Adornments()))
-				default:
-					// The other conjunct. A placed popup with an empty error is a
-					// validation result, not a placement problem, and reading the
-					// walk for it wastes the reader's time.
-					t.Fatalf("the marker placed a popup %s and reports nothing to say: its "+
-						"Error is empty, so the rule stopped failing rather than the "+
-						"adornment being dropped", when)
+						"attachments is where a new `allow` gate would do this — or "+
+						"the page never had a marker at all", when)
 				}
+				t.Fatalf("the marker did not place %s and the layer hosts NO adornment. "+
+					"frozenMarkerPage asserted a placement at build time for this "+
+					"caller and it passed, so one WAS placed and something dropped it "+
+					"— FocusManager.walk's unconditional SetFocusManager call on "+
+					"attachments is where a new `allow` gate would do this", when)
+			case m.pop == nil:
+				t.Fatalf("the marker did not place %s: the layer hosts %d adornment(s) "+
+					"and this marker's popup is nil, so it is THIS marker that was not "+
+					"placed rather than the layer being empty",
+					when, len(layer.Adornments()))
+			default:
+				// The other conjunct. A placed popup with an empty error is a
+				// validation result, not a placement problem, and reading the
+				// walk for it wastes the reader's time.
+				t.Fatalf("the marker placed a popup %s and reports nothing to say: its "+
+					"Error is empty, so the rule stopped failing rather than the "+
+					"adornment being dropped", when)
 			}
-			if got := row(c.Cells(), 1); !strings.Contains(got, "required") {
-				t.Fatalf("the marker reports itself shown %s but row 1 of the cell "+
-					"plane is %q — placed in the layer and painting nothing is what "+
-					"the user experiences as the form refusing to say what is wrong",
-					when, got)
-			}
-		}, func() int {
-			t.Helper()
-			if active == nil {
-				t.Fatal("freeze() was called on a page whose Active is nil. A plain " +
-					"<Frozen> is AllowNone from its first frame, so there is no flip " +
-					"to make and the refusal below would pass without measuring one")
-			}
-			active.Set(true)
-			// THE FLIP FRAME, and its count goes back to the caller. It
-			// exists so evictFrozen runs before anything is asserted;
-			// only the test named for the flip's damage reads the number.
-			_, painted := c.Frame()
-			if c.Focus().SetFocus(tb) {
-				t.Fatal("the TextBox took focus after Active flipped to true, so the " +
-					"subtree is not frozen: whatever the caller asserts next is about " +
-					"an ordinary field, and the unfrozen sibling test already covers it")
-			}
-			return painted
 		}
+		// WHOLE ROW, NOT Contains. This fixture's row 1 is exactly
+		// " required" on every caller — measured — so a popup arranged
+		// one column narrow, painting " requir", satisfies neither
+		// clause of the two-sided form and passes the Contains form by
+		// accident. Equality is available here because the row is a
+		// constant of the FIXTURE rather than of the assertion.
+		if got, want := row(c.Cells(), 1), " required"; got != want {
+			t.Fatalf("the marker reports itself shown %s but row 1 of the cell "+
+				"plane is %q, want %q — placed in the layer and painting "+
+				"something other than the message is what the user experiences "+
+				"as the form refusing to say what is wrong", when, got, want)
+		}
+	}
+	f.freeze = func() int {
+		t.Helper()
+		if active == nil {
+			t.Fatal("freeze() was called on a page whose Active is nil. A plain " +
+				"<Frozen> is AllowNone from its first frame, so there is no flip " +
+				"to make and the refusal below would pass without measuring one")
+		}
+		active.Set(true)
+		// THE FLIP FRAME, and its count goes back to the caller. It
+		// exists so evictFrozen runs before anything is asserted;
+		// only the test named for the flip's damage reads the number.
+		_, painted := c.Frame()
+		if c.Focus().SetFocus(tb) {
+			t.Fatal("the TextBox took focus after Active flipped to true, so the " +
+				"subtree is not frozen: whatever the caller asserts next is about " +
+				"an ordinary field, and the unfrozen sibling test already covers it")
+		}
+		return painted
+	}
+	return f
 }
 
 // TestAValidationMarkerPlacesItsAdornmentWhileFrozen holds the one claim
@@ -624,7 +653,8 @@ func frozenMarkerPage(t *testing.T, active *prop.Property[bool]) (*TextBox, *pro
 func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 	// A nil Active is a plain <Frozen>: AllowNone, the strongest freeze
 	// there is, and frozen from the first frame.
-	tb, _, _, c, shows, _ := frozenMarkerPage(t, nil)
+	f := frozenMarkerPage(t, nil)
+	tb, c, shows := f.tb, f.c, f.shows
 	// Discriminating half: without this the test passes just as well
 	// with no Frozen in the tree at all, and its name would be a claim
 	// about a wrapper that was doing nothing.
@@ -640,9 +670,12 @@ func TestAValidationMarkerPlacesItsAdornmentWhileFrozen(t *testing.T) {
 //
 // A nil here makes the comparison below it two nils, which passes — so
 // the guard is the assertion's other half, and it was written out by
-// hand in both callers with a character-identical message. That is the
+// hand in its callers with a character-identical message. That is the
 // shape frozenMarkerPage's own closures were written for; this is the
 // same duplication on the other assertion.
+//
+// No count in that sentence, for the reason frozenMarkerPage's doc gives
+// about its own.
 func keepPopup(t *testing.T, m *ValidationMarker) *markerPopup {
 	t.Helper()
 	if m.pop == nil {
@@ -675,7 +708,8 @@ func keepPopup(t *testing.T, m *ValidationMarker) *markerPopup {
 // causes behind one name cannot be told apart from a red run.
 func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	active := prop.NewSource(false)
-	tb, _, m, c, shows, freeze := frozenMarkerPage(t, active)
+	f := frozenMarkerPage(t, active)
+	tb, m, c, shows, freeze := f.tb, f.m, f.c, f.shows, f.freeze
 	if !c.Focus().SetFocus(tb) {
 		t.Fatal("the TextBox refused focus while Active is false, so the " +
 			"freeze is already on and the flip below is not the thing " +
@@ -684,12 +718,9 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 	shows("before the freeze turned on")
 	kept := keepPopup(t, m)
 
-	// THROUGH THE HELPER, WITH ITS COUNT. This test hand-wrote the flip
-	// prologue so it could count the frame, which left the second copy of
-	// the focus-refusal fatal that freeze() was extracted to remove —
-	// the drift the fixture's own comment argues against, surviving
-	// inside the fix for it. freeze() hands the count back now. Raised in
-	// review of #498.
+	// THROUGH THE HELPER, WITH ITS COUNT, so the focus-refusal fatal has
+	// one spelling in this file rather than one per test that needs the
+	// frame.
 	//
 	// THE COUNT, because this is the frame the test is named for and no
 	// other assertion here can see it. evictFrozen clears hover, captor,
@@ -770,7 +801,8 @@ func TestAValidationMarkerSurvivesAFreezeTurningOn(t *testing.T) {
 // and then goes invisible under a collapsing pane.
 func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 	active := prop.NewSource(false)
-	tb, _, m, c, shows, freeze := frozenMarkerPage(t, active)
+	f := frozenMarkerPage(t, active)
+	tb, m, c, shows, freeze := f.tb, f.m, f.c, f.shows, f.freeze
 	freeze()
 
 	// THE HELPER, not a hand copy of two of its three arms. An empty
@@ -848,7 +880,8 @@ func TestAFrozenFieldsMarkerSurvivesItsAnchorBeingHidden(t *testing.T) {
 // would satisfy the cell reads and IsShown alike.
 func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	active := prop.NewSource(false)
-	tb, name, m, c, shows, freeze := frozenMarkerPage(t, active)
+	f := frozenMarkerPage(t, active)
+	tb, name, m, c, shows, freeze := f.tb, f.name, f.m, f.c, f.shows, f.freeze
 	freeze()
 	// THE FREEZE AGAIN, at the END, and registered here so it runs even
 	// when an assertion below fatals. freeze() established it once,
@@ -861,10 +894,10 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	// named for. Same discriminator, second reading.
 	//
 	// IN A CLEANUP RATHER THAN AS THE LAST STATEMENT, because that is
-	// what lets the error legs below use shows(), which FATALS. Written
-	// last, it was unreachable from any failing assertion — so the leg
-	// most likely to be failing was the one that never got the second
-	// reading. Raised in review of #498.
+	// what lets the error legs below use shows(), which FATALS. As a
+	// closing statement it is unreachable from any failing assertion —
+	// so the leg most likely to be failing is the one that never gets
+	// the second reading.
 	t.Cleanup(func() {
 		if c.Focus().SetFocus(tb) {
 			t.Error("the TextBox took focus at the END of the test, so the " +
@@ -877,6 +910,20 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 	// cannot be the page's fault, and its third arm is the one a hand
 	// copy leaves out.
 	shows("while frozen, before the error moved")
+
+	// AND THE POINTER, HELD ACROSS THE WINDOW THIS TEST OPENS. The
+	// measured table at the hidden-anchor test establishes that
+	// `pop != nil`, IsShown(), the layer's count and the cell plane all
+	// read IDENTICALLY for a popup that survived and one that was
+	// dropped and rebuilt in the same frame; the pointer is the only
+	// thing that separates them. Driving the error to empty and back
+	// arranges this popup to a zero rect and back, so a layer sweep that
+	// dropped zero-rect adornments and let the next ensurePlaced build a
+	// fresh one would leave every other assertion below green — counts
+	// included, because a rebuilt popup reaching the same state paints
+	// the same cells. This is the same guard the other three tests in
+	// this file already carry.
+	kept := keepPopup(t, m)
 
 	name.Set("abc")
 	if _, painted := c.Frame(); painted != 3 {
@@ -906,16 +953,20 @@ func TestAFrozenFieldsMarkerTracksItsErrorWhileFrozen(t *testing.T) {
 		t.Errorf("the value going INVALID again under a freeze repainted %d "+
 			"component(s), want 2", painted)
 	}
-	// THE HELPER HERE TOO, which the comment at the top of this test
-	// asked for and the code did not do: this was `!m.IsShown()` plus a
-	// row-1 Contains, a hand copy of two of shows()' three arms whose
-	// message named neither conjunct. A marker that failed to come back
-	// reported "the marker did not come back" instead of the three-arm
-	// diagnosis — empty layer / this popup nil / placed-but-empty-Error —
-	// that the first line of this test paid for. The Fatal that made the
-	// hand copy look necessary is handled by the cleanup above. Raised in
-	// review of #498.
+	// THE HELPER HERE TOO. A hand copy of two of its three arms reports
+	// "the marker did not come back" where shows() reports which of
+	// empty layer / this popup nil / placed-but-empty-Error it is — the
+	// diagnosis the first line of this test already paid for. shows()
+	// FATALS, which is what the cleanup above is positioned to survive.
 	shows("after the error returned")
+	if m.pop != kept {
+		t.Error("the error going empty and coming back REPLACED the marker's " +
+			"popup: the layer dropped it at the zero rect and a later " +
+			"ensurePlaced built a fresh one. Every other assertion in this " +
+			"test reads the same either way — that is what the hidden-anchor " +
+			"test's own table measured — so the pointer is the only thing " +
+			"that can see it")
+	}
 	if _, painted := c.Frame(); painted != 0 {
 		t.Errorf("the frame after the error returned repainted %d component(s), "+
 			"want a settled page", painted)
