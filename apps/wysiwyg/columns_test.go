@@ -9,10 +9,16 @@ import (
 )
 
 // EVERY WIDTH ON THESE ROWS IS A COLUMN COUNT, and this file is where
-// that is checked for the four helpers this app sizes its own chrome
-// with.
+// that is checked for the four helpers PACKAGE MAIN sizes its own chrome
+// with. The module has a fifth, in components/preview — overlay.go's
+// fit, beside the module's only per-rune write loop — and the sentence
+// here said "this app" while reasoning about this package, so the sweep
+// that fixed four stopped at a boundary its own framing hid. Both are
+// swept now and pinned in that package's own overlay_test.go, which
+// carries the reachability the fixture could not. Raised in review of
+// #524.
 //
-// The app has four of them and they did not agree. dock.go's clipTo
+// Package main has four of them and they did not agree. dock.go's clipTo
 // delegates to render.ClipCols and always has since #441; statusaddr.go's
 // ellipsize and padTo, and properties.go's pad, each counted runes. A
 // reader of any one file could not see the disagreement, and no fixture

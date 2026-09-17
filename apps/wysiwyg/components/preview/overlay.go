@@ -454,24 +454,43 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 
 // fit truncates a spec to the space its track actually has, so a wide
 // spelling in a narrow column cannot run into its neighbour.
+//
+// COLUMNS, not runes. This was statusaddr.go's ellipsize body character
+// for character, including the defect that one was rewritten for, and
+// the sweep that fixed the four helpers in package main stopped at this
+// package's boundary: fit("世世世", 4) answered "it fits" and returned
+// six columns for a four-column track. A track spec is authored text —
+// tracks.go reads it off the document's Tracks= attribute and does not
+// validate it — so this is reachable from a .gooey file, not only from
+// Go source. Raised in review of #524.
 func fit(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= w {
+	if render.StringWidth(s) <= w {
 		return s
 	}
 	if w == 1 {
 		return "…"
 	}
-	return string(r[:w-1]) + "…"
+	return render.ClipCols(s, w-1) + "…"
 }
 
+// drawText writes a string across the guide's cells, ONE GRAPHEME
+// CLUSTER AT A TIME AND BY ITS COLUMN WIDTH.
+//
+// It walked []rune and passed x+i as a column, which is the second half
+// of the same trap fit held: a rune index is not a column, and
+// Buffer.Set lays no render.Continuation — so a wide glyph left the
+// buffer believing one column where the terminal draws two, and the next
+// rune landed on a cell the previous one already covered. CLAUDE.md
+// names this pair. Raised in review of #524.
 func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style) {
-	for i, r := range []rune(s) {
-		o.setCell(f, x+i, y, r, st)
-	}
+	render.EachCluster(s, func(cluster string, _, _, w int) bool {
+		o.setCluster(f, x, y, cluster, w, st)
+		x += max(w, 1)
+		return true
+	})
 }
 
 // mark is one cell the overlay wrote, and what was under it.
@@ -532,15 +551,50 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 // render.Buffer.Set is already bounds-checked; the nil guard is for
 // tests that render without a frame.
 func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
+	o.setCluster(f, x, y, string(r), render.RuneWidth(r), st)
+}
+
+// setCluster is setCell over a whole grapheme cluster, and every write
+// in this file goes through it.
+//
+// ALL OF THE CLUSTER'S COLUMNS MUST BE FREE, not just its first: the
+// blank check is what keeps a guide from destroying the content it
+// describes, and a wide glyph whose second column is occupied would
+// overwrite that neighbour while its own cell looked empty.
+//
+// WHAT WAS WRITTEN IS READ BACK, rather than assumed, because
+// Buffer.SetCell is allowed to write something else: it answers with a
+// SPACE where a wide cluster's second column would fall outside the
+// clip. Recording the intended rune there would leave restoreMarks
+// refusing to lift its own mark. That divergence is not observable
+// today — the cell it happens in was blank and the space it leaves
+// reads back the same — so this is the cheaper of two correct spellings
+// rather than a fix for a measured defect.
+//
+// ONE MARK FOR THE PAIR, deliberately, and the reason is in the buffer
+// rather than here: healSeam repairs a broken pair on any write, so
+// restoring the LEAD to a blank takes its continuation with it, and a
+// foreign write to the lead cannot leave our tail orphaned either. A
+// second mark on the continuation cell would be dead weight —
+// TestTheOverlayTakesBackAWideMark is what holds that.
+func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st render.Style) {
 	if f == nil || f.Cells == nil {
 		return
 	}
-	prev := f.Cells.At(x, y)
-	if !blank(prev.Rune) {
-		return
+	cols := max(w, 1)
+	prev := make([]render.Cell, cols)
+	for c := range prev {
+		prev[c] = f.Cells.At(x+c, y)
+		if !blank(prev[c].Rune) {
+			return
+		}
 	}
-	f.Cells.Set(x, y, r, st)
-	o.marks = append(o.marks, mark{x: x, y: y, wrote: r, prev: prev})
+	cell := render.Cell{Rune: []rune(cluster)[0], Style: st}
+	if len([]rune(cluster)) > 1 {
+		cell.Cluster = cluster
+	}
+	f.Cells.SetCell(x, y, cell)
+	o.marks = append(o.marks, mark{x: x, y: y, wrote: f.Cells.At(x, y).Rune, prev: prev[0]})
 }
 
 // blank is what counts as an empty cell. Both spellings occur: a cleared

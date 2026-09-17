@@ -280,10 +280,26 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 //
 //	grep -rnE '\.At\([^)]*\)\.Rune' --include='*_test.go' apps/wysiwyg
 //
-// Every remaining hit is a SINGLE-CELL identity check against a literal,
-// which .Rune answers correctly, plus docs_test.go's control-character
-// sweep, which skips render.Continuation by name. Raised in review of
-// #524, corrected in the round after.
+// Every remaining hit is one of three, and the third is the one the
+// first version of this sentence did not have:
+//
+//   - a SINGLE-CELL identity check against a LITERAL, which .Rune
+//     answers correctly;
+//   - docs_test.go's control-character sweep, which skips
+//     render.Continuation by name;
+//   - two reads in components/preview/overlay_test.go that are about
+//     the rune plane itself — one asserts render.Continuation BY NAME,
+//     and one snapshots a row's runes because Cell.Text() merges an
+//     unwritten cell with a space and the assertion is that a pair
+//     became two blanks.
+//
+// AGAINST A LITERAL is load-bearing in the first of those, and it is
+// what dockcollapse_test.go:747 was not: it captured a cell and compared
+// a later read against the capture, so every value but the stale one
+// reported green — render.Continuation included, in the test whose whole
+// subject is what a clip leaves in a column a wide glyph could not be
+// written into. It asserts what the cell holds now. Raised in review of
+// #524, corrected in the two rounds after.
 func screenRow(f *gooey.Frame, y int) string { return render.RowText(f.Cells, y) }
 
 // ---- 2. the copy tells the truth ----
