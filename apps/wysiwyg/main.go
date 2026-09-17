@@ -994,6 +994,50 @@ func splitDecls(n *node) (decls, kids, bare []*node) {
 	return decls, kids, bare
 }
 
+// alienDecls is every child splitDecls filed as a declaration that is
+// NOT <x:Property> — the arm markup answers with "unknown language
+// element".
+//
+// splitDecls keys on the NAMESPACE, exactly as markup's
+// splitDeclarations does, so <x:Foo> lands in decls beside a real
+// declaration. Every message built from that slice then described it as
+// a declaration, and one of them spelled the element literally: a
+// document holding <x:Foo/> was refused with "its 1 <x:Property>
+// declaration is not a root element", naming an element the file does
+// not contain and calling a thing markup rejects outright a declaration.
+// That is the defect this branch exists to remove, one arm over. Raised
+// in review of #522.
+func alienDecls(decls []*node) []string {
+	var out []string
+	for _, d := range decls {
+		if d.Elem != "Property" {
+			out = append(out, d.Elem)
+		}
+	}
+	return out
+}
+
+// alienDeclMsg is markup's own answer for those elements, said by the
+// editor for the reason bareDeclMsg gives: the author is looking here.
+//
+// DERIVED FROM markup.XNamespace, like its sibling, so the URI cannot
+// drift from the one splitDeclarations compares against.
+func alienDeclMsg(names []string, prefix string) string {
+	if prefix == "" {
+		prefix = "x"
+	}
+	elems := make([]string, len(names))
+	for i, n := range names {
+		elems[i] = "<" + prefix + ":" + n + ">"
+	}
+	verb := "is an unknown language element"
+	if len(elems) > 1 {
+		verb = "are unknown language elements"
+	}
+	return strings.Join(elems, ", ") + " " + verb + "; the " + markup.XNamespace +
+		" namespace declares <" + prefix + ":Property> only"
+}
+
 // bareDeclMsg is what markup's splitDeclarations says about an
 // unprefixed <Property>, said by the editor because the editor is where
 // the author is looking.
@@ -2807,7 +2851,7 @@ func (ed *editor) rebuild() {
 // #517 opened such a file and #522's first rounds made it round-trip;
 // this is the half that makes it BUILD. Raised in review of #522.
 //
-// markup.Declaration.NewValue picks the value, and that call is the
+// markup.Declaration.AbsentValue picks the value, and that call is the
 // whole of the policy: it is the handle an omitted optional attribute
 // would have got, Default included. A Required property has no default
 // and previews as its type's zero — the only stand-in available to a

@@ -562,7 +562,7 @@ func TestTheXPropertyRefusalNamesTheRoot(t *testing.T) {
 }
 
 // TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet pins
-// NewValue against the arm of resolve it is the public spelling of: a
+// AbsentValue against the arm of resolve it is the public spelling of: a
 // caller with no instantiation site gets what an omitted optional
 // attribute gets, and gets it from the same table row.
 //
@@ -614,7 +614,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	// not broken it.
 	who, err := by["Who"].AbsentValue()
 	if err != nil {
-		t.Fatalf("Who is Required, and NewValue must not treat that as a breach: %v", err)
+		t.Fatalf("Who is Required, and AbsentValue must not treat that as a breach: %v", err)
 	}
 	if got := who.(*prop.Property[string]).Get(); got != "" {
 		t.Errorf("Who = %q, want the zero string", got)
@@ -635,7 +635,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 	a, _ := by["Title"].AbsentValue()
 	b, _ := by["Title"].AbsentValue()
 	if a == b {
-		t.Error("two NewValue calls returned the same handle; a declaration's value is per-instance")
+		t.Error("two AbsentValue calls returned the same handle; a declaration's value is per-instance")
 	}
 
 	// A Declaration the caller built themselves names a Type and
@@ -649,7 +649,7 @@ func TestADeclarationMakesTheHandleAnAbsentAttributeWouldGet(t *testing.T) {
 }
 
 // TestSeedingDeclaredDefaultsBuildsTheDefiningDocument is the reason
-// NewValue is exported, end to end: the document that DECLARES a
+// AbsentValue is exported, end to end: the document that DECLARES a
 // property and then binds it has no instantiation site, so nothing
 // fills Values and the body's own binding is a load error. Seeded, it
 // builds.
@@ -665,7 +665,7 @@ func TestSeedingDeclaredDefaultsBuildsTheDefiningDocument(t *testing.T) {
 	// The premise: unseeded, this is the failure the editor reported.
 	if _, err := Build([]byte(src), &Context{}); err == nil {
 		t.Fatal("a defining document built without its declarations seeded; " +
-			"if top-level Build now instantiates declarations, this test and NewValue's reason for existing both need revisiting")
+			"if top-level Build now instantiates declarations, this test and AbsentValue's reason for existing both need revisiting")
 		// The MESSAGE, not just "an error": a fixture that fails to
 		// build for an unrelated reason — a misspelled attribute, say —
 		// would satisfy a bare err != nil and prove nothing about
