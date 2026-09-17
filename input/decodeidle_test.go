@@ -160,8 +160,9 @@ func TestIdleDecodeMakesProgressOnEscBeforeAMouseReport(t *testing.T) {
 // Paraphrased rather than quoted: this carried a verbatim quotation of
 // the single-member sentence that doc used to open with, and a grep for
 // it now finds nothing but the quotation marks. "Nothing else" is also
-// the opposite of what the two-member list says. But that walk covers 1- and 2-byte inputs — precisely the
-// range the exception stays OUT of, as the doc itself says. So the walk
+// the opposite of what the two-member list says. But that walk covers
+// 1- and 2-byte inputs — precisely the range the exception stays OUT
+// of, as the doc itself says. So the walk
 // proves the exception does not start too early and says nothing about
 // where it stops.
 //

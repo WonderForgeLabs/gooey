@@ -828,8 +828,9 @@ that reach the app as real commands. Its tri-state return (`ok`, consumed count)
 distinguishes "incomplete, feed me more bytes" from "complete but
 unmapped, skip it". The third state is the one whose violation is
 silent: under `idle` there are no more bytes to feed, so `Decode`
-answers "incomplete" only where a byte can still resolve it — and that
-list is two entries long and shrinking, not empty. A decoder that
+answers "incomplete" only where a byte could still resolve it — which is
+not the same as one arriving, and for the first of the two below it may
+never. That list is two entries long and shrinking, not empty. A decoder that
 answered it anywhere else would strand its buffer and go permanently
 deaf while still painting, which is the failure `App.Run`'s
 decoder-death watch cannot see, because the goroutine never returns.

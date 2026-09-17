@@ -1002,28 +1002,65 @@ func partialProgressAttempt(t *testing.T) bool {
 	if !got {
 		return false // late; a retry is expected to say whether it is the machine
 	}
-	if !ev.IsKey() || ev.Key.Key != input.KeyEsc {
-		t.Fatalf("the first event after `b ESC ESC [ 2` was %#v, want the Esc "+
-			"key — the nested-escape arm is what leaves the marker prefix "+
-			"behind, and without it this test measures nothing", ev)
+	if !ev.IsKey() || ev.Key.Key != input.KeyEsc || ev.Key.Mods != 0 {
+		// THE MODIFIER IS HALF THE PREMISE, and reading only the key
+		// let the premise pass over the state it exists to exclude.
+		// Measured on this tree:
+		//
+		//	Decode("\x1b\x1b[2", true):  n=1 ok=true key=KeyEsc mods=0
+		//	DecodeFinal("\x1b\x1b[2"):   n=2 ok=true key=KeyEsc mods=ModAlt
+		//
+		// Under the FINAL deadline the nested-escape arm's inner decode
+		// succeeds, so both escapes are consumed as one Alt+Esc and
+		// `[ 2` is what the decoder then re-reads — nothing is left
+		// behind as a marker prefix. ev.Key.Key is KeyEsc either way.
+		//
+		// That is precisely the state PasteMarkerGrace = 1 reaches: at
+		// 1 the first timeout is already the escalated pass. Without
+		// the modifier the mutation was waved through here and died
+		// ~400ms later at the tail assertion, which names neither the
+		// constant nor #419 while the two messages written to name
+		// them went unused — a kill landed by accident, which is the
+		// standard this record applies to the grace = 0 row. Raised in
+		// review of #445.
+		t.Fatalf("the first event after `b ESC ESC [ 2` was %#v, want an "+
+			"UNMODIFIED Esc key — the nested-escape arm under the idle "+
+			"deadline is what leaves the marker prefix behind, and without "+
+			"it this test measures nothing. An Alt-modified Esc means the "+
+			"first pass was already the escalated one, which is what "+
+			"PasteMarkerGrace = 1 makes of it (term/keys.go)", ev)
 	}
 	escAt := time.Now()
 	if escAt.Sub(wrote) > EscTimeout+EscTimeout/4 {
 		return false // escAt may be well past the send; attribute nothing
 	}
 
-	// INSIDE THE REMAINDER'S OWN WINDOW, AT BOTH ENDS. The prefix is
-	// entitled to (arm+EscTimeout, arm+2*EscTimeout), and escAt sits
-	// within EscTimeout/4 of the arm on either side — above it by the
-	// drift bail, below it by the same send-then-Reset ordering
-	// splitMarkerAttempt's comment works through.
+	// INSIDE THE REMAINDER'S OWN WINDOW. The prefix is entitled to
+	// (arm+EscTimeout, arm+2*EscTimeout), and escAt is bounded ABOVE by
+	// EscTimeout/4 past the arm — that is the drift bail two lines up,
+	// and it is derived. Below it is not bounded: `arm2 - escAt` is the
+	// decoder's deschedule between the send and the Reset, and nothing
+	// this attempt measures caps it. splitMarkerAttempt's comment
+	// establishes the DIRECTION (the arm can land either side of the
+	// event this clock reads), not a magnitude, and this sentence
+	// claimed the magnitude from it.
 	//
-	// A quarter-timeout past one therefore clears the first pass even
-	// when escAt is a quarter-timeout LATE (arm+EscTimeout is already
-	// behind us) and when it is a quarter-timeout EARLY (the write lands
-	// at arm+EscTimeout, which is the boundary the budget below keeps
-	// off). The first pass is what the mutation makes fatal, so the
-	// lower end is the half that must not be cut fine.
+	// The quarter-timeout at the bottom is therefore a MARGIN, not a
+	// bound: it clears the first pass when escAt is a quarter-timeout
+	// LATE (arm+EscTimeout is already behind us) and when it is a
+	// quarter-timeout EARLY (the write lands at arm+EscTimeout, the
+	// boundary the budget below keeps off). The first pass is what the
+	// mutation makes fatal, so the lower end is the half that must not
+	// be cut fine.
+	//
+	// THE RESIDUE, written down rather than claimed away, the same way
+	// splitMarkerAttempt's is: a deschedule larger than EscTimeout/4
+	// between the send and the Reset puts the tail before
+	// arm2+EscTimeout, the remainder never survives a timeout, the
+	// paste completes and this attempt returns TRUE having exercised
+	// nothing — a vacuous pass that stops the retry loop, under the
+	// mutation as well as under the fix. The spec carries it beside
+	// splitMarkerAttempt's. Raised in review of #445.
 	//
 	// IT IS SHORTER THAN splitMarkerAttempt'S, and deliberately: that
 	// helper's clock is `wrote`, which is provably not after the arm,

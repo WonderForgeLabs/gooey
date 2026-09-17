@@ -232,12 +232,29 @@ happening again. Mutation-tested, each mutation turning its own tests red:
 | the loop never escalates to the final pass | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
 | the stall counter resets on every timeout instead of counting | `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` |
 | the tty-close path drops to the idle deadline | `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` |
-| `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestPartialProgressGivesTheRemainderItsOwnGrace` (BEHAVIOURAL and deterministic - it fails on attempt 1 in ~0.09s, three runs of three, reaching its assertion rather than exhausting the loop); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
+| `PasteMarkerGrace` lowered from 2 to 1 | `TestPasteMarkerGraceHasAFloor` (structural); `TestPartialProgressGivesTheRemainderItsOwnGrace` (BEHAVIOURAL and deterministic - it fails on attempt 1 in ~0.04s at its PREMISE, three runs of three, naming the constant: "An Alt-modified Esc means the first pass was already the escalated one"); `TestASplitPasteMarkerStillPastes` (three runs of three, but see below - a vacuous attempt still pastes) |
 | the timer is re-armed unconditionally | **nothing** - the honest result, and the one the section above predicts |
 | `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` |
 | the first timeout's pass is neutered (`d := drainIdle` -> `drainLive`) | `TestALoneEscResolvesOnTheFirstTimeout` |
 | the partial-progress reset in the timer branch is deleted | `TestPartialProgressGivesTheRemainderItsOwnGrace` (three runs of three; the remainder resolves to Esc on the very next timeout) |
 | `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages. `TestPartialProgressGivesTheRemainderItsOwnGrace` reddens too, but by EXHAUSTING its 40 attempts in ~2.5s rather than by asserting - so it is listed with that caveat: its terminal message names the constant as a third cause alongside a loaded runner and a deleted reset, because a test that dies through its inconclusive path has not measured what its name says. `TestASplitPasteMarkerStillPastes` and `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` stay green |
+
+That row was landed once already with the right verdict for the wrong
+reason, which is the hazard a re-run table exists to catch and did not.
+`partialProgressAttempt`'s premise check read only `ev.Key.Key`, and under
+the FINAL deadline the nested-escape arm consumes both escapes as one
+Alt+Esc - so at grace 1, where the first timeout is already the escalated
+pass, the premise passed over exactly the state it exists to exclude and
+the test died ~400ms later at its tail assertion, which names neither the
+constant nor #419. Requiring `ev.Key.Mods == 0` makes the premise real; the
+row above is the re-run of the mutation against it. Measured on this tree:
+
+```
+Decode("\x1b\x1b[2", true):  n=1 ok=true key=KeyEsc mods=0
+DecodeFinal("\x1b\x1b[2"):   n=2 ok=true key=KeyEsc mods=ModAlt
+```
+
+Raised in review of #445.
 
 **Every row is re-derived by running its mutation**, never edited by hand, and
 the difference is not cosmetic. Earlier versions said "the term strand test" -
@@ -317,14 +334,30 @@ vacuous attempt pastes under the mutation too, so that row holds
 probabilistically. `TestPasteMarkerGraceHasAFloor` is the deterministic guard
 on the constant and is what the mutation table credits first.
 
+`partialProgressAttempt` carries the same residue, and it is written down
+here rather than claimed away in the helper. Its clock is `escAt`, the first
+idle pass's Esc, which is bounded ABOVE by a quarter-timeout past the arm (the
+drift bail) and is not bounded below at all: `arm2 - escAt` is the decoder's
+deschedule between the send and the `Reset`, and nothing the attempt measures
+caps it. Past `EscTimeout/4` the tail lands before `arm2 + EscTimeout`, the
+remainder never survives a timeout, the paste completes and the attempt
+returns **true** having exercised nothing - a vacuous pass that stops the retry
+loop, under the mutation as well as under the fix. The helper's comment used
+to claim the bound held "on either side", citing `splitMarkerAttempt`, whose
+comment establishes only the direction. Corrected in review of #445.
+
 **And the sentence that followed this is retired, by a test the same branch
 wrote.** It said there is no cheap observable for "the first idle timeout
 fired" - nothing is emitted at `stalls = 1` - so no symmetric guard was
 available. `TestPartialProgressGivesTheRemainderItsOwnGrace` is one: at
 `PasteMarkerGrace = 1` the remainder's own grace is the FIRST timeout, so the
-mutation resolves the prefix to Esc and the test reaches its assertion and
-fails in ~0.09s, three runs of three - a behavioural kill on the constant that
-does not depend on an attempt being non-vacuous. The conclusion was written
+mutation resolves the prefix to Esc and the test reaches its PREMISE and fails
+in ~0.04s, three runs of three - a behavioural kill on the constant that does
+not depend on an attempt being non-vacuous. It landed that kill for the wrong
+reason for one round: the premise read only `ev.Key.Key`, which an Alt+Esc
+satisfies, so at grace 1 the test fell through to a tail assertion ~400ms
+later that names neither the constant nor #419. `ev.Key.Mods == 0` is what
+makes the premise the thing that fires. The conclusion was written
 before the test existed and was left standing by the commit that created its
 counterexample. Corrected in review of #445; the half-claim in the heading was
 corrected in round eleven.

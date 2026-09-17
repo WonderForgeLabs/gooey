@@ -158,11 +158,24 @@ bracketed pastes: an OPEN paste, which waits indefinitely by design
 because delivering its prefix truncates it silently; and a SPLIT MARKER,
 which is bounded by `input.DecodeFinal` and `term.PasteMarkerGrace`
 because those bytes are also three keys a person can type
-([#440](https://github.com/WonderForgeLabs/gooey/issues/440)). The
-argument above survives the correction — neither exception can strand
-the loop indefinitely on input a user typed — but it has to be made from
-the real list rather than from an absolute. Reconciled in review of
-[PR #445](https://github.com/WonderForgeLabs/gooey/pull/445).
+([#440](https://github.com/WonderForgeLabs/gooey/issues/440)).
+
+**The argument above survives for ONE of those two, and the first
+attempt at this paragraph replaced an absolute with an absolute pointing
+the other way** — "neither exception can strand the loop indefinitely on
+input a user typed", four lines after saying an open paste waits
+indefinitely by design. `input/paste.go`'s `decodePaste` doc, corrected
+in the same PR, is the authority against the "typed" escape hatch too:
+a user typing Esc and then `[`, `2`, `0`, `0`, `~` writes exactly those
+bytes, and a terminal that sends an opening bracket and never closes it
+wedges the decoder with nobody typing at all. So: the split-marker half
+is designed out, by `DecodeFinal` and `PasteMarkerGrace`; the open-paste
+half is a deliberate and UNWATCHED wedge, whose justification is the
+truncation trade rather than a bound. "Designed out rather than watched
+for" holds for one member of the list and not for the other, and that is
+the whole of what the list supports. Reconciled in review of
+[PR #445](https://github.com/WonderForgeLabs/gooey/pull/445), and the
+absolute that replaced the absolute was caught one round later.
 
 **A dead companion outranks a dead decoder, which outranks a signal.**
 `exitErr` returns the first non-nil of `compErr`, `termErr`, `exitSig`,
