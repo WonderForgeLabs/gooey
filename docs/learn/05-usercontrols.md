@@ -263,11 +263,18 @@ only way data crosses is the instance's attributes. So a control cannot
 accidentally reach a page value that happens to share a name, and two
 instances of the same file cannot see each other.
 
-**What is inherited.** When a setup function leaves them nil, `Styles`,
-`Components`, `Handlers`, and `Includes` fall back to the parent context —
-which is why `Style="panel"` works inside `statpanel.gooey` without being
-re-registered. `Named` is per instance, so `Name="..."` inside a control
-is invisible to the page (like `x:Name` inside a template).
+**What is inherited.** Everything the page *registers* falls back to the
+parent context when a setup function leaves it unset — which is why
+`Style="panel"` works inside `statpanel.gooey` without being re-registered.
+`Values` does not cross, because that is the isolation above; `Named` is per
+instance, so `Name="..."` inside a control is invisible to the page (like
+`x:Name` inside a template).
+
+This heading used to answer with four field names, and the real set was
+ten — which is [#314](https://github.com/WonderForgeLabs/gooey/issues/314)
+itself, told under a heading that claims to be the complete answer. So the
+list is not repeated: the partition is `markup.boundaryPartition` (`markup/boundaryfields_test.go`), a row per field with its reason, checked against `Context` in both directions. ("Unset", not "nil": two of the fields
+are strings, tested with `== ""`.)
 
 **Element resolution order,** in full: a registered `Components` builder
 wins, then a built-in element, then the `Includes` convention, then an
@@ -323,8 +330,9 @@ error, because declarations own the public surface.
   attributes, as live handles.
 - `BindingValue` plus a type assertion carries non-string data; a small
   generic `attr[T]` helper is the idiom.
-- `Styles`/`Components`/`Handlers`/`Includes` inherit when left nil; `Named`
-  is per instance.
+- Everything the page registers inherits when left unset; `Values` and
+  `Named` do not. The partition is `markup.boundaryPartition`, not a list
+  in this file.
 - Naming a page's control files in `markup.Page` hot-reloads the whole
   composition through one page rebuild.
 

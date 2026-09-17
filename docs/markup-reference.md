@@ -1098,9 +1098,9 @@ An `embed.FS` reports a constant zero `ModTime` for every file, so a watcher ove
 | Attribute | Meaning |
 |---|---|
 | `Name` | **Required.** The companion's label in errors, and the element's `Name=` identity for `markup.Find` and tree snapshots. |
-| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory. Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
-| `Dir` | Working directory, resolved against the document's directory. Must exist at load time. |
-| `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
+| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the PAGE's directory (`Context.Dir`). Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
+| `Dir` | Working directory, resolved against the PAGE's directory (`Context.Dir`). Must exist at load time. |
+| `Log` | Output file, resolved against the PAGE's directory (`Context.Dir`). Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
 | `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. Empty, unparseable, or non-positive is a load error. |
 | `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. Empty, unparseable, or non-positive is a load error. |
 | `CleanEnv` | Starts the child from an **empty** environment. `"true"` or `"false"`, and nothing else — `CleanEnv="1"` is a **load error**, as it is on every other literal bool. This row documented the `strconv.ParseBool` spellings (`1`, `TRUE`, `T`) until [#460](https://github.com/WonderForgeLabs/gooey/issues/460): on a security switch the laxer grammar is the worse one, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell, and five spellings of "yes" is five chances for a near-miss. Default is inherit-and-override. |
@@ -1117,7 +1117,7 @@ Unknown attributes are a **load error**, as they now are on every element: a mis
 
 **Bindings in `<Arg>` and `<Var Value>` are snapshots**, read once when the child starts. Changing the property afterwards does not restart the child — an argv is a value a process was launched with, not one it observes. This is what lets a declaration depend on something only Go knows (an MCP endpoint that is not knowable until the listener is bound): the app puts it in a property, the document binds it.
 
-**Paths are document-relative.** `Dir` and `Log` resolve against `Context.Dir`, which an app sets to the same directory it rooted the page's `fs.FS` at:
+**Paths are page-relative.** `Dir` and `Log` resolve against `Context.Dir`, which an app sets to the same directory it rooted the page's `fs.FS` at. The PAGE's, not the enclosing document's, and the two genuinely disagree for `UserControl(otherFS, …)`: `fsys` is replaced while `Dir` is inherited, so a control loaded from another filesystem still resolves its `<Companion>` paths where the app runs. These rows said "the document's directory" while `companionPath`, `companionDir`, `companionLog` and `hostPath` had been corrected to say the page's — raised in review of #490.
 
 ```go
 app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))

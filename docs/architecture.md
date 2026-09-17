@@ -1364,9 +1364,14 @@ element attributes, resolved in the *parent* context via
 a `*prop.Property[T]` handle — that setup wires into its own context or
 components. This is XAML's DataContext-plus-dependency-property hand-off,
 done with explicit handles instead of an ambient inherited value.
-`Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent
-when the child leaves them nil; `Named` is scoped per instance, like
-`x:Name` inside a template.
+Everything a page *registers* inherits from the parent context when the
+child leaves it unset; what does not cross is `Values` — values arrive only
+through the declared surface — and `Named`, which is scoped per instance
+like `x:Name` inside a template. This sentence used to name four fields and
+the real set was ten, which is
+[#314](https://github.com/WonderForgeLabs/gooey/issues/314); the partition is `markup.boundaryPartition` (`markup/boundaryfields_test.go`), a row per field with its reason, checked against `Context` in both directions.
+"Unset" rather than "nil" because two of those fields are strings the
+loader tests with `== ""`.
 
 ### Include: markup-only controls
 

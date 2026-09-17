@@ -1275,9 +1275,16 @@ func TestEveryPrereqRowIsReached(t *testing.T) {
 		// offHarness to prevent. Raised in review of #490.
 		value := literalFor(tg.attr)
 		if value == "" {
+			// THE probePrereqs KEY, not the attribute's bare Name. This
+			// map is keyed Element.Attr, so a reader told row "Key"
+			// cannot find the entry — it is "TypeAhead.Key". Nobody had
+			// read the message because the branch above it argues it
+			// cannot fire today, which is exactly why it has to name what
+			// it will need to name on the day it does. Raised in review
+			// of #490.
 			t.Errorf("literalFor has no literal for %s, so row %q cannot be "+
 				"probed and is unreached — give it one rather than letting the "+
-				"row leave the guard quietly", tg.attr.Kind, tg.attr.Name)
+				"row leave the guard quietly", tg.attr.Kind, key)
 			continue
 		}
 		checked++

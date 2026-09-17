@@ -1,8 +1,11 @@
 package markup
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -244,5 +247,111 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 			"that one (markup/usercontrol.go), so an unconditional sentence "+
 			"here tells a control author the opposite of what the loader "+
 			"does. Say empty (accurate), or unset:\n\t%s", para)
+	}
+}
+
+// TestNoPageEnumeratesTheBoundaryPartition is the guard widened past the
+// one page that had it.
+//
+// TestTheReferencePartitionMatchesTheCode reads docs/markup-reference.md
+// and only its partition paragraph, so three other pages went on carrying
+// the four-of-ten list this branch exists to retire —
+// docs/architecture.md, docs/getting-started.md and
+// docs/learn/05-usercontrols.md, two of them TUTORIALS, which is where a
+// control author learns the rule rather than where they check it. A rule
+// the reference is held to and every other page is not, is a rule about
+// one page. Raised in review of #490.
+//
+// WHAT IT LOOKS FOR IS AN ENUMERATION, not a mention. A page is free to
+// say `Styles` and `Components` in a sentence about registering things;
+// what it may not do is answer "which fields inherit" with a list, because
+// that answer is ten rows long and goes stale silently — #314 is the
+// report of it having done so. So the trigger is the conjunction: a
+// paragraph that makes an inheritance CLAIM and backticks two or more
+// partition fields. Two escapes, and only two: name every inheriting
+// field (the reference paragraph, which is checked field-by-field above),
+// or cite boundaryPartition instead of enumerating (what the three
+// corrected pages now do).
+//
+// A PARAGRAPH, NOT A LINE, for the reason the test above gives: these
+// pages wrap at 80 columns, so a line-oriented read sees half a sentence.
+func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
+	const root = "../docs"
+	var pages []string
+	if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".md") {
+			pages = append(pages, p)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+	if len(pages) == 0 {
+		t.Fatalf("no markdown under %s, so this guard read nothing", root)
+	}
+
+	var everyInheriting []string
+	for name, rule := range boundaryPartition {
+		if rule.inherit && isExportedField(name) {
+			everyInheriting = append(everyInheriting, name)
+		}
+	}
+	sort.Strings(everyInheriting)
+
+	backticked := regexp.MustCompile("`([A-Za-z]+)`")
+	checked := 0
+	for _, page := range pages {
+		b, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatalf("reading %s: %v", page, err)
+		}
+		for _, para := range strings.Split(string(b), "\n\n") {
+			flat := strings.Join(strings.Fields(para), " ")
+			// THE CLAIM IS THE TRIGGER. Without it every table row
+			// listing two field names is a finding, and the guard becomes
+			// noise a reader learns to widen rather than read.
+			if !strings.Contains(flat, "inherit") {
+				continue
+			}
+			named := map[string]bool{}
+			for _, m := range backticked.FindAllStringSubmatch(flat, -1) {
+				if r, ok := boundaryPartition[m[1]]; ok && r.inherit && isExportedField(m[1]) {
+					named[m[1]] = true
+				}
+			}
+			if len(named) < 2 {
+				continue
+			}
+			checked++
+			if strings.Contains(flat, "boundaryPartition") {
+				continue // cites the source rather than copying it
+			}
+			var missing []string
+			for _, name := range everyInheriting {
+				if !named[name] {
+					missing = append(missing, name)
+				}
+			}
+			if len(missing) == 0 {
+				continue // the exhaustive form, checked field-by-field above
+			}
+			t.Errorf("%s answers what inherits with a list of %d field(s) and "+
+				"leaves out %s. A page that enumerates a PROPER SUBSET tells a "+
+				"control author those fields do not cross, which is #314 "+
+				"restated as prose. Either name them all — and expect to be "+
+				"wrong again the next time Context grows one — or point at "+
+				"markup.boundaryPartition, which is what the reference and the "+
+				"three pages corrected in #490 do:\n\t%s",
+				page, len(named), strings.Join(missing, ", "), flat)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no paragraph in the doc corpus makes an inheritance claim naming " +
+			"two or more boundary fields, so this guard ruled on nothing: either " +
+			"the walk is not reaching the pages or the trigger no longer matches " +
+			"how they are written")
 	}
 }

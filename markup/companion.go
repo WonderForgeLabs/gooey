@@ -167,10 +167,9 @@ func checkCompanionAttrs(e Element) error {
 // it, rather than a start failure behind a screen that is already up. A
 // pathful one is resolved against the PAGE's directory (Context.Dir,
 // which a control inherits when it leaves it empty — see its doc) and
-// made absolute: exec.Cmd
-// resolves a relative Path against Dir, so leaving it relative would
-// silently mean two different files depending on whether Dir was also
-// set.
+// made absolute: exec.Cmd resolves a relative Path against Dir, so
+// leaving it relative would silently mean two different files depending
+// on whether Dir was also set.
 func companionPath(e Element, ctx *Context, name string) (string, error) {
 	raw := strings.TrimSpace(e.Attrs["Path"])
 	if raw == "" {
@@ -219,13 +218,20 @@ func absPath(p, name, raw string) (string, error) {
 
 // companionDir resolves the working directory against the PAGE's
 // directory — Context.Dir, which a control inherits when it leaves it
-// nil rather than replacing, so a <Companion> inside a UserControl
-// loaded from another FS still runs where the app runs. This said "the document's own
-// directory" while pointing at the field that says otherwise, which is
-// the answer that stops being obvious exactly where a control's markup
-// and its host paths come from different places. Raised in review of
-// #490. A path in a configuration file that means something different
-// depending on where the binary was launched from is a bug generator.
+// EMPTY rather than replacing, so a <Companion> inside a UserControl
+// loaded from another FS still runs where the app runs. This said "the
+// document's own directory" while pointing at the field that says
+// otherwise, which is the answer that stops being obvious exactly where
+// a control's markup and its host paths come from different places. A
+// path in a configuration file that means something different depending
+// on where the binary was launched from is a bug generator.
+//
+// "EMPTY", not "nil". Dir is a string and the loader tests it with
+// `child.Dir == ""`; this was the fourth site saying nil in a round that
+// corrected three, missed because the word wrapped onto the next comment
+// line and the grep was line-oriented. companionPath and hostPath, four
+// lines either side, already said empty. Raised in review of #490,
+// twice.
 func companionDir(e Element, ctx *Context, name string) (string, error) {
 	raw := strings.TrimSpace(e.Attrs["Dir"])
 	if raw == "" {
