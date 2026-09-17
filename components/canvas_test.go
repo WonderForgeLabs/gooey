@@ -21,11 +21,16 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 
 // dump is the frame as a terminal would show it, one row per line.
 //
-// Through render.SpanText, which leaves the continuation markers out.
+// Through render.BufferText, which leaves the continuation markers out.
 // Reading Cell.Rune instead writes render.Continuation — rune(-1),
 // U+FFFD when stringified — into the middle of any row holding a wide
 // glyph, so no fixture in this file could contain one and be asserted
 // on. See #516.
+//
+// A ONE-LINE DELEGATION, because this body was written three times in
+// this package and twice more outside it. render.BufferText is where it
+// lives now; what stays here is the frame-to-buffer step and the reason
+// the window is not a parameter. Raised in review of #520.
 //
 // THE WINDOW COMES FROM THE FRAME, not from the caller. It used to take
 // cols and rows, written down beside a canvasFrame call that had already
@@ -35,14 +40,7 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 // which is the shape that passes on blank input, so the collapsed-child
 // regression would go undetected rather than merely mis-reported. Raised
 // in review of #520.
-func dump(f *gooey.Frame) string {
-	var sb strings.Builder
-	for y := 0; y < f.Cells.H; y++ {
-		sb.WriteString(render.RowText(f.Cells, y))
-		sb.WriteByte('\n')
-	}
-	return sb.String()
-}
+func dump(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 
 func TestCanvasArrangesChildrenAtAbsoluteOffsets(t *testing.T) {
 	a := &Text{Content: Str("A")}

@@ -203,12 +203,33 @@ superseded does not:
    quiet trap. That is an argument for deleting the wrapper, and it was
    deleted. `components/colorpicker_test.go`'s `rowText` earns its keep
    because it maps `*gooey.Frame` to `f.Cells`; it takes `SpanText`'s
-   order for the same reason.
-7. **One row search, not one per test.** `components/menucheck_test.go`
+   order for the same reason. A wrapper that earns its keep has to be
+   USED, though: five sites in the same package went on calling
+   `SpanText(f.Cells, 0, 0, n)` beside it, so the rule and the package
+   disagreed in the commit that stated the rule. They go through
+   `rowText` now — either the mapping is worth a wrapper everywhere or
+   it is worth one nowhere.
+7. **A whole-BUFFER read is `render.BufferText`, and it had no name.**
+   Removing the width parameters in item 5 left `components`' `dump`,
+   `menuRows` and `screen` as byte-identical eight-line loops, each under
+   its own comment explaining continuation markers and where the window
+   comes from — and two more of the same loop live outside that package,
+   one of them (`apps/scene`'s `containsRow`) still building its row from
+   `At(x, y).Rune`, which is the defect `RowText` exists to remove and
+   the one the sweep's grep cannot see. `BufferText` sits beside
+   `RowText`; the three helpers are one-line delegations, and the eleven
+   remaining directories of [#516] have a name to call rather than a loop
+   to copy. Its trailing newline is on every row *including the last*, so
+   a dump missing its final row is not a prefix of the correct one —
+   which is what keeps a `strings.Contains` assertion over one honest.
+8. **One row search, not one per test.** `components/menucheck_test.go`
    grew three copies of "every row holding a needle, and fatal unless
    exactly one", two of which redeclared the same local `match` struct
    and cross-referenced each other in comments written to keep the copies
-   in sync. `matchRows` and `onlyMatch` are the one spelling; the
+   in sync. `matchRows` and `onlyMatch` are the one spelling, over a
+   `rowMatch` rather than a bare `match` — a package-scope test type in a
+   package with dozens of test files owes the next file a hint rather
+   than a redeclaration error; the
    zero-match diagnosis stays per-test, because "no row matched" means
    the regression under test in one of them and "the dropdown did not
    paint" in another. Two of the three copies also took the FIRST hit, so

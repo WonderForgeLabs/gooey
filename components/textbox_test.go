@@ -144,7 +144,7 @@ func TestTextBoxRendersPromptTextAndCaret(t *testing.T) {
 	tb.setCaret(2)
 	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
-	if got, want := render.SpanText(f.Cells, 0, 0, 10), "> hi█     "; got != want {
+	if got, want := rowText(f, 0, 0, 10), "> hi█     "; got != want {
 		t.Errorf("rendered %q, want %q", got, want)
 	}
 }
@@ -158,7 +158,7 @@ func TestTextBoxScrollsToKeepTheCaretVisible(t *testing.T) {
 	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
 	// Caret is at the end, so the tail is what shows.
-	if got := render.SpanText(f.Cells, 0, 0, 6); !strings.Contains(got, "p") {
+	if got := rowText(f, 0, 0, 6); !strings.Contains(got, "p") {
 		t.Errorf("narrow field showed %q; the caret end must stay visible", got)
 	}
 }
@@ -289,7 +289,7 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 			tb.setCaret(len([]rune(text)))
 		}
 		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-		return render.SpanText(f.Cells, 0, 0, 10)
+		return rowText(f, 0, 0, 10)
 	}
 	caret := compose("世界", true)
 	plain := compose("世界", false)
@@ -324,11 +324,25 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// this whole loop**, not just the skip, and #519's acceptance
 	// criteria say so. Self-retiring means nobody is FORCED to delete
 	// it; it does not mean nobody has to.
-	for _, tw := range []struct{ got, want, buggy, shape string }{
-		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs"},
-		{plain, wantPlain, " 界       ", "the unfocused row"},
-		{mixed, wantMixed, "a b       ", "the unfocused mixed-width row"},
-	} {
+	//
+	// ONE TABLE DRIVES BOTH, and it did not: `want` was set three times
+	// and read nowhere, while the assertions below re-spelled the three
+	// constants by hand. A fourth shape could then get a tripwire and no
+	// assertion, or the reverse, and nothing would go red — in the test
+	// whose whole design is about not relying on somebody remembering.
+	// The `why` column is what the three bespoke t.Errorf blocks were
+	// carrying and is the only part of them that differed. Raised in
+	// review of #520.
+	shapes := []struct{ got, want, buggy, shape, why string }{
+		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs",
+			"the two glyphs occupy FOUR columns, so the caret belongs in column 4"},
+		{plain, wantPlain, " 界       ", "the unfocused row",
+			"the glyphs occupy their own columns with no caret to make room for"},
+		{mixed, wantMixed, "a b       ", "the unfocused mixed-width row",
+			"a narrow glyph either side of a wide one is the arrangement a " +
+				"per-rune advance loses in the middle rather than at the end"},
+	}
+	for _, tw := range shapes {
 		if tw.got == tw.buggy {
 			t.Skipf("#519 is still open — %s reads %q, the blanked-lead render "+
 				"this fixture was written against — "+
@@ -350,17 +364,9 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// SetString lay the continuation themselves, and render/cell.go says
 	// of the remaining displacement branch that it is only reachable by
 	// assigning Cells directly.
-	if got, want := caret, wantCaret; got != want {
-		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
-			"the caret belongs in column 4", got, want)
-	}
-	if got, want := plain, wantPlain; got != want {
-		t.Errorf("unfocused, rendered %q, want %q — the glyphs occupy their own "+
-			"columns with no caret to make room for", got, want)
-	}
-	if got, want := mixed, wantMixed; got != want {
-		t.Errorf("unfocused, rendered %q, want %q — a narrow glyph either side "+
-			"of a wide one is the arrangement a per-rune advance loses in the "+
-			"middle rather than at the end", got, want)
+	for _, tw := range shapes {
+		if tw.got != tw.want {
+			t.Errorf("%s rendered %q, want %q — %s", tw.shape, tw.got, tw.want, tw.why)
+		}
 	}
 }

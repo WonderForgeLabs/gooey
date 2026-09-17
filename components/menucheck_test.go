@@ -28,9 +28,11 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 }
 
 // menuRows is the open dropdown as a terminal would show it. Through
-// render.SpanText — a rune-per-cell read puts the continuation marker in
-// the row, which is what kept a wide-glyph label out of this file's
-// fixtures. See #516.
+// render.BufferText — a rune-per-cell read puts the continuation marker
+// in the row, which is what kept a wide-glyph label out of this file's
+// fixtures. See #516. It was this loop written out, byte for byte the
+// same as canvas_test.go's dump; the loop is in render now. Raised in
+// review of #520.
 //
 // THE WINDOW IS THE FRAME, derived from f.Cells rather than written
 // down. A fixed extent is the trap SpanText's own doc names — "a
@@ -39,7 +41,7 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 // this helper is the reader that paragraph is about. A written-down
 // width also has to agree with a composer width written separately in
 // each test.
-// match is one row that held a needle and the byte offset it held it
+// rowMatch is one row that held a needle and the byte offset it held it
 // at.
 //
 // PAIRED, because the two answers are about one match. Three tests in
@@ -49,7 +51,7 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 // them agree. Loosening such a guard to "at least one" slices one row at
 // an offset measured in another: a wrong column in a failure message at
 // best, an out-of-range slice at worst.
-type match struct{ row, byteAt int }
+type rowMatch struct{ row, byteAt int }
 
 // matchRows is every row of rows holding needle, with where.
 //
@@ -59,11 +61,11 @@ type match struct{ row, byteAt int }
 // order and the other became invisible. Every claim these tests make is
 // POSITIONAL, about a specific column of a specific row, so two
 // candidates is a fault to name rather than a choice to make.
-func matchRows(rows []string, needle string) []match {
-	var out []match
+func matchRows(rows []string, needle string) []rowMatch {
+	var out []rowMatch
 	for y, r := range rows {
 		if i := strings.Index(r, needle); i >= 0 {
-			out = append(out, match{y, i})
+			out = append(out, rowMatch{y, i})
 		}
 	}
 	return out
@@ -77,7 +79,7 @@ func matchRows(rows []string, needle string) []match {
 // test it is the regression under test, for another it is the dropdown
 // not painting at all. Folding a generic sentence in here would lose
 // that.
-func onlyMatch(t *testing.T, rows []string, needle, ifNone string) match {
+func onlyMatch(t *testing.T, rows []string, needle, ifNone string) rowMatch {
 	t.Helper()
 	got := matchRows(rows, needle)
 	if len(got) == 1 {
@@ -94,17 +96,10 @@ func onlyMatch(t *testing.T, rows []string, needle, ifNone string) match {
 		"positional — a column of a specific row — so picking one of two by "+
 		"iteration order would hide whichever it did not pick:\n%s",
 		needle, at, strings.Join(rows, "\n"))
-	return match{}
+	return rowMatch{}
 }
 
-func menuRows(f *gooey.Frame) string {
-	var sb strings.Builder
-	for y := 0; y < f.Cells.H; y++ {
-		sb.WriteString(render.RowText(f.Cells, y))
-		sb.WriteByte('\n')
-	}
-	return sb.String()
-}
+func menuRows(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 
 func TestACheckItemDrawsItsBox(t *testing.T) {
 	on := prop.NewSource(false)

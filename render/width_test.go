@@ -311,14 +311,55 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	b := NewBuffer(4, 1)
 	b.SetString(0, 0, "ab", Style{})
 
-	if got, want := SpanText(b, 2, 0, 8), "        "; got != want {
-		t.Errorf("a span running %d columns past the buffer = %q, want %q", 6, got, want)
+	// THE OVERSHOOT IS DERIVED, not written down beside the fixture that
+	// produces it: x+w-b.W is 6 today and stays right when the fixture
+	// moves, which is the difference CLAUDE.md draws between a number
+	// and a sample of one. "ENDS past" rather than "runs past", too —
+	// the span's head is inside the buffer and only its tail is not,
+	// which is what makes the first two columns blanks-from-the-buffer
+	// and the rest blanks-from-the-rule. Raised in review of #520.
+	const x, w = 2, 8
+	if got, want := SpanText(b, x, 0, w), "        "; got != want {
+		t.Errorf("a span ending %d columns past the buffer = %q, want %q",
+			x+w-b.W, got, want)
 	}
 	if got, want := SpanText(b, -2, 0, 4), "  ab"; got != want {
 		t.Errorf("a span starting left of column 0 = %q, want %q", got, want)
 	}
 	if got, want := SpanText(b, 0, 9, 4), "    "; got != want {
 		t.Errorf("a span on row 9 of a one-row buffer = %q, want %q", got, want)
+	}
+}
+
+// TestBufferTextIsEveryRowNewlineTerminated pins the two things a
+// caller of a whole-buffer read depends on and cannot see from the
+// signature: that it reads EVERY row, and that the last one carries its
+// newline like the rest.
+//
+// THE LAST NEWLINE IS THE HALF WORTH PINNING. Without it a dump missing
+// its final row is a PREFIX of the correct one, and every
+// strings.Contains assertion over such a dump passes — which is the
+// class CLAUDE.md calls a check that can quietly report the wrong
+// answer. With it the two strings simply differ.
+//
+// A WIDE GLYPH IN THE FIXTURE, because a buffer reader that walked cells
+// instead of delegating to RowText would put render.Continuation in the
+// middle of row 1 and still pass an ASCII-only test — the defect #516
+// exists for, one level up. Raised in review of #520.
+func TestBufferTextIsEveryRowNewlineTerminated(t *testing.T) {
+	b := NewBuffer(4, 3)
+	b.SetString(0, 0, "ab", Style{})
+	b.SetString(0, 1, "世界", Style{})
+
+	const want = "ab  \n世界\n    \n"
+	if got := BufferText(b); got != want {
+		t.Errorf("BufferText = %q, want %q: every row, each ending in a newline, "+
+			"and a wide glyph read as itself rather than as a rune and a "+
+			"continuation marker", got, want)
+	}
+	if got := BufferText(nil); got != "" {
+		t.Errorf("BufferText(nil) = %q, want the empty string — RowText answers a "+
+			"nil buffer the same way and this is the loop over it", got)
 	}
 }
 

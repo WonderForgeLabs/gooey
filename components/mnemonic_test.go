@@ -132,7 +132,7 @@ func TestButtonMnemonicRendersStrippedAndUnderlined(t *testing.T) {
 	// render.SpanText, not an append loop sliced with line[:8]: the 8
 	// means COLUMNS, and slicing a []rune counts runes, which conflates
 	// the two one level above the reader.
-	if got := render.SpanText(f.Cells, 0, 0, 8); got != "[ Save ]" {
+	if got := rowText(f, 0, 0, 8); got != "[ Save ]" {
 		t.Fatalf("label = %q, want %q — the marker must be stripped", got, "[ Save ]")
 	}
 	// "[ Save ]": the S sits at x=2.

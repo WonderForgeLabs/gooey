@@ -202,6 +202,37 @@ func RowText(b *Buffer, y int) string {
 	return SpanText(b, 0, y, b.W)
 }
 
+// BufferText is every row of b, newline-terminated — the whole screen as
+// a terminal would show it.
+//
+// IT EXISTS BECAUSE THE SAME EIGHT LINES KEPT BEING WRITTEN. Three test
+// files in `components` alone held byte-identical copies of this loop
+// after #516 removed their width parameters, each under its own comment
+// explaining the same two things, and two more live outside that package
+// — apps/wysiwyg's onScreen and apps/scene's containsRow, the second of
+// them still building a row with `At(x, y).Rune` and so unable to hold a
+// wide glyph at all. A whole-BUFFER read is as common as a whole-ROW
+// read and had no name, so every caller invented one. Raised in review
+// of #520.
+//
+// The trailing newline is on EVERY row including the last, so a
+// three-row buffer and the first three rows of a four-row one do not
+// compare equal — a dump missing its last row is a different string, not
+// a prefix.
+//
+// A nil buffer is the empty string, for RowText's reason.
+func BufferText(b *Buffer) string {
+	if b == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for y := 0; y < b.H; y++ {
+		sb.WriteString(RowText(b, y))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
 // SpanText is RowText over w columns starting at x — what that part of
 // row y would read as on a terminal.
 //

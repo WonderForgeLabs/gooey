@@ -7,7 +7,6 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
 	"github.com/WonderForgeLabs/gooey/prop"
-	"github.com/WonderForgeLabs/gooey/render"
 	"github.com/WonderForgeLabs/gooey/term"
 )
 
@@ -214,7 +213,7 @@ func TestScrollFollowsTheCaretBothWays(t *testing.T) {
 	tb.setCaret(16)
 	row := func() string {
 		f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
-		return render.SpanText(f.Cells, 0, 0, 6)
+		return rowText(f, 0, 0, 6)
 	}
 	if got := row(); !strings.HasSuffix(strings.TrimRight(got, " "), "p█") {
 		t.Fatalf("caret at the end showed %q, want the tail with the caret", got)
