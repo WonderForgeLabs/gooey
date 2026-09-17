@@ -83,7 +83,7 @@ func (n *node) deepCopy() *node {
 	if n == nil {
 		return nil
 	}
-	c := &node{Elem: n.Elem, Body: n.Body}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
@@ -799,8 +799,15 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 	if n.Elem != "Gooey" {
 		return nil, false, ""
 	}
-	decls, kids := splitDecls(n)
+	decls, kids, bare := splitDecls(n)
 	switch {
+	case len(bare) > 0:
+		// Before the declaration arm, because a document whose
+		// declarations are misnamespaced has a fault of its own and
+		// the paste refusal would otherwise describe the document
+		// wrongly — it has no declarations markup can see. Raised in
+		// review of #522.
+		return nil, false, bareDeclMsg(len(bare))
 	case len(decls) > 0:
 		noun := "declarations"
 		if len(decls) == 1 {

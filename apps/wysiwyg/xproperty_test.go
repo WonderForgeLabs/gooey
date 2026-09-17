@@ -9,6 +9,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/prop"
 )
 
 // xPropertyDoc is a control's type definition: an <x:Property>
@@ -498,5 +499,203 @@ func TestADeclarationDoesNotCaptureAnEditorBinding(t *testing.T) {
 	if got := ed.docCtx.Values["Region"]; got != any(ed.region) {
 		t.Errorf("closing that document left Region as %v — a name the editor "+
 			"owns was retired with the document that shadowed it", got)
+	}
+}
+
+// TestTheEditorSaysWhatMarkupWouldAboutABareProperty is finding 2 of
+// #522's round 1, and the finding is that the editor answered a
+// DIFFERENT question from the one the document asks.
+//
+// markup's splitDeclarations has three arms and the editor kept two.
+// The missing one is the likely typo — a <Property> with no namespace —
+// and markup diagnoses it by name. The editor counted it as a root
+// element instead:
+//
+//	<Gooey><Property …/><Canvas/></Gooey>
+//	  -> ✗ a <Gooey> document needs exactly one root element, found 2
+//
+// which reads as "delete one of your roots" about a file whose second
+// root is the declaration.
+//
+// THE ONE-KID SPELLING WAS NOT BETTER, and the review that raised this
+// assumed it was — "it passes the count and fails at Build, and that
+// asymmetry is the tell". Measured, it does not: the envelope is
+// unwrapped first, so the declaration is built INSIDE the editor's
+// surface and markup answers `unknown element <Property>`, which names
+// no remedy at all. Both spellings are arms here for that reason.
+//
+// THE SENTENCE IS CHECKED AGAINST markup'S OWN, not against a copy of
+// it. The editor cannot call splitDeclarations, so it restates the
+// advice; what keeps the restatement honest is asking markup for its
+// error on the same source and requiring the parts an author must act
+// on to appear in both.
+func TestTheEditorSaysWhatMarkupWouldAboutABareProperty(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc string
+		plural    bool
+	}{
+		{
+			name: "a declaration beside a content root",
+			doc: "<Gooey>\n" +
+				`  <Property Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`  <Canvas Name="Root"/>` + "\n" +
+				"</Gooey>\n",
+		},
+		{
+			name: "a declaration alone",
+			doc: "<Gooey>\n" +
+				`  <Property Name="Title" Type="string" Default="hi"/>` + "\n" +
+				"</Gooey>\n",
+		},
+		{
+			// THE PLURAL BRANCH, because the last untested
+			// pluralisation in this file shipped saying "its 1
+			// <p:Property> declaration is not root elements".
+			name:   "two declarations",
+			plural: true,
+			doc: "<Gooey>\n" +
+				`  <Property Name="A" Type="string" Default="a"/>` + "\n" +
+				`  <Property Name="B" Type="string" Default="b"/>` + "\n" +
+				`  <Canvas Name="Root"/>` + "\n" +
+				"</Gooey>\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := markup.Build([]byte(tc.doc), &markup.Context{})
+			if err == nil {
+				t.Fatal("markup now accepts an unprefixed <Property>, so there is " +
+					"nothing for the editor to agree with")
+			}
+			// The parts of markup's advice an author has to act on. Read
+			// off the loader's message rather than written here, so the
+			// day markup changes its mind this test says so.
+			for _, want := range []string{"<x:Property>", `xmlns:x="` + markup.XNamespace + `"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("markup's own diagnosis no longer contains %q, so this "+
+						"test is checking the editor against nothing: %v", want, err)
+				}
+			}
+
+			root := workspaceFixture(t)
+			if err := os.WriteFile(filepath.Join(root, "r.gooey"), []byte(tc.doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("r.gooey")
+
+			got := ed.status.Get()
+			if !strings.HasPrefix(got, "✗") {
+				t.Fatalf("an unprefixed <Property> was accepted: %q", got)
+			}
+			for _, want := range []string{"<x:Property>", `xmlns:x="` + markup.XNamespace + `"`} {
+				if !strings.Contains(got, want) {
+					t.Errorf("the editor's refusal reads %q and does not carry %q — "+
+						"the author is told something other than what would fix the "+
+						"file", got, want)
+				}
+			}
+			for _, not := range []string{"root element, found", "unknown element"} {
+				if strings.Contains(got, not) {
+					t.Errorf("the editor's refusal reads %q, which answers a "+
+						"different question from the one the document asks", got)
+				}
+			}
+			// THE WHOLE TAIL AGREES. The last untested pluralisation in
+			// this file shipped reading "its 1 <p:Property> declaration
+			// is not root elements", so the count and the verb are
+			// asserted rather than assumed.
+			want, wrong := "write it as", "write them as"
+			if tc.plural {
+				want, wrong = "write them as", "write it as"
+			}
+			if !strings.Contains(got, want) || strings.Contains(got, wrong) {
+				t.Errorf("the refusal reads %q; for %d declarations it should say "+
+					"%q and not %q", got, strings.Count(tc.doc, "<Property "), want, wrong)
+			}
+		})
+	}
+}
+
+// TestASeededNameIsVisibleToTheControlPlaneAndIsTransient measures
+// finding 4 of #522's round 1, which is a consequence of the shared map
+// that seedDeclared's doc reasoned about only through menuValues.
+//
+// ed.docCtx.Values IS ed.ctx.Values and both servers are handed ed.ctx,
+// so a seeded name is in the vocabulary the control plane validates and
+// patches against. Both halves are asserted because the first is the
+// reason the second is tolerated: the binding pickers read the same map,
+// which is what puts {{.Title}} in front of the author while the
+// declaring document is open.
+//
+// The transience is the half a client cannot see: a value set against a
+// seeded name survives until the next rebuild and no longer, because the
+// seed loop installs a fresh handle from Default every time.
+func TestASeededNameIsVisibleToTheControlPlaneAndIsTransient(t *testing.T) {
+	root := workspaceFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "used.gooey"), []byte(xPropertyUsedDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("used.gooey")
+
+	// THE SERVERS' CONTEXT, not docCtx — that is the whole finding.
+	v, ok := ed.ctx.Values["Title"]
+	if !ok {
+		t.Fatal("a declared name is not in the context the servers are handed, " +
+			"so this test measures nothing")
+	}
+	p, ok := v.(*prop.Property[string])
+	if !ok {
+		t.Fatalf("the seeded handle is %T, not a string property", v)
+	}
+	p.Set("set by a client")
+	if got := p.Get(); got != "set by a client" {
+		t.Fatalf("the seeded handle did not take a write: %q", got)
+	}
+
+	ed.rebuild()
+
+	w, ok := ed.ctx.Values["Title"].(*prop.Property[string])
+	if !ok {
+		t.Fatal("the name left the context on a rebuild")
+	}
+	if w.Get() != "hi" {
+		t.Errorf("the seeded handle still reads %q after a rebuild; this test "+
+			"asserts the OPPOSITE — a client's write is discarded, and if that "+
+			"has changed the doc on seedDeclared is now wrong", w.Get())
+	}
+}
+
+// TestSeedingDoesNotRunOnTheRemotePath is finding 5 of #522's round 1:
+// rebuild returns on the remote branch before it reaches seedDeclared,
+// so #517's build half is local preview only.
+//
+// It is the right behaviour — the target's context is the authority and
+// the editor cannot seed one it does not own — and it is asserted rather
+// than left implied, because seedDeclared's doc reads as unconditional
+// and nothing else says where it stops.
+func TestSeedingDoesNotRunOnTheRemotePath(t *testing.T) {
+	ed, _ := attachedEditor(t)
+	ed.envAttrs = map[string]string{"xmlns:x": markup.XNamespace}
+	ed.envDecls = []*node{{
+		Elem:  "Property",
+		Space: markup.XNamespace,
+		Attrs: map[string]string{"Name": "Title", "Type": "string", "Default": "hi"},
+	}}
+	ed.root.Kids = []*node{{Elem: "Text", Attrs: map[string]string{"Name": "T"}}}
+	ed.rebuild()
+
+	if _, ok := ed.docCtx.Values["Title"]; ok {
+		t.Error("the editor seeded a declared name while driving another app — " +
+			"the preview would then resolve a binding the target cannot, and " +
+			"agree with itself about a document that does not load there")
+	}
+	if len(ed.seededDecls) != 0 {
+		t.Errorf("seededDecls is %v on the remote path, so a later local rebuild "+
+			"would retire names that were never installed", ed.seededDecls)
 	}
 }
