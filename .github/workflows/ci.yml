@@ -346,9 +346,25 @@ jobs:
       # Repacking the legs must not drop it: without the objects the tracked
       # binaries arrive as pointer text, and a test that reads one fails with
       # a decode error rather than anything that names LFS.
+      #
+      # `fetch-depth: 0` ON THIS LEG ONLY, because this is the leg that runs
+      # the root module's suite and one test in it asks git about COMMITS.
+      # TestEveryOwnModulePinNamesACommitThisRepositoryPublished checks that
+      # every own-module `require` names a commit this repository actually
+      # published — the check that catches a pseudo-version hand-edited or
+      # `sed`-rewritten to a revision no proxy can serve. actions/checkout's
+      # default is depth 1, which on a pull request fetches the merge commit
+      # and NONE of its parents, so every pinned revision is absent and the
+      # check has nothing to look at. It fails rather than logging that, so
+      # this line is what makes it run rather than what keeps it quiet.
+      #
+      # Affordable: 216 commits and a 56 MiB pack against the LFS objects
+      # this same step already pulls. The other three checkouts in this file
+      # stay at the default — none of them asks git anything about history.
       - uses: actions/checkout@v4
         with:
           lfs: true
+          fetch-depth: 0
 
       # NO actions/setup-go. It installs the go.mod version and puts it on
       # PATH, which looks right and is not: the runner image ships its own

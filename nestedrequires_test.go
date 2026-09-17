@@ -96,7 +96,7 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			// same unservable revision wearing a pseudo-version's shape —
 			// and apps/wysiwyg carried three of them while the plain
 			// sentinel elsewhere carried the rest.
-			if r.version == "v0.0.0" || strings.HasPrefix(r.version, "v0.0.0-00010101000000-") {
+			if unservableSentinel(r.version) {
 				t.Errorf("%s requires %s %s, which is neither a tag nor a "+
 					"pseudo-version any proxy can serve: `go get` of this module "+
 					"fails with \"unknown revision\" for everybody outside this "+
@@ -525,6 +525,38 @@ func laterThan(a, b string) bool {
 	return a > b
 }
 
+// unservableSentinel reports whether a version is one of the two
+// spellings of "no published commit at all".
+//
+// ONE PREDICATE, TWO READERS. The shape guard rejects these, and
+// TestEveryOwnModulePinNamesACommitThisRepositoryPublished has to skip
+// them — revisionOf accepts `v0.0.0-00010101000000-000000000000`
+// (twelve hex characters, a fourteen-digit stamp), so reading the
+// requires raw made one sentinel produce the shape error AND "pins
+// commit 000000000000, which is not a commit in this repository": two
+// failures with two different remedies for one line. That is the defect
+// the `APPENDED AFTER THE SHAPE CHECKS` comment records fixing on the
+// skew path, arriving again by the other door, and a predicate is what
+// stops it arriving by a third. Raised in review of #497.
+func unservableSentinel(v string) bool {
+	return v == "v0.0.0" || strings.HasPrefix(v, "v0.0.0-00010101000000-")
+}
+
+// stampNames reports whether version carries `want` as its
+// pseudo-version stamp.
+//
+// A FUNCTION SO IT CAN BE PINNED, and because the obvious spelling is
+// wrong. This was strings.Contains(version, "-"+want+"-"+rev), which is
+// true of `v0.0.0-<stamp>-<rev>` and false of both tagged forms — the
+// stamp is preceded by a DOT in `v0.1.1-0.<stamp>-<rev>` and in
+// `v0.2.0-rc.1.0.<stamp>-<rev>`. revisionOf and stampOf both accept all
+// three, so the day the first per-subdirectory tag is cut a CORRECT pin
+// would have failed, naming the very stamp it carries. It was also the
+// only one of the three readers with no arm of its own, which is how
+// the three-spelling table two functions down missed it. Raised in
+// review of #497.
+func stampNames(version, want string) bool { return stampOf(version) == want }
+
 // stampOf is the 14-digit UTC timestamp inside a pseudo-version, or ""
 // for a plain tag.
 //
@@ -928,6 +960,83 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			t.Errorf("stampOf(%q) = %q, want %q", tc.v, got, tc.want)
 		}
 	}
+
+	// AND stampNames, WHICH IS A DIFFERENT QUESTION. stampOf reading a
+	// stamp does not make the pin check's comparison right: that check
+	// was strings.Contains(version, "-"+want+"-"+rev), and the two
+	// tagged spellings put a DOT in front of the stamp, so a correct pin
+	// off the first per-subdirectory tag would have been reported as
+	// carrying the wrong committer date — naming the stamp it already
+	// has. The third reader was the only one with no arm. Raised in
+	// review of #497.
+	for _, tc := range []struct {
+		v, want string
+		ok      bool
+	}{
+		{"v0.0.0-20260913132232-e5cdb56ececd", "20260913132232", true},
+		{"v0.1.1-0.20260913132232-e5cdb56ececd", "20260913132232", true},
+		{"v0.2.0-rc.1.0.20260913132232-e5cdb56ececd", "20260913132232", true},
+		// One digit out, which is the hazard the check exists for.
+		{"v0.1.1-0.20260913132232-e5cdb56ececd", "20260913132233", false},
+		{"v0.1.0", "20260913132232", false},
+	} {
+		if got := stampNames(tc.v, tc.want); got != tc.ok {
+			t.Errorf("stampNames(%q, %q) = %v, want %v — every spelling Go writes "+
+				"has to compare the same way, or a correct pin fails on the day "+
+				"the first tag is cut", tc.v, tc.want, got, tc.ok)
+		}
+	}
+
+	// AND THE SENTINEL PREDICATE, because revisionOf CANNOT be asked
+	// this. The canonical sentinel is twelve hex characters behind a
+	// fourteen-digit stamp, so it wears a pseudo-version's shape
+	// exactly — measured below — and any reader that filters on
+	// revisionOf's ok alone lets it through to be reported a second
+	// time, with a second remedy, for one line. Raised in review of
+	// #497.
+	if rev, ok := revisionOf("v0.0.0-00010101000000-000000000000"); !ok || rev != "000000000000" {
+		t.Errorf("revisionOf(sentinel) = (%q, %v), want (\"000000000000\", true) — "+
+			"this fixture exists to record that the sentinel PASSES the shape "+
+			"gate, which is why unservableSentinel is asked separately", rev, ok)
+	}
+	for _, tc := range []struct {
+		v  string
+		is bool
+	}{
+		{"v0.0.0", true},
+		{"v0.0.0-00010101000000-000000000000", true},
+		{"v0.0.0-20260913132232-e5cdb56ececd", false},
+		{"v0.1.0", false},
+	} {
+		if got := unservableSentinel(tc.v); got != tc.is {
+			t.Errorf("unservableSentinel(%q) = %v, want %v", tc.v, got, tc.is)
+		}
+	}
+
+	// AND THE POPULATION THAT READS IT, on a fixture, because the tree
+	// carries nothing to exclude and so cannot show an exclusion
+	// happening. Three requires in, one revision out: the sentinel and
+	// the plain tag belong to the shape guard, which reports each with
+	// its own remedy, and a second report here would be a second remedy
+	// for one line. Raised in review of #497.
+	at, spellings := pinPopulations([]ownRequire{
+		{"apps/x", coreModule, "v0.0.0-00010101000000-000000000000"},
+		{"apps/y", coreModule, "v0.1.0"},
+		{"apps/z", coreModule, "v0.0.0-20260913132232-e5cdb56ececd"},
+	})
+	if len(at) != 1 || at["e5cdb56ececd"] == "" || len(spellings) != 1 {
+		t.Errorf("pinPopulations over a sentinel, a tag and one pin gave at=%v "+
+			"spellings=%v; want just the pin. Anything else reaches the commit "+
+			"checks and reports a line the shape guard has already reported, "+
+			"with a different remedy", at, spellings)
+	}
+
+	// AND THE ORDERING the reports are built with.
+	if got := sortedKeys(map[string]string{"c": "", "a": "", "b": ""}); got[0] != "a" ||
+		got[1] != "b" || got[2] != "c" {
+		t.Errorf("sortedKeys gave %v — a report ranging a Go map reorders itself "+
+			"run to run, which is what skewFrom sorts to avoid", got)
+	}
 }
 
 // TestTwoCommitsInOneSecondReachTheStringFallback is the second route
@@ -968,6 +1077,35 @@ func TestTwoCommitsInOneSecondReachTheStringFallback(t *testing.T) {
 			"way both ways round makes which module it met first decide",
 			laterThan(a, b), laterThan(b, a))
 	}
+}
+
+// pinPopulations splits the tree's own-module requires into the two
+// keyed sets the pin check needs: revision → a representative pin, and
+// full version string → where it was found.
+//
+// A FUNCTION SO THE SKIPS CAN BE PINNED. The population is where a
+// require is excluded, and on a healthy tree there is nothing to exclude
+// — so a fixture handed straight to it is the only way an arm can see
+// that a sentinel and a plain tag stay out. Raised in review of #497.
+func pinPopulations(reqs []ownRequire) (at, spellings map[string]string) {
+	at, spellings = map[string]string{}, map[string]string{}
+	for _, r := range reqs {
+		if unservableSentinel(r.version) {
+			continue // the shape guard reports those, with its own remedy
+		}
+		rev, ok := revisionOf(r.version)
+		if !ok {
+			continue // a plain tag; the shape guard reports those
+		}
+		where := r.dir + " → " + r.path + " " + r.version
+		if _, seen := at[rev]; !seen {
+			at[rev] = where
+		}
+		if _, seen := spellings[r.version]; !seen {
+			spellings[r.version] = where
+		}
+	}
+	return at, spellings
 }
 
 // TestEveryOwnModulePinNamesACommitThisRepositoryPublished is the half
@@ -1042,22 +1180,8 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// characters, so both land in one bucket), and `go work vendor`
 	// accepts it, so the whole root suite went green over a pin `go get`
 	// refuses. Raised in review of #497.
-	at := map[string]string{}        // revision → a representative pin
-	spellings := map[string]string{} // full version string → where it was found
 	all, _ := allOwnRequires(t)
-	for _, r := range all {
-		rev, ok := revisionOf(r.version)
-		if !ok {
-			continue // a plain tag; the guard above reports those
-		}
-		where := r.dir + " → " + r.path + " " + r.version
-		if _, seen := at[rev]; !seen {
-			at[rev] = where
-		}
-		if _, seen := spellings[r.version]; !seen {
-			spellings[r.version] = where
-		}
-	}
+	at, spellings := pinPopulations(all)
 	if len(at) == 0 {
 		t.Skip("no own-module require names a pseudo-version, so there is no " +
 			"commit to look for — the guard above reports that state")
@@ -1067,7 +1191,11 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// end rather than per pin, and only where shallowness explains it.
 	var absent []string
 	present := map[string]bool{}
-	for rev, where := range at {
+	// SORTED, like skewFrom's report and for the same reason: a report
+	// that reorders itself run to run is hard to read, and a reader
+	// comparing two runs has to diff them. Raised in review of #497.
+	for _, rev := range sortedKeys(at) {
+		where := at[rev]
 		if _, err := git("cat-file", "-e", rev+"^{commit}"); err != nil {
 			if shallow == "true" {
 				absent = append(absent, where)
@@ -1095,7 +1223,8 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// EVERY SPELLING, not one per commit. The stamp is the 14 digits of
 	// the version string, and two modules can name one commit with two
 	// different ones.
-	for version, where := range spellings {
+	for _, version := range sortedKeys(spellings) {
+		where := spellings[version]
 		rev, _ := revisionOf(version)
 		if !present[rev] {
 			continue // said below
@@ -1113,7 +1242,7 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 			continue
 		}
 		want := strings.TrimSpace(string(stamp))
-		if !strings.Contains(version, "-"+want+"-"+rev) {
+		if !stampNames(version, want) {
 			t.Errorf("%s names commit %s with a stamp that is not that commit's "+
 				"committer date in UTC (%s). `go mod edit -require` writes "+
 				"literally what it is handed, so a hand-built pseudo-version "+
@@ -1124,9 +1253,26 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 		}
 	}
 
-	// SAID, NOT PASSED OVER, and named one by one: a reader has to be
-	// able to tell "checked and clean" from "not looked at".
-	if len(absent) > 0 {
+	// FAILED, NOT LOGGED, WHEN NOTHING WAS CHECKED. t.Logf is invisible
+	// for a passing package — this file measures that itself, at the
+	// `go test` buffering note above — so a run that verified nothing
+	// reported `ok` and said so only under -v. It is not a corner: the
+	// tree holds ONE revision across all its pins today, so `at` has a
+	// single entry and shallowness removes the only one there is, and
+	// ci.yml sets no fetch-depth on any checkout. comparedNothing is the
+	// precedent one test up: "the check reached no comparison at all" is
+	// a failure, not a note. Raised in review of #497.
+	sort.Strings(absent)
+	switch {
+	case len(absent) == len(at):
+		t.Errorf("NOTHING was checked here: this is a shallow clone "+
+			"(actions/checkout's default is fetch-depth: 1) and not one of the "+
+			"%d pinned revisions is an object in it, so no existence, ancestry "+
+			"or stamp check ran at all: %s. Set fetch-depth: 0 on the checkout "+
+			"that runs this suite", len(at), strings.Join(absent, "; "))
+	case len(absent) > 0:
+		// SAID, NOT PASSED OVER, and named one by one: a reader has to
+		// be able to tell "checked and clean" from "not looked at".
 		t.Logf("this is a SHALLOW clone (actions/checkout's default is "+
 			"fetch-depth: 1) and %d of the %d pinned revisions are not objects "+
 			"here, so their existence, ancestry and stamp were NOT checked: %s. "+
