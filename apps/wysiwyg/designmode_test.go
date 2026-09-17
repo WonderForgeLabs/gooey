@@ -8,6 +8,7 @@ import (
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/input"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // DESIGN ↔ LIVE, asserted against the SHIPPED page.
@@ -236,18 +237,25 @@ func TestTheTwoModeLabelsAreTheSameWidth(t *testing.T) {
 }
 
 // screen is the retained cell plane as text — what a user would see.
+//
+// A ROW AT A TIME, THROUGH render.RowText. The per-cell walk this
+// replaces special-cased rune 0 as a blank and did NOT special-case
+// render.Continuation, which is rune -1 and encodes as U+FFFD — so a
+// wide glyph anywhere on the plane put a replacement character into
+// every assertion made through this. RowText is the whole-row read, and
+// a second spelling of it is what kept wide glyphs out of this package's
+// fixtures. Raised in review of #524.
 func screen(c *gooey.Composer) string {
 	var b strings.Builder
 	cells := c.Cells()
-	cols, rows := c.Size()
+	_, rows := c.Size()
 	for y := 0; y < rows; y++ {
-		for x := 0; x < cols; x++ {
-			r := cells.At(x, y).Rune
-			if r == 0 {
-				r = ' '
-			}
-			b.WriteRune(r)
-		}
+		// A NEVER-WRITTEN CELL IS A BLANK, and RowText does not say so:
+		// Cell.Text() returns string(rune(0)) for one, a NUL rather than
+		// a space. The walk this replaces mapped it, and so does this, at
+		// the row rather than the cell — it is what makes a row of
+		// untouched plane read as whitespace instead of as eighty NULs.
+		b.WriteString(strings.ReplaceAll(render.RowText(cells, y), "\x00", " "))
 		b.WriteByte('\n')
 	}
 	return b.String()

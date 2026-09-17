@@ -42,10 +42,17 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 
 // rowText reads w cells of row y — the assertion primitive for "is
 // anything drawn here".
+//
+// Cell.Text(), NOT .Rune. A continuation cell — the second column of a
+// wide glyph — holds render.Continuation, which is rune -1 and encodes
+// as U+FFFD, so a per-rune read spells "世界" as "世\uFFFD界\uFFFD" and no
+// fixture in this package could hold a wide glyph and be asserted on.
+// Text() answers "" for a continuation and the cluster for a lead, which
+// is what render.RowText uses. Raised in review of #524.
 func rowText(f *gooey.Frame, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
+		sb.WriteString(f.Cells.At(x+i, y).Text())
 	}
 	return strings.TrimRight(sb.String(), " ")
 }

@@ -261,9 +261,23 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 // THROUGH render.RowText, because a per-rune read renders
 // render.Continuation as U+FFFD — the defect this branch fixed one file
 // over in noticeseparation_test.go, left standing here in a file the
-// same branch edits. A whole-row readback IS RowText, so two spellings
-// of it in one package is the shape that kept wide glyphs out of this
-// package's fixtures at all. Raised in review of #524.
+// same branch edits. A whole-row readback IS RowText, and a second
+// spelling of it is the shape that kept wide glyphs out of this
+// package's fixtures at all.
+//
+// WHICH IS AN ARGUMENT ABOUT THE PACKAGE, so the other four moved in the
+// same commit: dock_test.go's rowText, floatover_test.go's cellLine and
+// tracks_test.go's readCells to Cell.Text(), designmode_test.go's screen
+// to RowText a row at a time. A sentence claiming one spelling while
+// four others stood is the shape of claim this branch exists to retire.
+// Derive the set rather than trusting that list:
+//
+//	grep -rnE '\.At\([^)]*\)\.Rune' --include='*_test.go' apps/wysiwyg
+//
+// Every remaining hit is a SINGLE-CELL identity check against a literal,
+// which .Rune answers correctly, plus docs_test.go's control-character
+// sweep, which skips render.Continuation by name. Raised in review of
+// #524.
 func screenRow(f *gooey.Frame, y int) string { return render.RowText(f.Cells, y) }
 
 // ---- 2. the copy tells the truth ----
