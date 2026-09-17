@@ -383,13 +383,17 @@ func (ed *editor) removeTrack() {
 		return
 	}
 	at := ed.cursor.index
+	// retains nothing: specs is not reused. cursorTracks hands every verb
+	// a fresh `append([]string(nil), …)` copy, and writeTracks only reads
+	// it — preview.FormatTracks turns it into one attribute string — so
+	// the whole slice, vacated slot included, is unreachable when this
+	// function returns. A clear here released nothing; it was one, and it
+	// justified itself by the ELEMENT type ("a string is not safe to
+	// keep"), which is the guard's question rather than this escape's.
+	// The escape's question is whether anything reads the slice again.
+	// Raised in review of #456, where the reset matcher learned to read
+	// the splice, and again in review of the answer.
 	specs = append(specs[:at], specs[at+1:]...)
-	// The removed spec's string stays in the vacated slot otherwise, and
-	// this slice is handed to writeTracks rather than dropped. One line
-	// rather than an exemption comment, because "elements are safe to
-	// keep" is not true of a string. Raised in review of #456, where the
-	// reset matcher learned to read the splice.
-	clear(specs[len(specs):cap(specs)])
 	ed.writeTracks(n, ed.cursor.axis, specs)
 	if at >= len(specs) {
 		at = len(specs) - 1

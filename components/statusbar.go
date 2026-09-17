@@ -38,6 +38,14 @@ func StatusText(content *prop.Property[string]) *Text {
 	return &Text{Content: content, Style: Sty(render.Style{Dim: true})}
 }
 
+// ChildComponents is the bar's three sections, nil ones dropped.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT CALL, the same claim
+// FocusManager.Order and AdornmentLayer.Adornments carry and for the
+// same reason: this refills s.kids in place and then clears what the
+// refill did not reach, so a stashed return keeps its OLD length and
+// everything past the new one reads nil. Copy what you need, or call
+// again after the change. Raised in review of #456.
 func (s *StatusBar) ChildComponents() []gooey.Component {
 	s.kids = s.kids[:0]
 	for _, c := range []gooey.Component{s.Left, s.Center, s.Right} {

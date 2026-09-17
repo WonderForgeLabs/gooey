@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1038,7 +1039,7 @@ func noLow()     { x = append(x[:i], x[:k]...) }
 			if !ok || len(as.Rhs) != 1 {
 				return true
 			}
-			got = resetBase(as.Rhs[0], text)
+			got, _ = resetBase(as.Rhs[0], text)
 			return false
 		})
 		if got != tc.want {
@@ -1106,40 +1107,56 @@ func noLow()     { x = append(x[:i], x[:k]...) }
 // its own reasoning. That is scope, and it is stated rather than
 // claimed to be empty, which is the mistake the paragraph above
 // records.
-func resetBase(rhs ast.Expr, text func(ast.Expr) string) string {
+// THE SPELLING COMES BACK WITH THE BASE, and that is the exemption's
+// business rather than bookkeeping. zeroesTopIn proves one slot — the one
+// a POP vacates — was released, and the guard accepted it for all three
+// spellings: a function that pops-with-zero and ALSO truncates to [:0],
+// or delete-splices at i, had the second reset waved through with its
+// whole tail still reachable, and was counted as cleared. Not reachable
+// in the tree today (the three top-zero sites are single clean pops),
+// which is exactly the condition under which this file gives a narrowing
+// a synthetic fixture instead of trusting the corpus. Raised in review of
+// #456.
+const (
+	resetTruncate = "truncate" // x = x[:0]
+	resetSplice   = "splice"   // x = append(x[:i], x[i+1:]...)
+	resetPop      = "pop"      // x = x[:len(x)-1]
+)
+
+func resetBase(rhs ast.Expr, text func(ast.Expr) string) (base, kind string) {
 	switch e := rhs.(type) {
 	case *ast.SliceExpr:
 		if e.Low != nil || e.Max != nil || e.High == nil {
-			return ""
+			return "", ""
 		}
 		if hi, ok := e.High.(*ast.BasicLit); ok && hi.Value == "0" {
-			return text(e.X)
+			return text(e.X), resetTruncate
 		}
 		if isPopOf(e.High, text(e.X), text) {
-			return text(e.X)
+			return text(e.X), resetPop
 		}
-		return ""
+		return "", ""
 
 	case *ast.CallExpr:
 		id, ok := e.Fun.(*ast.Ident)
 		if !ok || id.Name != "append" || len(e.Args) != 2 || e.Ellipsis == token.NoPos {
-			return ""
+			return "", ""
 		}
 		head, ok := e.Args[0].(*ast.SliceExpr)
 		if !ok || head.Low != nil || head.Max != nil || head.High == nil {
-			return ""
+			return "", ""
 		}
 		tail, ok := e.Args[1].(*ast.SliceExpr)
 		if !ok || tail.Max != nil || tail.Low == nil {
-			return ""
+			return "", ""
 		}
 		base := text(head.X)
 		if base == "" || base != text(tail.X) {
-			return ""
+			return "", ""
 		}
-		return base
+		return base, resetSplice
 	}
-	return ""
+	return "", ""
 }
 
 // THE SPELLING HAS TO REACH CAP, and this used to accept three that do
@@ -1255,7 +1272,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 					return true
 				}
 				for i, rhs := range as.Rhs {
-					base := resetBase(rhs, text)
+					base, kind := resetBase(rhs, text)
 					if base == "" {
 						continue
 					}
@@ -1271,8 +1288,7 @@ func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 						continue
 					}
 					retaining++
-					if clears[base] || clears[text(as.Lhs[i])] ||
-						zeroesTop[base] || zeroesTop[text(as.Lhs[i])] {
+					if resetIsExempt(base, text(as.Lhs[i]), kind, clears, zeroesTop) {
 						cleared++
 						continue
 					}
@@ -1830,6 +1846,140 @@ func notAPop()   { x[len(x)-n] = nil }
 		}
 		if !got[tc.want] || len(got) != 1 {
 			t.Errorf("%s: zeroesTopIn = %v, want exactly %q — %s", tc.fn, got, tc.want, tc.why)
+		}
+	}
+}
+
+// resetIsExempt says whether a reset the guard matched is covered by a
+// clear in the same function. base is the slice the reset shortens, lhs
+// the text of the statement's left side (the two differ for
+// `dst = src[:0]`), and kind the spelling resetBase read.
+//
+// THE TOP-ZERO EXEMPTION IS THE POP'S ALONE. `clear(x[len(x):cap(x)])`
+// releases the whole tail, so it covers all three spellings and clears
+// stays general. zeroesTopIn proves ONE slot — the one a pop vacates —
+// and nothing else: accepting it for a truncate or a delete-splice in
+// the same function waves that reset's entire tail through with one
+// released element as the evidence. Raised in review of #456.
+//
+// It is a function rather than three lines in the guard because the
+// tree cannot exercise it. All three top-zero sites are single clean
+// pops, so widening this back to every kind changes nothing that a walk
+// of the corpus can see — the mutation is silent, and
+// TestTheExemptionIsScopedToTheSpellingItProves is where it goes red.
+func resetIsExempt(base, lhs, kind string, clears, zeroesTop map[string]bool) bool {
+	if clears[base] || clears[lhs] {
+		return true
+	}
+	return kind == resetPop && (zeroesTop[base] || zeroesTop[lhs])
+}
+
+// TestTheExemptionIsScopedToTheSpellingItProves is resetIsExempt's
+// fixture, and the first two arms are the shape the tree cannot supply:
+// a function that pops-with-zero AND also resets some other way. Both
+// of those second resets must still be reported.
+func TestTheExemptionIsScopedToTheSpellingItProves(t *testing.T) {
+	const src = `package p
+
+func popAndTruncate() {
+	x[len(x)-1] = nil
+	x = x[:len(x)-1]
+	x = x[:0]
+}
+
+func popAndSplice() {
+	c.kids[len(c.kids)-1] = nil
+	c.kids = c.kids[:len(c.kids)-1]
+	c.kids = append(c.kids[:i], c.kids[i+1:]...)
+}
+
+func popOnly() {
+	x[len(x)-1] = nil
+	x = x[:len(x)-1]
+}
+
+func clearedAll() {
+	clear(x[len(x):cap(x)])
+	x = x[:0]
+	x = x[:len(x)-1]
+}
+
+func bareTruncate() { x = x[:0] }
+
+func zeroesSomeoneElsesTop() {
+	y[len(y)-1] = nil
+	x = x[:len(x)-1]
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	text := func(e ast.Expr) string {
+		return src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset]
+	}
+
+	// reported is every reset in fn that resetIsExempt does NOT cover,
+	// named by the spelling resetBase read — which is what the guard
+	// goes red over.
+	reported := func(fn *ast.FuncDecl) []string {
+		clears := clearsToCapIn(fn, text)
+		zeroesTop := zeroesTopIn(fn, text)
+		var left []string
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok || len(as.Lhs) != len(as.Rhs) {
+				return true
+			}
+			for i, rhs := range as.Rhs {
+				base, kind := resetBase(rhs, text)
+				if base == "" {
+					continue
+				}
+				if resetIsExempt(base, text(as.Lhs[i]), kind, clears, zeroesTop) {
+					continue
+				}
+				left = append(left, kind)
+			}
+			return true
+		})
+		return left
+	}
+
+	for _, tc := range []struct {
+		fn   string
+		want []string
+		why  string
+	}{
+		{"popAndTruncate", []string{resetTruncate}, "the pop's released slot is the pop's " +
+			"alone; the truncation in the same function drops len to 0 and leaves " +
+			"everything below the popped slot reachable"},
+		{"popAndSplice", []string{resetSplice}, "and the delete-splice is the same " +
+			"reasoning with the removal idiom's spelling — the tail past the new len " +
+			"is still held"},
+		{"popOnly", nil, "a clean pop is what zeroesTopIn was widened for: one slot " +
+			"leaves the live range and that one slot is released"},
+		{"clearedAll", nil, "clear(x[len(x):cap(x)]) really does cover every spelling, " +
+			"so that exemption stays general"},
+		{"bareTruncate", []string{resetTruncate}, "with no clear at all there is nothing " +
+			"to exempt it"},
+		{"zeroesSomeoneElsesTop", []string{resetPop}, "the exemption is keyed on the " +
+			"base, so releasing y's top slot says nothing about x — even a pop is " +
+			"reported"},
+	} {
+		var decl *ast.FuncDecl
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == tc.fn {
+				decl = fd
+			}
+		}
+		if decl == nil {
+			t.Fatalf("the fixture has no func %s", tc.fn)
+		}
+		got := reported(decl)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: unexempted resets = %v, want %v — %s", tc.fn, got, tc.want, tc.why)
 		}
 	}
 }
