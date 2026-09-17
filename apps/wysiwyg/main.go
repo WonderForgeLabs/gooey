@@ -957,15 +957,35 @@ func withDeclBinding(attrs map[string]string, prefix string) map[string]string {
 // what makes the two halves one rule rather than a special case for
 // the default binding. Raised in review of #522.
 //
+// AND THE SENTENCE HAS A THIRD CLAUSE, which is the one that was a bug
+// rather than a residue: on the copy, xmlns:<prefix> must be ABSENT OR
+// EQUAL to markup.XNamespace, whatever it used to say. The predicate
+// asked first whether the value WAS the x namespace, so a declaration
+// carrying xmlns:<prefix> bound to something else survived onto the very
+// element envelopeHead emits as <prefix:Property> — and that prefix then
+// resolved to the something else, so the declaration stopped being one.
+// Measured end to end through openWorkspaceFile and saveOpenFile: the
+// editor reported the author's valid file as the missing-namespace typo,
+// then wrote "✓ saved" over the good bytes with a file markup.Build
+// refuses. Two shapes reach it, an envelope that binds the prefix and
+// one that does not — in the second, declPrefix MINTS the prefix and
+// declBinding's collision loop only reads the envelope's attrs, so the
+// mint can collide with a declaration's own binding. This clause closes
+// both, which is why the mint is left alone. Raised in review of #522.
+//
 // Returned as a copy for the same reason as withDeclBinding: these
 // attrs belong to the editor's node, not to this write.
 func declAttrs(attrs map[string]string, prefix string) map[string]string {
 	dead := func(k, v string) bool {
+		if k == "xmlns:"+prefix {
+			// The one spelling that names the emitted element. Bound to
+			// anything else it unnames it, so it goes whatever it says.
+			return v != markup.XNamespace
+		}
 		if v != markup.XNamespace {
 			return false
 		}
-		return k == "xmlns" || (strings.HasPrefix(k, "xmlns:") &&
-			strings.TrimPrefix(k, "xmlns:") != prefix)
+		return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
 	}
 	keep := true
 	for k, v := range attrs {

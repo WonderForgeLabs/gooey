@@ -378,8 +378,20 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	//
 	// n.Elem != "Gooey" because the envelope is the envelope whatever
 	// namespace it resolves in: a document whose DEFAULT xmlns is the x
-	// namespace puts <Gooey> itself in it, and that file's answer is the
-	// root-count refusal below, not this one.
+	// namespace puts <Gooey> itself in it, and that file has an answer of
+	// its own.
+	//
+	// WHICH IS THE ALIEN REFUSAL, NOT THE ROOT COUNT. This paragraph said
+	// the root count, and the alien arm was added after it and returns
+	// first: with the default xmlns on <Gooey>, splitDecls files every
+	// child into decls, alienDecls fires, and the editor answers
+	// "<x:Canvas> is an unknown language element; the
+	// wonderforge.io/gooey/x namespace declares <x:Property> only" —
+	// which is markup.Build's own sentence for the same bytes, the
+	// standard this file holds its other refusals to. The behaviour was
+	// right and the stated reason pointed at a branch that cannot fire,
+	// in a file whose comments other arms reason from. Raised in review
+	// of #522.
 	if n.Space == markup.XNamespace && n.Elem != "Gooey" {
 		prefix, bound := declBinding(n.Attrs)
 		if !bound {

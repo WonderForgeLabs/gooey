@@ -187,6 +187,39 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
 		},
+		{
+			// AND A BINDING OF THE SAVE PREFIX TO SOMETHING ELSE, which
+			// is the shape that was a BUG rather than a residue. XML
+			// scoping lets the declaration rebind p: for itself; the
+			// envelope binds p: to the x namespace, so p: is what
+			// envelopeHead writes the copy under — and the declaration's
+			// own xmlns:p, left in place, made that p: resolve to
+			// urn:other. markup.Build accepts this document and refused
+			// the saved one, under "✓ saved". Raised in review of #522.
+			"bound on the declaration element to a DIFFERENT namespace",
+			"p",
+			`<Gooey xmlns:p="` + markup.XNamespace + `">` + "\n" +
+				`  <Property xmlns="` + markup.XNamespace + `" xmlns:p="urn:other" Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="B" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n</Gooey>\n",
+		},
+		{
+			// THE SAME LOSS WITH NO ENVELOPE BINDING AT ALL, reached the
+			// other way: declPrefix MINTS a prefix, and declBinding's
+			// collision loop reads only the envelope's attrs — so it
+			// mints x while the declaration itself binds x to something
+			// else, and the inner binding wins at the element. The mint
+			// is left alone deliberately; declAttrs' third clause is
+			// what closes both routes. Raised in review of #522.
+			"a minted prefix the declaration itself binds elsewhere",
+			"x",
+			`<Gooey>` + "\n" +
+				`  <Property xmlns="` + markup.XNamespace + `" xmlns:x="urn:other" Name="Title" Type="string" Default="hi"/>` + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="B" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n</Gooey>\n",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := markup.Build([]byte(tc.doc), &markup.Context{}); err != nil {
@@ -1001,6 +1034,46 @@ func TestAPastedAlienElementKeepsItsOwnPrefix(t *testing.T) {
 	ed.setDispatcher(gooey.NewDispatcher())
 	ed.pasteMarkup(`<d:Foo xmlns:d="` + markup.XNamespace + `" Name="Title"/>`)
 	assertNames(t, "the paste refusal", ed.status.Get(), "<d:Foo>", "<x:Foo>")
+}
+
+// TestAnEnvelopeInTheXNamespaceGetsTheAlienRefusal pins the branch
+// browser.go's `n.Elem != "Gooey"` conjunct sends a reader to.
+//
+// That comment said the answer for such a file is "the root-count
+// refusal below". It is not, and has not been since the alien arm was
+// added ahead of the count: with the default xmlns on <Gooey>, splitDecls
+// files every child into decls, so there are no kids to count and
+// alienDecls returns first. The behaviour is right — it is markup's own
+// sentence for the same bytes, which is the standard this file holds its
+// refusals to — and only the stated reason was stale. Pinned rather than
+// only corrected, because the next person to move an arm ahead of another
+// should find out from a test rather than from a comment. Raised in
+// review of #522.
+func TestAnEnvelopeInTheXNamespaceGetsTheAlienRefusal(t *testing.T) {
+	doc := `<Gooey xmlns="` + markup.XNamespace + `">` + "\n" +
+		`  <Canvas Name="Root"/>` + "\n</Gooey>\n"
+	markupRefuses(t, doc, "unknown language element", "<x:Canvas>")
+
+	root := workspaceFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "env.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("env.gooey")
+
+	got := ed.status.Get()
+	assertNames(t, "the refusal for an envelope in the x namespace", got, "<x:Canvas>", "")
+	// AND IT IS NOT THE COUNT, which is the half the comment got wrong.
+	// The count refusal would report zero root elements for a document
+	// that plainly has one child, and send the author to look at the
+	// shape of their file rather than at its namespace.
+	if strings.Contains(got, "root element") {
+		t.Errorf("the refusal reads %q and counts roots; every child of this "+
+			"envelope is in the x namespace, so there is nothing to count and "+
+			"the namespace is the whole answer", got)
+	}
 }
 
 // markupRefuses is the "am I agreeing with anything" gate every arm of
