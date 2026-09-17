@@ -188,6 +188,7 @@ func ClipCols(s string, w int) string {
 // "世\ufffd界\ufffd" and no fixture in the repo could contain one. A
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
+//
 // A nil buffer is answered here rather than left to SpanText: `b.W` is
 // evaluated in the argument list, so a nil buffer would fault before the
 // guard one call down could run, inside this package with the caller off

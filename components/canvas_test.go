@@ -26,10 +26,19 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 // U+FFFD when stringified — into the middle of any row holding a wide
 // glyph, so no fixture in this file could contain one and be asserted
 // on. See #516.
-func dump(f *gooey.Frame, cols, rows int) string {
+//
+// THE WINDOW COMES FROM THE FRAME, not from the caller. It used to take
+// cols and rows, written down beside a canvasFrame call that had already
+// said the same two numbers — and SpanText's own doc names what that
+// costs: widen the composer in a later edit and the tail of the read is
+// phantom blanks. One caller here is `!strings.Contains(got, "gone")`,
+// which is the shape that passes on blank input, so the collapsed-child
+// regression would go undetected rather than merely mis-reported. Raised
+// in review of #520.
+func dump(f *gooey.Frame) string {
 	var sb strings.Builder
-	for y := 0; y < rows; y++ {
-		sb.WriteString(render.SpanText(f.Cells, 0, y, cols))
+	for y := 0; y < f.Cells.H; y++ {
+		sb.WriteString(render.SpanText(f.Cells, 0, y, f.Cells.W))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -76,7 +85,7 @@ func TestCanvasConstrainsChildrenToRemainingSpace(t *testing.T) {
 	if got, want := long.Bounds().W, 4; got != want {
 		t.Errorf("width at offset 6 of 10: %d, want %d", got, want)
 	}
-	if got, want := dump(f, 10, 1), "      ABCD\n"; got != want {
+	if got, want := dump(f), "      ABCD\n"; got != want {
 		t.Errorf("frame:\n%q\nwant:\n%q", got, want)
 	}
 }
@@ -92,7 +101,7 @@ func TestCanvasOverlapPaintsInTreeOrder(t *testing.T) {
 	}}
 	f := canvasFrame(c, 6, 1)
 
-	if got, want := dump(f, 6, 1), "XabX  \n"; got != want {
+	if got, want := dump(f), "XabX  \n"; got != want {
 		t.Errorf("overlap frame: %q, want %q (later sibling on top)", got, want)
 	}
 }
@@ -112,7 +121,7 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	}}
 	comp := gooey.NewComposer(c, 6, 1)
 	f, _ := comp.Frame()
-	if got, want := dump(f, 6, 1), "XabX  \n"; got != want {
+	if got, want := dump(f), "XabX  \n"; got != want {
 		t.Fatalf("first frame: %q, want %q", got, want)
 	}
 
@@ -122,7 +131,7 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	if painted != 2 {
 		t.Fatalf("painted %d components, want exactly 2 (the occluded text + its forced occluder)", painted)
 	}
-	if got, want := dump(f, 6, 1), "YabY  \n"; got != want {
+	if got, want := dump(f), "YabY  \n"; got != want {
 		t.Errorf("after repainting the occluded component: %q, want %q — "+
 			"the occluder must repaint above the new content", got, want)
 	}
@@ -139,10 +148,10 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 func TestCanvasPaintsNoChromeOfItsOwn(t *testing.T) {
 	c := &Canvas{Children: []gooey.Component{at(&Text{Content: Str("keep")}, 1, 0)}}
 	f := canvasFrame(c, 8, 2)
-	before := dump(f, 8, 2)
+	before := dump(f)
 
 	c.Render(f) // painting the container directly must change nothing
-	if after := dump(f, 8, 2); after != before {
+	if after := dump(f); after != before {
 		t.Errorf("Canvas.Render altered the buffer:\n%q\nwas:\n%q", after, before)
 	}
 }
@@ -168,7 +177,7 @@ func TestCanvasChildrenKeepLayoutSemantics(t *testing.T) {
 	c := &Canvas{Children: []gooey.Component{hidden, margined}}
 	f := canvasFrame(c, 8, 3)
 
-	if got := dump(f, 8, 3); strings.Contains(got, "gone") {
+	if got := dump(f); strings.Contains(got, "gone") {
 		t.Errorf("collapsed canvas child painted: %q", got)
 	}
 	// Offset 1 plus a 2-cell left margin puts it at x=3.

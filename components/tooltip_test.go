@@ -70,7 +70,7 @@ func TestTooltipHoverOutRestoresWhatWasBeneath(t *testing.T) {
 	tip, _, _, page := tipPage(30)
 	c := gooey.NewComposer(page, 30, 4)
 	c.Frame()
-	before := screen(c, 30, 4)
+	before := screen(c)
 
 	hoverAt(c, 3, 0)
 	c.Frame()
@@ -82,7 +82,7 @@ func TestTooltipHoverOutRestoresWhatWasBeneath(t *testing.T) {
 	if painted != 1 {
 		t.Fatalf("dismissing painted %d components, want 1 (the restored leaf; the cell-less Canvas and layer are not swept)", painted)
 	}
-	if got := screen(c, 30, 4); got != before {
+	if got := screen(c); got != before {
 		t.Fatalf("hover-out left a scar.\nbefore:\n%s\nafter:\n%s", before, got)
 	}
 	if _, painted := c.Frame(); painted != 0 {
@@ -96,7 +96,7 @@ func TestTooltipKeyDismissesWithoutConsuming(t *testing.T) {
 	tip, _, _, page := tipPage(30)
 	c := gooey.NewComposer(page, 30, 4)
 	c.Frame()
-	before := screen(c, 30, 4)
+	before := screen(c)
 
 	hoverAt(c, 3, 0)
 	c.Frame()
@@ -105,7 +105,7 @@ func TestTooltipKeyDismissesWithoutConsuming(t *testing.T) {
 	if tip.IsShown() {
 		t.Fatal("a keypress did not dismiss the tooltip")
 	}
-	if got := screen(c, 30, 4); got != before {
+	if got := screen(c); got != before {
 		t.Fatal("the key dismissal left a scar")
 	}
 
@@ -401,10 +401,20 @@ func TestTooltipWithoutALayerShowsNothing(t *testing.T) {
 // screen is the composition as a terminal would show it. Through
 // render.SpanText, which omits the continuation markers a rune-per-cell
 // read would write into any row holding a wide glyph. See #516.
-func screen(c *gooey.Composer, w, h int) string {
+//
+// THE WINDOW COMES FROM THE COMPOSER, not from the caller. It took w and
+// h, and its call sites sit in two files each writing 30, 4 or 30, 5
+// beside a separately constructed composer — while this same file builds
+// a 40-wide one elsewhere, which is what makes the divergence latent
+// rather than theoretical. A read wider than the buffer is phantom
+// blanks (SpanText's own doc says so) and every caller here compares two
+// screens for equality, where blanks on both sides agree. Raised in
+// review of #520.
+func screen(c *gooey.Composer) string {
 	var sb strings.Builder
-	for y := 0; y < h; y++ {
-		sb.WriteString(render.SpanText(c.Cells(), 0, y, w))
+	cells := c.Cells()
+	for y := 0; y < cells.H; y++ {
+		sb.WriteString(render.SpanText(cells, 0, y, cells.W))
 		sb.WriteByte('\n')
 	}
 	return sb.String()

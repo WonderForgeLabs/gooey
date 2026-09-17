@@ -276,11 +276,21 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// len(wrap) != 1, and the `at []int` fatal). It also just acquired
 	// more rows to be ambiguous in: menuRows widened from a fixed 14 to
 	// f.Cells.H. Raised in review of #520.
+	//
+	// AND THE ROW AND THE OFFSET COME FROM ONE HIT. They were two
+	// independent searches for the same needle over the same string,
+	// agreeing only because the needle was spelled identically in both
+	// places and the guard below made the set a singleton — the
+	// reasoning the sibling test in this file was restructured to stop
+	// relying on, one commit ago. Editing the needle in one place and
+	// not the other compiles and slices a row at an offset measured for
+	// a different string. Raised in review of #520.
 	rows := strings.Split(menuRows(f), "\n")
-	var found []int
+	type match struct{ row, byteAt int }
+	var found []match
 	for y, r := range rows {
-		if strings.Index(r, "[x] Wrap") >= 0 {
-			found = append(found, y)
+		if i := strings.Index(r, "[x] Wrap"); i >= 0 {
+			found = append(found, match{y, i})
 		}
 	}
 	if len(found) != 1 {
@@ -292,8 +302,8 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 			"which row this loop happened to reach first:\n%s",
 			len(found), found, strings.Join(rows, "\n"))
 	}
-	y := found[0]
-	at := render.StringWidth(rows[y][:strings.Index(rows[y], "[x] Wrap")])
+	y := found[0].row
+	at := render.StringWidth(rows[y][:found[0].byteAt])
 	// The check box must have SURVIVED, which is what discriminates
 	// an underline placed in the label from one placed over the box:
 	// Render SETS the rune as well as the style, so a wrong offset
