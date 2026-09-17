@@ -308,20 +308,38 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// an instruction naming something that was already gone. Retiring by
 	// hand needs the instruction to be complete; retiring by CONDITION
 	// needs no instruction at all, and no edit to this file on the day
-	// #519 lands. The loop skips on the FIRST shape still reading wrongly
-	// and names it, so the skip line in `go test -v` says which of the
-	// three is still broken rather than restating the issue. When all
-	// three read correctly the loop falls through and the three
-	// assertions below take over. Raised in review of #520, twice.
-	for _, tw := range []struct{ got, want, shape string }{
-		{caret, wantCaret, "the focused row with the caret after both glyphs"},
-		{plain, wantPlain, "the unfocused row"},
-		{mixed, wantMixed, "the unfocused mixed-width row"},
+	// #519 lands. Raised in review of #520, twice.
+	//
+	// AND IT SKIPS ON THE BUG, NOT ON "NOT CORRECT", which is the third
+	// round of the same sentence and the one that makes the assertions
+	// below reachable. t.Skipf calls runtime.Goexit, so a loop skipping
+	// on any mismatch leaves this fixture with two outcomes forever —
+	// pass and skip — and the three t.Errorf blocks below could never
+	// run. Worse after #519 lands: an unrelated regression re-arms the
+	// skip and the suite stays GREEN with a message blaming a closed
+	// issue. Measured — with a plausible #519 fix applied, changing the
+	// caret glyph in textbox.go from '█' to '|' gave
+	//
+	//	--- SKIP: TestTextBoxRendersAWideGlyphInItsOwnColumns
+	//	    TextBox blanks wide glyphs — the focused row … reads "世界|     "
+	//
+	// a check quietly reporting the wrong answer, which is the class
+	// CLAUDE.md's Verify section exists to remove. Skipping on the
+	// DOCUMENTED buggy render keeps both properties: all three correct
+	// falls through with no edit to this file, and anything else is red
+	// with the right diagnosis. The three buggy strings are the ones
+	// tabulated in the comment below, measured against the bug. Raised
+	// in review of #520, a third time.
+	for _, tw := range []struct{ got, want, buggy, shape string }{
+		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs"},
+		{plain, wantPlain, " 界       ", "the unfocused row"},
+		{mixed, wantMixed, "a b       ", "the unfocused mixed-width row"},
 	} {
-		if tw.got != tw.want {
-			t.Skipf("TextBox blanks wide glyphs — %s reads %q, want %q — "+
+		if tw.got == tw.buggy {
+			t.Skipf("#519 is still open — %s reads %q, the blanked-lead render "+
+				"this fixture was written against — "+
 				"https://github.com/WonderForgeLabs/gooey/issues/519",
-				tw.shape, tw.got, tw.want)
+				tw.shape, tw.got)
 		}
 	}
 

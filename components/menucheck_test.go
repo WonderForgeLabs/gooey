@@ -92,24 +92,33 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	// invisible. menuRows just widened from a fixed 14 rows to the whole
 	// frame, which is more rows for a second match to hide in. Raised in
 	// review of #520.
-	find := func(word string) (byteAt int, rows_ []int) {
-		byteAt = -1
+	// PAIRED, because the two answers are about one match. This returned
+	// the byte offset of the LAST match and the row indices of ALL of
+	// them, then indexed a row taken from the second with an offset
+	// taken from the first — correct only because the len == 1 guard
+	// below happened to make them agree. Loosening that guard to "at
+	// least one", which is the obvious next edit and the shape this
+	// helper had one commit ago, slices one row at an offset measured in
+	// another: a wrong column in a failure message at best, and an
+	// out-of-range slice at worst. Safe by construction now rather than
+	// by a neighbouring guard. Raised in review of #520.
+	type match struct{ row, byteAt int }
+	find := func(word string) (matches []match) {
 		for y, r := range rows {
 			if i := strings.Index(r, word); i >= 0 {
-				byteAt, rows_ = i, append(rows_, y)
+				matches = append(matches, match{y, i})
 			}
 		}
-		return byteAt, rows_
+		return matches
 	}
-	wrapAt, wrapRows := find("Wrap")
-	plainAt, plainRows := find("Plain")
-	if len(wrapRows) != 1 || len(plainRows) != 1 {
+	wrap, plain := find("Wrap"), find("Plain")
+	if len(wrap) != 1 || len(plain) != 1 {
 		t.Fatalf("%q matched rows %v and %q matched rows %v, want one each: this "+
 			"test compares ONE lead column against another, and two candidates "+
 			"make the answer depend on iteration order:\n%s",
-			"Wrap", wrapRows, "Plain", plainRows, strings.Join(rows, "\n"))
+			"Wrap", wrap, "Plain", plain, strings.Join(rows, "\n"))
 	}
-	if wrapAt != plainAt {
+	if wrap[0].byteAt != plain[0].byteAt {
 		// THE REPORTED NUMBER IS A COLUMN. strings.Index answers in BYTES
 		// and the dropdown's border is '│', three bytes for one column, so
 		// the offset printed 7 where the cell is 5 — a diagnostic sending
@@ -120,8 +129,8 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 		// assertion. Raised in review of #520.
 		t.Errorf("the checked item's text starts at column %d and the plain one's at %d; "+
 			"a menu's lead column belongs to the menu",
-			render.StringWidth(rows[wrapRows[0]][:wrapAt]),
-			render.StringWidth(rows[plainRows[0]][:plainAt]))
+			render.StringWidth(rows[wrap[0].row][:wrap[0].byteAt]),
+			render.StringWidth(rows[plain[0].row][:plain[0].byteAt]))
 	}
 }
 
@@ -357,11 +366,24 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 			"would hide whichever it did not pick:\n%s",
 			"Wrap", at, strings.Join(rows, "\n"))
 	}
-	got := strings.TrimRight(rows[at[0]], " ")
+	// TRIMMED AT BOTH ENDS, because the claim is RELATIVE: the right
+	// border lands one column after the glyphs. TrimRight alone made the
+	// assertion depend on the dropdown starting at column 0, which holds
+	// only because _View is this fixture's one menu — add a menu before
+	// it, the ordinary way a menu fixture grows, and the row reads
+	// "        │[x] Wrap 世界 │", the comparison fails, and the message
+	// diagnoses the menu's WIDTH when the difference is its X. That is
+	// the fault-versus-fault distinction the missing-row diagnostic
+	// above already draws, left undrawn one line below it. If the lead
+	// column ever becomes part of the claim it gets its own assertion
+	// and its own sentence. Raised in review of #520.
+	got := strings.TrimSpace(rows[at[0]])
 	if want := "│[x] Wrap 世界 │"; got != want {
 		t.Errorf("the wide label's row reads %q, want %q. A box narrower than "+
 			"its own text is the menu measuring runes where it owes columns; a "+
-			"row holding U+FFFD is this test's reader doing it instead.\n%s",
+			"row holding U+FFFD is this test's reader doing it instead. The "+
+			"comparison is trimmed at both ends, so the difference is the box "+
+			"and not where it starts.\n%s",
 			got, want, strings.Join(rows, "\n"))
 	}
 }
