@@ -50,6 +50,7 @@ import (
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -365,6 +366,32 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// two — TestEnvAttrsIsAssignedWhereTheDocumentIs checks that from the
 	// AST rather than leaving it to three comments. Raised in review of
 	// #501.
+	// A FILE WHOSE ROOT IS A DECLARATION IS REFUSED HERE, because nodeOf
+	// deliberately lets a root-position x-namespaced element through for
+	// the PASTE path (see there) and this is the one caller that would
+	// then write it back. Measured before the guard: the file opened with
+	// "unknown element <Property>", was wrapped in a <Gooey>, and ctrl+s
+	// wrote `<Property Name="T" … xmlns:p="…"/>` — the prefix gone from
+	// the author's file, under a build error. saveOpenFile is not gated
+	// on the build and canSave gates on openPath, which the open had set.
+	// Raised in review of #522.
+	//
+	// n.Elem != "Gooey" because the envelope is the envelope whatever
+	// namespace it resolves in: a document whose DEFAULT xmlns is the x
+	// namespace puts <Gooey> itself in it, and that file's answer is the
+	// root-count refusal below, not this one.
+	if n.Space == markup.XNamespace && n.Elem != "Gooey" {
+		prefix, bound := declBinding(n.Attrs)
+		if !bound {
+			prefix = "x"
+		}
+		ed.status.Set("✗ " + rel + ": <" + prefix + ":" + n.Elem + "> is a " +
+			"dependency property declaration, not a document. A declaration " +
+			"belongs among the children of a <Gooey> root, where it defines " +
+			"that control's public surface; a file whose whole content is one " +
+			"has no document to show")
+		return
+	}
 	var env map[string]string
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
@@ -453,15 +480,36 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// AND THE BINDING IS NOT ONLY THE ENVELOPE'S.
 				// declBinding reads n.Attrs, which is the envelope; XML
 				// scoping lets the binding sit on the <x:Property>
-				// element itself, and declPrefix — written in this same
-				// change for the save path — answers both placements.
-				// Reading the envelope alone reported a correctly
-				// namespaced <p:Property> document as containing
-				// <Property>, which bareDeclMsg in this same editor
-				// defines as the missing-namespace typo: an author
-				// acting on it would have edited a namespace that was
-				// already right. Raised in review of #522.
-				prefix, bound := declPrefix(n.Attrs, decls)
+				// element itself. Reading the envelope alone reported a
+				// correctly namespaced <p:Property> document as
+				// containing <Property>, which bareDeclMsg in this same
+				// editor defines as the missing-namespace typo: an
+				// author acting on it would have edited a namespace that
+				// was already right. Raised in review of #522.
+				//
+				// ASKED OF THE ELEMENT IN HAND, NOT BORROWED FROM THE
+				// SAVE PATH. The first repair used declPrefix, which
+				// answers a different question — which prefix will the
+				// SAVE write, and does the document already bind it
+				// somewhere the saved file keeps. Its bound=false means
+				// "the envelope needs a binding added at write time",
+				// not "the file writes <Property> unprefixed", and the
+				// two part company on exactly the arm declPrefix was
+				// added for: two declarations carrying their own,
+				// DIFFERENT bindings. Measured — a file with
+				// <p:Property> and <q:Property> and no content root was
+				// told it held 2 <Property> declarations. And even where
+				// bound is true, declPrefix's prefix is the first
+				// binding-carrying declaration's rather than decls[0]'s,
+				// so a document mixing a default-xmlns declaration with
+				// a p:-bound one could name <p:Property> for an
+				// unprefixed element. The message is about ONE element,
+				// so it asks about that element: its own binding first,
+				// then the envelope's. Raised in review of #522.
+				prefix, bound := declBinding(decls[0].Attrs)
+				if !bound {
+					prefix, bound = declBinding(n.Attrs)
+				}
 				elem := "<" + decls[0].Elem + ">"
 				if bound {
 					elem = "<" + prefix + ":" + decls[0].Elem + ">"
