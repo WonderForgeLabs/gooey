@@ -31,10 +31,9 @@ import (
 // live citations in docs/specs are written as a backticked markup.TestX
 // or wysiwyg.TestX, and the first version of this guard's pattern
 // required a backtick immediately before Test, so all six were invisible
-// to it —
-// a guard against rot that could not see the citations most likely to
-// rot, because a cross-package name is the one whose test you are least
-// likely to notice renaming. Review of PR #476 caught that.
+// to it — a guard against rot that could not see the citations most
+// likely to rot, because a cross-package name is the one whose test you
+// are least likely to notice renaming. Review of PR #476 caught that.
 var citedTestName = regexp.MustCompile("`(?:([a-z][A-Za-z0-9_]*)\\.)?(Test[A-Za-z0-9_]*)`")
 
 // testFuncDecl is a test function declaration in the tree.

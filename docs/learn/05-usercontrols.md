@@ -268,16 +268,15 @@ parent context when a setup function leaves it unset — which is why
 `Style="panel"` works inside `statpanel.gooey` without being re-registered.
 `Values` does not cross, because that is the isolation above; `Named` is per
 instance, so `Name="..."` inside a control is invisible to the page (like
-`x:Name` inside a template).
+`x:Name` inside a template). The partition itself is
+`markup.boundaryPartition` (`markup/boundaryfields_test.go`).
 
 This heading used to answer with four field names, and the real set was
 ten — which is [#314](https://github.com/WonderForgeLabs/gooey/issues/314)
 itself, told under a heading that claims to be the complete answer. So the
-list is not repeated: the partition is `markup.boundaryPartition`
-(`markup/boundaryfields_test.go`), a row per field with its reason,
-checked against `Context` in both directions. ("Unset", not "nil": two
-of the fields
-are strings, tested with `== ""`.)
+list is not repeated: `markup.boundaryPartition` carries a row per field
+with its reason, checked against `Context` in both directions. ("Unset",
+not "nil": two of the fields are strings, tested with `== ""`.)
 
 **Element resolution order,** in full: a registered `Components` builder
 wins, then a built-in element, then the `Includes` convention, then an

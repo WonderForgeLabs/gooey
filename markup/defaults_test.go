@@ -88,10 +88,10 @@ func defaultsContext() *Context {
 		// A REGISTERED HANDLER. Every KindCommand attribute in the
 		// vocabulary — eleven of them — was probed with "x", which
 		// Context.Command refuses with "no handler \"x\" registered".
-		// That is the context being empty, not the
-		// declaration being wrong, so all eleven landed in the sweep's
-		// unverified bucket and no arm ever saw whether they take a
-		// literal. Raised in review of #470.
+		// That is the context being empty, not the declaration being
+		// wrong, so all eleven landed in the sweep's unverified bucket
+		// and no arm ever saw whether they take a literal. Raised in
+		// review of #470.
 		Handlers: map[string]gooey.Action{"probe": gooey.Command(func() {})},
 		// PRESENT, AND NOT EMPTY. <FileWatcher> refuses to build without
 		// an FS at all, so its three declarations came back UNVERIFIED in
@@ -420,12 +420,11 @@ func probeElementSeeded(t *testing.T, def *ElementDef, attr, value string, prere
 			//
 			// A restricted child cannot be built the way the parent is,
 			// either: <Menu> and <MenuItem> have no ElementDef at all
-			// (`markup.buildMenuBar` reads them as DATA), so there
-			// is no declaration to seed from. The Seed is markup that
-			// loads by construction and states the children the element
-			// actually wants — the same argument seedValue makes for
-			// required attributes, one level down. Raised in review of
-			// #470.
+			// (`markup.buildMenuBar` reads them as DATA), so there is no
+			// declaration to seed from. The Seed is markup that loads by
+			// construction and states the children the element actually
+			// wants — the same argument seedValue makes for required
+			// attributes, one level down. Raised in review of #470.
 			b.WriteString(seedChildren(t, def))
 		}
 	}

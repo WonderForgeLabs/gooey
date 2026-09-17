@@ -1114,8 +1114,8 @@ func TestNoSweepProbeDependsOnAnInstalledBinary(t *testing.T) {
 // Binds: Click="x" needs a registered handler, Allow="x" is not one of
 // the categories. Those are harness limits. The one failure that means
 // "the declaration is wrong" is Bound[T]'s — `%q is not a binding
-// expression`, from Context.BindingValue — which fires exactly when the loader
-// demanded a handle where the catalog promised a literal.
+// expression`, from Context.BindingValue — which fires exactly when the
+// loader demanded a handle where the catalog promised a literal.
 //
 // NO PRE-FILTER. An earlier version built each element with the
 // attribute OMITTED first and skipped it when that failed, to exclude

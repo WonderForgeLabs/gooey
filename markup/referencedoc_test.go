@@ -275,13 +275,46 @@ var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 // file keeps running into: a rule written in two places is a rule only
 // half the callers receive the next fix for.
 func backtickedInheriting(flat string) map[string]bool {
+	return backtickedPartition(flat, true)
+}
+
+// backtickedPartition is the same read with the side as a parameter, and
+// the parameter is the whole of finding #490 round 9. The forbid guard
+// adjudicates a PROPER SUBSET of the inheriting side, so it counts only
+// that side. The require guard asks a different question — "does this
+// paragraph answer what crosses by naming fields" — and `Values` and
+// `Named` in one sentence is exactly that answer, given from the
+// isolating side. Measured: docs/architecture.md's second answering
+// paragraph names only those two, so under the inheriting-only bar it
+// was never adjudicated and deleting its citation left both boundary
+// guards green — the per-page-vs-per-paragraph defect the round before
+// believed it had closed. Raised in review of #490.
+func backtickedPartition(flat string, inheritingOnly bool) map[string]bool {
 	named := map[string]bool{}
 	for _, m := range regexp.MustCompile("`([A-Za-z]+)`").FindAllStringSubmatch(flat, -1) {
-		if r, ok := boundaryPartition[m[1]]; ok && r.inherit && isExportedField(m[1]) {
+		if r, ok := boundaryPartition[m[1]]; ok && (r.inherit || !inheritingOnly) &&
+			isExportedField(m[1]) {
 			named[m[1]] = true
 		}
 	}
 	return named
+}
+
+// namesPartitionFields is how many distinct partition fields a paragraph
+// names, by backtick or in a comma run, on the side asked for.
+func namesPartitionFields(flat string, inheritingOnly bool) int {
+	named := backtickedPartition(flat, inheritingOnly)
+	for _, name := range partitionRunSide(flat, inheritingOnly) {
+		named[name] = true
+	}
+	return len(named)
+}
+
+// answersByNaming is the REQUIRE direction's bar: a paragraph that
+// answers the crossing question and names two or more partition fields
+// on EITHER side is giving the answer, and has to point at the source.
+func answersByNaming(flat string) bool {
+	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(flat, false) >= 2
 }
 
 // enumeratesThePartition reports that a paragraph answers the crossing
@@ -289,14 +322,7 @@ func backtickedInheriting(flat string) map[string]bool {
 // and the same one the require guard demands a citation for, so the two
 // cannot disagree about which paragraphs are in scope.
 func enumeratesThePartition(flat string) bool {
-	if !answersWhatCrosses.MatchString(flat) {
-		return false
-	}
-	named := backtickedInheriting(flat)
-	for _, name := range partitionRun(flat) {
-		named[name] = true
-	}
-	return len(named) >= 2
+	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(flat, true) >= 2
 }
 
 // TestNoPageEnumeratesTheBoundaryPartition is the guard widened past the
@@ -458,7 +484,11 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // differently"), and the separators a list uses are short. The gap is
 // measured in the flattened paragraph, so a list wrapped over three
 // source lines is still one run. Raised in review of #490.
-func partitionRun(flat string) []string {
+func partitionRun(flat string) []string { return partitionRunSide(flat, true) }
+
+// partitionRunSide is partitionRun with the side as a parameter, for
+// backtickedPartition's reason.
+func partitionRunSide(flat string, inheritingOnly bool) []string {
 	const maxGap = 30 // ", registered " and friends; not a clause
 
 	type hit struct {
@@ -468,7 +498,7 @@ func partitionRun(flat string) []string {
 	lower := strings.ToLower(flat)
 	var hits []hit
 	for name, rule := range boundaryPartition {
-		if !rule.inherit || !isExportedField(name) {
+		if (inheritingOnly && !rule.inherit) || !isExportedField(name) {
 			continue
 		}
 		word := regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
@@ -523,21 +553,31 @@ func partitionRun(flat string) []string {
 // because that one stands down on a paragraph naming no fields. A
 // per-page flag for a per-paragraph defect. Raised in review of #490.
 //
-// THE PER-PARAGRAPH BAR IS enumeratesThePartition, NOT THE TRIGGER, and
-// the difference was measured rather than chosen. Requiring a citation
-// from every paragraph matching the trigger flags 47 of the 53 such
+// THE PER-PARAGRAPH BAR IS answersByNaming, NOT THE TRIGGER, and the
+// difference was measured rather than chosen. Requiring a citation from
+// every paragraph matching the trigger flags 47 of the 53 such
 // paragraphs across these four pages — every sentence that happens to
-// use the word "inherits" — which is noise, not a guard. Requiring it
-// from every paragraph the FORBID guard adjudicates flags none today and
-// is exactly the set where a hand-written list can go stale: it turns
-// that guard's "or cite the partition" escape into an obligation, so the
-// two agree about which paragraphs are in scope instead of one of them
-// having a quieter rule.
+// use the word "inherits" — which is noise, not a guard.
+//
+// AND IT IS NOT enumeratesThePartition EITHER, which is what the round
+// before used and is the FORBID guard's bar. That one counts only the
+// INHERITING side, because a proper-subset finding only means anything
+// there. This direction asks a different question: does the paragraph
+// answer what crosses by naming fields. `Values` and `Named` in one
+// sentence is precisely that answer, given from the isolating side —
+// and docs/architecture.md's second answering paragraph is exactly that
+// shape, so under the forbid guard's bar it was never adjudicated and
+// deleting its citation left both boundary guards green. That is the
+// per-page-vs-per-paragraph defect the paragraph above claims to have
+// closed, still open one bar over. Measured across the four pages with
+// both sides counted: the same paragraphs are in scope plus that one,
+// and no new false positive. Raised in review of #490, twice.
 //
 // BOTH CLAUSES SURVIVE. The per-page floor still runs, because a page
 // that loses its only citation may also have lost the enumeration with
 // it, and then no paragraph is in scope for the per-paragraph clause.
 func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
+	adjudicated := 0
 	for _, page := range []string{
 		"../docs/architecture.md",
 		"../docs/getting-started.md",
@@ -558,9 +598,12 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 			}
 			if strings.Contains(flat, "boundaryPartition") {
 				cited = true
+				if answersByNaming(flat) {
+					adjudicated++
+				}
 				continue
 			}
-			if enumeratesThePartition(flat) {
+			if answersByNaming(flat) {
 				t.Errorf("%s answers what crosses a control boundary by naming "+
 					"fields and does not cite markup.boundaryPartition:\n\t%s\n"+
 					"Every such paragraph has to point at the partition, not just "+
@@ -578,5 +621,30 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 				"wrongly before #490 and has to keep answering it from the "+
 				"source", page)
 		}
+	}
+	// THE MUST-FIRE FLOOR, which every sibling guard in this file carries
+	// and this one did not — TestNoPageEnumeratesTheBoundaryPartition has
+	// `checked == 0`, TestEveryCitedSymbolResolves has `fromGo == 0` and
+	// `rescued == 0`, TestEveryPrereqRowIsReached and
+	// TestEveryCitedTestNameResolves have theirs. Measured without it:
+	// neutering the bar to a predicate that can never be true — so the
+	// per-paragraph clause adjudicates nothing at all — left the whole
+	// markup suite green, which is how the defect above could sit under a
+	// paragraph claiming to have closed it.
+	//
+	// IT COUNTS THE PARAGRAPHS THAT PASS, not the findings. On a correct
+	// corpus the finding count is legitimately zero, so a floor over
+	// findings would be a demand that the docs be wrong. What can be
+	// asserted is that the PREDICATE still recognises this corpus: the
+	// four pages between them hold paragraphs that answer the crossing
+	// question by naming fields and do cite the partition, and if that
+	// count reaches zero the bar has stopped matching anything and the
+	// clause is adjudicating an empty set. Raised in review of #490.
+	if adjudicated == 0 {
+		t.Error("no paragraph on any of these four pages answers what crosses by " +
+			"naming two or more partition fields AND cites markup.boundaryPartition, " +
+			"so the per-paragraph clause above ruled on nothing: answersByNaming has " +
+			"stopped recognising this corpus and the clause passes over any number " +
+			"of uncited answers")
 	}
 }
