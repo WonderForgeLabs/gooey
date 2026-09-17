@@ -121,20 +121,108 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// added tomorrow is covered without anyone editing this test, which
 	// is the same discipline CLAUDE.md's verify loop uses against the
 	// same mistake.
+	for _, s := range moduleFloorFaults(reached, ruled, modules) {
+		t.Error(s)
+	}
+	t.Logf("examined %d doc comments across %d files", examined, files)
+}
+
+// moduleFloorFaults is the floor itself, and it is a function so that a
+// fixture can drive it.
+//
+// It was a switch inline in the test above, which made the floor — the
+// thing that distinguishes this guard from the markup/-scoped version
+// #483 was filed about — the one part of this file nothing measured.
+// Measured: replacing both arms with `case false && …` left the whole
+// root suite GREEN, with no output. Its two siblings pin the inputs
+// (TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery pins that treeWalk
+// finds the same modules as discoverModules,
+// TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay pins owningModule's
+// attribution) and neither reached the loop that turns them into a
+// failure. This is the same extraction the file already applies to
+// stolenComments, for the same reason. Raised in review of #503.
+//
+// THE TWO MESSAGES ARE THE RETURN VALUE, not a bool, because they are
+// distinguishable only by wording: "the walk never got here" and "the
+// walk got here and the rule declined every file" are different faults
+// with different next steps, and the comment on the two maps above names
+// marking them on the wrong side of the skips as a live way to report one
+// in the other's words. A fixture asserting WHICH message comes back is
+// what can see that; a count cannot.
+func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []string {
+	var faults []string
 	for _, mod := range modules {
 		switch {
 		case !reached[mod]:
-			t.Errorf("the walk yielded no .go file under %q, which is a module of this "+
-				"tree: a guard that stops at a module boundary reports green for code "+
-				"it never read", mod)
+			faults = append(faults, fmt.Sprintf("the walk yielded no .go file under %q, "+
+				"which is a module of this tree: a guard that stops at a module boundary "+
+				"reports green for code it never read", mod))
 		case !ruled[mod]:
-			t.Errorf("every .go file under %q was skipped — it did not parse, or it is "+
-				"generated — so this guard read the module and ruled on none of it. "+
-				"That is not the prune the case above is about, and it is not "+
-				"coverage either", mod)
+			faults = append(faults, fmt.Sprintf("every .go file under %q was skipped — it "+
+				"did not parse, or it is generated — so this guard read the module and "+
+				"ruled on none of it. That is not the prune the case above is about, and "+
+				"it is not coverage either", mod))
 		}
 	}
-	t.Logf("examined %d doc comments across %d files", examined, files)
+	return faults
+}
+
+// TestTheModuleFloorReportsWhichFaultItFound is the counterfactual the
+// floor did not have. Each case asserts the message, not the count: the
+// two arms are one word apart in effect and identical in shape, so a
+// test that only counted faults would pass with them swapped.
+func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
+	const (
+		unreached = "yielded no .go file"
+		unruled   = "was skipped"
+	)
+	for _, tc := range []struct {
+		name           string
+		reached, ruled map[string]bool
+		modules        []string
+		want           string
+	}{
+		{
+			name:    "a module the walk never reached",
+			reached: map[string]bool{".": true},
+			ruled:   map[string]bool{".": true},
+			modules: []string{".", "mcp"},
+			want:    unreached,
+		},
+		{
+			name:    "a module reached but never ruled on",
+			reached: map[string]bool{".": true, "mcp": true},
+			ruled:   map[string]bool{".": true},
+			modules: []string{".", "mcp"},
+			want:    unruled,
+		},
+		{
+			name:    "a module covered both ways",
+			reached: map[string]bool{".": true, "mcp": true},
+			ruled:   map[string]bool{".": true, "mcp": true},
+			modules: []string{".", "mcp"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := moduleFloorFaults(tc.reached, tc.ruled, tc.modules)
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("a fully covered set reported %v, so the floor fires on "+
+						"modules it has no complaint about", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("reported %d faults, want exactly 1: %v", len(got), got)
+			}
+			if !strings.Contains(got[0], tc.want) {
+				t.Errorf("reported %q, want the %q wording — the two arms are "+
+					"distinguishable only by what they say, so the wrong one sends "+
+					"the reader to look for a prune that is not there, or past one "+
+					"that is", got[0], tc.want)
+			}
+		})
+	}
 }
 
 // treeWalk is every .go file this guard rules on, and every directory
@@ -365,6 +453,26 @@ func gamma() {}
 			// holds. Raised in review of #503.
 			name: "a backticked first word is still a first word",
 			src:  "// `alpha` does the alpha thing.\nfunc beta() {}\n\nfunc alpha() {}\n",
+			want: "alpha",
+		},
+		{
+			// A FIRST LINE THAT IS JUST THE NAME, which is the shape that
+			// made opensBy split on whitespace rather than cut on " ":
+			// the cut answered "alpha.\nThe" and every arm fell through.
+			// It was live in markup/menuicon_test.go, and repairing that
+			// file — the right fix for it — removed the tree's last
+			// instance, so the corpus can no longer cover this and only a
+			// fixture holds it. Measured: with the Fields call replaced
+			// by a cut on a space, all seventeen other arms and the
+			// whole-tree guard stay GREEN. Raised in review of #503.
+			name: "a first line with no space in it is still a first word",
+			src: `// alpha.
+//
+// The paragraph about it.
+func beta() {}
+
+func alpha() {}
+`,
 			want: "alpha",
 		},
 		{
@@ -1082,10 +1190,23 @@ func (x ValueKind) Enum() *ValueKind { return &x }
 	// hand AND ITS OWN fset — the same file, not a third parse of the
 	// same bytes. Re-parsing was only ever necessary because the FileSet
 	// was thrown away.
-	if got := stolenComments(fset, hand, "fake"); len(got) != 1 {
-		t.Errorf("the same source reports %d findings when it is NOT generated, "+
+	got := stolenComments(fset, hand, "fake")
+	if len(got) != 1 {
+		t.Fatalf("the same source reports %d findings when it is NOT generated, "+
 			"want 1 — the skip is what suppresses it, so without this the arm "+
 			"above would pass over a rule that never fired: %v", len(got), got)
+	}
+	// AND WHERE IT SAYS IT IS. The comment above records why the
+	// discarded FileSet was silent — "nothing went red because the
+	// assertion counts findings" — and a count goes on being silent after
+	// the fix, so the sentence described a defect nothing could see
+	// returning. One line closes it: a second, empty FileSet answers the
+	// zero Position for every Pos, so the message opens with a bare "-:".
+	// Raised in review of #503.
+	if !strings.HasPrefix(got[0], "fixture.go:") {
+		t.Errorf("the finding opens with %q rather than a position, so the FileSet "+
+			"handed to stolenComments is not the one that parsed the file — and "+
+			"confirmHint is being built from an empty filename", got[0])
 	}
 }
 
