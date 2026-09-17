@@ -273,7 +273,10 @@ instance, so `Name="..."` inside a control is invisible to the page (like
 This heading used to answer with four field names, and the real set was
 ten — which is [#314](https://github.com/WonderForgeLabs/gooey/issues/314)
 itself, told under a heading that claims to be the complete answer. So the
-list is not repeated: the partition is `markup.boundaryPartition` (`markup/boundaryfields_test.go`), a row per field with its reason, checked against `Context` in both directions. ("Unset", not "nil": two of the fields
+list is not repeated: the partition is `markup.boundaryPartition`
+(`markup/boundaryfields_test.go`), a row per field with its reason,
+checked against `Context` in both directions. ("Unset", not "nil": two
+of the fields
 are strings, tested with `== ""`.)
 
 **Element resolution order,** in full: a registered `Components` builder

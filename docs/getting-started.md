@@ -633,7 +633,9 @@ Everything a page registers inherits from the parent context when the child
 leaves it unset; `Values` and `Named` do not — values arrive only through
 the declared surface, and `Named` is scoped per instance. Enumerating the
 inheriting half here is what [#314](https://github.com/WonderForgeLabs/gooey/issues/314)
-was filed for (this sentence named four of ten): the partition is `markup.boundaryPartition` (`markup/boundaryfields_test.go`), a row per field with its reason, checked against `Context` in both directions. The
+was filed for (this sentence named four of ten): the partition is
+`markup.boundaryPartition` (`markup/boundaryfields_test.go`), a row per
+field with its reason, checked against `Context` in both directions. The
 demos wrap the `BindingValue` + type-assert dance in a small generic
 helper — see `attr[T]` in `cmd/reader/controls.go`. Letting a registered
 component declare a checked surface instead, the way `<x:Property>` does

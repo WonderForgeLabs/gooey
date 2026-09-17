@@ -313,7 +313,14 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// THE CLAIM IS THE TRIGGER. Without it every table row
 			// listing two field names is a finding, and the guard becomes
 			// noise a reader learns to widen rather than read.
-			if !strings.Contains(flat, "inherit") {
+			// CASE-FOLDED. strings.Contains is exact, so a paragraph
+			// under a heading like "**Inherited fields.**", or opening
+			// "Inherits from the parent", was skipped with its stale
+			// list intact — and docs/learn/05-usercontrols.md already
+			// headings this section, so a title-case rewrite of one
+			// heading would have switched the guard off for it. Raised
+			// in review of #490.
+			if !strings.Contains(strings.ToLower(flat), "inherit") {
 				continue
 			}
 			named := map[string]bool{}
@@ -321,6 +328,29 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 				if r, ok := boundaryPartition[m[1]]; ok && r.inherit && isExportedField(m[1]) {
 					named[m[1]] = true
 				}
+			}
+			// AND THE UNFORMATTED SPELLING OF THE SAME LIST. Requiring
+			// backticks made the guard a check on markup: "styles,
+			// registered components, handlers, includes" is the four-of-
+			// ten answer #314 is about, written in prose, and it sat in
+			// docs/markup-reference.md's <ItemsView.ItemTemplate>
+			// paragraph with only `xmlns` in backticks — invisible here
+			// for two rounds.
+			//
+			// Matching bare names one at a time was measured first and
+			// rejected: case-insensitively, "components" and "styles"
+			// are English, and the corpus answered with two paragraphs
+			// that MENTION fields rather than answer the crossing
+			// question (the `Elements`-cost paragraph in the reference,
+			// and the Declared registry note in
+			// docs/specs/2026-08-10-mcp-server.md). Noise a reader
+			// learns to widen is the failure this guard's own doc warns
+			// about, so the signature is the RUN instead: three or more
+			// partition names in one comma-or-and list. A sentence that
+			// mentions a field does not produce one; a stale answer to
+			// "what crosses" always does. Raised in review of #490.
+			for _, name := range partitionRun(flat) {
+				named[name] = true
 			}
 			if len(named) < 2 {
 				continue
@@ -353,5 +383,109 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			"two or more boundary fields, so this guard ruled on nothing: either " +
 			"the walk is not reaching the pages or the trigger no longer matches " +
 			"how they are written")
+	}
+}
+
+// partitionRun is every inheriting partition field named inside one
+// comma-or-and list of three or more of them, case-insensitively —
+// the shape of a prose answer to "what crosses a control boundary",
+// and nothing else in the corpus.
+//
+// Three rather than two, and a bounded gap between them: two names a
+// clause apart is an ordinary sentence ("Styles and Named are handled
+// differently"), and the separators a list uses are short. The gap is
+// measured in the flattened paragraph, so a list wrapped over three
+// source lines is still one run. Raised in review of #490.
+func partitionRun(flat string) []string {
+	const maxGap = 30 // ", registered " and friends; not a clause
+
+	type hit struct {
+		name     string
+		at, past int
+	}
+	lower := strings.ToLower(flat)
+	var hits []hit
+	for name, rule := range boundaryPartition {
+		if !rule.inherit || !isExportedField(name) {
+			continue
+		}
+		word := regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
+		for _, m := range word.FindAllStringIndex(lower, -1) {
+			hits = append(hits, hit{name, m[0], m[1]})
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].at < hits[j].at })
+
+	var out []string
+	for i := 0; i < len(hits); i++ {
+		run := []hit{hits[i]}
+		for j := i + 1; j < len(hits); j++ {
+			gap := flat[hits[j-1].past:hits[j].at]
+			if len(gap) > maxGap || !strings.ContainsAny(gap, ",&") &&
+				!strings.Contains(strings.ToLower(gap), " and ") {
+				break
+			}
+			run = append(run, hits[j])
+		}
+		if len(run) >= 3 {
+			for _, h := range run {
+				out = append(out, h.name)
+			}
+			i += len(run) - 1
+		}
+	}
+	return out
+}
+
+// TestEveryPageThatAnswersWhatCrossesCitesThePartition is the REQUIRE
+// direction, and the guard above is only the forbid one.
+//
+// Nothing held the four corrected paragraphs to their citation: deleting
+// "markup.boundaryPartition" from any of them leaves a paragraph that
+// answers the crossing question with nothing at all, and
+// TestNoPageEnumeratesTheBoundaryPartition passes it — it forbids a
+// SUBSET, and the empty set is not one it can see. That is the direction
+// argument this file already makes for
+// TestTheCompanionSectionStatesTheInheritanceCondition, applied to the
+// pages the same round corrected. Raised in review of #490.
+//
+// The page list is written down because it is a list of PAGES, not of
+// fields: a page that stops existing fails this closed at the read, and
+// a new page answering the question is caught by the guard above rather
+// than by silence here.
+func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
+	for _, page := range []string{
+		"../docs/architecture.md",
+		"../docs/getting-started.md",
+		"../docs/learn/05-usercontrols.md",
+		"../docs/markup-reference.md",
+	} {
+		b, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatalf("reading %s: %v — this page carried the four-of-ten list "+
+				"#314 reported, so its disappearance is a finding rather than "+
+				"a reason to skip", page, err)
+		}
+		cited := false
+		for _, para := range strings.Split(string(b), "\n\n") {
+			flat := strings.Join(strings.Fields(para), " ")
+			if !strings.Contains(strings.ToLower(flat), "inherit") &&
+				!strings.Contains(strings.ToLower(flat), "cross") {
+				continue
+			}
+			if strings.Contains(flat, "boundaryPartition") {
+				cited = true
+				break
+			}
+		}
+		if !cited {
+			t.Errorf("%s makes no paragraph that answers what crosses a control "+
+				"boundary AND cites markup.boundaryPartition. The forbid-direction "+
+				"guard cannot see this: it reports a page that names a PROPER "+
+				"SUBSET, and a paragraph with the citation deleted names none, "+
+				"which passes. Each of these four pages answered the question "+
+				"wrongly before #490 and has to keep answering it from the "+
+				"source", page)
+		}
 	}
 }
