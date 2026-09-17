@@ -443,39 +443,66 @@ func TestTheScrollWindowIsWalkedNotResummed(t *testing.T) {
 // this branch had already taken out of scrollFor, relocated one file
 // over. Raised in review of #521.
 //
-// THE BUDGET IS DELIBERATELY ENORMOUS, for the reason its sibling gives:
-// the walk from the window costs microseconds and the whole-value form
-// costs seconds at this size, so half a second sits orders of magnitude
-// from both and cannot flake on a loaded shared runner.
+// THE CARET SITS MID-VALUE, AND THAT IS THE WHOLE FIXTURE. It sat at
+// the END until #521's review measured what that cost: the window then
+// holds the last 39 runes, so every string(runes[lo:to]) inside the call
+// is ~103 runes and the O(len) the test is named for is not on any path
+// it walks. The test passed against the defect. Mid-value the same 100
+// events took 317ms here and 826ms on the review's runner, against this
+// same 500ms budget — so the fixture, not the budget, was what made this
+// green.
+//
+// BOTH DIRECTIONS, because they had different bills and only one of them
+// was bounded by the offset. Dragging LEFT of the field walks a cluster
+// at a time, and each step called clusterStartAt and caretCols, each of
+// which copied the tail of the value: 21.9ms per motion event at 100,000
+// runes, against 3.74ms for the forward walk. Measured after the fix, on
+// this fixture: 1.1ms forward and 9.3ms left, for all hundred events.
 //
 // A HUNDRED EVENTS, because one call of the defective shape is already
 // slow but a drag is not one call — and because a per-call figure over a
-// single sample is what a loaded runner turns into a flake.
+// single sample is what a loaded runner turns into a flake. The budget
+// is one order of magnitude over the measurement and two under the
+// defect, which is the room a shared runner needs; the earlier version
+// of this sentence claimed that spread while the fixture was hiding the
+// defect entirely.
 func TestADragDoesNotWalkTheWholeValue(t *testing.T) {
-	const n = 200000
-	v := prop.NewSource(strings.Repeat("a", n))
-	tb := &TextBox{Text: v}
-	tb.SetFocused(true)
-	tb.setCaret(n)
-	gooey.Compose(tb, term.Caps{Cols: 40, Rows: 1}, nil)
-	tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 39, Y: 0, Button: input.ButtonLeft})
+	for _, tc := range []struct {
+		name string
+		x    int
+		want int
+	}{
+		// The window holds the 39 runes before the caret plus its own
+		// column, so column 20 is that many runes in from its left edge.
+		{"forward", 20, 200000/2 - 39 + 20},
+		// Ten columns left of the field is ten runes left of the window.
+		{"drag left", -10, 200000/2 - 39 - 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const n = 200000
+			v := prop.NewSource(strings.Repeat("a", n))
+			tb := &TextBox{Text: v}
+			tb.SetFocused(true)
+			tb.setCaret(n / 2)
+			gooey.Compose(tb, term.Caps{Cols: 40, Rows: 1}, nil)
+			tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 39, Y: 0, Button: input.ButtonLeft})
 
-	start := time.Now()
-	for range 100 {
-		tb.HandleMouseMove(input.MouseEvent{X: 20, Y: 0, Button: input.ButtonLeft})
-	}
-	took := time.Since(start)
+			start := time.Now()
+			for range 100 {
+				tb.HandleMouseMove(input.MouseEvent{X: tc.x, Y: 0, Button: input.ButtonLeft})
+			}
+			took := time.Since(start)
 
-	// The answer first: a budget over a wrong caret proves nothing. The
-	// window holds the last 39 runes with the caret's own column, so
-	// column 20 is that many runes in from its left edge.
-	if got, want := tb.Caret(), n-39+20; got != want {
-		t.Fatalf("a drag to column 20 put the caret at %d, want %d", got, want)
-	}
-	if took > 500*time.Millisecond {
-		t.Errorf("100 motion events over a %d-rune value took %v, want well under "+
-			"500ms; that is the whole-value segmentation #521's review measured "+
-			"at 51.6ms a call on the UI goroutine", n, took)
+			// The answer first: a budget over a wrong caret proves nothing.
+			if got := tb.Caret(); got != tc.want {
+				t.Fatalf("a drag to column %d put the caret at %d, want %d", tc.x, got, tc.want)
+			}
+			if took > 500*time.Millisecond {
+				t.Errorf("100 motion events over a %d-rune value took %v, want well under "+
+					"500ms; that is the whole-value segmentation #521's review measured "+
+					"at 51.6ms a call on the UI goroutine", n, took)
+			}
+		})
 	}
 }
 
@@ -1169,6 +1196,101 @@ func TestTheCaretSurvivesAWindowThatOpensOnACombiningMark(t *testing.T) {
 		t.Errorf("no cell in the field is reversed with the caret at 11 of %q: "+
 			"the user is typing into a field whose caret is nowhere on screen. "+
 			"Row: %q", value, render.RowText(f.Cells, 0))
+	}
+}
+
+// TestAFlagRunCostsTheSameWhateverItsLength is a COST assertion shaped
+// as a SCALING one, and the shape is the point: a budget in
+// milliseconds measures the runner, a ratio between two runs on the same
+// machine in the same process measures the algorithm.
+//
+// eachClusterFrom walks off a regional-indicator run before it starts,
+// because UAX #29 GB12/GB13 decide a flag boundary by the parity of the
+// whole run and a segmenter restarted mid-run pairs every flag from
+// there one rune out. Walking to the run's OWN START restores the
+// parity and makes the segmented span as long as the run — so the fix
+// for a correctness defect put an O(run) cost on the paint path and on
+// every column of a drag. Measured, 1,000 clusterStartAt calls:
+//
+//	                     500 flags   5,000 flags   ratio
+//	walk to the start      53.1 ms      517.1 ms    9.7x
+//	drop to even parity     7.6 ms       10.7 ms    1.4x
+//
+// Any EVEN offset into the run is a true pair boundary, so the parity
+// survives while the span stays bounded by clusterSlack. The residual
+// cost is the walk that FINDS the run's start, which is a rune
+// comparison per step and segments nothing.
+//
+// FOUR TIMES is the budget because both halves are wrong by more than
+// that: 2.8x above the measurement and 2.4x below the defect, on a
+// quantity that does not move with the machine. Raised in review of
+// #521.
+func TestAFlagRunCostsTheSameWhateverItsLength(t *testing.T) {
+	cost := func(pairs int) time.Duration {
+		runes := []rune(strings.Repeat("\U0001F1FA\U0001F1F8", pairs))
+		start := time.Now()
+		for range 1000 {
+			clusterStartAt(runes, len(runes)/2)
+		}
+		return time.Since(start)
+	}
+	short, long := cost(500), cost(5000)
+	if long > 4*short {
+		t.Errorf("1,000 clusterStartAt calls cost %v over 5,000 flags against %v "+
+			"over 500 — %.1fx for ten times the run, want under 4x. The "+
+			"regional-indicator walk-back is segmenting the run rather than "+
+			"dropping to the nearest even offset in it, which is O(run) on "+
+			"the paint path", long, short, float64(long)/float64(short))
+	}
+}
+
+// TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets pins the two
+// halves of one refusal: TextBox.Render skipped a zero-width cluster
+// outright, so a value beginning with a combining mark lost that
+// character on screen AND the caret on it was drawn nowhere.
+//
+// THE ORACLE IS THE FRAMEWORK'S OWN WRITER, not a fixture string, which
+// is the whole point of the assertion. render.Buffer.SetString is what
+// every other component paints text through, and it gives such a cluster
+// its own column; a TextBox that disagrees is a character in the bound
+// property with nothing on screen, which is #519 one Unicode category
+// over. Measured before the fix: the field painted "abc       " against
+// SetString's "\u0301abc      ", with zero reversed cells in a focused
+// field. Raised in review of #521.
+//
+// THE SECOND ARM IS NOT IMPLIED BY THE FIRST. Painting the mark gives it
+// a cell; it does not follow that the caret arm reaches it, because that
+// arm tests containment against a cluster the loop might still have
+// passed over. A field the user is typing into with no caret anywhere is
+// the injury, and only a reversed-cell count sees it.
+func TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets(t *testing.T) {
+	const value = "\u0301abc"
+	const cols = 10
+
+	tb := &TextBox{Text: prop.NewSource(value)}
+	tb.SetFocused(true)
+	tb.setCaret(0)
+	f := gooey.Compose(tb, term.Caps{Cols: cols, Rows: 1}, nil)
+
+	want := render.NewBuffer(cols, 1)
+	want.SetString(0, 0, value, render.Style{})
+	if got, w := render.RowText(f.Cells, 0), render.RowText(want, 0); got != w {
+		t.Errorf("a value opening with a combining mark painted %q, want %q — "+
+			"what render.Buffer.SetString writes for the same string. A "+
+			"character in the bound property and absent from the screen is "+
+			"the defect #519 is about", got, w)
+	}
+
+	reversed := 0
+	for x := 0; x < cols; x++ {
+		if f.Cells.At(x, 0).Style.Reverse {
+			reversed++
+		}
+	}
+	if reversed != 1 {
+		t.Errorf("%d cells reversed with the caret at 0 of %q, want 1: the user "+
+			"is typing into a focused field whose caret is nowhere on screen. "+
+			"Row: %q", reversed, value, render.RowText(f.Cells, 0))
 	}
 }
 
