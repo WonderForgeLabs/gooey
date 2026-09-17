@@ -161,7 +161,13 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 			faults = append(faults, fmt.Sprintf("every .go file under %q was skipped — it "+
 				"did not parse, or it is generated — so this guard read the module and "+
 				"ruled on none of it. That is not the prune the case above is about, and "+
-				"it is not coverage either", mod))
+				"it is not coverage either. Check which: `go vet ./...` in that module "+
+				"answers the parse half, and `grep -rL \"Code generated .* DO NOT EDIT\" "+
+				"--include=\"*.go\" %s` names any file that is NOT generated and was "+
+				"therefore skipped for the other reason. There is deliberately no way to "+
+				"mark a module exempt: an all-generated module is a real answer, and it "+
+				"is one a reader should have to give rather than a flag that outlives "+
+				"the first hand-written file added to it", mod, mod))
 		}
 	}
 	return faults
@@ -296,12 +302,30 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 // treeWalk is a third implementation of "where are the modules" beside
 // CLAUDE.md's verify loop and ci.yml's matrix, which are pinned to each
 // other character-for-character by
-// TestCIWorkflowAndCLAUDEMDShareOneDiscovery. The sets agree today. The
-// residual risk is the one this file exists to remove, one level up: a
-// prune added to treeWalk for some future heavy directory takes the
-// modules beneath it out of BOTH halves together, so the floor stays
-// internally consistent while covering less, and nothing goes red.
-// Raised in review of #503.
+// TestCIWorkflowAndCLAUDEMDShareOneDiscovery. The sets agree today.
+//
+// THE RESIDUAL IS NARROWER THAN THIS COMMENT SAID, and the difference is
+// whether this test is worth keeping. It said a prune added to treeWalk
+// takes the modules beneath it out of both halves and nothing goes red.
+// That is false, and this test is what falsifies it: discoverModules
+// (claudemd_test.go) is an INDEPENDENT walk that prunes dot-directories
+// only, so a prune here alone makes the two sets disagree. Measured, by
+// adding `|| name == "packs"` to the prune above:
+//
+//	doccomment_test.go:323: the canonical discovery finds
+//	packs/temporal-batch and this guard's walk does not …
+//
+// eight times, one per pack — while TestNoDocCommentNamesTheDeclaration-
+// BelowIt stayed GREEN, which is the half the old sentence had right:
+// the pruned modules drop out of `modules` too, so the floor itself has
+// nothing to complain about. That is exactly why this test exists.
+//
+// The real residual is one word away: a prune added to BOTH walks
+// shrinks the two sets together, and then nothing goes red. Writing the
+// weaker claim was the defect this whole file is about — a comment
+// saying something the code does not — pointed at the code beneath it,
+// and it is how a test gets deleted as redundant. Raised in review of
+// #503, corrected in the round after.
 func TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery(t *testing.T) {
 	_, mods := treeWalk(t)
 	got := map[string]bool{}
@@ -1080,8 +1104,15 @@ func specDeclares(sp ast.Spec, want string) bool {
 // the same defect one level down and nothing here looks at either. The
 // walk would have to descend into StructType.Fields and
 // InterfaceType.Methods to reach them, which is a different traversal
-// rather than a wider switch — recorded as a gap, not closed. Raised in
-// review of #503.
+// rather than a wider switch.
+//
+// TRACKED AS #527 rather than recorded here alone, because a
+// hand-written claim about what is not covered outlives the state it
+// describes — CLAUDE.md's "A red suite is yours" requires a boundary of
+// this shape to cite an issue the reader can check is still open, so it
+// dies with the fix. The issue names the live instance: `workspace` in
+// apps/wysiwyg/browser.go has three documented fields and two of them
+// have another field directly below. Raised in review of #503.
 func documented(d ast.Decl) (name string, doc *ast.CommentGroup, ok bool) {
 	switch d := d.(type) {
 	case *ast.FuncDecl:
