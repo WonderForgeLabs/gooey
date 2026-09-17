@@ -522,6 +522,403 @@ func TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge(t *testing.T) {
 	}
 }
 
+// reversedText is the text of the reversed cells in the first w columns
+// of row 0, in order.
+//
+// Cell.Text() rather than Cell.Rune, because a reversed cell may hold a
+// multi-rune cluster and a rune would report only its lead — which is
+// the distinction three of the tests below exist to make. A wide
+// cluster's continuation cell carries no text, so a two-column glyph
+// still contributes its cluster once.
+func reversedText(f *gooey.Frame, w int) string {
+	var b strings.Builder
+	for x := 0; x < w; x++ {
+		if c := f.Cells.At(x, 0); c.Style.Reverse {
+			b.WriteString(c.Text())
+		}
+	}
+	return b.String()
+}
+
+// TestAnEmojiPresentationSequenceScrollsByItsColumnsNotItsRunes is
+// #519's defect on the SCROLL path, reported against the fix for it.
+//
+// render.RuneWidth('⚠') is 1 and VS16 is zero, so window arithmetic
+// that sums rune widths counted "⚠️" as ONE column where Render, now
+// cluster-based, draws TWO. The window was sized for twice the content
+// it could hold and never moved: a field of six emoji in six columns
+// stayed at scroll 0 and showed no caret at all, so a user typing past
+// column 6 saw nothing appear. Measured in review of #521 —
+//
+//	VS16 before: scroll=0, row "⚠️⚠️⚠️", no caret block
+//	CJK control: scroll=4, row "東東█ "
+//
+// — which is why the CJK arm is here: it passed against the bug, so an
+// assertion that only exercised it would have agreed with it.
+func TestAnEmojiPresentationSequenceScrollsByItsColumnsNotItsRunes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		glyph   string
+		wantRow string
+	}{
+		{"emoji presentation sequence", "⚠️", "⚠️⚠️█ "},
+		{"CJK control", "東", "東東█ "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := strings.Repeat(tc.glyph, 6) // six clusters, twelve columns
+			runes := []rune(value)
+			tb := &TextBox{Text: prop.NewSource(value)}
+			tb.SetFocused(true)
+			tb.setCaret(len(runes)) // past the end, where the block is drawn
+			f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
+
+			if tb.scroll == 0 {
+				t.Errorf("a six-column window over twelve columns of %q did not "+
+					"scroll at all: the window is being measured in runes, and "+
+					"%d of them is not %d columns", tc.glyph, len(runes),
+					render.StringWidth(value))
+			}
+			if got := render.SpanText(f.Cells, 0, 0, 6); got != tc.wantRow {
+				t.Errorf("row %q, want %q — the caret is past the last glyph and "+
+					"the block that draws it has to be inside the field",
+					got, tc.wantRow)
+			}
+		})
+	}
+}
+
+// TestTheCaretIsVisibleOnAnEmojiPresentationSequenceAtTheWindowsEdge is
+// TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge one Unicode
+// category over.
+//
+// The caret ON a character is drawn by reversing the CLUSTER it is in,
+// and Render stops on that cluster's full width — so the columns
+// scrollFor reserves for it have to be the cluster's too. Reserving
+// render.RuneWidth(runes[i]) is 1 for the lead of "⚠️", because VS16 is
+// zero-width, so the window kept a single column for a glyph needing
+// two and the glyph the caret was riding fell off the right edge:
+//
+//	VS16 before: row "x ", no reversed cell
+//	CJK control: row "東",  reversed "東"
+//
+// Measured in review of #521. The assertion is the reversed CLUSTER
+// rather than a reversed rune, because the lead of "⚠️" reverses under
+// the bug too — only its width is wrong.
+func TestTheCaretIsVisibleOnAnEmojiPresentationSequenceAtTheWindowsEdge(t *testing.T) {
+	for _, tc := range []struct{ name, value, want string }{
+		{"emoji presentation sequence", "x⚠️", "⚠️"},
+		{"CJK control", "x東", "東"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := &TextBox{Text: prop.NewSource(tc.value)}
+			tb.SetFocused(true)
+			tb.setCaret(1) // on the wide glyph, one Right from Home
+			f := gooey.Compose(tb, term.Caps{Cols: 2, Rows: 1}, nil)
+
+			if got := reversedText(f, 2); got != tc.want {
+				t.Errorf("the reversed cells spell %q, want %q; the row reads %q. "+
+					"The caret is on the second character of %q in a field two "+
+					"columns wide, so that character is the whole field and it "+
+					"has to be both drawn and reversed",
+					got, tc.want, render.SpanText(f.Cells, 0, 0, 2), tc.value)
+			}
+		})
+	}
+}
+
+// TestTheWindowOpensOnAClusterBoundaryAndStillFits pins the two halves
+// of scrollFor's start against each other.
+//
+// They were in tension: windowFloor stopped at the first glyph that
+// would not fit, and the snap that follows it walked LEFT off a
+// zero-width rune onto the lead — re-adding exactly the column
+// windowFloor had excluded. On decomposed "áxy" in three columns that
+// put the whole value on screen with nowhere left for the caret:
+//
+//	NFD before:    scroll=0, row "áxy", no caret block
+//	ASCII control: scroll=1, row "xy█"
+//
+// Measured in review of #521; NFD is not exotic, macOS hands filenames
+// over decomposed. The scroll index is asserted as well as the row
+// because the row alone cannot see a window that opens INSIDE the "á":
+// Render drops the orphaned mark and paints "xy█" either way, while
+// indexAt still segments from the start of the value, so the two
+// disagree about where the user just clicked.
+func TestTheWindowOpensOnAClusterBoundaryAndStillFits(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		wantScroll  int
+	}{
+		{"decomposed", "áxy", 2},
+		{"ASCII control", "axy", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runes := []rune(tc.value)
+			tb := &TextBox{Text: prop.NewSource(tc.value)}
+			tb.SetFocused(true)
+			tb.setCaret(len(runes)) // past the end
+			f := gooey.Compose(tb, term.Caps{Cols: 3, Rows: 1}, nil)
+
+			if tb.scroll != tc.wantScroll {
+				t.Errorf("the window over %q opens at rune %d, want %d — %d is "+
+					"not a cluster boundary, so Render and indexAt would answer "+
+					"different questions about column 0", tc.value, tb.scroll,
+					tc.wantScroll, tb.scroll)
+			}
+			if got := render.SpanText(f.Cells, 0, 0, 3); got != "xy█" {
+				t.Errorf("row %q, want \"xy█\" — three columns cannot hold %q and "+
+					"the caret both, and the caret is the half that may not be "+
+					"dropped", got, tc.value)
+			}
+		})
+	}
+}
+
+// TestASelectionOverHalfAClusterHighlightsTheWholeGlyph is the
+// selection arm's half of the cluster rule.
+//
+// It tested the cluster's FIRST rune (`i >= lo && i < hi`) while the
+// caret arm beside it tested containment, so a selection covering only
+// the zero-width half of a cluster highlighted nothing — and `selected`
+// suppresses the caret arm, so the field showed neither selection nor
+// caret:
+//
+//	[1,2) before: reversed "",  row "éx"
+//	[1,3) before: reversed "x", row "éx"
+//	ASCII control [1,2): reversed "x"
+//
+// Measured in review of #521. Half a cluster is not a state a cell can
+// draw; reversing the whole glyph is the only answer one has, which is
+// the answer the caret arm already gives.
+func TestASelectionOverHalfAClusterHighlightsTheWholeGlyph(t *testing.T) {
+	// "éx" decomposed: e, U+0301, x. Rune 1 is the mark, and it is
+	// inside the é the user sees.
+	const nfd = "éx"
+	for _, tc := range []struct {
+		name, value   string
+		caret, anchor int
+		want          string
+	}{
+		{"the mark alone", nfd, 1, 2, "e\u0301"},
+		{"the mark and the rune after it", nfd, 1, 3, "e\u0301x"},
+		{"ASCII control", "ex", 1, 2, "x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := &TextBox{Text: prop.NewSource(tc.value)}
+			tb.SetFocused(true)
+			tb.setCaret(tc.caret)
+			tb.setAnchor(tc.anchor)
+			f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
+
+			if got := reversedText(f, 4); got != tc.want {
+				t.Errorf("selection [%d,%d) over %q reverses %q, want %q; the row "+
+					"reads %q. A selection the user made and cannot see is worse "+
+					"than no selection: the caret arm is suppressed while one is "+
+					"live, so the field shows nothing at all",
+					min(tc.caret, tc.anchor), max(tc.caret, tc.anchor), tc.value,
+					got, tc.want, render.SpanText(f.Cells, 0, 0, 4))
+			}
+		})
+	}
+}
+
+// family is a four-person ZWJ emoji: SEVEN runes, whose rune widths sum
+// to eight, drawn in TWO columns. It is the fixture that separates the
+// three units this file has to keep apart — runes, rune-width sums and
+// grapheme columns — because it disagrees with both of the first two.
+const family = "\U0001F469‍\U0001F469‍\U0001F467‍\U0001F466"
+
+// clusterBoundaries lists every grapheme boundary of runes[:end],
+// segmented from index 0.
+//
+// It is DELIBERATELY the slow, obvious answer — the O(len(value)) walk
+// that #521 removed from the paint path — because a reference the
+// implementation could share a shortcut with would agree with the bug.
+func clusterBoundaries(runes []rune, end int) []int {
+	var bs []int
+	idx := 0
+	render.EachCluster(string(runes[:end]), func(cluster string, _, _, _ int) bool {
+		bs = append(bs, idx)
+		idx += len([]rune(cluster))
+		return true
+	})
+	return append(bs, end)
+}
+
+// widthVocabulary is a value of each shape whose runes, rune-width sum
+// and column count can disagree, for the two grid tests below.
+//
+// Each entry is here because it breaks a different estimate: the family
+// over-counts under a rune sum and under-counts under a rune COUNT, the
+// VS16 emoji under-counts under both, CJK agrees with a rune sum and
+// not with a rune count, and the decomposed run has more runes than
+// either. A grid over only one of them would agree with itself.
+func widthVocabulary() []string {
+	return []string{
+		"abcdefghij" + family + "xyz0123456789",
+		strings.Repeat(family, 5),
+		strings.Repeat("⚠️", 8),
+		strings.Repeat("é", 10),
+		strings.Repeat("abc"+family+"東⚠️", 3),
+	}
+}
+
+// TestTheWindowFloorIsTheLeftmostFittingClusterBoundary is a grid
+// against the definition rather than a fixture against a symptom.
+//
+// windowFloor answers "the leftmost index a window of avail columns can
+// start at and still show runes[:end] with reserve to spare", and that
+// sentence is checkable directly: walk every grapheme boundary of the
+// span from the left and take the first whose remaining text fits. The
+// implementation may not do it that way — an O(len) walk on the paint
+// path is the 1.4 s freeze this PR exists to have removed — but it has
+// to AGREE with it.
+//
+// A grid rather than examples because the three defects found in review
+// of #521 were each one example away from each other: a rune-width sum
+// that stopped too far right on a ZWJ family, a candidate returned
+// without snapping to its cluster's start, and an expansion that never
+// looked left of a candidate that had already overshot. All three are
+// invisible to a fixture chosen for any one of them.
+func TestTheWindowFloorIsTheLeftmostFittingClusterBoundary(t *testing.T) {
+	for vi, v := range widthVocabulary() {
+		runes := []rune(v)
+		for end := 0; end <= len(runes); end++ {
+			bs := clusterBoundaries(runes, end)
+			for avail := 1; avail <= 10; avail++ {
+				for reserve := 0; reserve <= 2; reserve++ {
+					want := end
+					for _, b := range bs {
+						if reserve+render.StringWidth(string(runes[b:end])) <= avail {
+							want = b
+							break
+						}
+					}
+					if got := windowFloor(runes, end, reserve, avail); got != want {
+						t.Fatalf("value %d, end=%d reserve=%d avail=%d: windowFloor "+
+							"says %d, the leftmost fitting cluster boundary is %d. "+
+							"%q is %d columns and the window holds %d",
+							vi, end, reserve, avail, got, want,
+							string(runes[want:end]),
+							render.StringWidth(string(runes[want:end])), avail-reserve)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestTheScrollWindowAlwaysOpensOnAClusterBoundary pins the property
+// Render and indexAt both depend on and neither can check.
+//
+// Render re-segments from t.scroll; indexAt segments from 0. While the
+// window opens on a boundary the two see the same glyphs in the same
+// columns. While it does not, they disagree about what is in the first
+// column, so a click there answers with a character off-screen to the
+// left and the window jumps on the next frame — and NOTHING about the
+// painted row says so, which is why this is a grid over scrollFor
+// rather than an assertion about cells.
+//
+// The second half is the reason scrollFor exists at all: the caret's
+// own cluster is never left of the window.
+func TestTheScrollWindowAlwaysOpensOnAClusterBoundary(t *testing.T) {
+	for vi, v := range widthVocabulary() {
+		runes := []rune(v)
+		boundary := map[int]bool{}
+		for _, b := range clusterBoundaries(runes, len(runes)) {
+			boundary[b] = true
+		}
+		for avail := 1; avail <= 8; avail++ {
+			for cur := 0; cur <= len(runes); cur++ {
+				for caret := 0; caret <= len(runes); caret++ {
+					got := scrollFor(runes, cur, caret, avail)
+					if !boundary[got] {
+						t.Fatalf("value %d, avail=%d cur=%d caret=%d: the window opens "+
+							"at rune %d, which is inside a cluster — Render would paint "+
+							"a glyph %q does not contain, and indexAt would answer a "+
+							"click on column 0 with a different rune",
+							vi, avail, cur, caret, got, v)
+					}
+					if cs := clusterStartAt(runes, caret); cs < got {
+						t.Fatalf("value %d, avail=%d cur=%d caret=%d: the window opens at "+
+							"rune %d, right of the caret's own cluster at %d — the user "+
+							"is typing at a position off the left of the field",
+							vi, avail, cur, caret, got, cs)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestAFourPersonFamilyIsWindowedByItsColumnsNotItsRunes is the two
+// grids above reduced to the three rows a user would see.
+//
+// A four-person family is seven runes, a rune-width sum of eight, and
+// two columns — so every arithmetic that is not the cluster's own gets
+// it wrong, and each arm here is one of the ways that was measured in
+// review of #521:
+//
+//	three families in eight columns: showed two, scrolled the third away
+//	the caret on the x after one:    opened the window inside the family
+//	the caret inside the family:     counted the family's columns twice
+//
+// The rows are asserted whole because the defect is a glyph that is on
+// screen or is not; the CJK and ASCII spellings of the same shapes are
+// already covered by the fixtures above, which is what makes these
+// three arms about the FAMILY rather than about wide text.
+func TestAFourPersonFamilyIsWindowedByItsColumnsNotItsRunes(t *testing.T) {
+	const around = "abcdefghij" + family + "xyz0123456789"
+	for _, tc := range []struct {
+		name       string
+		value      string
+		caret      int
+		cols       int
+		wantScroll int
+		wantRow    string
+	}{
+		{
+			// 21 runes, 6 columns: all three fit in 8 with the caret's
+			// column to spare, so none of them may be scrolled off.
+			"three families and the caret fit whole",
+			strings.Repeat(family, 3), 21, 8, 0,
+			strings.Repeat(family, 3) + "█ ",
+		},
+		{
+			// The family is two columns and the x is one: 'j', the
+			// family and the x fit in four. Answering with the rune the
+			// column walk stopped on opened the window inside the
+			// family, which paints a TWO-person family instead.
+			"the window opens at the family's own start",
+			around, 17, 4, 9, "j" + family + "x",
+		},
+		{
+			// The caret is inside the family — an arrow key steps by
+			// rune. Its width is reserved once, as the caret's, and the
+			// span the floor measures ends where its cluster begins;
+			// counting it in both scrolled "ij" away for nothing.
+			"the caret's own cluster is counted once",
+			around, 11, 4, 8, "ij" + family,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := &TextBox{Text: prop.NewSource(tc.value)}
+			tb.SetFocused(true)
+			tb.setCaret(tc.caret)
+			f := gooey.Compose(tb, term.Caps{Cols: tc.cols, Rows: 1}, nil)
+
+			if tb.scroll != tc.wantScroll {
+				t.Errorf("the window opens at rune %d, want %d", tb.scroll, tc.wantScroll)
+			}
+			if got := render.SpanText(f.Cells, 0, 0, tc.cols); got != tc.wantRow {
+				t.Errorf("row %q, want %q — a family is seven runes and a "+
+					"rune-width sum of eight, and neither of those is the two "+
+					"columns it occupies", got, tc.wantRow)
+			}
+		})
+	}
+}
+
 // TestACombiningMarkSurvivesTheRuneItDecorates is #519's defect one
 // Unicode category over, reported against the fix for it.
 //

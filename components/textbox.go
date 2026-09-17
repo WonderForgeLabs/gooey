@@ -218,11 +218,34 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// render.EachCluster hands over the cluster AND its width from one
 	// segmentation, which is what SetString, ClipCols and StringWidth
 	// all use and what makes this loop agree with them. It is walked
-	// from t.scroll rather than from 0 so the cost stays proportional to
-	// the FIELD, not to the value: a window that starts in the middle of
-	// a ZWJ family re-segments from there and splits it, which is
-	// cosmetic and bounded, where an O(len(value)) walk on the paint
-	// path is neither. Found in the review of #521.
+	// from t.scroll rather than from 0, and stops at the field's right
+	// edge, so the SEGMENTATION is proportional to the field.
+	//
+	// THE SLICE IS NOT, and the sentence this replaces claimed the cost
+	// stays proportional to the field full stop. `string(runes[t.scroll:])`
+	// copies the whole tail on every paint — measured in review of #521
+	// at 0.93 ms per call on a 100,000-rune value, out of a 1.14 ms
+	// compose, so it is the dominant term of that frame. Nothing like
+	// the 1.4 s this PR removed, and stated rather than fixed because
+	// the bound cannot be computed cheaply AND correctly: deciding how
+	// many runes can fill `avail` columns needs a rune-width walk, and a
+	// rune sum is neither an upper nor a lower bound on its clusters' —
+	// render.StringWidth("⚠️") is 2 against a rune sum of 1, and a
+	// four-person ZWJ family is 2 against a rune sum of 8. Guessing
+	// short drops glyphs off the right of the field, which is #519
+	// again. The next reader should not rely on a bound that is not
+	// there.
+	//
+	// A window that starts in the middle of a cluster would re-segment
+	// from there and split it, and that is not only cosmetic: indexAt
+	// segments from the START of the value, so the two would disagree
+	// about which character is in the first column and a click there
+	// would answer with a rune off-screen to the left. scrollFor no
+	// longer produces such a start — every clamp in it answers with a
+	// cluster boundary, which
+	// TestTheScrollWindowAlwaysOpensOnAClusterBoundary pins over a grid
+	// rather than a fixture. Setting t.scroll by hand still can. Raised
+	// in the review of #521, which found the click half of it.
 	idx := t.scroll
 	render.EachCluster(string(runes[t.scroll:]), func(cluster string, _, _, w int) bool {
 		i := idx
@@ -243,7 +266,17 @@ func (t *TextBox) Render(f *gooey.Frame) {
 		}
 		st := textSty
 		switch {
-		case selected && i >= lo && i < hi:
+		case selected && i < hi && i+n > lo:
+			// OVERLAP, the same containment test the caret arm below
+			// makes, and for the same reason. Testing the cluster's
+			// FIRST rune left a selection that covers only a combining
+			// mark showing nothing at all — and `selected` suppresses
+			// the caret arm, so the field displayed neither: measured on
+			// decomposed "éx" with the selection [1,2), reversed cells
+			// none, against the ASCII control "ex" reversing its x.
+			// Half a cluster is not a thing a cell can show; reversing
+			// the whole glyph is the only answer it has. Raised in
+			// review of #521.
 			st.Reverse = true
 		case !selected && t.IsFocused() && caret >= i && caret < i+n:
 			// THE WHOLE CLUSTER, and caret >= i rather than caret == i.
@@ -302,8 +335,35 @@ func scrollFor(runes []rune, cur, caret, avail int) int {
 	if cur < 0 {
 		cur = 0
 	}
+	// ON A CLUSTER BOUNDARY. The line above is the only one here that
+	// can leave `cur` inside a cluster — an arrow key steps by rune, so
+	// a caret walked backwards into the middle of one drags the window
+	// in with it. A window that opens there has no lead for Render to
+	// draw, so Render skips the fragment AND the caret arm with it,
+	// leaving a focused field with no caret anywhere, which is what
+	// TestTheCaretSurvivesAWindowThatOpensOnACombiningMark pins.
+	//
+	// The two clamps below cannot reintroduce that: windowFloor answers
+	// with the leftmost fitting BOUNDARY, which is the property
+	// TestTheWindowFloorIsTheLeftmostFittingClusterBoundary pins
+	// directly. So the snap's POSITION in this function is not
+	// load-bearing and the comment here used to claim it was — measured
+	// in review of #521 by moving it to the end and diffing scrollFor
+	// over a grid of emoji, family, CJK and decomposed values: not one
+	// input changed answer. It stays first because that is where the
+	// value it repairs is produced.
+	cur = clusterStartAt(runes, cur)
 	// Right far enough that the caret's own columns fit.
-	if floor := windowFloor(runes, caret, caretCols(runes, caret), avail); cur < floor {
+	//
+	// THE SPAN ENDS AT THE CARET'S CLUSTER, NOT AT THE CARET. A caret
+	// moved into the middle of one — an arrow key steps by rune — would
+	// otherwise be counted twice: `reserve` is the whole cluster's
+	// width, and the span runes[:caret] still holds the front of that
+	// same cluster. On a four-person family in three columns the double
+	// count made the window fit nothing and the floor came back as the
+	// caret's own index, opening the window inside the family. Measured
+	// in review of #521.
+	if floor := windowFloor(runes, clusterStartAt(runes, caret), caretCols(runes, caret), avail); cur < floor {
 		cur = floor
 	}
 	// And no further: show as much of the tail as the window holds. This
@@ -313,65 +373,159 @@ func scrollFor(runes []rune, cur, caret, avail int) int {
 	if tail := windowFloor(runes, len(runes), 1, avail); cur > tail {
 		cur = tail
 	}
-	return clusterStart(runes, cur)
+	return cur
 }
 
-// clusterStart walks back off a zero-width rune to the glyph it
-// decorates, so a window never opens in the middle of one.
+// clusterSlack is how many runes before a rune-width estimate the
+// cluster walks below re-synchronise from.
 //
-// A window that started on a combining mark had no lead for it to join,
-// so Render skipped it — and skipped the caret arm with it, leaving a
-// focused field with no caret anywhere on screen. The mark is not a
-// position the window can show: it has no column of its own, and its
-// lead is the thing the user sees. Found in the review of #521.
+// A GRAPHEME BOUNDARY IS LOCAL, and segmentation started mid-cluster is
+// correct from the NEXT boundary on — only the first cluster it reports
+// is a fragment. So a walk that begins clusterSlack runes early and
+// ignores its first cluster reads true boundaries from there, without
+// segmenting the value from index 0, which is the O(len) cost on the
+// paint path that #521's review measured at 1.4 s.
 //
-// IT IS BOUNDED BY THE CLUSTER, not by the value, which is what keeps
-// scrollFor O(avail). That also bounds what it can KNOW: a rune width
-// cannot see a ZWJ join, so a window can still open inside an emoji
-// family, where Render re-segments from the new start and splits the
-// family. Cosmetic, bounded, and the alternative is an O(len(value))
-// cluster walk on the paint path — which is the cost #521's review
-// measured at 1.4 s and this function exists to have removed.
-func clusterStart(runes []rune, i int) int {
-	for i > 0 && i < len(runes) && render.RuneWidth(runes[i]) == 0 {
-		i--
+// It is also windowFloor's first step when it has to expand leftwards,
+// doubling from there — so it is a starting guess in both places, never
+// a cap on how far either will look.
+//
+// 64 is generous against what one cluster can be: the widest this
+// vocabulary has is a four-person ZWJ family, seven runes. The residual
+// is a SINGLE cluster longer than this, where the re-synchronising walk
+// can still begin inside it and report that fragment's start as the
+// cluster's — cosmetic, bounded, and the only thing a fixed lookback
+// can be wrong about now that windowFloor expands until it can prove it
+// has gone far enough. Raised in review of #521.
+const clusterSlack = 64
+
+// eachClusterFrom walks the clusters of runes[from:to], calling fn with
+// each cluster's start index, rune count and COLUMN width.
+//
+// It re-synchronises: segmentation starts clusterSlack runes before
+// `from` when there is room, and the fragment that produces is skipped.
+// fn returning false stops the walk.
+func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
+	if from < 0 {
+		from = 0
 	}
-	return i
+	if to > len(runes) {
+		to = len(runes)
+	}
+	if from >= to {
+		return
+	}
+	lo := from - clusterSlack
+	if lo < 0 {
+		lo = 0
+	}
+	idx := lo
+	first := true
+	render.EachCluster(string(runes[lo:to]), func(cluster string, _, _, w int) bool {
+		n := len([]rune(cluster))
+		at := idx
+		idx += n
+		// The fragment, and anything still left of the span asked for.
+		if (first && lo > 0) || at+n <= from {
+			first = false
+			return true
+		}
+		first = false
+		return fn(at, n, w)
+	})
+}
+
+// clusterStartAt is the index the cluster containing i begins at.
+func clusterStartAt(runes []rune, i int) int {
+	if i <= 0 || i >= len(runes) {
+		return i
+	}
+	at := i
+	eachClusterFrom(runes, i, len(runes), func(a, n, _ int) bool {
+		if i >= a && i < a+n {
+			at = a
+			return false
+		}
+		return true
+	})
+	return at
 }
 
 // caretCols is how many columns the caret needs at index i.
 //
-// ON a rune it is drawn by REVERSING that glyph (Render, above), so a
-// caret on a wide glyph needs both of its columns — reserving one let
-// Render's stop, which breaks on the glyph's full width, drop the glyph
-// the caret was riding, and the user typed at a position with no visible
-// caret at all. Past the last rune it is a block of its own, one column.
+// ON a rune it is drawn by REVERSING the CLUSTER it is in (Render,
+// above), so a caret on a wide glyph needs all of its columns —
+// reserving one let Render's stop, which breaks on the glyph's full
+// width, drop the glyph the caret was riding, and the user typed at a
+// position with no visible caret at all. Past the last rune it is a
+// block of its own, one column.
 //
-// The floor of one is for a zero-width rune: a combining mark is drawn
-// into its lead's cell and has no column to reverse, so the caret takes
-// the column after it rather than none.
+// THE CLUSTER, NOT THE RUNE, and the difference is not only CJK. This
+// reserved render.RuneWidth(runes[i]), which is 1 for the lead of "⚠️"
+// — VS16 is zero-width — while Render reverses the whole cluster and
+// stops on its full width of 2. Measured: `x⚠️` with the caret on the
+// emoji in two columns drew "x " and reversed nothing, the identical
+// configuration TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge pins
+// one Unicode category over. Raised in review of #521.
+//
+// The floor of one is for a caret inside a zero-width cluster: a
+// combining mark with nothing in front of it is drawn into no column, so
+// the caret takes the column after it rather than none.
 func caretCols(runes []rune, i int) int {
 	if i < 0 || i >= len(runes) {
 		return 1
 	}
-	if w := render.RuneWidth(runes[i]); w > 1 {
-		return w
-	}
-	return 1
+	got := 1
+	eachClusterFrom(runes, i, len(runes), func(at, n, w int) bool {
+		if i >= at && i < at+n {
+			if w > 1 {
+				got = w
+			}
+			return false
+		}
+		return true
+	})
+	return got
 }
 
 // windowFloor is the leftmost index a window of avail columns can start
 // at and still show runes[:end] with reserve columns to spare.
 //
-// Walking left from end and stopping at the first glyph that would not
-// fit is what makes it O(avail): it touches only the runes the window
-// can hold, never the value in front of them.
+// A GUESS AND A CORRECTION, BECAUSE A RUNE SUM IS NOT A CLUSTER SUM IN
+// EITHER DIRECTION. The first pass walks left from end summing rune
+// widths, which is O(avail) and exact for the one-rune clusters almost
+// every value is made of. The second segments that span into clusters,
+// expands it left until it overflows the window, and then drops leading
+// clusters until it fits.
+//
+// The review that asked for this offered the rune walk as a valid lower
+// BOUND — rune widths "under-count a cluster and never over-count it" —
+// and that is measured false: render.StringWidth("⚠️") is 2 against a
+// rune sum of 1, and a four-person ZWJ family is 2 against a rune sum of
+// 8. The guess can be wrong in BOTH directions, which is why the
+// correction expands as well as drops. Raised in review of #521.
+//
+// The result is the leftmost fitting cluster boundary, exactly — not an
+// approximation of one. TestTheWindowFloorIsTheLeftmostFittingClusterBoundary
+// checks it against the O(len) walk that says so directly, over the
+// vocabularies where runes, rune-width sums and columns all disagree.
 func windowFloor(runes []rune, end, reserve, avail int) int {
 	if end > len(runes) {
 		end = len(runes)
 	}
-	w := reserve
+	if avail <= 0 || end <= 0 {
+		return 0
+	}
+	// A CANDIDATE, NOT A BOUND. Summing rune widths left from end is
+	// O(avail) and exact while every cluster is one rune, which is the
+	// overwhelmingly common case — but a rune sum is neither an upper
+	// nor a lower bound on its clusters' widths, so it can land either
+	// side of the answer: render.StringWidth("⚠️") is 2 against a rune
+	// sum of 1, and a four-person family is 2 against a rune sum of 8.
+	// The cluster pass below is what makes the answer true, and it
+	// expands leftwards until it can prove it has gone far enough.
 	i := end
+	w := reserve
 	for i > 0 {
 		rw := render.RuneWidth(runes[i-1])
 		if w+rw > avail {
@@ -379,6 +533,63 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 		}
 		w += rw
 		i--
+	}
+
+	// Now in clusters, which is the unit Render advances by. Collect the
+	// span, then drop whole clusters off the LEFT until it fits.
+	//
+	// Dropping lands the answer on a cluster BOUNDARY, and that is not a
+	// bonus. A window opened inside a cluster makes Render re-segment
+	// the fragment into a glyph the value does not contain, while
+	// indexAt still segments from 0 — so the paint and the click stop
+	// agreeing about what is in the first column.
+	type seg struct{ at, n, w int }
+	var segs []seg
+	total := 0
+	collect := func(from int) {
+		segs = segs[:0]
+		total = reserve
+		eachClusterFrom(runes, from, end, func(at, n, cw int) bool {
+			segs = append(segs, seg{at, n, cw})
+			total += cw
+			return true
+		})
+	}
+	collect(i)
+	// EXPAND LEFT UNTIL THE SPAN OVERFLOWS THE WINDOW, because only an
+	// overflowing span is evidence that the answer is inside it. A span
+	// that still fits proves only that the guess was too far right, and
+	// the drop loop below moves one way. Three four-person families are
+	// six columns and TWENTY-ONE runes: in a field of eight the rune
+	// walk said the window starts thirteen runes in, and the first
+	// family — which fitted — was scrolled off the left. Measured in
+	// review of #521.
+	//
+	// Doubling keeps the total work proportional to the runes the window
+	// ENDS UP SHOWING rather than to the value: each retry at most
+	// doubles the span, and the walk stops the first time it overflows.
+	// That is the honest form of the O(avail) claim this function was
+	// written for — avail COLUMNS may be arbitrarily many runes, and
+	// nothing cheaper can know how many.
+	//
+	// The doubling is a COST property and nothing here can see it: no
+	// vocabulary in this repo's tests needs a second retry, so a fixed
+	// step gives every one of them the same answer. It is the bound
+	// against a single cluster thousands of runes long, where a fixed
+	// step would re-walk the span once per 64 runes.
+	for back := clusterSlack; total <= avail && i > 0; back *= 2 {
+		i -= back
+		if i < 0 {
+			i = 0
+		}
+		collect(i)
+	}
+	// The loop below is what lands the answer: it leaves i at a cluster
+	// START every time it runs, and the expansion above guarantees it
+	// runs unless the span already reaches rune 0.
+	for k := 0; k < len(segs) && total > avail; k++ {
+		total -= segs[k].w
+		i = segs[k].at + segs[k].n
 	}
 	return i
 }
