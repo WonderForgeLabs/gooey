@@ -38,7 +38,7 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 func dump(f *gooey.Frame) string {
 	var sb strings.Builder
 	for y := 0; y < f.Cells.H; y++ {
-		sb.WriteString(render.SpanText(f.Cells, 0, y, f.Cells.W))
+		sb.WriteString(render.RowText(f.Cells, y))
 		sb.WriteByte('\n')
 	}
 	return sb.String()

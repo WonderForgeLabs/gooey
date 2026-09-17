@@ -186,6 +186,35 @@ blanks both pass `!strings.Contains(got, …)` and "the row is empty".**
 Every one of these edges turns a reader that quietly returned nothing
 into a component that appears to have drawn nothing.
 
+Three more things were settled on the CALLER side of the same contract,
+and they are here rather than in the test comments for the reason above —
+the rule belongs next to the code, the account of which version was
+superseded does not:
+
+5. **A whole-row read is `RowText`, never `SpanText(b, 0, y, b.W)`.**
+   `RowText` *is* that expression, and it carries a nil guard the
+   hand-rolled loops do not. Three converted readers were left spelling
+   it the long way in the commit that wrote the rule down, which is the
+   same defect the sweep is about one level up.
+6. **A wrapper with the same signature is not worth its own comment.**
+   `components/box_test.go`'s `rowString` ended up as `SpanText`'s
+   parameters passed straight through, under seventeen lines explaining
+   that a wrapper taking a different *meaning* for the same position is a
+   quiet trap. That is an argument for deleting the wrapper, and it was
+   deleted. `components/colorpicker_test.go`'s `rowText` earns its keep
+   because it maps `*gooey.Frame` to `f.Cells`; it takes `SpanText`'s
+   order for the same reason.
+7. **One row search, not one per test.** `components/menucheck_test.go`
+   grew three copies of "every row holding a needle, and fatal unless
+   exactly one", two of which redeclared the same local `match` struct
+   and cross-referenced each other in comments written to keep the copies
+   in sync. `matchRows` and `onlyMatch` are the one spelling; the
+   zero-match diagnosis stays per-test, because "no row matched" means
+   the regression under test in one of them and "the dropdown did not
+   paint" in another. Two of the three copies also took the FIRST hit, so
+   a second matching row was resolved by iteration order while every
+   claim they make is positional.
+
 ## Rejected alternatives
 
 **Reserve by the lead rune's width instead of the cluster's.** Suggested

@@ -262,15 +262,10 @@ func RowText(b *Buffer, y int) string {
 // than a panic inside strings.Repeat, which is the ONE arrangement where
 // the guard changes an answer rather than restating what the loop
 // already does. ClipCols answers `w <= 0` the same way, and the reason
-// is the same: zero columns of a terminal is nothing, not one blank.
-//
-// It is stated rather than left to the loop because a width can ARRIVE
-// as a difference — an extent minus an origin, a remaining budget — so
-// a negative one is a value a caller produces rather than a caller
-// error. The hazard is the one the padding paragraph above describes, at
-// the other end: "" passes `!strings.Contains(got, …)` and "the row is
-// empty" exactly as blanks do, so a span that silently collapsed to
-// nothing reads as a component that drew nothing.
+// is the same: zero columns of a terminal is nothing, not one blank. Why
+// that is a stated contract rather than whatever the loop happens to do
+// is item 4 of docs/specs/2026-08-27-display-width.md's readback
+// section.
 //
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
 func SpanText(b *Buffer, x, y, w int) string {

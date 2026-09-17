@@ -280,7 +280,7 @@ func TestSpanTextCutThroughAGlyphReadsShortOrLong(t *testing.T) {
 //
 // The fixture makes the two answers DIFFERENT strings rather than
 // asserting one: row 0 and row 1 hold different text, so reading
-// (x=1, y=0) and (x=0, y=1) cannot agree. Raised in review of #520.
+// (x=1, y=0) and (x=0, y=1) cannot agree.
 func TestSpanTextTakesXBeforeY(t *testing.T) {
 	b := NewBuffer(4, 2)
 	b.SetString(0, 0, "abcd", Style{})
@@ -326,11 +326,10 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 // off-buffer enumeration went past: three out-of-range shapes, then nil,
 // and never `w <= 0`.
 //
-// SPLIT OUT, because most of the ways it can go red are about NOT
-// padding, and the first line CI prints is the test's name. It lived
-// inside TestSpanTextPadsWhereTheBufferIsNot, which by then pinned five
-// separate contracts, so a failure here reported the padding contract
-// breaking. Raised in review of #520.
+// SPLIT OUT FROM THE PADDING TEST, because most of the ways it can go
+// red are about NOT padding, and the first line CI prints is the test's
+// name. Folded in with five other contracts, a failure here reports the
+// padding contract breaking.
 //
 // A width can ARRIVE as a difference — an extent minus an origin, a
 // remaining budget — so a negative one is a value a caller produces

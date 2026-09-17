@@ -323,7 +323,7 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// deletion has to live somewhere: **#519's fixing commit deletes
 	// this whole loop**, not just the skip, and #519's acceptance
 	// criteria say so. Self-retiring means nobody is FORCED to delete
-	// it; it does not mean nobody has to. Raised in review of #520.
+	// it; it does not mean nobody has to.
 	for _, tw := range []struct{ got, want, buggy, shape string }{
 		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs"},
 		{plain, wantPlain, " 界       ", "the unfocused row"},

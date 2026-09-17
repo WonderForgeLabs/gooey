@@ -414,7 +414,7 @@ func screen(c *gooey.Composer) string {
 	var sb strings.Builder
 	cells := c.Cells()
 	for y := 0; y < cells.H; y++ {
-		sb.WriteString(render.SpanText(cells, 0, y, cells.W))
+		sb.WriteString(render.RowText(cells, y))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
