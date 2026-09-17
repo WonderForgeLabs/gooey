@@ -75,20 +75,6 @@ import (
 // read outside this workspace, which is true of a sibling exactly as it
 // is of core. Raised in review of #497.
 func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
-	const core = "github.com/WonderForgeLabs/gooey"
-
-	// A sibling is core's path plus a directory. Prefixing with the
-	// slash is what keeps a future `github.com/WonderForgeLabs/gooeyfoo`
-	// from matching.
-	own := func(path string) bool {
-		return path == core || strings.HasPrefix(path, core+"/")
-	}
-
-	mods := modulesIncludingTheRoot(t)
-	if len(mods) == 0 {
-		t.Fatal("no nested modules found; the walk is wrong, not the tree")
-	}
-
 	// A module that requires core at all must name a version that could be
 	// served. `packs/*` require nothing of core and are simply skipped —
 	// and `seen` is counted below, so a walk that stops finding requires
@@ -99,40 +85,18 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	//
 	// Every own-module require in the tree, so the skew check below can
 	// compare them against each other rather than against a constant.
+	all, mods := allOwnRequires(t)
 	var seen []ownRequire
-	for _, dir := range mods {
-		// `go mod edit -json` is textual — it reports what the file says
-		// rather than what the workspace would resolve, which is the whole
-		// point here. It is also how ci.yml reads the `go` directive, so
-		// this adds no dependency the repo does not already rely on.
-		cmd := exec.Command("go", "mod", "edit", "-json")
-		cmd.Dir = dir
-		body, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("%s: go mod edit -json: %v", dir, err)
-		}
-
-		var mf struct {
-			Require []struct {
-				Path    string
-				Version string
-			}
-		}
-		if err := json.Unmarshal(body, &mf); err != nil {
-			t.Fatalf("%s: parsing go mod edit -json: %v", dir, err)
-		}
-
-		for _, r := range mf.Require {
-			if !own(r.Path) {
-				continue
-			}
+	{
+		for _, r := range all {
+			dir := r.dir
 			// THE ZERO PSEUDO-VERSION TOO. `go mod edit -require=X@v0.0.0`
 			// on a module the workspace replaces writes the canonical
 			// spelling `v0.0.0-00010101000000-000000000000`, which is the
 			// same unservable revision wearing a pseudo-version's shape —
 			// and apps/wysiwyg carried three of them while the plain
 			// sentinel elsewhere carried the rest.
-			if r.Version == "v0.0.0" || strings.HasPrefix(r.Version, "v0.0.0-00010101000000-") {
+			if r.version == "v0.0.0" || strings.HasPrefix(r.version, "v0.0.0-00010101000000-") {
 				t.Errorf("%s requires %s %s, which is neither a tag nor a "+
 					"pseudo-version any proxy can serve: `go get` of this module "+
 					"fails with \"unknown revision\" for everybody outside this "+
@@ -151,13 +115,13 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 					"only while the module is untagged). "+
 					"Keep any `replace` line, which is what makes local development "+
 					"use the checkout.",
-					dir, r.Path, r.Version, r.Path)
+					dir, r.path, r.version, r.path)
 				continue
 			}
 			// Not a resolution check (no network here), just the shape: a
 			// version the proxy could be asked for at all.
-			if !strings.HasPrefix(r.Version, "v") {
-				t.Errorf("%s requires %s %q, which is not a version", dir, r.Path, r.Version)
+			if !strings.HasPrefix(r.version, "v") {
+				t.Errorf("%s requires %s %q, which is not a version", dir, r.path, r.version)
 				continue
 			}
 			// APPENDED AFTER THE SHAPE CHECKS, not before. A sentinel
@@ -168,14 +132,19 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 			// len(seen) == 0 fatal below still fires correctly: a tree of
 			// nothing but sentinels fails loudly on the sentinels.
 			// Raised in review of #497.
-			seen = append(seen, ownRequire{dir, r.Path, r.Version})
+			seen = append(seen, r)
 		}
 	}
 
 	if len(seen) == 0 {
-		t.Fatalf("none of the %d nested modules were found to require %s or a "+
-			"module under it; either the requires moved or this test stopped "+
-			"reading them, and an empty check is not a passing one", len(mods), core)
+		// NAMING THE SET THE NUMBER DESCRIBES. It said "nested modules"
+		// while len(mods) had come to include the ROOT, in the one
+		// failure path whose whole job is to tell the reader which walk
+		// came back empty. Raised in review of #497.
+		t.Fatalf("none of the %d modules walked — the root and every nested "+
+			"module — were found to require %s or a module under it; either "+
+			"the requires moved or this test stopped reading them, and an "+
+			"empty check is not a passing one", len(mods), coreModule)
 	}
 
 	// ONE REVISION ACROSS THE TREE, which the shape checks above cannot
@@ -364,9 +333,20 @@ func skewMsg(g skewGroup, newestRev string, revisions int) string {
 	// there is no single newcomer — every group below has to move up —
 	// and saying so is the difference between a remedy a reader can
 	// follow and two contradicting each other in the same run.
+	//
+	// SPELLED, NOT HASHED, on this branch too. It named a bare
+	// twelve-character commit while the move-up direction spelled both
+	// pseudo-version shapes, which is the exact "`go mod edit -require`
+	// writes literally what it is handed: a bare short hash stays a bare
+	// short hash and fails this test again" trap the sentinel message
+	// above exists to prevent. The `Behind:` list is not a substitute —
+	// it carries spellings of g.rev only for the paths in THIS group,
+	// and the newcomer being pinned back need not require any of them.
+	// Raised in review of #497.
 	remedy := fmt.Sprintf(" — or, if the newest is a single module you just "+
 		"added or bumped, pin THAT one back to %s, which is what the rest of "+
-		"the tree names", g.rev)
+		"the tree names, in its own spelling of it: v0.1.1-0.<stamp>-%s off a "+
+		"tag, v0.0.0-<stamp>-%s off an untagged path", g.rev, g.rev, g.rev)
 	count := "two revisions is"
 	if revisions > 2 {
 		remedy = fmt.Sprintf(". With %d revisions in the tree there is no single "+
@@ -747,9 +727,31 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	}
 	// AND THE TWO-REVISION MESSAGE KEEPS IT, or this is a deletion
 	// wearing a condition's hat.
-	if msg := skewMsg(threeBehind[0], threeRev, 2); !strings.Contains(msg, "pin THAT one back") {
+	twoRev := skewMsg(threeBehind[0], threeRev, 2)
+	if !strings.Contains(twoRev, "pin THAT one back") {
 		t.Errorf("at two revisions the pin-the-newcomer-back remedy is correct "+
-			"and is gone:\n\t%s", msg)
+			"and is gone:\n\t%s", twoRev)
+	}
+	// AND IT SPELLS THE VERSION, which the arm above cannot see because
+	// a bare hash and a spelled one both contain "pin THAT one back".
+	// Both shapes, because a tree can hold either and the reader has to
+	// be able to tell which is theirs. The move-up direction had this
+	// from round 9 and the pin-back direction did not, which is the same
+	// representative-versus-fact defect one branch over: `go mod edit
+	// -require` writes literally what it is handed, so a reader copying
+	// the bare hash fails this test again. Raised in review of #497.
+	backRev := threeBehind[0].rev
+	for _, want := range []string{
+		"v0.1.1-0.<stamp>-" + backRev,
+		"v0.0.0-<stamp>-" + backRev,
+	} {
+		if !strings.Contains(twoRev, want) {
+			t.Errorf("the pin-back remedy does not spell %q, so it names a bare "+
+				"commit the reader cannot hand to `go mod edit -require`. The "+
+				"Behind: list is not a substitute — it carries spellings only "+
+				"for the paths in THIS group, and the module being pinned back "+
+				"need not require any of them:\n\t%s", want, twoRev)
+		}
 	}
 
 	// THE TAGGED SPELLING AT THE OLDER COMMIT, which is the arm that
@@ -993,66 +995,67 @@ func TestTwoCommitsInOneSecondReachTheStringFallback(t *testing.T) {
 // whose stamp does not match its own commit is a real hazard the shape
 // check cannot see, and `go get` rejects it.
 //
-// A SHALLOW CLONE IS SAID, NOT PASSED OVER. actions/checkout defaults to
-// fetch-depth 1, so in CI the commit is usually absent and `cat-file -e`
-// would report every pin as unpublished. `git rev-parse
-// --is-shallow-repository` is the discriminator, and the honest
-// behaviour is the one the tagged-require path above already takes:
-// report what was skipped rather than pass silently. Raised in review of
-// #497.
+// A SHALLOW CLONE COSTS ONE CONJUNCT, NOT THE TEST. This gave up the
+// moment `git rev-parse --is-shallow-repository` said true — and
+// actions/checkout defaults to fetch-depth 1, so it never ran in CI at
+// all. Measured in the review that found it: in a shallow CI checkout
+// `git cat-file -e e5cdb56ececd^{commit}` and `git merge-base
+// --is-ancestor e5cdb56ececd origin/main` BOTH succeed, and the test
+// skipped anyway — a check reporting green while never reaching the
+// thing it is named for, which is the defect this whole file narrates.
+//
+// Shallowness is a property of the REPOSITORY; the question here is
+// per-REVISION, and a shallow clone still holds the commits near its
+// tip. So existence is asked per revision and an absent object is
+// reported-and-skipped only where shallowness explains it. `merge-base
+// --is-ancestor` is the one conjunct that needs the whole gate: a
+// truncated history answers it WRONGLY rather than not at all, so it is
+// the only thing shallowness costs. Raised in review of #497.
 func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
-	const core = "github.com/WonderForgeLabs/gooey"
-	own := func(path string) bool {
-		return path == core || strings.HasPrefix(path, core+"/")
-	}
-
 	git := func(args ...string) (string, error) {
 		out, err := exec.Command("git", args...).Output()
 		return strings.TrimSpace(string(out)), err
 	}
 
-	if shallow, err := git("rev-parse", "--is-shallow-repository"); err != nil {
+	shallow, err := git("rev-parse", "--is-shallow-repository")
+	if err != nil {
 		t.Skipf("git is not answering here (%v), so this check cannot run; the "+
 			"shape and skew checks above still did", err)
-	} else if shallow == "true" {
-		t.Skipf("this is a SHALLOW clone (actions/checkout's default is " +
-			"fetch-depth: 1), so the commits these pins name are not objects " +
-			"here and their absence would say nothing. Run with a full clone " +
-			"— fetch-depth: 0 — to check that every pin names a published " +
-			"commit; the shape and skew checks above ran either way")
 	}
-	if _, err := git("rev-parse", "--verify", "origin/main"); err != nil {
-		t.Skipf("no origin/main in this checkout (%v), so reachability cannot "+
-			"be asked; the shape and skew checks above still ran", err)
+	// Reachability needs a published branch to compare against AND a
+	// history deep enough for the answer to mean anything.
+	canReach := shallow != "true"
+	if canReach {
+		if _, err := git("rev-parse", "--verify", "origin/main"); err != nil {
+			canReach = false
+		}
 	}
 
-	// One entry per distinct revision, with a representative pin so the
-	// failure names a file rather than a hash.
-	at := map[string]string{}
-	for _, dir := range modulesIncludingTheRoot(t) {
-		cmd := exec.Command("go", "mod", "edit", "-json")
-		cmd.Dir = dir
-		body, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("%s: go mod edit -json: %v", dir, err)
+	// TWO POPULATIONS OUT OF ONE WALK, because the two questions have
+	// different keys and keying them alike is what left 35 of 36 pins
+	// unchecked. Existence and ancestry are properties of the COMMIT, so
+	// one representative per revision answers them. The stamp is a
+	// property of the version STRING — two spellings of one commit are
+	// two claims — so a transposed stamp in one module's pin sat in the
+	// same bucket as the correct one and was never read. Measured: the
+	// skew check cannot see it either (skewFrom keys on the trailing 12
+	// characters, so both land in one bucket), and `go work vendor`
+	// accepts it, so the whole root suite went green over a pin `go get`
+	// refuses. Raised in review of #497.
+	at := map[string]string{}        // revision → a representative pin
+	spellings := map[string]string{} // full version string → where it was found
+	all, _ := allOwnRequires(t)
+	for _, r := range all {
+		rev, ok := revisionOf(r.version)
+		if !ok {
+			continue // a plain tag; the guard above reports those
 		}
-		var mf struct {
-			Require []struct{ Path, Version string }
+		where := r.dir + " → " + r.path + " " + r.version
+		if _, seen := at[rev]; !seen {
+			at[rev] = where
 		}
-		if err := json.Unmarshal(body, &mf); err != nil {
-			t.Fatalf("%s: parsing go mod edit -json: %v", dir, err)
-		}
-		for _, r := range mf.Require {
-			if !own(r.Path) {
-				continue
-			}
-			rev, ok := revisionOf(r.Version)
-			if !ok {
-				continue // a plain tag; the guard above reports those
-			}
-			if _, seen := at[rev]; !seen {
-				at[rev] = dir + " → " + r.Path + " " + r.Version
-			}
+		if _, seen := spellings[r.version]; !seen {
+			spellings[r.version] = where
 		}
 	}
 	if len(at) == 0 {
@@ -1060,8 +1063,16 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 			"commit to look for — the guard above reports that state")
 	}
 
+	// Revisions whose object is genuinely not here. Reported once at the
+	// end rather than per pin, and only where shallowness explains it.
+	var absent []string
+	present := map[string]bool{}
 	for rev, where := range at {
 		if _, err := git("cat-file", "-e", rev+"^{commit}"); err != nil {
+			if shallow == "true" {
+				absent = append(absent, where)
+				continue
+			}
 			t.Errorf("%s pins commit %s, which is not a commit in this "+
 				"repository. `go get` of that module fails with \"unknown "+
 				"revision\" for everybody outside this workspace, and every "+
@@ -1069,12 +1080,25 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 				"tree-wide typo — `sed` is how these get rewritten", where, rev)
 			continue
 		}
+		present[rev] = true
+		if !canReach {
+			continue
+		}
 		if _, err := git("merge-base", "--is-ancestor", rev, "origin/main"); err != nil {
 			t.Errorf("%s pins commit %s, which exists here but is NOT an "+
 				"ancestor of origin/main — a branch commit, or one taken from "+
 				"an unmerged worktree head. A proxy can only serve what the "+
 				"published history contains", where, rev)
-			continue
+		}
+	}
+
+	// EVERY SPELLING, not one per commit. The stamp is the 14 digits of
+	// the version string, and two modules can name one commit with two
+	// different ones.
+	for version, where := range spellings {
+		rev, _ := revisionOf(version)
+		if !present[rev] {
+			continue // said below
 		}
 		// The stamp is the same commit's committer date, in UTC.
 		// `format-local` means "in TZ", so TZ is set on THIS command
@@ -1089,12 +1113,86 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 			continue
 		}
 		want := strings.TrimSpace(string(stamp))
-		if !strings.Contains(where, "-"+want+"-"+rev) {
+		if !strings.Contains(version, "-"+want+"-"+rev) {
 			t.Errorf("%s names commit %s with a stamp that is not that commit's "+
 				"committer date in UTC (%s). `go mod edit -require` writes "+
 				"literally what it is handed, so a hand-built pseudo-version "+
 				"can carry the wrong 14 digits and be refused by `go get` while "+
-				"passing every shape check here", where, rev, want)
+				"passing every shape check here — including the skew check, "+
+				"which buckets by commit and cannot see two stamps of one",
+				where, rev, want)
 		}
 	}
+
+	// SAID, NOT PASSED OVER, and named one by one: a reader has to be
+	// able to tell "checked and clean" from "not looked at".
+	if len(absent) > 0 {
+		t.Logf("this is a SHALLOW clone (actions/checkout's default is "+
+			"fetch-depth: 1) and %d of the %d pinned revisions are not objects "+
+			"here, so their existence, ancestry and stamp were NOT checked: %s. "+
+			"Run with fetch-depth: 0 to check them; everything else above ran",
+			len(absent), len(at), strings.Join(absent, "; "))
+	}
+	if !canReach {
+		t.Logf("ancestry of origin/main was NOT checked for any pin: the clone " +
+			"is shallow or has no origin/main, and a truncated history answers " +
+			"`merge-base --is-ancestor` wrongly rather than not at all. " +
+			"Existence and stamp ran for every revision present here")
+	}
+}
+
+// allOwnRequires is every require of this repository's own modules,
+// across the root module and every nested one, read TEXTUALLY.
+//
+// ONE POPULATION, TWO QUESTIONS. Two tests built this walk
+// independently — same command, same anonymous struct, same two
+// t.Fatalfs, same `own` predicate declared twice — and the divergence
+// was not cosmetic: the second copy keyed its map by revision where the
+// first keyed by module, which is how 35 of 36 pins came to be
+// unchecked. Asking two questions of one population makes them agree by
+// construction. Raised in review of #497.
+//
+// It returns the module directories too, because "the walk came back
+// empty" is a failure both callers have to be able to describe.
+func allOwnRequires(t *testing.T) (reqs []ownRequire, mods []string) {
+	t.Helper()
+	mods = modulesIncludingTheRoot(t)
+	if len(mods) == 0 {
+		t.Fatal("no modules found; the walk is wrong, not the tree")
+	}
+	for _, dir := range mods {
+		// `go mod edit -json` is textual — it reports what the file says
+		// rather than what the workspace would resolve, which is the whole
+		// point here. It is also how ci.yml reads the `go` directive, so
+		// this adds no dependency the repo does not already rely on.
+		cmd := exec.Command("go", "mod", "edit", "-json")
+		cmd.Dir = dir
+		body, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: go mod edit -json: %v", dir, err)
+		}
+		var mf struct {
+			Require []struct{ Path, Version string }
+		}
+		if err := json.Unmarshal(body, &mf); err != nil {
+			t.Fatalf("%s: parsing go mod edit -json: %v", dir, err)
+		}
+		for _, r := range mf.Require {
+			if !ownModule(r.Path) {
+				continue
+			}
+			reqs = append(reqs, ownRequire{dir, r.Path, r.Version})
+		}
+	}
+	return reqs, mods
+}
+
+// coreModule is this repository's own module path.
+const coreModule = "github.com/WonderForgeLabs/gooey"
+
+// ownModule reports whether path is core or a module under it. A sibling
+// is core's path plus a DIRECTORY, and prefixing with the slash is what
+// keeps a future `github.com/WonderForgeLabs/gooeyfoo` from matching.
+func ownModule(path string) bool {
+	return path == coreModule || strings.HasPrefix(path, coreModule+"/")
 }
