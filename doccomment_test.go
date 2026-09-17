@@ -312,13 +312,22 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 // only, so a prune here alone makes the two sets disagree. Measured, by
 // adding `|| name == "packs"` to the prune above:
 //
-//	doccomment_test.go:323: the canonical discovery finds
-//	packs/temporal-batch and this guard's walk does not …
+//	the canonical discovery finds packs/temporal-batch and this
+//	guard's walk does not …
 //
 // eight times, one per pack — while TestNoDocCommentNamesTheDeclaration-
 // BelowIt stayed GREEN, which is the half the old sentence had right:
 // the pruned modules drop out of `modules` too, so the floor itself has
 // nothing to complain about. That is exactly why this test exists.
+//
+// NO LINE NUMBER IN THAT TRANSCRIPT, for the reason this file gives
+// twice about counts. A pasted `file:line` is true when it is measured
+// and wrong the moment anything above it grows — and what grew here was
+// the comment doing the quoting, so it came to cite itself. That is this
+// file's own subject one level up, and nothing checks line numbers
+// inside Go comments the way TestEveryCitedTestNameResolves checks them
+// in CLAUDE.md. The message text identifies the assertion and cannot go
+// stale. Raised in review of #503.
 //
 // The real residual is one word away: a prune added to BOTH walks
 // shrinks the two sets together, and then nothing goes red. Writing the
@@ -440,9 +449,21 @@ func TestTheDocCommentGuardCatchesWhatItIsFor(t *testing.T) {
 		// wrong edit, which is how the block arm came to carry the
 		// neighbour arms' tail. Raised in review of #503.
 		wantMsg string
+		// wantExamined is how many doc comments docsExamined counts in
+		// this fixture, asserted EXACTLY rather than against zero.
+		//
+		// The two walks share a bound — `j+1 < len(g.Specs)` — and the
+		// comment on stolenComments' copy says they must move together.
+		// Nothing made them: docsExamined was only ever compared with
+		// zero, so widening its spec bound to `j >= 0` moved the
+		// tree-wide population from 4665 to 4691 with the whole suite
+		// green. An exact count per arm is what makes a bound changed on
+		// one side alone redden. Raised in review of #503.
+		wantExamined int
 	}{
 		{
-			name: "a function stolen from",
+			name:         "a function stolen from",
+			wantExamined: 1,
 			src: `// alpha does the alpha thing.
 func beta() {}
 
@@ -451,7 +472,8 @@ func alpha() {}
 			want: "alpha",
 		},
 		{
-			name: "an honest comment that names itself",
+			name:         "an honest comment that names itself",
+			wantExamined: 1,
 			src: `// alpha does the alpha thing.
 func alpha() {}
 
@@ -459,7 +481,8 @@ func beta() {}
 `,
 		},
 		{
-			name: "a comment naming something further down is not theft",
+			name:         "a comment naming something further down is not theft",
+			wantExamined: 1,
 			src: `// alpha calls gamma, eventually.
 func alpha() {}
 
@@ -475,9 +498,10 @@ func gamma() {}
 			// went unreported exactly the way a spaceless first line
 			// did. `any` and ItemsView's are the two the tree actually
 			// holds. Raised in review of #503.
-			name: "a backticked first word is still a first word",
-			src:  "// `alpha` does the alpha thing.\nfunc beta() {}\n\nfunc alpha() {}\n",
-			want: "alpha",
+			name:         "a backticked first word is still a first word",
+			wantExamined: 1,
+			src:          "// `alpha` does the alpha thing.\nfunc beta() {}\n\nfunc alpha() {}\n",
+			want:         "alpha",
 		},
 		{
 			// A FIRST LINE THAT IS JUST THE NAME, which is the shape that
@@ -489,7 +513,8 @@ func gamma() {}
 			// fixture holds it. Measured: with the Fields call replaced
 			// by a cut on a space, all seventeen other arms and the
 			// whole-tree guard stay GREEN. Raised in review of #503.
-			name: "a first line with no space in it is still a first word",
+			name:         "a first line with no space in it is still a first word",
+			wantExamined: 1,
 			src: `// alpha.
 //
 // The paragraph about it.
@@ -500,7 +525,8 @@ func alpha() {}
 			want: "alpha",
 		},
 		{
-			name: "a possessive first word is still a first word",
+			name:         "a possessive first word is still a first word",
+			wantExamined: 1,
 			src: `// alpha's rows are measured before anything is placed.
 func beta() {}
 
@@ -513,7 +539,8 @@ func alpha() {}
 			// arm that says so: trimming "s" as a character would turn
 			// specs into spec and report a theft of a name the file does
 			// declare, one line down.
-			name: "a plural first word is not a possessive",
+			name:         "a plural first word is not a possessive",
+			wantExamined: 1,
 			src: `// specs are read in order.
 func specs() {}
 
@@ -526,7 +553,8 @@ func spec() {}
 			// rule used to scan the whole block and announce whatever it
 			// found as "the declaration DIRECTLY BELOW it" — five
 			// entries from where the name was. Raised in review of #503.
-			name: "the first entry of the block directly below is theft",
+			name:         "the first entry of the block directly below is theft",
+			wantExamined: 1,
 			src: `// alpha is the alpha table.
 func beta() {}
 
@@ -538,7 +566,8 @@ var (
 			want: "alpha",
 		},
 		{
-			name: "a later entry of the block below it is a cross reference",
+			name:         "a later entry of the block below it is a cross reference",
+			wantExamined: 1,
 			src: `// alpha is the alpha table.
 func beta() {}
 
@@ -553,7 +582,8 @@ var (
 			// THE BLOCK CASE. Nothing about this is different in kind and
 			// the walk could not see it: f.Decls has ONE entry for the
 			// whole const block.
-			name: "a const stolen from inside a block",
+			name:         "a const stolen from inside a block",
+			wantExamined: 1,
 			src: `const (
 	// KindAlpha is the alpha kind.
 	KindBeta = "beta"
@@ -564,7 +594,8 @@ var (
 			want: "KindAlpha",
 		},
 		{
-			name: "an honest block",
+			name:         "an honest block",
+			wantExamined: 1,
 			src: `const (
 	// KindAlpha is the alpha kind.
 	KindAlpha = "alpha"
@@ -575,7 +606,8 @@ var (
 `,
 		},
 		{
-			name: "a var stolen from inside a block",
+			name:         "a var stolen from inside a block",
+			wantExamined: 1,
 			src: `var (
 	// alpha is the alpha table.
 	beta = map[string]int{}
@@ -592,7 +624,8 @@ var (
 			// the spec-level arm cannot see it because the first spec's
 			// Doc is nil. It is the shape an insertion at the TOP of a
 			// documented block leaves behind.
-			name: "a block's doc names a later entry of itself",
+			name:         "a block's doc names a later entry of itself",
+			wantExamined: 1,
 			src: `// fuzzyGap is per character skipped.
 const (
 	fuzzyRun      = 3
@@ -612,7 +645,8 @@ const (
 			// not see while it tested exactly one neighbour — the hole
 			// the block-doc arm's comment argues must not exist at this
 			// level either. Silent before review of #503.
-			name: "a spec's doc names a sibling two entries down",
+			name:         "a spec's doc names a sibling two entries down",
+			wantExamined: 1,
 			src: `const (
 	// KindAlpha is the alpha kind.
 	KindBeta  = "beta"
@@ -635,7 +669,8 @@ const (
 			// signature is identical to a theft by insertion — which is
 			// the point of having it here, since a reader looking for
 			// their own case will be looking for this one.
-			name: "a lost blank line merged two comment groups",
+			name:         "a lost blank line merged two comment groups",
+			wantExamined: 1,
 			src: `// alpha is the alpha thing, and this paragraph is about it.
 // beta is a different thing entirely, and the blank line that used to
 // separate these two groups is gone.
@@ -652,7 +687,8 @@ func alpha() {}
 			// matched no declaration, and the theft went unreported —
 			// the false NEGATIVE the "cannot invent a match" argument
 			// does not cover. Raised in review of #503.
-			name: "a leading underscore is part of the identifier",
+			name:         "a leading underscore is part of the identifier",
+			wantExamined: 1,
 			src: `// _handler dispatches the request.
 func beta() {}
 
@@ -667,7 +703,8 @@ func _handler() {}
 			// above the Measure it was written for, and the guard was
 			// green over it for as long as documented() checked
 			// d.Recv == nil.
-			name: "a method stolen from",
+			name:         "a method stolen from",
+			wantExamined: 1,
 			src: `type pane struct{}
 
 // Measure reserves the ring.
@@ -678,13 +715,82 @@ func (p *pane) Measure() int { return 2 }
 			want: "Measure",
 		},
 		{
+			// A TYPE, which was the one declaration kind no fixture
+			// reached. The *ast.TypeSpec arms of documented,
+			// documentedSpec and specDeclares were exercised only by the
+			// tree-wide corpus, which is clean — so neutering any of the
+			// three left the whole root suite green, and neutering
+			// documented's dropped the examined population by 518 doc
+			// comments, 11% of the tree, with nothing but a t.Logf to
+			// say so. Raised in review of #503.
+			name:         "a type stolen from",
+			wantExamined: 1,
+			src: `// Alpha is the alpha thing.
+type Beta struct{}
+
+type Alpha struct{}
+`,
+			want: "Alpha",
+		},
+		{
+			name:         "a type stolen from inside a block",
+			wantExamined: 1,
+			src: `type (
+	// Alpha is the alpha thing.
+	Beta struct{}
+
+	Alpha struct{}
+)
+`,
+			want: "Alpha",
+		},
+		{
+			// THE LAST DECLARATION IS THE OTHER BOUNDARY, and the only
+			// arm whose population is ZERO. A doc comment on the last
+			// declaration in a file cannot have been separated from its
+			// subject by an insertion — there is nothing below it to
+			// insert — so the rule does not judge it and the population
+			// must not count it. That bound was unpinned: dropping
+			// `i+1 < len(f.Decls)` from docsExamined left every other arm
+			// green. Raised in review of #503.
+			name:         "a doc on the last declaration is outside the population",
+			wantExamined: 0,
+			src: `func beta() {}
+
+// alpha does the alpha thing.
+func alpha() {}
+`,
+		},
+		{
+			// AN HONEST TYPE BLOCK, AND THE ONE ARM WHOSE POPULATION IS
+			// NOT ONE. Three documented specs, of which the rule judges
+			// the first two — the last is the boundary the block's
+			// closing paren draws. It is what makes wantExamined a
+			// measurement rather than a constant: widen docsExamined's
+			// spec bound and this arm counts three.
+			name:         "an honest type block",
+			wantExamined: 2,
+			src: `type (
+	// Alpha is the alpha thing.
+	Alpha struct{}
+
+	// Beta is the beta thing.
+	Beta struct{}
+
+	// Gamma is the gamma thing.
+	Gamma struct{}
+)
+`,
+		},
+		{
 			// THE RECEIVER IS NOT PART OF THE QUESTION. A method's doc
 			// naming its own method is honest whatever it hangs off,
 			// and the exclusion this replaced was argued from telling
 			// two Measures apart — which this rule never has to do,
 			// because it only ever compares against the declaration
 			// directly below.
-			name: "an honest method that names itself",
+			name:         "an honest method that names itself",
+			wantExamined: 1,
 			src: `type pane struct{}
 
 // Measure reserves the ring.
@@ -723,13 +829,20 @@ func (p *pane) inset() int { return 1 }
 			case tc.wantMsg != "" && !strings.Contains(got[0], tc.wantMsg):
 				t.Errorf("reported\n\t%q\nwant it to carry\n\t%q", got[0], tc.wantMsg)
 			}
-			// AND THE POPULATION COUNT SEES THE SAME DOCUMENTS. A walk
-			// that reported correctly while counting nothing would leave
-			// the non-vacuity floor above resting on other files.
-			if n := docsExamined(f); n == 0 {
-				t.Errorf("docsExamined found nothing to rule on in a fixture the rule " +
-					"itself reads, so the floor in the guard above is measuring a " +
-					"different population from the check")
+			// AND THE POPULATION COUNT SEES THE SAME DOCUMENTS, to the
+			// exact number. A walk that reported correctly while counting
+			// nothing would leave the non-vacuity floor above resting on
+			// other files — but "not nothing" was the whole assertion,
+			// and it cannot see a bound that moved on one side only.
+			// Every arm's count is derivable by hand from the two rules,
+			// which is why it is written down rather than recorded from a
+			// run. Raised in review of #503.
+			if n := docsExamined(f); n != tc.wantExamined {
+				t.Errorf("docsExamined counts %d doc comments in this fixture, want "+
+					"%d. The population and the rule share the `j+1 < len(g.Specs)` "+
+					"bound, and a bound moved on one side alone changes what the "+
+					"floor above MEANS without changing whether it passes", n,
+					tc.wantExamined)
 			}
 		})
 	}
