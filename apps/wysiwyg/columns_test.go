@@ -320,9 +320,25 @@ func TestAStyleListIsSizedInColumns(t *testing.T) {
 // the whole leading "aa/". Reserving two costs a column of packing at
 // the boundary ("…/cc" where "…bbbb/cc" would have fitted) and buys a
 // row that never says the wrong thing about what it dropped.
+//
+// THE GUARANTEE HAS A FLOOR, and the loop below used to stop one width
+// above it. It holds while "…/" plus the last segment fits in w — four
+// columns for this fixture — and at 3 there is no answer that both fits
+// and keeps the separator: shortPath("aa/bbbb/cc", 3) = "…cc". That is
+// not a bounds bug, it is where the format runs out, and a test that
+// walks 9, 8, 7 and stops leaves the reader to guess whether the
+// guarantee is unconditional. It is not. Raised in review of #524.
 func TestAShortenedPathSaysWhatItDropped(t *testing.T) {
 	const p = "aa/bbbb/cc" // ten columns; the last segment fits every width below
-	for _, w := range []int{9, 8, 7} {
+	// Down to 4: "…/cc" is four columns, so 4 is the last width at which
+	// the separator can be kept at all. 8 through 4 are the SAME call —
+	// elide("cc", w) taking its first arm — so they are the range the
+	// format is claimed over rather than five separate arms; 9 is the
+	// only width here that keeps "bbbb", and 3, below, is the only step
+	// that changes the answer. Measured: with elide's first arm widened
+	// to w-1, the loop stays green at every width in it and only the
+	// boundary below reddens.
+	for _, w := range []int{9, 8, 7, 6, 5, 4} {
 		got := shortPath(p, w)
 		if n := render.StringWidth(got); n > w {
 			t.Fatalf("shortPath(%q, %d) = %q, %d columns — a bounds failure, which "+
@@ -334,5 +350,15 @@ func TestAShortenedPathSaysWhatItDropped(t *testing.T) {
 				"the separator in \"…/\" is what says. Without it the row reads as a "+
 				"cut inside the segment that survived.", p, w, got)
 		}
+	}
+	// THE OTHER SIDE OF THE BOUNDARY, so the loop above is a claim about
+	// a range rather than about wherever it happened to stop. One column
+	// below "…/cc" the separator cannot be paid for, and asserting that
+	// is what makes 4 the floor instead of the smallest number anyone
+	// bothered to try.
+	if got := shortPath(p, 3); got != "…cc" {
+		t.Errorf("shortPath(%q, 3) = %q, want %q: three columns cannot hold "+
+			"\"…/\" and a two-column segment both, so the format above is bounded "+
+			"and this is where it ends", p, got, "…cc")
 	}
 }

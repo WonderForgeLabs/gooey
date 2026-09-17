@@ -349,13 +349,35 @@ func shortPath(p string, w int) string {
 		// the whole leading `aa/`. Reserving two also makes this
 		// condition and elide's first branch the SAME predicate — but
 		// only from the SECOND iteration on, where `out` is the previous
-		// `next` and has already passed this test. On the first, `out` is
-		// the last segment straight out of Split with nothing having
-		// measured it, and at the return below it is the whole path; both
-		// reach elide's cut arm, which is what the wide half of
-		// TestShortPathStillKeepsTheTail exercises. The cut arm is the
-		// last segment's, not dead code. Found in review of #524,
-		// corrected in the round after.
+		// `next` and has already passed this test.
+		//
+		// WHICH ARM THE FIRST ITERATION REACHES IS THE LAST SEGMENT'S
+		// WIDTH, not this condition. `out` is then that segment straight
+		// out of Split with nothing having measured it, so it takes
+		// elide's "…/" arm whenever the segment fits in w-2 and the cut
+		// arm only when it does not:
+		//
+		//	shortPath("aa/bbbb/cc", 7) = "…/cc"   first iteration, FIRST arm
+		//	shortPath("aa/bbbb/cc", 3) = "…cc"    first iteration, CUT arm
+		//
+		// An earlier version of this comment said the first iteration and
+		// the return below BOTH reach the cut arm. Only the second does
+		// unconditionally — and that return is reached only when the path
+		// holds no "/" at all: any separator makes this loop run, and its
+		// last pass has `next == p`, which cannot satisfy this condition
+		// because `render.StringWidth(p) > w` is already established
+		// above. The cut arm is live either way, which is what the wide
+		// half of TestShortPathStillKeepsTheTail exercises; it is not
+		// dead code.
+		//
+		// AND THE FORMAT IT BUYS HAS A FLOOR. "…/" + the last segment is
+		// what says leading SEGMENTS went, and it is the answer only
+		// while that string fits in w. Below it there is no room for the
+		// separator and the row degrades to elide's cut arm —
+		// shortPath("aa/bbbb/cc", 3) = "…cc", the only answer that fits
+		// three columns, and the one the format exists to avoid.
+		// TestAShortenedPathSaysWhatItDropped runs down to that boundary
+		// and asserts both sides of it. Found in review of #524, twice.
 		if render.StringWidth(next)+2 > w {
 			return elide(out, w)
 		}
@@ -370,7 +392,10 @@ func shortPath(p string, w int) string {
 //
 //	"…/" + s          when s fits in w-2 — the common path, and what
 //	                  every ordinary row in the explorer gets
-//	"…" + a tail of s when it does not, keeping the LAST w-1 columns
+//	"…" + a tail of s when it does not, keeping AT MOST the last w-1
+//	                  columns — the walk stops at a cluster boundary, so
+//	                  it comes up short whenever no cluster begins exactly
+//	                  there: elide("世世世世世", 6) = "…世世", five of six
 //	"…" alone         when even the trailing CLUSTER is wider than w-1,
 //	                  so no tail fits beside the ellipsis — and, below
 //	                  w == 2, whatever ClipCols can lay of it
