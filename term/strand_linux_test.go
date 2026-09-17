@@ -852,12 +852,34 @@ func loneEscAttempt(t *testing.T) bool {
 	}
 
 	// ONE AND A HALF TIMEOUTS from `wrote`, which is what separates the
-	// two passes. A healthy decoder emits the Esc at arm+EscTimeout, and
-	// arm is within EscTimeout/4 of `wrote` by the bail above, so it
-	// lands by wrote+50ms. The mutation cannot emit before
-	// arm+PasteMarkerGrace*EscTimeout, i.e. wrote+80ms at the earliest.
-	// 60ms sits between them with 10ms of slack on the side that must
-	// not flake and 20ms of margin on the side that must not pass.
+	// two passes. A healthy decoder emits the Esc at arm+EscTimeout; the
+	// mutation cannot emit before arm+PasteMarkerGrace*EscTimeout. 60ms
+	// sits between arm+40ms and arm+80ms with margin on both sides.
+	//
+	// THE QUARTER-TIMEOUT IS A MARGIN, NOT A BOUND ON THE ARM, and this
+	// comment claimed the bound until round sixteen. The bail two lines
+	// up compares `held` — the moment THIS goroutine read the 'b' off a
+	// BUFFERED channel — against `wrote`, so it bounds held-wrote and
+	// nothing else. The arm is set by the decoder AFTER its send
+	// (`out <- ev`, keys.go:179, then `timer.Reset`, keys.go:203), and a
+	// deschedule in between puts the arm arbitrarily far after `held`
+	// and after `wrote` with the bail seeing none of it. `arm >= wrote`
+	// is derivable and is the LOWER bound; the budget's soundness needs
+	// the upper one. splitMarkerAttempt:566 and partialProgressAttempt
+	// both say exactly this about their own clocks; this was the third
+	// instance and the only one still asserting the magnitude.
+	//
+	// THE RESIDUE IS INCONCLUSIVENESS, NOT A VACUOUS PASS, which is the
+	// one way this helper differs from its two siblings and is worth
+	// stating in the same breath. A large deschedule pushes a HEALTHY
+	// Esc past wrote+60ms, nextOrNone times out, and the attempt returns
+	// false — so the loop retries, and twenty of them exhausting is a
+	// Fatal naming both causes. It cannot go the other way: the
+	// drainLive mutation emits no earlier than arm+2*EscTimeout >=
+	// wrote+80ms, which is outside this budget however the arm drifted,
+	// so no amount of scheduling noise turns the mutation green here.
+	// The spec carries this beside splitMarkerAttempt's and
+	// partialProgressAttempt's. Raised in review of #445.
 	ev, got := nextOrNone(evs, EscTimeout+EscTimeout/2-time.Since(wrote))
 	if !got {
 		return false // late; it may be the machine, and a retry is expected to say

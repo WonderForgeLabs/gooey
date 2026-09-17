@@ -144,8 +144,13 @@ gives no cover against it.
 
 What closes it is not a tripwire but an invariant, because a tripwire
 needs someone to trip it: under `idle`, `Decode` answers "incomplete"
-only where a byte can still resolve it, so the drain loop cannot be told
-to wait for a byte that is not coming. `CompanionLeaked()` and
+only where a byte *could* still resolve it — which is not the same as
+one arriving. For the split-marker half that is a bound, so the drain
+loop cannot be told to wait for a byte that is not coming. For the
+open-paste half it is not: that member waits indefinitely by design, and
+the two paragraphs below say so. `docs/architecture.md` was narrowed
+this way in the same commit and this copy of the sentence was not;
+corrected in review of #445. `CompanionLeaked()` and
 `DecoderLeaked` have watchdogs precisely because their failures are
 observable; this one is not, so it is designed out instead of watched
 for.

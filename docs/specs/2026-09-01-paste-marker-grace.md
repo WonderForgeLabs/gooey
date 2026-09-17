@@ -122,8 +122,24 @@ buy one more grace period gets two. (Raised in review of
 [PR #445](https://github.com/WonderForgeLabs/gooey/pull/445), where the
 constant's own doc comment had the looser phrasing.)
 
-Lower is not available: at 1 the FIRST timeout resolves, which is what `idle`
-already means, and the grace would not exist. Higher buys a marker split across
+Lower is not available, and **the two values below it fail differently** — so
+both are named here rather than left to be derived, because this record is the
+document `term/keys.go` and `TestPasteMarkerGraceHasAFloor` point back to.
+
+- At **1** the FIRST timeout resolves, which is what `idle` already means, and
+  the grace would not exist. A marker split across two reads resolves to Esc
+  and its payload arrives as keystrokes — #419's symptom.
+- At **0** the loop's re-arm condition (`stalls < PasteMarkerGrace`) is false on
+  the very first iteration, so `timer.Reset` is never reached and the single
+  arming `time.NewTimer` did is consumed by the `Stop` above it. **The escape
+  timeout stops existing altogether**: a lone Esc, a truncated `ESC O` and a
+  half-written CSI are each held for the life of the process. That is a worse
+  failure than 1's and it arrives by a different route, which is why stating
+  only the value-1 story left a reader who landed on 0 with the wrong
+  diagnosis. The mutation table's last row measures it; this is the normative
+  statement of it. Raised in review of #445.
+
+Higher buys a marker split across
 a slower link, at the price of the Esc key taking that long to arrive and of
 the deaf window being that much wider if something new ever lands in this
 shape.
@@ -259,10 +275,16 @@ Raised in review of #445.
 **Every row is re-derived by running its mutation**, never edited by hand, and
 the difference is not cosmetic. Earlier versions said "the term strand test" -
 a phrase that named one test when `strand_linux_test.go` held one, and names
-none of four now - and undercounted two rows: withdrawing the grace turns the
+none of the several it holds now (`grep -c '^func Test'`) - and undercounted
+two rows: withdrawing the grace turns the
 tty-close test red as well, since with the grace never withdrawn that route
 cannot resolve a held prefix either. A table whose whole value is that it can
 be re-run has to be re-run. Corrected in review of #445.
+
+That sentence carried a count of its own - "names none of four now" - and it
+was four behind by round sixteen, inside the paragraph whose subject is prose
+counts going stale. Nothing about the point needed the number, so it is a
+`grep` now. Corrected in review of #445.
 
 ### One pty test refuses to pass vacuously; the other narrows the window and names the residue
 
@@ -345,6 +367,21 @@ returns **true** having exercised nothing - a vacuous pass that stops the retry
 loop, under the mutation as well as under the fix. The helper's comment used
 to claim the bound held "on either side", citing `splitMarkerAttempt`, whose
 comment establishes only the direction. Corrected in review of #445.
+
+`loneEscAttempt` is the third helper with an unbounded arm, and **its residue
+runs the other way**, which is why it is worth stating separately rather than
+folding into the two above. Its bail compares `held` — this goroutine's read
+off a buffered channel — against `wrote`, so it bounds `held - wrote` and says
+nothing about `arm - wrote`; the decoder sends before it re-arms
+(`term/keys.go:179`, then `:203`), so a deschedule in between puts the arm
+arbitrarily late. A healthy Esc then arrives past the 60ms budget,
+`nextOrNone` times out and the attempt returns **false**: the loop retries, and
+twenty exhausting is a Fatal that names both causes. It cannot fail the other
+way, and that is derivable rather than hoped for — the `drainLive` mutation
+emits no earlier than `arm + 2*EscTimeout >= wrote + 80ms`, outside this budget
+however the arm drifted. So the residue here is a red suite on a loaded
+machine, never a vacuous green. The helper's comment claimed the bound until
+round sixteen; corrected in review of #445.
 
 **And the sentence that followed this is retired, by a test the same branch
 wrote.** It said there is no cheap observable for "the first idle timeout
