@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -279,9 +280,9 @@ var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 // re-deriving its own copy and the wrapper's only caller went with it.
 //
 // THE SIDE IS A PARAMETER, and the parameter is the whole of finding
-// #490 round 9. The forbid guard
-// adjudicates a PROPER SUBSET of the inheriting side, so it counts only
-// that side. The require guard asks a different question — "does this
+// #490 round 9. The forbid guard adjudicates a PROPER SUBSET of the
+// inheriting side, so it counts only that side. The require guard asks
+// a different question — "does this
 // paragraph answer what crosses by naming fields" — and `Values` and
 // `Named` in one sentence is exactly that answer, given from the
 // isolating side. Measured: docs/architecture.md's second answering
@@ -426,40 +427,16 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// deleted with both guards green. Measured in review of
 			// #490.
 			//
-			// A WORD BOUNDARY, NOT strings.Contains("cross"). The
-			// obvious widening was measured first and is wrong:
-			// "across" contains "cross", and
-			// docs/markup-reference.md:889 says "including across the
-			// control boundary" while backticking `Components`,
-			// `Handlers` and `Rules` as an ANALOGY rather than an
-			// enumeration. With a substring trigger that paragraph is
-			// reported as leaving out seven fields — one false positive
-			// out of the whole corpus, and noise a reader learns to
-			// widen is the failure this guard's own doc warns about.
+			// The trigger is a word boundary rather than a substring,
+			// and what that buys is on answersWhatCrosses — stated
+			// once, for backtickedPartition's reason.
 			if !enumeratesThePartition(flat) {
 				continue
 			}
+			// Backticked or bare, on the inheriting side: see
+			// namedPartitionFields, which owns both spellings and the
+			// argument for each.
 			named := namedPartitionFields(flat, true)
-			// AND THE UNFORMATTED SPELLING OF THE SAME LIST. Requiring
-			// backticks made the guard a check on markup: "styles,
-			// registered components, handlers, includes" is the four-of-
-			// ten answer #314 is about, written in prose, and it sat in
-			// docs/markup-reference.md's <ItemsView.ItemTemplate>
-			// paragraph with only `xmlns` in backticks — invisible here
-			// for two rounds.
-			//
-			// Matching bare names one at a time was measured first and
-			// rejected: case-insensitively, "components" and "styles"
-			// are English, and the corpus answered with two paragraphs
-			// that MENTION fields rather than answer the crossing
-			// question (the `Elements`-cost paragraph in the reference,
-			// and the Declared registry note in
-			// docs/specs/2026-08-10-mcp-server.md). Noise a reader
-			// learns to widen is the failure this guard's own doc warns
-			// about, so the signature is the RUN instead: three or more
-			// partition names in one comma-or-and list. A sentence that
-			// mentions a field does not produce one; a stale answer to
-			// "what crosses" always does. Raised in review of #490.
 			checked++
 			if strings.Contains(flat, "boundaryPartition") {
 				continue // cites the source rather than copying it
@@ -491,6 +468,32 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 	}
 }
 
+// THE UNFORMATTED SPELLING IS HALF OF IT, and leaving it out made the
+// guard a check on markup rather than on prose: "styles, registered
+// components, handlers, includes" is the four-of-ten answer #314 is
+// about, written out, and it sat in docs/markup-reference.md's
+// <ItemsView.ItemTemplate> paragraph with only `xmlns` in backticks —
+// invisible for two rounds.
+//
+// Matching bare names ONE AT A TIME was measured first and rejected:
+// case-insensitively, "components" and "styles" are English, and the
+// corpus answered with two paragraphs that MENTION fields rather than
+// answer the crossing question (the `Elements`-cost paragraph in the
+// reference, and the Declared registry note in
+// docs/specs/2026-08-10-mcp-server.md). Noise a reader learns to widen
+// is the failure this guard's own doc warns about, so the signature is
+// the RUN instead — see partitionRunSide. A sentence that mentions a
+// field does not produce one; a stale answer to "what crosses" always
+// does.
+//
+// THIS PARAGRAPH SAT ABOVE A `checked++` until #490's review. The
+// rewrite that made these functions moved the logic and left its
+// twenty-line justification at the old call site, where the statement
+// underneath it was a counter — so a reader auditing why bare names are
+// matched at all, and what the one-at-a-time widening cost, landed on
+// an increment. The same defect the same commit fixed one function
+// over. Raised in review of #490.
+//
 // partitionRunSide is every partition field on the side asked for that
 // is named inside one comma-or-and list of three or more of them,
 // case-insensitively — the shape of a prose answer to "what crosses a
@@ -502,6 +505,26 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // differently"), and the separators a list uses are short. The gap is
 // measured in the flattened paragraph, so a list wrapped over three
 // source lines is still one run. Raised in review of #490.
+// partitionWords is one `\bname\b` pattern per partition field, built
+// once.
+//
+// COMPILED PER CALL until #490's review, which is the same memoisation
+// this file already applies to declaredIndex and goCommentIndex, at the
+// one site still paying it: ~12 compiles per call, once per
+// trigger-matching paragraph of the whole ../docs walk and TWICE for
+// every paragraph that clears the bar, since enumeratesThePartition and
+// the namedPartitionFields beside it each re-derive the run. Measured:
+// TestNoPageEnumeratesTheBoundaryPartition 0.46s -> 0.21s and
+// TestEveryPageThatAnswersWhatCrossesCitesThePartition 0.10s -> 0.05s,
+// against a 4.5s markup suite. Raised in review of #490.
+var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
+	out := map[string]*regexp.Regexp{}
+	for name := range boundaryPartition {
+		out[name] = regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
+	}
+	return out
+})
+
 func partitionRunSide(flat string, inheritingOnly bool) []string {
 	const maxGap = 30 // ", registered " and friends; not a clause
 
@@ -515,8 +538,7 @@ func partitionRunSide(flat string, inheritingOnly bool) []string {
 		if (inheritingOnly && !rule.inherit) || !isExportedField(name) {
 			continue
 		}
-		word := regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
-		for _, m := range word.FindAllStringIndex(lower, -1) {
+		for _, m := range partitionWords()[name].FindAllStringIndex(lower, -1) {
 			hits = append(hits, hit{name, m[0], m[1]})
 		}
 	}

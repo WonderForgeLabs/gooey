@@ -136,7 +136,7 @@ var rowPartition = map[string]struct {
 	"Rules":      {true, "a validation rule is a registration like the rest"},
 	"Includes":   {true, "a template may instantiate a control"},
 	"Dispatcher": {true, "one UI goroutine, one dispatcher"},
-	"Dir":        {true, "the row's markup is in the same document directory"},
+	"Dir":        {true, "Dir is the PAGE's host-side anchor and a row does not change which page it is in"},
 	"Variant":    {true, "the pixel protocol is a property of the app"},
 	"controls": {false, "RESET, because a row is a legitimate re-entry and " +
 		"identity cannot tell a terminating recursive template from a " +
