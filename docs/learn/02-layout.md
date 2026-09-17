@@ -187,6 +187,14 @@ control that is invisible *and* inert, and the press does not stop there,
 it goes through. Only the NODE is skipped: a Visible child of a Hidden
 parent is still on screen and still hittable.
 
+**That node-only rule is Hidden's alone.** `Collapsed` returns from the
+hit walk before it descends into the children at all (`mouse.go`, the
+`Visibility == Collapsed` arm, which sits above the bounds check), so a
+Visible child of a Collapsed parent is not hittable — the whole subtree
+is out of the walk, exactly as it is out of layout and out of focus
+traversal. If you want the space back but the children still reachable,
+neither value does that; move them.
+
 This step used to say Hidden "paints nothing", and that is retired: a
 hidden LEAF still pre-clears its own bounds, and so erases a visible
 sibling it overlaps ([#508](https://github.com/WonderForgeLabs/gooey/issues/508)).

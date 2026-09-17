@@ -55,8 +55,16 @@ import (
 //
 // Raised in review of #458.
 func TestNoFileTeachesTheRetiredOverlayRule(t *testing.T) {
-	scanForRetiredRule(t, statesTheRetiredRule, prefilterWords, qualifierRes,
-		supersededOf, scanAdvice)
+	scanForRetiredRule(t, zOrderRule)
+}
+
+var zOrderRule = rulePlane{
+	states:    statesTheRetiredRule,
+	prefilter: prefilterWords,
+	quals:     qualifierRes,
+	of:        supersededOf,
+	plane:     planeZOrder,
+	advice:    scanAdvice,
 }
 
 // scanAdvice is NAMED rather than written at the call, because
@@ -92,31 +100,70 @@ const scanAdvice = "Overlays are lifted out of document order into a paint " +
 // Raised in review of #478.
 func TestNoFileTeachesTheRetiredInputRule(t *testing.T) {
 	scanFilesForResidue(t, docFiles(t))
-	scanForRetiredRule(t, statesTheRetiredInputRule, inputPrefilterWords, inputQualifierRes,
-		supersededOfInput,
-		"FocusManager.HitTest asks overlayOf since #465 — the same "+
-			"membership-and-rank rule paint derives its order from — so "+
-			"the hit walk is lifted, it does know about the marker, and "+
-			"a later ordinary sibling does not take the press from an "+
-			"overlay. Either state the current rule, or mark the "+
-			"sentence as history; the markers this test accepts are in "+
-			"inputQualifierRes — note that a #437/#439 citation or the "+
-			"bare word \"lifted\" is NOT one of them, because a paint "+
-			"correction says nothing about the hit walk and \"is not "+
-			"lifted\" would qualify itself.")
+	scanForRetiredRule(t, inputRule)
 }
 
-// scanForRetiredRule is the walk both guards run, differing only in the
-// patterns, the prefilter, and the advice in the failure.
+var inputRule = rulePlane{
+	states:    statesTheRetiredInputRule,
+	prefilter: inputPrefilterWords,
+	quals:     inputQualifierRes,
+	of:        supersededOfInput,
+	plane:     planeInput,
+	advice: "FocusManager.HitTest asks overlayOf since #465 — the same " +
+		"membership-and-rank rule paint derives its order from — so " +
+		"the hit walk is lifted, it does know about the marker, and " +
+		"a later ordinary sibling does not take the press from an " +
+		"overlay. Either state the current rule, or mark the " +
+		"sentence as history; the markers this test accepts are in " +
+		"inputQualifierRes — note that a #437/#439 citation or the " +
+		"bare word \"lifted\" is NOT one of them, because a paint " +
+		"correction says nothing about the hit walk and \"is not " +
+		"lifted\" would qualify itself.",
+}
+
+// The three planes this walk backs, named in the failure so a report
+// says which rule it found. The advice string says what to write
+// instead and was always per-plane; the FIRST line was not, and read
+// "a retired z-order rule" over a Visibility sentence with no z-order
+// in it — which sends the reader to the wrong contract before they
+// reach the advice. This file's whole thesis is that a message naming
+// the wrong rule costs more than no message. Raised in review of #458.
+const (
+	planeZOrder     = "z-order"
+	planeInput      = "hit-walk"
+	planeVisibility = "Visibility"
+)
+
+// rulePlane is one plane's whole configuration, and it is a VALUE
+// rather than six positional arguments for the reason scanFilesForResidue
+// is a function rather than two argument lists: a pairing spelled out at
+// every call site can be got wrong at one of them silently. Measured —
+// with the plane passed positionally, swapping planeVisibility for
+// planeZOrder at TestNoFileTeachesTheRetiredHiddenWording's call left
+// every test in this file green, including the one written to pin the
+// plane, because that test spelled the pairing out a second time. Bundled
+// so the guard and its pin read the SAME value. Raised in review of #458.
+type rulePlane struct {
+	states    func(string) bool
+	prefilter []string
+	quals     []*regexp.Regexp
+	of        *regexp.Regexp
+	plane     string
+	advice    string
+}
+
+// scanForRetiredRule is the walk all three guards run, differing only in
+// the patterns, the prefilter, the plane's name and the advice in the
+// failure.
 //
 // It was the body of TestNoFileTeachesTheRetiredOverlayRule until #478
 // needed a second plane. Copying it would have copied the join, the span
 // arithmetic, the superseded-head exemption and the prefilter contract —
 // four subtleties this file spent a review each on — into a place where
 // only one copy would receive the next fix.
-func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) {
+func scanForRetiredRule(t *testing.T, r rulePlane) {
 	t.Helper()
-	for _, p := range scanFilesForRetiredRule(t, docFiles(t), states, prefilter, quals, of, advice) {
+	for _, p := range scanFilesForRetiredRule(t, docFiles(t), r) {
 		t.Error(p)
 	}
 }
@@ -153,7 +200,7 @@ func scanForRetiredRule(t *testing.T, states func(string) bool, prefilter []stri
 //
 // Raised in review of #458, generalised to two planes and turned from
 // reporting to returning in review of #478.
-func scanFilesForRetiredRule(t testing.TB, files []string, states func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) []string {
+func scanFilesForRetiredRule(t testing.TB, files []string, r rulePlane) []string {
 	t.Helper()
 	found := make([][]string, len(files))
 	errs := make([]error, len(files))
@@ -166,7 +213,7 @@ func scanFilesForRetiredRule(t testing.TB, files []string, states func(string) b
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			found[i], errs[i] = retiredRuleProblems(f, states, prefilter, quals, of, advice)
+			found[i], errs[i] = retiredRuleProblems(f, r)
 		}()
 	}
 	wg.Wait()
@@ -185,7 +232,12 @@ func scanFilesForRetiredRule(t testing.TB, files []string, states func(string) b
 
 // retiredRuleProblems is the per-file half, pure so it can run off the
 // test's goroutine: it returns what it found rather than reporting it.
-func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []string, quals []*regexp.Regexp, of *regexp.Regexp, advice string) ([]string, error) {
+func retiredRuleProblems(f string, r rulePlane) ([]string, error) {
+	// Named locally so the walk below, which several rounds have argued
+	// line by line, reads as it did when those arguments were made.
+	statesIt, prefilter, quals, of := r.states, r.prefilter, r.quals, r.of
+	plane, advice := r.plane, r.advice
+
 	var problems []string
 	{
 		body, err := docText(f)
@@ -389,9 +441,9 @@ func retiredRuleProblems(f string, statesIt func(string) bool, prefilter []strin
 				at = span
 			}
 			problems = append(problems, fmt.Sprintf(
-				"%s:%d states a retired z-order rule with nothing "+
+				"%s:%d states a retired %s rule with nothing "+
 					"nearby to qualify it:\n\t%s\n%s",
-				f, at+1, strings.TrimSpace(lines[at]), advice))
+				f, at+1, plane, strings.TrimSpace(lines[at]), advice))
 		}
 	}
 	return problems, nil
@@ -910,15 +962,22 @@ var paintCorrectionRes = []*regexp.Regexp{
 // callers will receive the next fix. Raised in review of #478.
 func scanFilesForResidue(t testing.TB, files []string) []string {
 	t.Helper()
-	return scanFilesForRetiredRule(t, files, statesTheCorrectionResidue,
-		inputPrefilterWords, inputCorrectionRes, supersededOfInput,
-		"That is the residue of a correction that stopped halfway: paint "+
-			"was described as lifted and the hit walk was left behind. "+
-			"Since #465 both derive their order from overlayOf. An "+
-			"epitaph does NOT excuse this one — say what the walk does "+
-			"now (the markers are inputCorrectionRes), because \"no "+
-			"longer\" in the same sentence is exactly what the live "+
-			"instance of this said.")
+	return scanFilesForRetiredRule(t, files, residueRule)
+}
+
+var residueRule = rulePlane{
+	states:    statesTheCorrectionResidue,
+	prefilter: inputPrefilterWords,
+	quals:     inputCorrectionRes,
+	of:        supersededOfInput,
+	plane:     planeInput,
+	advice: "That is the residue of a correction that stopped halfway: paint " +
+		"was described as lifted and the hit walk was left behind. " +
+		"Since #465 both derive their order from overlayOf. An " +
+		"epitaph does NOT excuse this one — say what the walk does " +
+		"now (the markers are inputCorrectionRes), because \"no " +
+		"longer\" in the same sentence is exactly what the live " +
+		"instance of this said.",
 }
 
 // correctionResidueRule is the shape a HALF-FINISHED correction leaves
@@ -1152,8 +1211,7 @@ func TestTheDocGuardsFireOnAFixtureTree(t *testing.T) {
 					"about what the scan REPORTS, so it has to be reading the "+
 					"fixture", len(files))
 			}
-			found := scanFilesForRetiredRule(t, files, statesTheRetiredInputRule,
-				inputPrefilterWords, inputQualifierRes, supersededOfInput, "advice")
+			found := scanFilesForRetiredRule(t, files, inputRule)
 			found = append(found, scanFilesForResidue(t, files)...)
 			if got := len(found) > 0; got != tc.caught {
 				t.Errorf("the input scan reported=%v, want %v, for:\n%s\n%s", got,
@@ -1306,8 +1364,7 @@ func TestAWrappedPrefilterWordStillReachesTheLoop(t *testing.T) {
 				[]byte(tc.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			found := scanFilesForRetiredRule(t, docFilesIn(t, dir), statesTheRetiredRule,
-				prefilterWords, qualifierRes, supersededOf, scanAdvice)
+			found := scanFilesForRetiredRule(t, docFilesIn(t, dir), zOrderRule)
 			if len(found) == 0 {
 				t.Errorf("the paint scan reported nothing for:\n%s", tc.body)
 			}
@@ -2764,8 +2821,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 
 	bad := write("bad.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
 		"paints on top.\n\nMore prose.\n")
-	got, err := retiredRuleProblems(bad, statesTheRetiredRule, prefilterWords,
-		qualifierRes, supersededOf, scanAdvice)
+	got, err := retiredRuleProblems(bad, zOrderRule)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -2780,8 +2836,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 
 	good := write("good.md", "Some prose.\n\nDeclare the ToastHost LAST so it "+
 		"paints on top — that is what this used to say.\n\nMore prose.\n")
-	got, err = retiredRuleProblems(good, statesTheRetiredRule, prefilterWords,
-		qualifierRes, supersededOf, scanAdvice)
+	got, err = retiredRuleProblems(good, zOrderRule)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -2806,8 +2861,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 		"LAST or the toasts go behind the page.\n"+
 		"\n"+
 		"More prose.\n")
-	got, err = retiredRuleProblems(wrapped, statesTheRetiredRule, prefilterWords,
-		qualifierRes, supersededOf, scanAdvice)
+	got, err = retiredRuleProblems(wrapped, zOrderRule)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -2832,8 +2886,7 @@ func TestTheScanItselfReportsAFixtureFile(t *testing.T) {
 		"Here is the rule, and it is simple:\n"+
 		"Declare the MenuBar LAST in its container.\n"+
 		"\nMore prose.\n")
-	got, err = retiredRuleProblems(anchored, statesTheRetiredRule, prefilterWords,
-		qualifierRes, supersededOf, scanAdvice)
+	got, err = retiredRuleProblems(anchored, zOrderRule)
 	if err != nil {
 		t.Fatalf("scanning the fixture: %v", err)
 	}
@@ -3020,17 +3073,24 @@ var hiddenQualifierRes = epitaphRes
 var supersededOfHidden = regexp.MustCompile(`(?i)visibility|hidden|#508`)
 
 func TestNoFileTeachesTheRetiredHiddenWording(t *testing.T) {
-	scanForRetiredRule(t, statesTheRetiredHiddenWording, hiddenPrefilterWords,
-		hiddenQualifierRes, supersededOfHidden,
-		"Hidden renders NO CONTENT and is NOT HIT-TESTED. \"Does not "+
-			"paint\" is wrong in both halves: a hidden LEAF still "+
-			"pre-clears its own bounds and so erases a visible sibling "+
-			"it overlaps (#508), and since #465 the hit walk skips a "+
-			"hidden NODE, so a press lands on whatever is beneath it. "+
-			"Say \"renders no content\" and say the node is not "+
-			"hit-tested, the way layout.go, docs/architecture.md and "+
-			"docs/markup-reference.md do; or mark the sentence as "+
-			"history with one of the markers in epitaphRes.")
+	scanForRetiredRule(t, visibilityRule)
+}
+
+var visibilityRule = rulePlane{
+	states:    statesTheRetiredHiddenWording,
+	prefilter: hiddenPrefilterWords,
+	quals:     hiddenQualifierRes,
+	of:        supersededOfHidden,
+	plane:     planeVisibility,
+	advice: "Hidden renders NO CONTENT and is NOT HIT-TESTED. \"Does not " +
+		"paint\" is wrong in both halves: a hidden LEAF still " +
+		"pre-clears its own bounds and so erases a visible sibling " +
+		"it overlaps (#508), and since #465 the hit walk skips a " +
+		"hidden NODE, so a press lands on whatever is beneath it. " +
+		"Say \"renders no content\" and say the node is not " +
+		"hit-tested, the way layout.go, docs/architecture.md and " +
+		"docs/markup-reference.md do; or mark the sentence as " +
+		"history with one of the markers in epitaphRes.",
 }
 
 // TestTheRetiredHiddenGuardCanActuallyFire is the honesty arm the two
@@ -3044,8 +3104,22 @@ func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
 	}{
 		{"the wording layout.go carried", "Hidden // occupies space, does not paint", true},
 		{"the tutorial's bullet", "- **Hidden** measures and arranges normally but paints nothing.", true},
-		{"the quoted form dock.go carried",
+		// THE NEXT TWO ARE ONE CASE, and splitting them is the point.
+		// The first line is what dock.go carried on its own line, and
+		// on its own it does not state the rule — the word "hidden" is
+		// on the line ABOVE it. Read alone it looks like an exemption
+		// the guard grants that sentence, which is the opposite of
+		// true: in the tree the scan joins line i with i+1, and that
+		// join is what caught dock.go (reverting the file reddens
+		// TestNoFileTeachesTheRetiredHiddenWording). The second arm is
+		// the joined pair, so the exemption cannot be read as intended
+		// by somebody narrowing or deleting joinWrapped later.
+		// Raised in review of #458.
+		{"dock.go's second line alone, which is NOT how the scan reads it",
 			`which the framework defines as "occupies space, does not paint".`, false},
+		{"and the joined pair, which is",
+			`the user's explicit rule, and it maps exactly onto gooey.Hidden, ` +
+				`which the framework defines as "occupies space, does not paint".`, true},
 		{"reversed", "paints nothing, which is what Hidden means", true},
 		{"the current wording", "Hidden occupies space and renders no content", false},
 		{"Collapsed, for which it is true",
@@ -3055,5 +3129,63 @@ func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
 			t.Errorf("%s: statesTheRetiredHiddenWording(%q) = %v, want %v",
 				tc.name, tc.line, got, tc.want)
 		}
+	}
+}
+
+// TestAReportNamesThePlaneItFound pins the plane name in the failure,
+// which is the only part of that string not already asserted somewhere:
+// the advice has been per-plane since #478, and the file:line is pinned
+// by TestTheScanItselfReportsAFixtureFile. The first line was hardcoded
+// to "z-order" for all three planes until this round, so a Visibility
+// finding sent its reader to the wrong contract before they reached the
+// advice that would have corrected them.
+//
+// IT READS THE GUARDS' OWN VALUES, and that is the difference between
+// pinning the plumbing and pinning the wiring. The first version of this
+// test spelled the pairing out a second time, and mis-wiring
+// TestNoFileTeachesTheRetiredHiddenWording to planeZOrder was measured
+// SILENT against it — the same defect scanFilesForResidue's own doc
+// records one screen up. Raised in review of #458.
+func TestAReportNamesThePlaneItFound(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	for _, tc := range []struct {
+		name     string
+		rule     rulePlane
+		body     string
+		notPlane string
+	}{
+		{"z-order", zOrderRule, "Some prose.\n\nDeclare the ToastHost LAST so " +
+			"it paints on top.\n\nMore prose.\n", planeVisibility},
+		{"Visibility", visibilityRule, "Some prose.\n\nHidden occupies space " +
+			"and does not paint.\n\nMore prose.\n", planeZOrder},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := retiredRuleProblems(write(tc.name+".md", tc.body), tc.rule)
+			if err != nil {
+				t.Fatalf("scanning the fixture: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("the scan reported %d problems, want 1 — this arm is "+
+					"about what the report SAYS, so it has to have found "+
+					"something: %v", len(got), got)
+			}
+			if !strings.Contains(got[0], "a retired "+tc.name+" rule") {
+				t.Errorf("the report does not name the plane it scanned (%s):\n\t%s",
+					tc.name, got[0])
+			}
+			if strings.Contains(got[0], "a retired "+tc.notPlane+" rule") {
+				t.Errorf("the report names %s, which is not the rule this scan "+
+					"looks for — that is the whole defect, a message sending the "+
+					"reader to the wrong contract:\n\t%s", tc.notPlane, got[0])
+			}
+		})
 	}
 }

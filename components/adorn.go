@@ -322,9 +322,8 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // same `under`, so an opaque adornment also costs the covered field its
 // tooltip and its hover highlight, which is the half of this nobody
 // sees happen. OverlayRankAdornment is the TOP rank (component.go),
-// above popups and above toasts. The
-// layer being transparent only means the layer's own empty cells are;
-// each adornment decides for itself.
+// above popups and above toasts. The layer being transparent only means
+// the layer's own empty cells are; each adornment decides for itself.
 //
 // Every adornment in this repo decides the same way, and that is now a
 // CHECK rather than a grep: TestEveryAdornmentIsHitTestTransparent reads
@@ -337,11 +336,11 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // "declaring" and "declare", which answers a different question and got
 // both of those backwards — the fourth instance of the
 // doc-says-declare/code-means-method-set shape the same commit fixed in
-// the test's own doc. Raised in review of #458. A fourth adornment comes under it on the
-// commit that adds it, where the sentence this replaces ("the grep to
-// run rather than a count to trust here") asked the reader to do the
-// walk by hand and would have gone on reading true while a new one
-// shipped opaque.
+// the test's own doc. Raised in review of #458. A fourth adornment comes
+// under it on the commit that adds it, where the sentence this replaces
+// ("the grep to run rather than a count to trust here") asked the reader
+// to do the walk by hand and would have gone on reading true while a new
+// one shipped opaque.
 //
 // What the check cannot reach is a third-party adornment: Add is
 // exported and Adornment is an interface, so one written outside this

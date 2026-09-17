@@ -60,7 +60,7 @@ not it was declared last.
 **Capture is a different question, and this page used to answer it
 wrongly.** The walk prunes on bounds at every node, so a surface arranged
 OUTSIDE its owner's rect — which is what `components.Popup` and
-`components.Menu` arrange — is never descended into on the way down,
+`components.MenuBar` arrange — is never descended into on the way down,
 whatever its layer or rank. For those, capture is not "Popup's own
 mechanism rather than a repair for the walk": it is the reason the click
 arrives at all. The layer-and-rank rule decides between candidates the
