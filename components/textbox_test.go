@@ -256,17 +256,37 @@ func TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks(t *testing.T) {
 // fixed, and this test carried a t.Skip citing it until then.
 func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// THE SKIP RETIRED HERE, which is what it was built to do. The base
-	// branch carried a t.Skip citing #519 behind a tripwire that failed
-	// the moment the row read correctly, so the claim could not outlive
-	// the fix even if the fixer never opened this file. This is the
-	// commit that fixes it, so the tripwire fired and the skip and the
-	// tripwire came out together, leaving the fixture asserting. Merged
-	// in from #520.
-	v := prop.NewSource("世界")
-	tb := &TextBox{Text: v}
-	tb.SetFocused(true)
-	tb.setCaret(len([]rune("世界")))
-	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+	// branch (#520) carried a t.Skip citing #519 behind a condition that
+	// stopped firing the moment all three rows read correctly, so the
+	// claim could not outlive the fix even if the fixer never opened
+	// this file. THIS is the commit that fixes it: all three rows read
+	// correctly, the skip's condition is false, and it comes out rather
+	// than sitting here as a branch that can no longer be taken.
+	//
+	// THE THREE SHAPES STAY. They are the base branch's, not this
+	// branch's — #520 widened the fixture from the focused caret row to
+	// all three after review pointed out that a fix correcting the
+	// unfocused path and leaving the caret column wrong would have kept
+	// the file dark behind a green check. Merging the skip away must not
+	// merge the coverage away with it, which is what taking this side of
+	// the conflict wholesale would have done.
+	const (
+		wantCaret = "世界█     "
+		wantPlain = "世界      "
+		wantMixed = "a世b      "
+	)
+	compose := func(text string, focused bool) string {
+		tb := &TextBox{Text: prop.NewSource(text)}
+		tb.SetFocused(focused)
+		if focused {
+			tb.setCaret(len([]rune(text)))
+		}
+		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+		return render.SpanText(f.Cells, 0, 0, 10)
+	}
+	caret := compose("世界", true)
+	plain := compose("世界", false)
+	mixed := compose("a世b", false)
 
 	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
 	// to stand beside it are gone for opposite reasons.
@@ -289,9 +309,18 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// assigning Cells directly. An assertion that cannot fail measures
 	// nothing, and a second one beside a real pin reads as corroboration
 	// it is not supplying. Raised in review of #520.
-	if got, want := render.SpanText(f.Cells, 0, 0, 10), "世界█     "; got != want {
+	if got, want := caret, wantCaret; got != want {
 		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
 			"the caret belongs in column 4", got, want)
+	}
+	if got, want := plain, wantPlain; got != want {
+		t.Errorf("unfocused, rendered %q, want %q — the glyphs occupy their own "+
+			"columns with no caret to make room for", got, want)
+	}
+	if got, want := mixed, wantMixed; got != want {
+		t.Errorf("unfocused, rendered %q, want %q — a narrow glyph either side "+
+			"of a wide one is the arrangement a per-rune advance loses in the "+
+			"middle rather than at the end", got, want)
 	}
 }
 
