@@ -1460,10 +1460,29 @@ func sortedNames(set map[string]bool) []string {
 }
 
 // assignedIn returns the names of the functions in this package's
-// non-test sources that ASSIGN the field the matcher picks out, sorted.
-// It reads the AST rather than grepping because a grep cannot tell an
-// assignment from a read, and every one of these fields is read in many
-// more places than it is written.
+// non-test sources that WRITE the field the matcher picks out, sorted.
+// It reads the AST rather than grepping because a grep cannot tell a
+// write from a read, and every one of these fields is read in many more
+// places than it is written.
+//
+// THREE SPELLINGS, not one, and the two that were missing are the ones
+// the invariant is most likely to be broken with. This matched only
+// `*ast.AssignStmt` with the field itself on the left, so an in-place
+// empty was invisible:
+//
+//	ed.envAttrs = nil        // caught
+//	clear(ed.envAttrs)       // NOT caught — a call, not an assignment
+//	delete(ed.envAttrs, k)   // NOT caught, same reason
+//	ed.envAttrs[k] = v       // NOT caught — the LHS is an IndexExpr
+//
+// Measured with a probe method rather than read off the types: with
+// `func (ed *editor) probeClearA() { clear(ed.envAttrs) }` in the
+// package, the guard stayed GREEN, while the `= nil` spelling beside it
+// reddened. `clear` is the idiomatic Go spelling of exactly the clear
+// the three comments this guard replaces forbid, so the blind spot was
+// over the fourth site's most likely form. Same class as the
+// FuncDecl-body hole closed in TestOnlyOneFunctionWritesADocumentEnvelope
+// one commit earlier. Raised in review of #501.
 func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -1482,12 +1501,30 @@ func assignedIn(t *testing.T, writes func(ast.Expr) bool) []string {
 					continue
 				}
 				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					as, ok := n.(*ast.AssignStmt)
-					if !ok {
-						return true
-					}
-					for _, lhs := range as.Lhs {
-						if writes(lhs) {
+					switch n := n.(type) {
+					case *ast.AssignStmt:
+						for _, lhs := range n.Lhs {
+							// The field itself, or a slot in it:
+							// `m[k] = v` writes m without naming it on
+							// the left.
+							if writes(lhs) {
+								seen[fn.Name.Name] = true
+							}
+							if ix, ok := lhs.(*ast.IndexExpr); ok && writes(ix.X) {
+								seen[fn.Name.Name] = true
+							}
+						}
+					case *ast.CallExpr:
+						// clear and delete are the in-place empties, and
+						// they are calls rather than assignments. append
+						// is deliberately NOT here: it returns, and the
+						// assignment that stores the result is already
+						// matched above.
+						id, ok := n.Fun.(*ast.Ident)
+						if !ok || len(n.Args) == 0 {
+							return true
+						}
+						if (id.Name == "clear" || id.Name == "delete") && writes(n.Args[0]) {
 							seen[fn.Name.Name] = true
 						}
 					}
