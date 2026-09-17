@@ -343,6 +343,7 @@ func viewMenuRows(t *testing.T, which int) []string {
 	t.Setenv("EDITOR", "/usr/bin/env -i")
 	ed, root := buildPage(t)
 	c := gooey.NewComposer(root, 150, 44)
+	t.Cleanup(c.Close)
 	c.Frame()
 	settle(t, c)
 
@@ -463,18 +464,18 @@ func boxBefore(t fataler, rows []string, want string) (box, row string) {
 	}
 	// NO PRECONDITION, BECAUSE THE QUESTION IS ANSWERABLE DIRECTLY.
 	//
-	// This used to slice four RUNES off the prefix and guard the slice
-	// with render.StringWidth(prefix) == len([]rune(prefix)). That guard
-	// compares TOTALS, and totals-equality does not make the last four
-	// runes the last four cells: a wide glyph before the boundary and a
+	// TOTALS-EQUALITY IS NOT A POSITION MAPPING, which is why there is
+	// nothing to require: a rune slice guarded by
+	// render.StringWidth(prefix) == len([]rune(prefix)) still answers
+	// the wrong four characters. A wide glyph before the boundary and a
 	// zero-width combining mark after it cancel in the sum, so the
-	// prefix passes while the mapping is 1:1 nowhere except at its end.
-	// Measured on "世abcé" with a decomposed é — 6 runes, 6 columns,
-	// precondition PASSES — the rune slice answered "bcé", three
-	// columns, where the four cells in front of the label are "abcé".
-	// A wrong answer, not an error, which is the failure the old doc
-	// described and the old check did not prevent. Raised in review of
-	// #502.
+	// totals agree while the mapping is 1:1 nowhere except at the end.
+	// Measured on "世abcé" with a decomposed é — 6 runes, 6 columns, the
+	// guard satisfied — the rune slice answers "bcé", three columns,
+	// where the four cells in front of the label are "abcé". A wrong
+	// answer, not an error, and
+	// TestTheFourCellsInFrontAreNotTheFourRunes is that fixture.
+	// Raised in review of #502.
 	//
 	// EachCluster walks columns, so the boundary is found rather than
 	// assumed, and the helper has nothing left to require of its input.
@@ -543,9 +544,9 @@ func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
 	t.Helper()
 	c := &caughtFatal{}
 	// NAMED RETURN, set here. A panic recovered in a deferred function
-	// leaves an UNNAMED result at its zero value, so the first version
-	// of this returned "" for every guard that fired correctly — and
-	// every Contains below then failed with an empty message, which
+	// leaves an UNNAMED result at its ZERO VALUE, so an unnamed one
+	// hands back "" for every guard that fired correctly — and every
+	// Contains at the call site then fails with an empty message, which
 	// reads as the guard not firing. The opposite mistake to the one
 	// the t.Fatal below catches, and just as quiet.
 	defer func() {
@@ -565,8 +566,10 @@ func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
 	return ""
 }
 
-// TestBoxBeforeRefusesTheTwoRowsItCannotAnswerFor covers the two Fatal
-// branches that had no fixture.
+// TestTheRowHelpersRefuseWhatTheyCannotAnswerFor covers every Fatal
+// branch the two helpers have — FOUR, not the two the first version of
+// this doc counted, which is the arithmetic a "covers the branches with
+// no fixture" claim invites and cannot settle on its own.
 //
 // Both are reachable, and the second is reachable from the REAL menus
 // rather than only synthetically: `total < 4` is what fires if the
@@ -576,12 +579,26 @@ func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
 // reports one row of a three-row story — which is why the message is
 // worth pinning rather than left to be read once.
 //
-// The within-row uniqueness guard is the other: boxBefore's doc argues
+// The within-row uniqueness guard is the third: boxBefore's doc argues
 // it is "the within-row half of dropdownRow's guarantee, asserted rather
 // than documented as out of scope", and no fixture put a label twice on
 // one row, so the arm had never run. dropdownRow takes `rows []string`
-// precisely to make a fixture like this cheap. Raised in review of #502.
-func TestBoxBeforeRefusesTheTwoRowsItCannotAnswerFor(t *testing.T) {
+// precisely to make a fixture like this cheap.
+//
+// THE STRADDLE IS THE FOURTH, and its own comment is the reason it went
+// uncovered: "reachable only if a glyph STRADDLES the four-cell
+// boundary, which no check box can". True of the menus, and the helper
+// takes `rows []string` exactly so a synthetic row can reach what the
+// menus cannot — which is the argument the other three arms rest on. A
+// branch excused because production cannot reach it, in a helper built
+// to be driven directly, is the shape this test exists to close.
+//
+// AND dropdownRow's OWN GUARD, in both directions. The "exactly one is
+// the assertion, not a convenience" paragraph rests on it and every
+// fixture in this file hands it exactly one hit, so neither the
+// zero-row nor the two-row side had ever run. Raised in review of
+// #502.
+func TestTheRowHelpersRefuseWhatTheyCannotAnswerFor(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		rows  []string
@@ -605,6 +622,34 @@ func TestBoxBeforeRefusesTheTwoRowsItCannotAnswerFor(t *testing.T) {
 			rows:  []string{"[x]Wrap", "  ( ) Other"},
 			label: "Wrap",
 			want:  []string{"starts at column 3", "no room for a check box"},
+		},
+		{
+			// THE STRADDLE. "世世a" is five columns, so the four-cell
+			// boundary falls at column 1 — inside the first glyph, where
+			// no cluster starts. Half a glyph is not an answer, and the
+			// message is the one thing that tells a reader "the box
+			// straddles" apart from "there is no box".
+			name:  "the four cells begin inside a wide glyph",
+			rows:  []string{"世世aWrap", "  ( ) Other"},
+			label: "Wrap",
+			want:  []string{"starts at column 1", "inside a wide glyph"},
+		},
+		{
+			// dropdownRow's own guard, low side: no row contains the
+			// label at all.
+			name:  "no row carries the label",
+			rows:  []string{"  [x] Wrap", "  ( ) Other"},
+			label: "Missing",
+			want:  []string{"0 of the 2 rows given contain", "want exactly 1"},
+		},
+		{
+			// And the high side: two rows do. The leftmost would win
+			// strings.Index silently, which is what "exactly one is the
+			// assertion, not a convenience" is about.
+			name:  "two rows carry the label",
+			rows:  []string{"  [x] Wrap", "  ( ) Wrap"},
+			label: "Wrap",
+			want:  []string{"2 of the 2 rows given contain", "want exactly 1"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -679,32 +724,40 @@ func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
 // and it is separate because its row is not a menu row at all.
 //
 // For the two rules to disagree, something inside the last four columns
-// of the prefix has to make a rune and a column different — and for the
-// retired precondition to have PASSED while they disagreed, the prefix's
-// totals had to come out equal anyway. The reviewer's string does both
-// at once: 世 is one rune and two columns, a decomposed é is two runes
-// and one column, and they cancel. "世abcé" measures 6 runes and 6
-// columns, the guard passed, and the rune slice answered "bcé" — three
-// columns — where the four cells in front of the label are "abcé".
+// of the prefix has to make a rune and a column different — and for a
+// totals comparison to be SATISFIED while they disagree, the prefix's
+// totals have to come out equal anyway. "世abcé" does both at once: 世
+// is one rune and two columns, a decomposed é is two runes and one
+// column, and they cancel, so the string measures 6 runes and 6 columns
+// while the rune slice answers "bcé" — three columns — where the four
+// cells in front of the label are "abcé".
 //
-// So this fixture is the wrong answer itself, asserted. Raised in review
-// of #502.
+// So this fixture is the wrong answer itself, asserted, and it is the
+// reason boxBefore requires nothing of its input. Raised in review of
+// #502.
 func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	const acute = "\u0301"
 	rows := []string{"世abce" + acute + "Wrap", "  ( ) Other"}
 	prefix := "世abce" + acute
 	if cols, runes := render.StringWidth(prefix), len([]rune(prefix)); cols != runes {
 		t.Fatalf("the fixture prefix %q measures %d columns and %d runes. They must be "+
-			"EQUAL, or this arm proves only that an unequal prefix is handled — the "+
-			"retired precondition refused those and let this one through",
-			prefix, cols, runes)
+			"EQUAL, or this arm proves only that an unequal prefix is handled, where "+
+			"a totals comparison would already have refused it and the interesting "+
+			"case is the one it lets through", prefix, cols, runes)
 	}
 	box, row := boxBefore(t, rows, "Wrap")
+	// THE COUNTEREXAMPLE IS READ, NOT SPELLED, for the reason dock_test's
+	// rowText message is: a literal about the same fixture is a second
+	// answer free to disagree with it, and this one was written twice.
+	// The moment the prefix changes shape the message asserts a wrong
+	// "four RUNES back from the label" with nothing red.
+	r := []rune(prefix)
+	runeSlice := string(r[len(r)-4:])
 	if want := "abce" + acute; box != want {
 		t.Errorf("boxBefore read %q in front of %q on %q, want %q. Four RUNES back "+
 			"from the label is %q, which is %d columns; the four CELLS are %q.",
-			box, "Wrap", row, want, "bce"+acute,
-			render.StringWidth("bce"+acute), want)
+			box, "Wrap", row, want, runeSlice,
+			render.StringWidth(runeSlice), want)
 	}
 	if got := render.StringWidth(box); got != 4 {
 		t.Errorf("boxBefore returned %q, %d columns — the contract is the four CELLS "+

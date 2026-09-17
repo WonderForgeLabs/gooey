@@ -141,10 +141,11 @@ func TestRowTextReturnsTheWholeSpan(t *testing.T) {
 
 	// THE COUNTEREXAMPLE IS READ, NOT SPELLED. A literal for it is a
 	// second answer about the same eight cells, free to disagree with
-	// `want` — which is the drift boxBefore's row return exists to
-	// prevent one file over, and a hand-computed one here got the
-	// trailing blanks wrong. Reading it puts the claim and the cells on
-	// one source. Raised in review of #502.
+	// `want` the moment the fixture changes shape — which is the drift
+	// boxBefore's row return exists to prevent one file over. Reading it
+	// puts the claim and the cells on one source, where a hand-computed
+	// one has to get the trailing blanks right by hand and says so
+	// nowhere. Raised in review of #502.
 	var runeRead strings.Builder
 	for x := 0; x < 8; x++ {
 		runeRead.WriteRune(f.Cells.At(x, 0).Rune)
