@@ -270,19 +270,13 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// already satisfies it" is a cross-branch promise rather than a
 	// local pin. Composing FIRST and deciding after costs one frame and
 	// needs nothing from the issue tracker: the day all three rows read
-	// correctly the skip below does not fire, the assertions at the
-	// bottom take over, and NOTHING IN THIS FILE HAS TO BE EDITED.
-	// Raised in review of #520.
+	// correctly the skip below does not fire and the assertions at the
+	// bottom take over.
 	//
-	// ALL THREE SHAPES, and a tripwire on each. The first version
-	// composed only the focused caret row, while the table below
-	// tabulates three renders — so a reader took the tripwire to be
-	// watching #519 and it was watching one assertion. A fix that
-	// corrected the unfocused path and left the caret column wrong would
-	// have kept this file dark behind a green check, which is the
-	// outcome this paragraph exists to prevent. The three are the
-	// table's three, so the comment and the code now describe the same
-	// set. Raised in review of #520.
+	// ALL THREE SHAPES, and a tripwire on each, because the table below
+	// tabulates three renders: a fix that corrected the unfocused path
+	// and left the caret column wrong would otherwise keep this file
+	// dark behind a green check.
 	const (
 		wantCaret = "世界█     "
 		wantPlain = "世界      "
@@ -300,36 +294,36 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	caret := compose("世界", true)
 	plain := compose("世界", false)
 	mixed := compose("a世b", false)
-	// THE SKIP IS THE CONDITION, not a statement after one. This was a
-	// t.Fatalf on a shape that read CORRECTLY followed by an
-	// unconditional t.Skip, and the Fatalf's message said to delete the
-	// skip — so a fixer who did exactly what it said deleted one of the
-	// two things holding the test shut and left it permanently red, with
-	// an instruction naming something that was already gone. Retiring by
-	// hand needs the instruction to be complete; retiring by CONDITION
-	// needs no instruction at all, and no edit to this file on the day
-	// #519 lands. Raised in review of #520, twice.
+	// THE SKIP IS THE CONDITION, not a statement after one: retiring by
+	// hand needs an instruction that is complete and stays complete,
+	// and retiring by CONDITION needs no instruction at all.
 	//
-	// AND IT SKIPS ON THE BUG, NOT ON "NOT CORRECT", which is the third
-	// round of the same sentence and the one that makes the assertions
-	// below reachable. t.Skipf calls runtime.Goexit, so a loop skipping
-	// on any mismatch leaves this fixture with two outcomes forever —
-	// pass and skip — and the three t.Errorf blocks below could never
-	// run. Worse after #519 lands: an unrelated regression re-arms the
-	// skip and the suite stays GREEN with a message blaming a closed
-	// issue. Measured — with a plausible #519 fix applied, changing the
-	// caret glyph in textbox.go from '█' to '|' gave
+	// AND IT SKIPS ON THE DOCUMENTED BUGGY RENDER, not on "not correct",
+	// which is what makes the assertions below reachable at all. t.Skipf
+	// calls runtime.Goexit, so a loop skipping on any mismatch leaves
+	// this fixture with two outcomes forever — pass and skip — and the
+	// three t.Errorf blocks could never run. Measured: with a plausible
+	// #519 fix applied, changing the caret glyph in textbox.go from '█'
+	// to '|' gave
 	//
 	//	--- SKIP: TestTextBoxRendersAWideGlyphInItsOwnColumns
 	//	    TextBox blanks wide glyphs — the focused row … reads "世界|     "
 	//
-	// a check quietly reporting the wrong answer, which is the class
-	// CLAUDE.md's Verify section exists to remove. Skipping on the
-	// DOCUMENTED buggy render keeps both properties: all three correct
-	// falls through with no edit to this file, and anything else is red
-	// with the right diagnosis. The three buggy strings are the ones
-	// tabulated in the comment below, measured against the bug. Raised
-	// in review of #520, a third time.
+	// a check quietly reporting the wrong answer.
+	//
+	// WHAT THIS DOES NOT BUY, stated because the paragraph above used to
+	// claim it did: the quietly-wrong-answer class is narrowed, not
+	// removed. Once #519 is fixed this block stays live, and the single
+	// most likely future regression — the same per-rune advance loop,
+	// reintroduced — produces exactly the three strings below. That
+	// re-arms the skip and the suite goes green with a message citing a
+	// CLOSED issue, which is the same failure one lifetime later.
+	//
+	// The block therefore has a lifetime the code cannot express, so the
+	// deletion has to live somewhere: **#519's fixing commit deletes
+	// this whole loop**, not just the skip, and #519's acceptance
+	// criteria say so. Self-retiring means nobody is FORCED to delete
+	// it; it does not mean nobody has to. Raised in review of #520.
 	for _, tw := range []struct{ got, want, buggy, shape string }{
 		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs"},
 		{plain, wantPlain, " 界       ", "the unfocused row"},
@@ -343,16 +337,10 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 		}
 	}
 
-	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
-	// to stand beside it are gone for opposite reasons.
-	//
-	// A loop over TerminalColumns asserting col == i was false of a
-	// CORRECT wide row — a continuation cell's recorded column is where
-	// the cursor sits mid-glyph, which is legitimately not its index —
-	// so it could not run. render.Displaced replaced it and cannot
-	// FAIL: #519 blanks the orphaned lead through healSeam, so the row
-	// is wrong without being displaced. Measured against the buggy
-	// render, all three cases of this fixture:
+	// THE STRING IS THE ONLY PIN HERE, and a render.Displaced assertion
+	// beside it would be corroboration it cannot supply: #519 blanks the
+	// orphaned lead through healSeam, so the row is wrong WITHOUT being
+	// displaced. Measured against the buggy render, all three cases:
 	//
 	//	"世界" unfocused -> " 界       "  displaced=false
 	//	"世界" focused   -> "  █       "  displaced=false
@@ -361,9 +349,7 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// Nor is it reachable for any component test: Buffer.Set and
 	// SetString lay the continuation themselves, and render/cell.go says
 	// of the remaining displacement branch that it is only reachable by
-	// assigning Cells directly. An assertion that cannot fail measures
-	// nothing, and a second one beside a real pin reads as corroboration
-	// it is not supplying. Raised in review of #520.
+	// assigning Cells directly.
 	if got, want := caret, wantCaret; got != want {
 		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
 			"the caret belongs in column 4", got, want)

@@ -320,15 +320,54 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	if got, want := SpanText(b, 0, 9, 4), "    "; got != want {
 		t.Errorf("a span on row 9 of a one-row buffer = %q, want %q", got, want)
 	}
+	// A NON-POSITIVE WIDTH IS THE FIFTH SHAPE, and it is the one the
+	// off-buffer paragraph enumerated past: three out-of-range shapes,
+	// then nil, and never `w <= 0`. Against a LIVE buffer, which is what
+	// the two assertions below add — the only one that existed was
+	// SpanText(nil, 0, 0, 0), and since the width guard runs BEFORE the
+	// nil guard that assertion never reached a buffer at all.
+	//
+	// Reachable rather than a caller error: components/box_test.go's
+	// rowString computes its width as a difference, so a negative one
+	// arrives the same way a positive one does. And the hazard is the
+	// padding paragraph's, at the other end — "" passes
+	// `!strings.Contains(got, …)` and "the row is empty" exactly as
+	// blanks do, so a span that silently collapsed to nothing reads as a
+	// component that drew nothing. Raised in review of #520.
+	if got := SpanText(b, 0, 0, 0); got != "" {
+		t.Errorf("a zero-width span of a LIVE buffer = %q, want empty — zero "+
+			"columns of a terminal is nothing, not one blank, which is the "+
+			"answer ClipCols gives the same question", got)
+	}
+	if got := SpanText(b, 0, 0, -1); got != "" {
+		t.Errorf("a negative-width span of a LIVE buffer = %q, want empty. A "+
+			"width can arrive as a difference (components/box_test.go's "+
+			"rowString computes one), so this is a value a caller produces "+
+			"rather than a misuse", got)
+	}
+	// AND THE ONE ARRANGEMENT WHERE THE GUARD CHANGES AN ANSWER rather
+	// than restating what the loop already does. For a live buffer
+	// `for i := 0; i < w` with w <= 0 returns "" on its own, so removing
+	// the guard leaves the two assertions above green — measured, which
+	// is why this third one is here. Nil is different: the guard below
+	// would hand strings.Repeat a count of -1, and that PANICS. The
+	// order of the two guards is therefore load-bearing, not incidental.
+	if got := SpanText(nil, 0, 0, -1); got != "" {
+		t.Errorf("a negative-width span of a nil buffer = %q, want empty — "+
+			"without the width guard ahead of the nil guard this is a panic "+
+			"in strings.Repeat, inside render with the caller off the stack", got)
+	}
 	// A NIL BUFFER IS THE FOURTH SHAPE, and it was the one the doc
 	// promised and the body did not have: Buffer.At dereferences b.W, so
 	// this panicked inside render with At on the stack rather than the
-	// caller. Raised in review of #520.
+	// caller.
 	if got, want := SpanText(nil, 0, 0, 3), "   "; got != want {
 		t.Errorf("a span of a nil buffer = %q, want %q — the out-of-range "+
 			"contract is blanks, and a nil buffer is the most out of range a "+
 			"span can be", got, want)
 	}
+	// Nil AND zero-width at once, which the width guard answers first —
+	// asserted so the two rules cannot disagree about their overlap.
 	if got := SpanText(nil, 0, 0, 0); got != "" {
 		t.Errorf("a zero-width span of a nil buffer = %q, want empty", got)
 	}

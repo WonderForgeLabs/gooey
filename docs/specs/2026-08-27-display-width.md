@@ -135,6 +135,54 @@ bug writes that rune *into the continuation cell* — the row holds two
 copies and the search matches the corrupted one, which is underlined.
 Locate by construction, never by searching for the value you expect.
 
+## How the readback contract was settled
+
+`SpanText`'s doc states a contract; this is where the rounds that
+produced it live, so the exported godoc says what the function promises
+rather than how the promise was arrived at. `RowText` and `SpanText` are
+public symbols in `render` and their comments are what a consumer reads
+on pkg.go.dev — a place for the contract, not for the history of the pull
+request that wrote it
+([#520](https://github.com/WonderForgeLabs/gooey/pull/520), raised in
+review of that PR).
+
+Four things were decided one at a time, each after the version before it
+shipped:
+
+1. **The span form at all.** `RowText` did not stop the private `row(b,
+   y)` helpers it was written to stop, because a test asserting on a dock
+   header, a menu row's check box or a status gutter is asking about a
+   REGION. Each package grew its own reader instead, and each wrote
+   `Continuation` as a literal rune — the defect `RowText` exists to
+   remove, one directory over.
+2. **`(x, y, w)`, not `(y, x, w)`.** It took `y` first for one commit.
+   All four parameters are `int`, so a transposed call compiles, and by
+   the padding rule it returns spaces rather than panicking: the fixture
+   stops matching and the message blames the component.
+3. **Off the buffer reads as blanks, and a nil buffer is part of that.**
+   `Buffer.At` already answers a space out of bounds, so padding is
+   inherited behaviour — but `Buffer.At` dereferences `b.W`, so a nil
+   buffer panicked *inside* `render` with `At` on the stack rather than
+   the caller. `RowText` needs its own nil guard for the same reason and
+   answers differently: a row of no buffer is empty, because there is no
+   width to pad to. `TerminalColumns` answers an out-of-range row with
+   `nil` rather than blanks, because a per-cell map has no blank cell to
+   report; that asymmetry is asserted rather than left to be noticed.
+4. **A non-positive width is `""`.** The enumeration in (3) named three
+   out-of-range shapes and nil, and never `w <= 0` — which matters
+   because a width can arrive as a DIFFERENCE: `components/box_test.go`'s
+   `rowString` computed one. The guard is mostly a restatement — for a
+   live buffer the loop returns `""` on its own, measured — with one
+   arrangement where it changes the answer: a nil buffer and a negative
+   width would hand `strings.Repeat` a count of `-1`, which panics. So
+   the width guard sits AHEAD of the nil guard, and that order is
+   load-bearing.
+
+The recurring shape across all four: **the empty string and a row of
+blanks both pass `!strings.Contains(got, …)` and "the row is empty".**
+Every one of these edges turns a reader that quietly returned nothing
+into a component that appears to have drawn nothing.
+
 ## Rejected alternatives
 
 **Reserve by the lead rune's width instead of the cluster's.** Suggested

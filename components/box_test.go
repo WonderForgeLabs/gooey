@@ -38,7 +38,8 @@ func outsideWrites(t *testing.T, b *render.Buffer, r gooey.Rect) {
 	}
 }
 
-// rowString reads the half-open column range [x0, x1) of row y.
+// rowString reads w columns of row y starting at x — render.SpanText's
+// signature exactly, and its arguments passed straight through.
 //
 // It appended b.At(x, y).Rune, which is the rune-per-cell reader
 // render.SpanText exists to retire — and it survived #516's sweep
@@ -46,15 +47,17 @@ func outsideWrites(t *testing.T, b *render.Buffer, r gooey.Rect) {
 // `grep -rln 'WriteRune(.*\.Rune)'` and this spells the same defect
 // with append. The grep under-counts; the defect has two spellings.
 //
-// (x0, y, x1), NOT (y, x0, x1), for the reason SpanText itself was
-// reordered: all four parameters are int, so a transposed call compiles
-// and reads blanks, and the fixture then fails somewhere else with a
-// message blaming the component. A wrapper that takes the opposite
-// order from the function directly under it is the likelier trap of the
-// two — a reader who has just learned the new order mis-calls the
-// wrapper. Raised in review of #520.
-func rowString(b *render.Buffer, x0, y, x1 int) string {
-	return render.SpanText(b, x0, y, x1-x0)
+// IDENTICAL, not merely same-ordered. It took an exclusive END column
+// while the function under it takes a WIDTH, so the third argument
+// changed meaning across one call — and both readings were live at the
+// call sites: `rowString(b, 0, r.Y+i, 8)` is a correct end column AND a
+// correct width, and nothing in the call says which the helper wants.
+// A wrapper that takes the opposite ORDER from the function under it is
+// a trap this helper was already reordered to avoid; one that takes a
+// different MEANING for the same position is the same trap one step
+// quieter, and it compiles either way. Raised in review of #520.
+func rowString(b *render.Buffer, x, y, w int) string {
+	return render.SpanText(b, x, y, w)
 }
 
 func TestDrawBoxRunesShape(t *testing.T) {
@@ -136,7 +139,7 @@ func TestDrawBoxTitleClipsAndNeverStrandsPadding(t *testing.T) {
 		r := gooey.Rect{X: 1, Y: 1, W: tc.w, H: 3}
 		DrawBoxRunes(b, r, render.Style{})
 		DrawBoxTitle(b, r, "title", render.Style{})
-		if got := rowString(b, r.X, r.Y, r.X+r.W); got != tc.want {
+		if got := rowString(b, r.X, r.Y, r.W); got != tc.want {
 			t.Errorf("w=%d top row = %q, want %q", tc.w, got, tc.want)
 		}
 		outsideWrites(t, b, r)

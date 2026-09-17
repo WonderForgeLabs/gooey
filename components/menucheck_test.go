@@ -118,19 +118,29 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 			"make the answer depend on iteration order:\n%s",
 			"Wrap", wrap, "Plain", plain, strings.Join(rows, "\n"))
 	}
-	if wrap[0].byteAt != plain[0].byteAt {
-		// THE REPORTED NUMBER IS A COLUMN. strings.Index answers in BYTES
-		// and the dropdown's border is '│', three bytes for one column, so
-		// the offset printed 7 where the cell is 5 — a diagnostic sending
-		// the reader to the wrong cell of a row this file now puts wide
-		// glyphs into. The COMPARISON is sound either way: both rows carry
-		// the same prefix, so the offsets differ exactly when the columns
-		// do, which is why this was the message lying and not the
-		// assertion. Raised in review of #520.
+	// MEASURED IN COLUMNS, AND COMPARED IN COLUMNS. strings.Index answers
+	// in BYTES, and the dropdown's border is '│' — three bytes for one
+	// column — so the offset printed 7 where the cell is 5, a diagnostic
+	// sending the reader to the wrong cell of a row this file now puts
+	// wide glyphs into. That much was already fixed; the COMPARISON was
+	// left in bytes, on the argument that both rows carry the same prefix
+	// so the offsets differ exactly when the columns do.
+	//
+	// That argument is true of today's fixture and is no longer
+	// CONSTRAINED. menuRows reads the whole frame now, so `len(wrap) == 1
+	// && len(plain) == 1` no longer implies both matches are dropdown
+	// rows sharing a border prefix — only that each word appears once
+	// anywhere on screen. A byte comparison over two rows with different
+	// prefixes is then a column comparison only by coincidence, and
+	// docs/specs/2026-09-05-menu-item-icons.md:118 records this exact
+	// trap springing twice already in menu code. The two widths are
+	// computed for the message regardless, so comparing them costs
+	// nothing. Raised in review of #520.
+	wrapCol := render.StringWidth(rows[wrap[0].row][:wrap[0].byteAt])
+	plainCol := render.StringWidth(rows[plain[0].row][:plain[0].byteAt])
+	if wrapCol != plainCol {
 		t.Errorf("the checked item's text starts at column %d and the plain one's at %d; "+
-			"a menu's lead column belongs to the menu",
-			render.StringWidth(rows[wrap[0].row][:wrap[0].byteAt]),
-			render.StringWidth(rows[plain[0].row][:plain[0].byteAt]))
+			"a menu's lead column belongs to the menu", wrapCol, plainCol)
 	}
 }
 

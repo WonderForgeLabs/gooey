@@ -188,15 +188,12 @@ func ClipCols(s string, w int) string {
 // "世\ufffd界\ufffd" and no fixture in the repo could contain one. A
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
-// A NIL BUFFER IS ANSWERED HERE TOO, and it has to be answered here
-// rather than left to SpanText: `b.W` is evaluated in the argument list,
-// so a nil buffer faults before the guard one call down can run — inside
-// this package, with the caller off the stack. SpanText's doc calls a
-// nil buffer "the most out of range a span can be"; the whole-row
-// spelling of the same read cannot sit outside that promise. Raised in
-// review of #520, the round after the same finding closed one function
-// over. A row of no buffer is empty rather than padded, because there
-// is no width to pad TO.
+// A nil buffer is answered here rather than left to SpanText: `b.W` is
+// evaluated in the argument list, so a nil buffer would fault before the
+// guard one call down could run, inside this package with the caller off
+// the stack. A row of no buffer is EMPTY rather than padded, because
+// there is no width to pad to — which is the one place this function's
+// answer differs from SpanText's.
 func RowText(b *Buffer, y int) string {
 	if b == nil {
 		return ""
@@ -208,18 +205,15 @@ func RowText(b *Buffer, y int) string {
 // row y would read as on a terminal.
 //
 // (x, y, w), NOT (y, x, w). Every other coordinate-taking function in
-// this package is x-then-y — Buffer.At, Buffer.Set, Buffer.SetString —
-// and this took y first for one commit. All four parameters are int, so
-// a transposed call COMPILES, and by the off-buffer rule below it
-// returns spaces rather than panicking: the fixture simply stops
-// matching and the message blames the component. Raised in review of
-// #520, before #516 spread the call across eleven more directories.
+// this package is x-then-y — Buffer.At, Buffer.Set, Buffer.SetString.
+// All four parameters are int, so a transposed call COMPILES, and by the
+// off-buffer rule below it returns spaces rather than panicking: the
+// fixture simply stops matching and the message blames the component.
 //
-// THE SPAN FORM IS THE ONE THE TESTS ACTUALLY WANT, and its absence is
-// why RowText did not stop the copies it was written to stop. A test
-// asserting on a dock header, a menu row's check box or a status gutter
-// is asking about a REGION, so each package grew its own reader — and
-// each wrote Continuation as a literal rune, which is the defect
+// THE SPAN FORM IS THE ONE THE TESTS ACTUALLY WANT. A test asserting on
+// a dock header, a menu row's check box or a status gutter is asking
+// about a REGION, and without this each package grew its own reader —
+// each writing Continuation as a literal rune, which is the defect
 // RowText exists to remove, re-introduced one directory over.
 // [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the
 // sweep; this is the function that makes each site a call rather than a
@@ -257,14 +251,26 @@ func RowText(b *Buffer, y int) string {
 // drawn. TestSpanTextPadsWhereTheBufferIsNot pins it, so the contract
 // is chosen rather than inherited from Buffer.At.
 //
-// A NIL BUFFER IS PART OF THAT CONTRACT, and it was the one out-of-range
-// shape the paragraph above promised and did not deliver: Buffer.At
-// dereferences b.W, so a nil buffer panicked inside render with At on
-// the stack rather than the caller. Not a regression — RowText's old
-// body read b.W the same way — but this is the commit that writes the
-// contract down and points eleven more directories at the function, so
-// it is where the gap closes. TerminalColumns guards nil as its first
-// condition for the same reason. Raised in review of #520.
+// A NIL BUFFER is the most out of range a span can be, and it is part of
+// the same contract: Buffer.At dereferences b.W, so without the guard a
+// nil buffer panics inside render with At on the stack rather than the
+// caller. TerminalColumns guards nil as its first condition for the same
+// reason.
+//
+// A NON-POSITIVE WIDTH IS THE EMPTY STRING, not blanks, and the guard is
+// checked BEFORE the nil one — so `SpanText(nil, 0, 0, -1)` is "" rather
+// than a panic inside strings.Repeat, which is the ONE arrangement where
+// the guard changes an answer rather than restating what the loop
+// already does. ClipCols answers `w <= 0` the same way, and the reason
+// is the same: zero columns of a terminal is nothing, not one blank.
+//
+// It is stated because a width can ARRIVE as a difference rather than as
+// a constant — components/box_test.go's rowString computes one — and a
+// negative w is then a reachable value rather than a caller error. The
+// hazard is the one the padding paragraph above describes, at the other
+// end: "" passes `!strings.Contains(got, …)` and "the row is empty"
+// exactly as blanks do, so a span that silently collapsed to nothing
+// reads as a component that drew nothing.
 func SpanText(b *Buffer, x, y, w int) string {
 	if w <= 0 {
 		return ""
