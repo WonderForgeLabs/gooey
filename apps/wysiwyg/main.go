@@ -1868,6 +1868,12 @@ type editor struct {
 	// why that makes retirement this method's job. Added in review of
 	// #522.
 	seededDecls []string
+	// shadowedDecls are the declared names seedDeclared could NOT seed
+	// because the editor's own chrome already binds them. The skip is
+	// right — see seedDeclared — but it is invisible in the preview, so
+	// rebuild appends them to the build status. Raised in review of
+	// #522.
+	shadowedDecls []string
 
 	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
 	// recorded from rebuild rather than from each mutator, so a mutation
@@ -3105,7 +3111,7 @@ func (ed *editor) rebuild() {
 		ed.status.Set("✗ " + err.Error())
 		return
 	}
-	ed.status.Set("✓ builds")
+	ed.status.Set("✓ builds" + shadowedNote(ed.shadowedDecls))
 	ed.pv.Swap(w)
 	// The one moment the document and the built tree are known to
 	// correspond: w is what markup.Build made of THIS document. Inverted
@@ -3186,6 +3192,12 @@ func (ed *editor) rebuild() {
 // reaches this, so none of the above is true under -attach; the comment
 // at that branch carries the reasoning.
 func (ed *editor) seedDeclared(src string) bool {
+	// CLEARED BEFORE THE EARLY RETURN, not inside the loop below: a
+	// document that shadowed a name and is then replaced by one
+	// declaring nothing takes the early return, and a note left over
+	// from the previous document would name a declaration the open file
+	// does not contain.
+	ed.shadowedDecls = ed.shadowedDecls[:0]
 	if len(ed.envDecls) == 0 && len(ed.seededDecls) == 0 {
 		return true
 	}
@@ -3202,6 +3214,23 @@ func (ed *editor) seedDeclared(src string) bool {
 	}
 	for _, d := range decls {
 		if _, taken := ed.docCtx.Values[d.Name]; taken {
+			// SKIPPED, AND SAID. The skip is the behaviour
+			// TestADeclarationDoesNotCaptureAnEditorBinding earns; the
+			// silence was the defect. Measured on a document declaring
+			// Name="Region" Type="string" Default="zzz" and binding
+			// {{.Region}}: status "✓ builds", the handle still the
+			// IDE's own *prop.Property[int] region enum, the <Text>
+			// rendering "0" — an editor implementation detail shown
+			// inside the user's document, under a green status, with
+			// the author's only route to the diagnosis being to know
+			// menuValues' name list.
+			//
+			// newEditor PANICS on a duplicate binding name for the very
+			// reason that went unsaid here: one of the two is
+			// unreachable and nothing would say which. A panic is
+			// obviously wrong for a name a USER'S FILE chose; a line in
+			// the status is not. Raised in review of #522.
+			ed.shadowedDecls = append(ed.shadowedDecls, d.Name)
 			continue
 		}
 		v, err := d.AbsentValue()
@@ -3224,6 +3253,30 @@ func (ed *editor) seedDeclared(src string) bool {
 		ed.seededDecls = append(ed.seededDecls, d.Name)
 	}
 	return true
+}
+
+// shadowedNote is what the build status says about declared names the
+// editor's own chrome already binds, and "" when there are none.
+//
+// APPENDED TO "✓ builds" RATHER THAN REPLACING IT, because the document
+// really does build: the binding resolves, the tree is made, the preview
+// is live. What it is not is the author's value — the handle is the
+// IDE's, so Default never appears and the declared Type is not what the
+// binding resolved to. That is a narrower claim than a failure and the
+// status says the narrower thing.
+//
+// IT NAMES THE NAMES, because the author's only other route to the
+// diagnosis is knowing menuValues' list, which is not in their document.
+func shadowedNote(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	verb := " is a name the editor itself binds"
+	if len(names) > 1 {
+		verb = " are names the editor itself binds"
+	}
+	return " — " + strings.Join(names, ", ") + verb + "; the preview shows the " +
+		"editor's value, not this declaration's"
 }
 
 func (ed *editor) outline() string {
