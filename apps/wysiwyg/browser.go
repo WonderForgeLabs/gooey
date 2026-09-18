@@ -419,6 +419,30 @@ func (ed *editor) openWorkspaceFile(rel string) {
 			"has no document to show")
 		return
 	}
+	// AND THE UNPREFIXED SPELLING, which is splitDecls' THIRD arm and the
+	// one the whole partition exists to diagnose — the author who wrote
+	// <Property> meaning <x:Property>. The guard above is keyed on the
+	// namespace, so that file fell through it entirely: it opened with
+	// "markup: unknown element <Property>", set ed.openPath, and ctrl+s
+	// then wrote the editor's synthesised document — the declaration
+	// wrapped in a <Gooey> — over the author's file.
+	//
+	// THE MESSAGE WAS ALSO ABOUT A DOCUMENT THE AUTHOR DID NOT WRITE.
+	// markup.Build on those bytes answers "root element must be <Gooey>,
+	// got <Property>"; "unknown element" only arises once the editor has
+	// put the declaration under its surface, and splitDecls' own doc
+	// names that string as the one the author must not be shown.
+	//
+	// The other three routes to these bytes were already covered — the
+	// prefixed file by the arm above, a paste by bareDeclWhy's third arm,
+	// and one inside a <Gooey> by splitDecls' bare arm — which is what
+	// made this the odd path out rather than a gap in the idea. Raised in
+	// review of #522.
+	if n.Elem == "Property" {
+		ed.status.Set("✗ " + rel + ": " + bareDeclMsg(1) + ". A file whose " +
+			"whole content is one has no document to show")
+		return
+	}
 	var env map[string]string
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
