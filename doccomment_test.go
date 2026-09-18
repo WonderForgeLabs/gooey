@@ -55,13 +55,23 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// look for a prune that is not there. The reverse mistake is worse:
 	// marking before them makes a module of nothing but .pb.go read as
 	// covered. Raised in review of #503.
-	reached := map[string]bool{} // modules the walk yielded a .go file in
-	ruled := map[string]bool{}   // and then parsed one this rule applies to
+	//
+	// AND THE POSITIONS ARE PINNED NOW, not just described. The paragraph
+	// above names both mistakes and calls one of them worse; neither had
+	// a counterfactual, because the only thing driving this bookkeeping
+	// was the clean tree, where both markings agree. Measured: adding
+	// `ruled[owningModule(…)] = true` beside the reached line — the exact
+	// "worse" state — left the guard tests green. The marking moved into
+	// coverage() so a fixture can drive it, the same extraction
+	// moduleFloorFaults got one level down and for the same reason.
+	// Raised in review of #503.
 	paths, modules := treeWalk(t)
+	reached, ruled := map[string]bool{}, map[string]bool{}
 	for _, path := range paths {
-		reached[owningModule(filepath.Dir(path), modules)] = true
 		fset := gotoken.NewFileSet()
 		f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
+		ok := err == nil && !ast.IsGenerated(f)
+		coverInto(reached, ruled, filepath.Dir(path), modules, err == nil, ok)
 		if err != nil {
 			// A file that does not parse is not this guard's business —
 			// the compiler is already the instrument for that, and a
@@ -102,7 +112,6 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 			continue
 		}
 		files++
-		ruled[owningModule(filepath.Dir(path), modules)] = true
 		for _, s := range stolenComments(fset, f, filepath.Dir(path)) {
 			t.Error(s)
 		}
@@ -238,6 +247,84 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 	return faults
 }
 
+// coverInto records one file against the two coverage maps: reached
+// whenever the walk yielded it, ruled only when the rule applies to it.
+//
+// A FUNCTION FOR THE SAME REASON moduleFloorFaults is one. The two
+// markings are one line apart in the caller and one word apart in
+// effect, and the positions carry an argument: reached BEFORE the parse
+// and generated skips, so a module whose every file is skipped reports
+// as read-and-not-ruled; ruled AFTER them, because marking it before
+// makes a module of nothing but .pb.go read as covered. That second
+// state is the one the caller's comment calls worse, and it was
+// reachable in silence — the only thing exercising these lines was the
+// clean tree, where a module always has at least one ordinary file and
+// so both maps agree whatever the order.
+//
+// TWO BOOLEANS RATHER THAN AN *ast.File, which is what makes the fixture
+// possible at all. Handing this a file would put the parse and
+// ast.IsGenerated inside it and leave a fixture needing real bytes on
+// disk; planting them under testdata/ is worse than it looks, because
+// testdata is deliberately unpruned here, so a go.mod there would be
+// picked up by BOTH treeWalk and discoverModules and redden
+// TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery for an unrelated
+// reason. The caller keeps the parse; this keeps the order. Raised in
+// review of #503.
+func coverInto(reached, ruled map[string]bool, dir string, modules []string, parsed, applies bool) {
+	mod := owningModule(dir, modules)
+	reached[mod] = true
+	if parsed && applies {
+		ruled[mod] = true
+	}
+}
+
+// TestTheCoverageMarkingsHaveTheOrderTheirCommentClaims is the
+// counterfactual for coverInto, and the generated-only module is the arm
+// that matters.
+//
+// A module contributing one generated file is READ and RULED ON BY
+// NOTHING, so the floor must report it — that is the whole of the
+// "worse" mistake the caller's comment names, and before this arm
+// existed, marking ruled beside reached left the suite green. The
+// parse-failure arm is its sibling: same answer, different cause, and
+// the floor's !ruled message names both so a reader can tell which.
+//
+// THE CLEAN ARM IS NOT DECORATION either: without it the two arms above
+// pass for a coverInto that never marks ruled at all, which is the
+// mirror mistake and would make every module in the tree report as
+// unruled. Raised in review of #503.
+func TestTheCoverageMarkingsHaveTheOrderTheirCommentClaims(t *testing.T) {
+	const mod = "m"
+	mods := []string{".", mod}
+	for _, tc := range []struct {
+		name             string
+		parsed, applies  bool
+		wantR, wantRuled bool
+	}{
+		{"an ordinary file", true, true, true, true},
+		{"a module of nothing but generated code", true, false, true, false},
+		{"a file that does not parse", false, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reached, ruled := map[string]bool{}, map[string]bool{}
+			coverInto(reached, ruled, mod, mods, tc.parsed, tc.applies)
+			if reached[mod] != tc.wantR {
+				t.Errorf("reached[%q] = %v, want %v: the walk yielded the file, so "+
+					"the module is reached whatever the rule then does with it — "+
+					"marking this after the skips would report a skipped module as "+
+					"one a prune ate", mod, reached[mod], tc.wantR)
+			}
+			if ruled[mod] != tc.wantRuled {
+				t.Errorf("ruled[%q] = %v, want %v: ruled means the rule was APPLIED, "+
+					"and marking it before the parse and generated skips makes a "+
+					"module of nothing but .pb.go read as covered — which is the "+
+					"mistake coverInto's comment calls the worse of the two",
+					mod, ruled[mod], tc.wantRuled)
+			}
+		})
+	}
+}
+
 // TestTheModuleFloorReportsWhichFaultItFound is the counterfactual the
 // floor did not have. Each case asserts the message, not the count: the
 // two arms are one word apart in effect and identical in shape, so a
@@ -254,6 +341,20 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 		// review of #503.
 		twoCauses = "the module genuinely holds no Go"
 		separator = "-name '*.go'"
+		// AND THE SAME TREATMENT FOR THE OTHER ARM, which round 6's fix
+		// was not applied to. Its want was the single phrase `unruled`,
+		// and TestTheRemediationGrepAgreesWithTheRule reads
+		// generatedMarkerPattern DIRECTLY rather than through this
+		// message — so the remedy could leave the arm with nothing going
+		// red. Measured: replacing the clause naming `go vet ./...` with
+		// placeholder text, format args untouched so vet's printf check
+		// cannot see it either, left the whole root suite green. That is
+		// the parse half of the reader's next step deleted in silence,
+		// in the arm whose stated purpose is to separate two causes.
+		// Raised in review of #503.
+		parseHalf   = "go vet ./..."
+		markerHalf  = "grep -rLE"
+		noExemption = "no way to mark a module exempt"
 	)
 	for _, tc := range []struct {
 		name           string
@@ -275,7 +376,7 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 			reached: map[string]bool{".": true, "mcp": true},
 			ruled:   map[string]bool{".": true},
 			modules: []string{".", "mcp"},
-			want:    []string{unruled},
+			want:    []string{unruled, parseHalf, markerHalf, noExemption},
 		},
 		{
 			// A SET WITH NO ROOT MODULE IN IT, which is the only way
@@ -527,15 +628,38 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 		if strings.HasSuffix(s, "_test.go") && tests == "" {
 			tests = s
 		}
-		if fixtures == "" && strings.Contains(s, "/testdata/") {
+		// EVERY ONE OF THESE HANDLES THE ROOT POSITION, because a path
+		// test written only for the nested case is the shape two of
+		// these had. `strings.Contains(s, "/testdata/")` alone cannot
+		// see a root-level testdata/, and all four of the tree's
+		// testdata Go files are nested today — so the day one moves,
+		// the fatal below fires saying testdata "had nothing behind
+		// it", which is the opposite of what happened. The vendor test
+		// beside it got the root case right, which is what makes the
+		// asymmetry visible in one loop. Raised in review of #503.
+		if fixtures == "" && (strings.HasPrefix(s, "testdata/") ||
+			strings.Contains(s, "/testdata/")) {
 			fixtures = s
 		}
-		if vendored == "" && (s == "vendor" || strings.HasPrefix(s, "vendor/") ||
+		if vendored == "" && (strings.HasPrefix(s, "vendor/") ||
 			strings.Contains(s, "/vendor/")) {
 			vendored = s
 		}
+		// THE DIRECTORY PART ONLY, and this is the same root-position
+		// mistake in its other form. The prune skips DIRECTORIES
+		// (d.IsDir() above); scanning every segment including the
+		// basename made a dot-prefixed FILE fire it. `.#name.go` is
+		// Emacs' lock-file spelling and this repo routinely has five to
+		// fifteen agents live, any of which can leave one at the root —
+		// measured, one such file reddened all three treeWalk callers
+		// with a message blaming two directories that are not involved.
+		// It failed CLOSED, which is the safe direction; the defect was
+		// the message, in the file whose whole subject is a guard whose
+		// message is wrong. filepath.Dir(".#scratch.go") is ".", one
+		// character, so the len > 1 test stops there. Raised in review
+		// of #503.
 		if hidden == "" {
-			for _, seg := range strings.Split(s, "/") {
+			for _, seg := range strings.Split(filepath.ToSlash(filepath.Dir(s)), "/") {
 				if len(seg) > 1 && seg[0] == '.' {
 					hidden = s
 					break
