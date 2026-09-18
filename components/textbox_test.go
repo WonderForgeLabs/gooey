@@ -400,6 +400,86 @@ func TestTheScrollWindowIsWalkedNotResummed(t *testing.T) {
 	}
 }
 
+// TestARepaintDoesNotWalkTheWholeValue is the third of the three cost
+// assertions, over the PAINT path, and it is the one that was missing.
+//
+// Render segmented `string(runes[t.scroll:])` — the whole tail, copied
+// on every paint. Its own doc argued the bound could not be computed,
+// because a rune sum is neither an upper nor a lower bound on its
+// clusters' widths and guessing short drops glyphs off the right of the
+// field. True of guessing and false of WALKING: spanForCols doubles the
+// span until the walk has passed the column asked for, so it never
+// guesses and never touches more than the window shows.
+//
+// Measured on this tree, a 40-column focused field with the caret
+// mid-value, one repaint per frame, 100 frames:
+//
+//	  runes   before    after
+//	  1,000    88 µs   103 µs
+//	 10,000   149 µs    95 µs
+//	100,000   558 µs    99 µs
+//	200,000   997 µs    94 µs
+//
+// A RATIO BETWEEN TWO LENGTHS, not a budget in milliseconds, for
+// TestTheScrollWindowIsWalkedNotResummed's reason one file up: the ratio
+// measures the algorithm and a millisecond measures the runner. Before
+// the fix it is 11x for 200x the value; the budget of 4 is 4x above the
+// flat measurement and 2.8x below the defect.
+//
+// THE ROW FIRST, because a budget over a field painting nothing is
+// trivially met — the exact hazard spanForCols introduces, since a span
+// guessed short paints a short row rather than failing.
+func TestARepaintDoesNotWalkTheWholeValue(t *testing.T) {
+	cost := func(n int) (time.Duration, string, int) {
+		v := prop.NewSource(strings.Repeat("a", n))
+		st := prop.NewSource(render.Style{})
+		tb := &TextBox{Text: v, Style: st}
+		tb.SetFocused(true)
+		tb.setCaret(n / 2)
+		c := gooey.NewComposer(tb, 40, 1)
+		f, _ := c.Frame()
+		row := render.RowText(f.Cells, 0)
+		caret := 0
+		for x := range 40 {
+			if f.Cells.At(x, 0).Style.Reverse {
+				caret++
+			}
+		}
+		const frames = 100
+		start := time.Now()
+		for i := range frames {
+			// A REAL REPAINT, not a re-read of a clean node: Render is
+			// a paint node, so a Frame() over an unchanged graph paints
+			// nothing at all and would time the Composer's damage
+			// bookkeeping instead.
+			st.Set(render.Style{Bold: i%2 == 0})
+			c.Frame()
+		}
+		return time.Since(start) / frames, row, caret
+	}
+	short, shortRow, shortCaret := cost(1000)
+	long, longRow, longCaret := cost(200000)
+
+	if want := strings.Repeat("a", 40); shortRow != want || longRow != want {
+		t.Fatalf("the field painted %q at 1,000 runes and %q at 200,000, want "+
+			"%q for both — a span walked short paints a short row, so a cost "+
+			"assertion over it would be met by painting less", shortRow, longRow, want)
+	}
+	if shortCaret != 1 || longCaret != 1 {
+		t.Fatalf("%d reversed cells at 1,000 runes and %d at 200,000, want 1 "+
+			"each: the caret is mid-value, so a window that stopped short of it "+
+			"would paint a full row with the caret nowhere on screen — which "+
+			"the row assertion above cannot see", shortCaret, longCaret)
+	}
+	if long > 4*short {
+		t.Errorf("a repaint costs %v at 200,000 runes against %v at 1,000 — "+
+			"%.1fx for two hundred times the value, want under 4x. Render is "+
+			"segmenting the whole tail rather than the span spanForCols bounds, "+
+			"which is O(len(value)) on the paint path, per keystroke, on the UI "+
+			"goroutine", long, short, float64(long)/float64(short))
+	}
+}
+
 // TestADragDoesNotWalkTheWholeValue is a COST assertion over the INPUT
 // path, and it is the same shape and the same reason as
 // TestTheScrollWindowIsWalkedNotResummed above: the caret indexAt
@@ -824,7 +904,44 @@ func widthVocabulary() []string {
 		// question is about the run and not about the flag. Raised in
 		// review of #521.
 		strings.Repeat("🇺🇸", 40) + strings.Repeat("🇬🇧", 4),
+		// OPENS WITH A BARE COMBINING MARK, which is a cluster the
+		// segmenter reports at ZERO columns. Every other entry here
+		// opens on something with a column of its own —
+		// strings.Repeat("é", 10) opens with `e` — so no grid arm could
+		// reach the one place Render and the window disagree by
+		// construction: Render advances by max(w, 1) so the mark is
+		// painted at all, and windowFloor summed the raw width, so it
+		// believed in a column Render would not give it. In a
+		// four-column field the window never scrolled and the caret
+		// block fell outside the bounds — a focused field showing a
+		// value and no caret. Measured in review of #521.
+		"\u0301abc" + family + "\u0301\u0301xy",
 	}
+}
+
+// clusterCols is what the SCREEN costs for a span: every cluster's
+// width, each floored at one column.
+//
+// NOT render.StringWidth, and the difference is the whole of #521's
+// round-5 finding 1. StringWidth counts a zero-width cluster as 0, which
+// is the right answer about Unicode and the wrong one about this
+// component: Render advances by max(w, 1) (`components/textbox.go`, the
+// arm added so a value opening with a combining mark is painted at all),
+// so a leading mark occupies a column on screen. The oracle used
+// StringWidth, so it encoded windowFloor's model rather than Render's
+// and AGREED WITH THE DEFECT — a grid over six vocabulary entries stayed
+// green over a field that scrolled one column short.
+//
+// Like clusterBoundaries, this is deliberately the slow obvious walk. A
+// reference that shared the implementation's shortcut would share its
+// bug.
+func clusterCols(runes []rune) int {
+	cols := 0
+	render.EachCluster(string(runes), func(cluster string, _, _, _ int) bool {
+		cols += max(render.StringWidth(cluster), 1)
+		return true
+	})
+	return cols
 }
 
 // TestTheWindowFloorIsTheLeftmostFittingClusterBoundary is a grid
@@ -853,7 +970,7 @@ func TestTheWindowFloorIsTheLeftmostFittingClusterBoundary(t *testing.T) {
 				for reserve := 0; reserve <= 2; reserve++ {
 					want := end
 					for _, b := range bs {
-						if reserve+render.StringWidth(string(runes[b:end])) <= avail {
+						if reserve+clusterCols(runes[b:end]) <= avail {
 							want = b
 							break
 						}
@@ -864,7 +981,7 @@ func TestTheWindowFloorIsTheLeftmostFittingClusterBoundary(t *testing.T) {
 							"%q is %d columns and the window holds %d",
 							vi, end, reserve, avail, got, want,
 							string(runes[want:end]),
-							render.StringWidth(string(runes[want:end])), avail-reserve)
+							clusterCols(runes[want:end]), avail-reserve)
 					}
 				}
 			}
@@ -1171,48 +1288,65 @@ func TestTheCaretSurvivesAWindowThatOpensOnACombiningMark(t *testing.T) {
 	}
 }
 
-// TestAFlagRunCostsTheSameWhateverItsLength is a COST assertion shaped
-// as a SCALING one, and the shape is the point: a budget in
-// milliseconds measures the runner, a ratio between two runs on the same
-// machine in the same process measures the algorithm.
+// TestAFlagRunSegmentsNoMoreThanItsSlack is a COST assertion shaped as a
+// RATIO, and the shape is the point: a budget in milliseconds measures
+// the runner, a ratio between two runs on the same machine in the same
+// process measures the algorithm.
 //
-// eachClusterFrom walks off a regional-indicator run before it starts,
-// because UAX #29 GB12/GB13 decide a flag boundary by the parity of the
-// whole run and a segmenter restarted mid-run pairs every flag from
-// there one rune out. Walking to the run's OWN START restores the
-// parity and makes the segmented span as long as the run — so the fix
-// for a correctness defect put an O(run) cost on the paint path and on
-// every column of a drag. Measured, 1,000 clusterStartAt calls:
+// WHAT IS BOUNDED IS THE SEGMENTED SPAN, and the name this replaces
+// claimed more than that. eachClusterFrom walks off a
+// regional-indicator run before it starts, because UAX #29 GB12/GB13
+// decide a flag boundary by the parity of the whole run and a segmenter
+// restarted mid-run pairs every flag from there one rune out. Walking to
+// the run's OWN START restores the parity and makes the SEGMENTED span
+// as long as the run — an O(run) segmentation on the paint path and on
+// every column of a drag. Dropping back to the nearest EVEN offset keeps
+// the parity with the span bounded by clusterSlack.
 //
-//	                     500 flags   5,000 flags   ratio
-//	walk to the start      53.1 ms      517.1 ms    9.7x
-//	drop to even parity     7.6 ms       10.7 ms    1.4x
+// The residual is the walk that FINDS the run's start, and that walk is
+// still O(run) — a rune comparison per step, segmenting nothing. So the
+// cost does grow with the run, and the old assertion's two sample points
+// simply sat on the flat part of that curve. Measured on this tree,
+// 1,000 clusterStartAt calls:
 //
-// Any EVEN offset into the run is a true pair boundary, so the parity
-// survives while the span stays bounded by clusterSlack. The residual
-// cost is the walk that FINDS the run's start, which is a rune
-// comparison per step and segments nothing.
+//	   500 pairs    7.8 ms
+//	 5,000 pairs   10.9 ms   1.4x
+//	50,000 pairs   40.3 ms   3.7x
 //
-// FOUR TIMES is the budget because both halves are wrong by more than
-// that: 2.8x above the measurement and 2.4x below the defect, on a
-// quantity that does not move with the machine. Raised in review of
-// #521.
-func TestAFlagRunCostsTheSameWhateverItsLength(t *testing.T) {
-	cost := func(pairs int) time.Duration {
-		runes := []rune(strings.Repeat("\U0001F1FA\U0001F1F8", pairs))
-		start := time.Now()
-		for range 1000 {
-			clusterStartAt(runes, len(runes)/2)
-		}
-		return time.Since(start)
+// A third grid point reddens the old form, and it went red once here at
+// two — a 4x budget over a 1.4x measurement is a thin margin on a loaded
+// runner, which is the objection this PR's own round 4 made about a
+// sibling.
+//
+// THE CLAIM THAT IS TRUE, AND THE ONE WORTH PINNING: a call costs a scan
+// of the run, not a SEGMENTATION of it. So 100 calls cost less than ONE
+// segmentation of the same run, where the defect made each call cost
+// about one. Measured at 50,000 pairs, three runs: 0.69, 0.70, 0.72 of a
+// segmentation for a hundred calls. The budget of ten is 14x above the
+// measurement and 10x below the defect, and both the numerator and the
+// denominator move with the machine together.
+func TestAFlagRunSegmentsNoMoreThanItsSlack(t *testing.T) {
+	const pairs = 50000
+	runes := []rune(strings.Repeat("\U0001F1FA\U0001F1F8", pairs))
+
+	t0 := time.Now()
+	render.EachCluster(string(runes), func(string, int, int, int) bool { return true })
+	oneSegmentation := time.Since(t0)
+
+	t1 := time.Now()
+	for range 100 {
+		clusterStartAt(runes, len(runes)/2)
 	}
-	short, long := cost(500), cost(5000)
-	if long > 4*short {
-		t.Errorf("1,000 clusterStartAt calls cost %v over 5,000 flags against %v "+
-			"over 500 — %.1fx for ten times the run, want under 4x. The "+
-			"regional-indicator walk-back is segmenting the run rather than "+
-			"dropping to the nearest even offset in it, which is O(run) on "+
-			"the paint path", long, short, float64(long)/float64(short))
+	hundredCalls := time.Since(t1)
+
+	if hundredCalls > 10*oneSegmentation {
+		t.Errorf("100 clusterStartAt calls into a run of %d flags cost %v "+
+			"against %v to segment that run ONCE — %.1f segmentations for a "+
+			"hundred calls, want under 10. The regional-indicator walk-back is "+
+			"segmenting the run rather than dropping to the nearest even offset "+
+			"in it, which puts an O(run) segmentation on the paint path and on "+
+			"every column of a drag", pairs, hundredCalls, oneSegmentation,
+			float64(hundredCalls)/float64(oneSegmentation))
 	}
 }
 
@@ -1264,6 +1398,47 @@ func TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets(t *testing.T) {
 			"is typing into a focused field whose caret is nowhere on screen. "+
 			"Row: %q", reversed, value, render.RowText(f.Cells, 0))
 	}
+
+	// AND THE THIRD ARM IS WHERE THE SLACK RUNS OUT. Both arms above run
+	// in ten columns for four runes, so the window never has to decide
+	// anything and the same injury hides. windowFloor summed the raw
+	// cluster width where Render advances by max(w, 1), so it believed in
+	// a column Render would not give it; at a width with no spare column
+	// the field does not scroll, the caret block's x < b.X+b.W is false,
+	// and the user is again typing into a field with no caret in it.
+	//
+	// THE ORACLE IS THE ASCII CONTROL, not a written-down row. The two
+	// values differ only in whether their first cluster is zero-width to
+	// the segmenter, and Render gives both of them one column — so every
+	// observable here has to be IDENTICAL, and a row spelled out in the
+	// fixture would pin today's scroll arithmetic rather than that
+	// agreement. Measured before the fix: the mark row was "\u0301abc"
+	// at scroll 0 with no caret block, the control "abc█" at scroll 1
+	// with one.
+	narrow := func(v string) (int, string, int) {
+		tb := &TextBox{Text: prop.NewSource(v)}
+		tb.SetFocused(true)
+		tb.setCaret(len([]rune(v)))
+		f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
+		row := render.RowText(f.Cells, 0)
+		return tb.scroll, row, strings.Count(row, "█")
+	}
+	markScroll, markRow, markCarets := narrow(value)
+	ctlScroll, ctlRow, ctlCarets := narrow("xabc")
+	if markCarets == 0 {
+		t.Errorf("a four-column field showing %q paints no caret at all (row "+
+			"%q, scroll %d) while the same shape in ASCII paints %d (row %q, "+
+			"scroll %d) — the window kept a column Render does not give it, so "+
+			"it never scrolled and the caret fell outside the bounds",
+			value, markRow, markScroll, ctlCarets, ctlRow, ctlScroll)
+	}
+	if markScroll != ctlScroll || markRow != ctlRow || markCarets != ctlCarets {
+		t.Errorf("%q renders (scroll %d, row %q, %d caret blocks) and %q renders "+
+			"(scroll %d, row %q, %d) — Render gives the leading cluster one "+
+			"column in both, so the two have to agree",
+			value, markScroll, markRow, markCarets,
+			"xabc", ctlScroll, ctlRow, ctlCarets)
+	}
 }
 
 // TestAClickLandsOnAClusterBoundaryNotInsideOne is finding 4.
@@ -1286,6 +1461,42 @@ func TestAClickLandsOnAClusterBoundaryNotInsideOne(t *testing.T) {
 		t.Errorf("a click on column 1 of %q answers caret %d, want %d — %d is "+
 			"between the e and its accent, which is a position the screen does "+
 			"not have", decomposed, got, want, got)
+	}
+}
+
+// TestAClickOnAValueOpeningWithACombiningMarkIsNotOffByOne is the click
+// half of round-5 finding 1, and the half the window grid cannot reach.
+//
+// indexAt disagreed WITH ITSELF. Its backward walk goes through
+// caretCols, which floors a zero-width cluster at one column; its
+// forward walk three lines down summed the raw width. So on a value
+// opening with a bare combining mark — a cluster Render paints into a
+// column and the segmenter reports as zero — every column answered one
+// index late and index 0 was unreachable by mouse:
+//
+//	click col 0 -> caret 1     (column 0 paints the mark, which is index 0)
+//	click col 1 -> caret 2
+//	click col 2 -> caret 3
+//
+// EVERY COLUMN, NOT ONE, which is why this asserts the whole row rather
+// than a single click: an off-by-one that starts at column 0 is a
+// different fault from a click landing inside a cluster
+// (TestAClickLandsOnAClusterBoundaryNotInsideOne, above), and a single
+// probe cannot tell which one it caught.
+func TestAClickOnAValueOpeningWithACombiningMarkIsNotOffByOne(t *testing.T) {
+	const leading = "\u0301abc"
+	tb := &TextBox{Text: prop.NewSource(leading)}
+	gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+
+	for col := 0; col < 4; col++ {
+		tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: col})
+		if got := tb.Caret(); got != col {
+			t.Errorf("a click on column %d of %q answers caret %d, want %d — "+
+				"the leading mark is drawn into column 0 by Render and counted "+
+				"as no column by the forward walk, so every click is one index "+
+				"late and index 0 cannot be reached at all",
+				col, leading, got, col)
+		}
 	}
 }
 
