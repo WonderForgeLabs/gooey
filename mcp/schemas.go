@@ -132,6 +132,87 @@ func validateMarkupSchema() map[string]any {
 	}, "valid")
 }
 
+// THE THREE PAIRS SHARE THEIR TAILS RATHER THAN REPEATING THEM, and
+// this paragraph is the const group's own. Each of
+// cols/rows, x/y and cellWidth/cellHeight differed in one leading noun
+// phrase and was then byte-identical for the rest — 60 to 370
+// characters of it, with nothing comparing the copies.
+// TestTheScreenSizeSchemaAndItsResultNameTheSameKeys compares KEYS, so
+// sharpening the double-conversion warning on x and leaving y behind
+// would ship a generated client two different rules for one axis pair,
+// and y is the axis the fixtures make non-zero. That is the same move
+// this branch spent five rounds making on its prose inventories
+// (islandGoneFmt and friends); the schema was the surface where the
+// copies were left standing. Raised in review of #504.
+const (
+	extentTail = " in cells. For a scoped session this is the island's %s, not the " +
+		"terminal's. 0 is a real answer, not an error: a scoped session whose island " +
+		"is collapsed or not yet arranged reports 0x0 and shows nothing. It may also " +
+		"EXCEED the terminal's: the island's arranged rect is reported unclipped, so " +
+		"one arranged partly offscreen names cells no terminal has, and the far " +
+		"corner converted through x/y is outside the screen."
+	originTail = " of the surface's %s edge — add it to a position within the surface " +
+		"to put the coordinate in the space send_mouse reads. 0 when unscoped. It " +
+		"fixes the coordinate space, not the outcome: whether a point is acted on " +
+		"still depends on what is under it. Applies to a position read off " +
+		"`screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
+		"ALREADY absolute and must not be converted twice."
+	cellTail = " of one cell in pixels, for sizing graphics. " + cellProbeRule
+)
+
+// pointerFrameRule is the ONE statement of what send_mouse's x and y are
+// measured against, and it sits here rather than inline for the reason
+// cellProbeRule gives: the caller reads the tool it is about to call,
+// not the tool beside it.
+//
+// originTail already tells a screen_size caller to convert. Nothing told
+// a send_mouse caller there was anything to convert FROM — the arguments
+// read "Column, 0-based", with no statement of what 0 is. So a scoped
+// agent calls screen_text, gets three lines for an island arranged at
+// y=1, sends y=0 for the first of them, and is refused with "element …
+// is outside this session's island" for a row it can see in its own
+// screenshot. Everything else on this branch moved: the description, the
+// schema tails, the instructions, the tutorial, both spec records, both
+// workflow prompts. The tool that CONSUMES the coordinate did not, which
+// is the one surface the agent reads immediately before committing it.
+// Raised in review of #504.
+const pointerFrameRule = ", 0-based, in ABSOLUTE screen cells — the host's screen, " +
+	"not the island. For a scoped session add screen_size's %s to a position read " +
+	"off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
+	"ALREADY absolute and must not be converted twice. Unscoped the two spaces " +
+	"coincide and there is nothing to add."
+
+// cellProbeRule is the ONE statement of what a zero cell metric means,
+// and it is a const rather than two sentences because the two surfaces
+// that carry it had drifted in DIRECTION. This schema said "0 means the
+// host never probed"; the tool description said "cell metrics are 0 when
+// the host never probed", which reads as never-probed ⇒ 0 and is false —
+// App.caps substitutes term.DefaultCellW/H for a pixel-plane host, so a
+// graphics app with a pinned encoder and no probe reports 10x20. An
+// agent applying the wrong direction sizes a picture against an invented
+// measurement, which is the move screen_size exists to replace. Two
+// halves of one contract disagreeing is not a thing to assert about; it
+// is a thing to make unwritable. Raised in review of #504.
+//
+// AND THERE ARE TWO SUBSTITUTION SITES, not one. This const named the
+// narrower — and it is the copy that ships to clients, while
+// control.ScreenSize's doc and docs/learn/08-remote-control.md both name
+// both. term.Screen.Detect substitutes DefaultCellW/H on `caps.CellW ==
+// 0` alone, with NO plane test (term/term.go), so a cell-plane app run
+// with WithCapabilityProbe in a terminal that ignores CSI 16 t reports
+// 10x20 too. An agent applying the narrow rule — invented only for a
+// graphics host with a pinned encoder, and this host is neither —
+// concludes the terminal was measured and sizes a picture against a
+// number nobody took. App.caps' backfill is the second site and fires
+// only where the first did not. Raised in review of #504, one round
+// after the direction was.
+const cellProbeRule = "0 MEANS the host never probed the terminal — branch on that " +
+	"rather than dividing by it. The converse does not hold, at two separate " +
+	"sites: the probe itself substitutes a default whenever the terminal did not " +
+	"answer, whatever the app paints on, and a graphics host with a pinned " +
+	"encoder substitutes one without probing at all — so non-zero means usable, " +
+	"not necessarily measured."
+
 // screenSizeSchema publishes what screen_size answers. Every field is
 // required: a client asking for the screen cannot act on a partial one,
 // and a field nobody measured says so with 0 rather than going missing —
@@ -161,86 +242,6 @@ func validateMarkupSchema() map[string]any {
 // reading it computed coordinates its own pointer call would refuse. x/y
 // are what close the gap, so they are described as the conversion rather
 // than as decoration.
-// THE THREE PAIRS SHARE THEIR TAILS RATHER THAN REPEATING THEM. Each of
-// cols/rows, x/y and cellWidth/cellHeight differed in one leading noun
-// phrase and was then byte-identical for the rest — 60 to 370
-// characters of it, with nothing comparing the copies.
-// TestTheScreenSizeSchemaAndItsResultNameTheSameKeys compares KEYS, so
-// sharpening the double-conversion warning on x and leaving y behind
-// would ship a generated client two different rules for one axis pair,
-// and y is the axis the fixtures make non-zero. That is the same move
-// this branch spent five rounds making on its prose inventories
-// (islandGoneFmt and friends); the schema was the surface where the
-// copies were left standing. Raised in review of #504.
-const (
-	extentTail = " in cells. For a scoped session this is the island's %s, not the " +
-		"terminal's. 0 is a real answer, not an error: a scoped session whose island " +
-		"is collapsed or not yet arranged reports 0x0 and shows nothing. It may also " +
-		"EXCEED the terminal's: the island's arranged rect is reported unclipped, so " +
-		"one arranged partly offscreen names cells no terminal has, and the far " +
-		"corner converted through x/y is outside the screen."
-	originTail = " of the surface's %s edge — add it to a position within the surface " +
-		"to put the coordinate in the space send_mouse reads. 0 when unscoped. It " +
-		"fixes the coordinate space, not the outcome: whether a point is acted on " +
-		"still depends on what is under it. Applies to a position read off " +
-		"`screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
-		"ALREADY absolute and must not be converted twice."
-	cellTail = " of one cell in pixels, for sizing graphics. " + cellProbeRule
-)
-
-// cellProbeRule is the ONE statement of what a zero cell metric means,
-// and it is a const rather than two sentences because the two surfaces
-// that carry it had drifted in DIRECTION. This schema said "0 means the
-// host never probed"; the tool description said "cell metrics are 0 when
-// the host never probed", which reads as never-probed ⇒ 0 and is false —
-// App.caps substitutes term.DefaultCellW/H for a pixel-plane host, so a
-// graphics app with a pinned encoder and no probe reports 10x20. An
-// agent applying the wrong direction sizes a picture against an invented
-// measurement, which is the move screen_size exists to replace. Two
-// halves of one contract disagreeing is not a thing to assert about; it
-// is a thing to make unwritable. Raised in review of #504.
-//
-// AND THERE ARE TWO SUBSTITUTION SITES, not one. This const named the
-// narrower — and it is the copy that ships to clients, while
-// control.ScreenSize's doc and docs/learn/08-remote-control.md both name
-// both. term.Screen.Detect substitutes DefaultCellW/H on `caps.CellW ==
-// 0` alone, with NO plane test (term/term.go), so a cell-plane app run
-// with WithCapabilityProbe in a terminal that ignores CSI 16 t reports
-// 10x20 too. An agent applying the narrow rule — invented only for a
-// graphics host with a pinned encoder, and this host is neither —
-// concludes the terminal was measured and sizes a picture against a
-// number nobody took. App.caps' backfill is the second site and fires
-// only where the first did not. Raised in review of #504, one round
-// after the direction was.
-// pointerFrameRule is the ONE statement of what send_mouse's x and y are
-// measured against, and it sits here rather than inline for the reason
-// cellProbeRule gives: the caller reads the tool it is about to call,
-// not the tool beside it.
-//
-// originTail already tells a screen_size caller to convert. Nothing told
-// a send_mouse caller there was anything to convert FROM — the arguments
-// read "Column, 0-based", with no statement of what 0 is. So a scoped
-// agent calls screen_text, gets three lines for an island arranged at
-// y=1, sends y=0 for the first of them, and is refused with "element …
-// is outside this session's island" for a row it can see in its own
-// screenshot. Everything else on this branch moved: the description, the
-// schema tails, the instructions, the tutorial, both spec records, both
-// workflow prompts. The tool that CONSUMES the coordinate did not, which
-// is the one surface the agent reads immediately before committing it.
-// Raised in review of #504.
-const pointerFrameRule = ", 0-based, in ABSOLUTE screen cells — the host's screen, " +
-	"not the island. For a scoped session add screen_size's %s to a position read " +
-	"off `screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
-	"ALREADY absolute and must not be converted twice. Unscoped the two spaces " +
-	"coincide and there is nothing to add."
-
-const cellProbeRule = "0 MEANS the host never probed the terminal — branch on that " +
-	"rather than dividing by it. The converse does not hold, at two separate " +
-	"sites: the probe itself substitutes a default whenever the terminal did not " +
-	"answer, whatever the app paints on, and a graphics host with a pinned " +
-	"encoder substitutes one without probing at all — so non-zero means usable, " +
-	"not necessarily measured."
-
 func screenSizeSchema() map[string]any {
 	return object(map[string]any{
 		"cols":       prop_("integer", "Width of the visible surface"+fmt.Sprintf(extentTail, "width")),

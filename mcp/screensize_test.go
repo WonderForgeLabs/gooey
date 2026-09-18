@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -644,7 +645,30 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 // gofmt, vet, -race and every inventory guard green; whose schema it is
 // makes no difference to the client reading it. Raised in review of
 // #504.
+//
+// TWO RESIDUES, because only one of these tails goes through Sprintf.
+// extentTail, originTail and pointerFrameRule are rendered, so a
+// mismatched verb in them is caught by go vet's printf check at build
+// time for a constant format and by the "%!" search here for a computed
+// one. cellTail is plain CONCATENATION (schemas.go), and cellProbeRule
+// reaches clients twice that way — through cellTail into
+// cellWidth/cellHeight, and directly into screen_size's Description
+// (tools.go). A "%s" added to either ships VERBATIM: vet sees no format
+// call at all, and nothing ever rendered it, so there is no "%!" to
+// find. The asymmetry is invisible from this test, which reads as
+// covering all six descriptions alike — so the sweep asks both
+// questions of every published string, and the unconsumed-verb half is
+// the one that covers the concatenated tails. The published strings
+// hold no literal % today, so it starts green. Raised in review of
+// #504.
 func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
+	// A % FOLLOWED BY A FORMAT LETTER, with its flag and width run: what
+	// a tail that was never rendered looks like. "%!"-style residue
+	// cannot match it — "!" is neither a flag nor a letter — so the two
+	// checks are independent rather than one subsuming the other, and
+	// "%%" is left alone because an escaped percent is a legal thing for
+	// a description to carry.
+	verb := regexp.MustCompile(`%[-+ #0]*[0-9.]*[a-zA-Z]`)
 	s := &Server{}
 	tools := s.v1Tools()
 	if len(tools) == 0 {
@@ -657,6 +681,12 @@ func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 		}
 		if strings.Contains(tl.Description, "%!") {
 			t.Errorf("%s's description carries fmt residue: %q", tl.Name, tl.Description)
+		}
+		if v := verb.FindString(tl.Description); v != "" {
+			t.Errorf("%s's description ships the unrendered verb %q to every "+
+				"generated client: %q. This one is CONCATENATED rather than "+
+				"Sprintf'd, so neither vet's printf check nor the %%! search "+
+				"above can see it", tl.Name, v, tl.Description)
 		}
 		// BOTH SCHEMAS. screen_size — the tool whose rendered
 		// descriptions this sweep was generalized from — publishes
@@ -691,6 +721,13 @@ func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 					t.Errorf("%s's %q %s carries fmt residue (%q): a tail grew a "+
 						"%% and Sprintf shipped it to every generated client",
 						tl.Name, name, sch.kind, d)
+				}
+				if v := verb.FindString(d); v != "" {
+					t.Errorf("%s's %q %s ships the unrendered verb %q: %q. A tail "+
+						"that is CONCATENATED rather than Sprintf'd — cellTail and "+
+						"cellProbeRule are the ones in this inventory — reaches the "+
+						"client with the verb intact, which neither vet nor the %%! "+
+						"search can see", tl.Name, name, sch.kind, v, d)
 				}
 			}
 		}
