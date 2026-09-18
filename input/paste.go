@@ -67,10 +67,12 @@ func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 // what moved the thing it points at. The wedge paragraph was the block
 // immediately above here on origin/main; the godoc misattribution fixed
 // at the foot of decodePaste's doc moved it below, and the direction
-// stayed. The same comment already says "on decodePaste below" thirteen
-// lines down, so one doc gave both directions for one paragraph. Naming
+// stayed. The last paragraph of this same doc then said "on decodePaste
+// below", so one comment gave both directions for one paragraph. Naming
 // the site is the form this branch settled on for "the sleep above" and
-// "seventy lines below". Raised in review of #445.
+// "seventy lines below" — and the sentence that stated that rule was
+// itself counting lines to say where the contradiction was. Raised in
+// review of #445, twice.
 //
 // THAT COST WAS UNDERSTATED HERE, and the sentence that follows replaces
 // one claiming the hold "is not stranded, because the next byte from the

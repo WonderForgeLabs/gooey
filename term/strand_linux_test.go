@@ -92,8 +92,9 @@ func TestEscBeforeAMouseReportDoesNotStrandTheDecoder(t *testing.T) {
 // and the pass after it withdraws the exception (input.DecodeFinal).
 // Here rather than in input for the reason the test above gives — only
 // the loop can show that violating a decoding contract strands live
-// input, and only a real tty makes the loop the thing under test. In particular the
-// GAP is the fixture: these bytes have to arrive in their own read and
+// input, and only a real tty makes the loop the thing under test. In
+// particular the GAP is the fixture: these bytes have to arrive in their
+// own read and
 // then nothing for two timeouts, which is exactly what a keyboard does
 // and what a single Write in one test cannot fake.
 func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
@@ -131,8 +132,14 @@ func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
 	// a shared runner reads as a regression. Raised in review of #445.
 	if ev := next(t, evs, "the Esc never arrived: three bytes that are half a "+
 		"paste marker and also three keys a person typed are being held "+
-		"forever, and the decoder now wakes every EscTimeout for the life of "+
-		"the process without ever delivering them"); !ev.IsKey() ||
+		"forever. Two causes, and this assertion cannot tell them apart: "+
+		"the grace is never withdrawn, so the decoder wakes every EscTimeout "+
+		"for the life of the process without delivering them; or "+
+		"PasteMarkerGrace is 0, in which case it does not wake at all, "+
+		"because the re-arm condition is false on the first iteration and "+
+		"the escape timeout has stopped existing rather than firing "+
+		"forever. TestPasteMarkerGraceHasAFloor's zero arm is the message "+
+		"to read for the second"); !ev.IsKey() ||
 		ev.Key.Key != input.KeyEsc {
 		t.Fatalf("first event after ESC [ 2 was %#v, want the Esc key", ev)
 	}
@@ -785,12 +792,17 @@ func TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable(t *testing.T) {
 		t.Fatalf("write to master: %v", err)
 	}
 	if ev := next(t, evs, "the Esc typed after a paste that outlasted the grace "+
-		"never arrived. stalls is at its ceiling and nothing cleared it when "+
-		"the paste completed, so len(pend) > 0 && stalls < PasteMarkerGrace is "+
+		"never arrived, so len(pend) > 0 && stalls < PasteMarkerGrace is "+
 		"permanently false, the escape timer is never re-armed, and every "+
 		"incomplete sequence from here on is held for the life of the "+
-		"process. DecoderDone cannot see this — the goroutine never "+
-		"returns."); !ev.IsKey() || ev.Key.Key != input.KeyEsc {
+		"process. DecoderDone cannot see this — the goroutine never returns. "+
+		"TWO WAYS THAT CONDITION STAYS FALSE. Either stalls is at its "+
+		"ceiling and nothing cleared it when the paste completed — the "+
+		"chunks branch's `stalls = 0`, which this test is the sole pin for; "+
+		"or PasteMarkerGrace is 0, where stalls never moved at all and the "+
+		"ceiling is what is wrong, which is TestPasteMarkerGraceHasAFloor's "+
+		"zero arm. Naming only the first sends a reader hunting a spent "+
+		"counter in a run where the counter is 0"); !ev.IsKey() || ev.Key.Key != input.KeyEsc {
 		t.Fatalf("got %#v, want the Esc key", ev)
 	}
 }
@@ -819,17 +831,25 @@ func TestALoneEscResolvesOnTheFirstTimeout(t *testing.T) {
 		t.Logf("attempt %d could not measure the Esc's arrival inside the "+
 			"budget; retrying", i+1)
 	}
-	// BOTH CAUSES NAMED. An exhausted loop here is either a machine that
-	// cannot be measured or a first pass that no longer resolves
-	// anything — the mutation this test exists to catch produces exactly
-	// this exit, because its Esc is late on EVERY attempt rather than
-	// absent. Reporting only the runner would send the next reader to
-	// the wrong place.
+	// EVERY CAUSE NAMED. An exhausted loop here is a machine that cannot
+	// be measured, a first pass that no longer resolves anything, or the
+	// constant at 0 — the mutation this test exists to catch produces
+	// exactly this exit, because its Esc is late on EVERY attempt rather
+	// than absent, and so does grace = 0, where no Esc arrives at all.
+	// Reporting only the runner would send the next reader to the wrong
+	// place. The third was added in review of #445: the spec's zero row
+	// lists this test, and a row naming a test that dies through its
+	// INCONCLUSIVE path has to say so.
 	t.Fatalf("in %d attempts the Esc never arrived inside one escape timeout of "+
-		"the write. Either this machine is too loaded to distinguish the first "+
-		"idle pass from the escalated one, or the first pass has stopped "+
-		"resolving anything (keys.go's `d := drainIdle`) and every Esc now "+
-		"costs PasteMarkerGrace*EscTimeout", attempts)
+		"the write. Three causes, and this path cannot tell them apart: this "+
+		"machine is too loaded to distinguish the first idle pass from the "+
+		"escalated one; or the first pass has stopped resolving anything "+
+		"(keys.go's `d := drainIdle`) and every Esc now costs "+
+		"PasteMarkerGrace*EscTimeout; or PasteMarkerGrace is 0, in which case "+
+		"that product is 0ms and the sentence before it is nonsense — the "+
+		"escape timeout has stopped existing rather than firing late, and "+
+		"TestPasteMarkerGraceHasAFloor's zero arm is the message to read",
+		attempts)
 }
 
 // loneEscAttempt returns false when the attempt could not be made inside the

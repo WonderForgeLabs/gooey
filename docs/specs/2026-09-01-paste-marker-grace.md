@@ -253,7 +253,7 @@ happening again. Mutation-tested, each mutation turning its own tests red:
 | `stalls = 0` on the chunks branch is deleted | `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` (three runs of three, but see the residue below - a deschedule spanning the sleep makes the attempt vacuous and the mutation green) |
 | the first timeout's pass is neutered (`d := drainIdle` -> `drainLive`) | `TestALoneEscResolvesOnTheFirstTimeout` |
 | the partial-progress reset in the timer branch is deleted | `TestPartialProgressGivesTheRemainderItsOwnGrace` (three runs of three; the remainder resolves to Esc on the very next timeout) |
-| `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - all three on timeouts, because at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages. `TestPartialProgressGivesTheRemainderItsOwnGrace` reddens too, but by EXHAUSTING its 40 attempts in ~2.5s rather than by asserting - so it is listed with that caveat: its terminal message names the constant as a third cause alongside a loaded runner and a deleted reset, because a test that dies through its inconclusive path has not measured what its name says. `TestASplitPasteMarkerStillPastes` and `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` stay green |
+| `PasteMarkerGrace` lowered to 0 | `TestPasteMarkerGraceHasAFloor` on its zero arm, plus `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder`, `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` and `TestALoneEscResolvesOnTheFirstTimeout` - at 0 the escape timeout stops existing rather than firing early. That is a different failure from the value-1 row above, and the reason the floor test carries two messages. THREE OF THOSE NEEDED THEIR MESSAGES CORRECTED before this row could be honest, and the standard is the one the caveat below states: `TestALoneEscResolvesOnTheFirstTimeout` dies through its EXHAUSTED-attempts path, 20 of 20 inconclusive with no assertion reached, and named only a loaded runner or a neutered first pass - closing with "every Esc now costs `PasteMarkerGrace*EscTimeout`", which at 0 is 0ms; `TestAPasteThatOutlastsTheGraceLeavesTheEscapeTimerArmable` said "stalls is at its ceiling and nothing cleared it" for a run in which `stalls` never moved, because the CEILING is what is 0 and `timer.Reset` is never reached; and `TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder` said "the decoder now wakes every EscTimeout" where it does not wake at all. All three name both causes now. `TestPartialProgressGivesTheRemainderItsOwnGrace` reddens too, but by EXHAUSTING its 40 attempts in ~2.5s rather than by asserting - the same caveat, and its terminal message already named the constant as a third cause. A test that dies through its inconclusive path has not measured what its name says, and a message that names a mechanism which did not occur is worse than one that names none. `TestASplitPasteMarkerStillPastes` and `TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits` stay green |
 
 That row was landed once already with the right verdict for the wrong
 reason, which is the hazard a re-run table exists to catch and did not.
@@ -305,11 +305,18 @@ none it says so here instead. What follows is one subject at a time: what it
 bounds, which direction it leaves open, and what that direction produces — a
 red suite on a loaded machine, or a vacuous green.
 
-What happens when the retries run out is not the same on both, and the
-difference is the point of `closedTtyAttempt`'s non-measured outcomes — how
+What happens when the retries run out differs per helper, and the sharpest
+version of the difference is `closedTtyAttempt`'s non-measured outcomes — how
 many there are is derived from the type, not written here, for the reason
 CLAUDE.md gives about counts in prose. `splitMarkerAttempt` has one kind of
-miss and the loop simply exhausts. `closedTtyAttempt` distinguishes
+miss, and its loop exhausts into a message about the runner alone. That is
+NOT the general case, and this paragraph said it was: `loneEscAttempt` and
+`partialProgressAttempt` each have one kind of miss too, and their exhaustion
+is ambiguous between the runner, a real regression and the constant — so both
+carry terminal messages naming every cause, added in rounds seventeen and
+fourteen and corrected again in nineteen. One kind of miss is a fact about
+the attempt; how much its exhaustion means is a fact about what else can
+produce it. `closedTtyAttempt` distinguishes
 **drifted** — abandoned before the close, so no timer was observed and none
 may be named — from **late**, an Esc that arrived too late to attribute to
 the close rather than to the timer, from **silent**, and silence
@@ -324,9 +331,9 @@ the slow outcome, costing a full wait each time — and the failure names
 neither and says so. Corrected in review of #445, twice: the message once
 claimed the regression on a threshold the loop did not break on.
 
-How strong that is differs between the two, and saying "neither can report
-success on an attempt it did not make" overstated it for BOTH, in opposite
-places. `closedTtyAttempt` measures a real discriminator — an Esc arriving
+How strong a verdict is differs per helper as well, and saying "neither can
+report success on an attempt it did not make" overstated it for the two it
+named, in opposite places. `closedTtyAttempt` measures a real discriminator — an Esc arriving
 inside one `EscTimeout` of the handshake cannot have come from the stall
 path, which needs `PasteMarkerGrace` full timeouts — so its verdict is a
 measurement, but only once the clock it measures from is itself bounded.

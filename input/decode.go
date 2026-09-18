@@ -177,7 +177,7 @@ const (
 // path, where nothing more can arrive and no timeout has fired.
 //
 // NOT "whether the escape timeout has fired at least once", which is the
-// correction deadlineFinal's own comment makes eight lines up, DecodeFinal's
+// correction deadlineFinal's own declaration comment makes, DecodeFinal's
 // doc makes again, and two failure messages in decodefinal_test.go make a
 // third time. The accessor every arm actually calls was the one place the
 // branch did not apply it. Raised in review of #445.
