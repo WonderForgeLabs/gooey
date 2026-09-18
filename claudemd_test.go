@@ -1928,13 +1928,6 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 			"derived — either they stopped citing code by name, or the pattern no "+
 			"longer matches the spelling they use", checked, len(docs))
 	}
-	// AND THE GO-COMMENT HALF SEPARATELY, because the floor above is
-	// dominated by markdown and would not notice it going to zero. That
-	// half is the whole of #490's finding — the conversions this guard
-	// exists for landed in Go comments, where nothing read them — so a
-	// walk that stopped returning .go files, or a parse that started
-	// failing silently, has to be its own failure rather than a dent in
-	// a three-digit total. Raised in review of #490.
 	// AND THE VENDOR ARM IS NOT ALLOWED TO GO QUIET. It is the only
 	// mechanism standing between a page citing a dependency's symbol and
 	// an error telling the author to rename their own — and with vendor/
@@ -1958,6 +1951,22 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 			"and a symbol it does not declare were left undecided; the other %d "+
 			"were checked", unadjudicable, checked)
 	}
+	// AND THE GO-COMMENT HALF SEPARATELY, because the floor above is
+	// dominated by markdown and would not notice it going to zero. That
+	// half is the whole of #490's finding — the conversions this guard
+	// exists for landed in Go comments, where nothing read them — so a
+	// walk that stopped returning .go files, or a parse that started
+	// failing silently, has to be its own failure rather than a dent in
+	// a three-digit total.
+	//
+	// IT WAS WRITTEN TWO ARMS UP, merged into the vendor arm's comment
+	// with no blank line between them, so the whole argument read as the
+	// rationale for the vendor floor and the reader it misled was the one
+	// auditing whether that floor is worth keeping. That is the defect
+	// this branch fixed in markup/referencedoc_test.go and then committed
+	// one file over, in the same change. A comment belongs above the arm
+	// it is about; the checked-count floor it was sitting beside is a
+	// neighbour, not its subject. Raised in review of #490.
 	if fromGo == 0 {
 		t.Error("no symbol citation was resolved from a Go comment, so the half " +
 			"of this guard that #490 added covers nothing. Either goComments is " +

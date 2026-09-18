@@ -270,6 +270,22 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 // whole corpus, which is one more than a guard like this survives.
 var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 
+// backtickedWord is hoisted for the reason partitionWords is, and this
+// is the site that comment called "the one still paying it" while the
+// pattern below it went on compiling per call. Its consumer runs on a
+// STRICTLY LARGER population: namedPartitionFields reaches
+// backtickedPartition for every trigger-matching paragraph of the
+// ../docs walk in the forbid guard, and for every answersWhatCrosses
+// paragraph in the require guard, which calls it without the
+// enumeratesThePartition pre-filter. Raised in review of #490.
+//
+// ABOVE backtickedPartition's DOC BLOCK, not between it and the
+// function. Dropped in there it took that block's four paragraphs onto
+// itself and left backtickedPartition undocumented — which this
+// package's own guard caught on the first run, and which is the defect
+// the branch holding this commit exists to police.
+var backtickedWord = regexp.MustCompile("`([A-Za-z]+)`")
+
 // backtickedPartition is every partition field a paragraph names in
 // backticks, on the side asked for.
 //
@@ -292,7 +308,7 @@ var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 // believed it had closed. Raised in review of #490.
 func backtickedPartition(flat string, inheritingOnly bool) map[string]bool {
 	named := map[string]bool{}
-	for _, m := range regexp.MustCompile("`([A-Za-z]+)`").FindAllStringSubmatch(flat, -1) {
+	for _, m := range backtickedWord.FindAllStringSubmatch(flat, -1) {
 		if r, ok := boundaryPartition[m[1]]; ok && (r.inherit || !inheritingOnly) &&
 			isExportedField(m[1]) {
 			named[m[1]] = true
@@ -472,8 +488,12 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // once.
 //
 // COMPILED PER CALL until #490's review, which is the same memoisation
-// this file already applies to declaredIndex and goCommentIndex, at the
-// one site still paying it: ~12 compiles per call, once per
+// this file already applies to declaredIndex and goCommentIndex. It was
+// called "the one site still paying it" here, and that was wrong when it
+// was written: backtickedPartition, two declarations above, compiled its
+// own pattern per call on a larger population, and went on doing so for
+// a round because this sentence said there was nothing left. Both are
+// hoisted now. The cost this one carried: ~12 compiles per call, once per
 // trigger-matching paragraph of the whole ../docs walk and TWICE for
 // every paragraph that clears the bar, since enumeratesThePartition and
 // the namedPartitionFields beside it each re-derive the run. Measured:
@@ -552,9 +572,22 @@ func partitionRunSide(flat string, inheritingOnly bool) []string {
 	for i := 0; i < len(hits); i++ {
 		run := []hit{hits[i]}
 		for j := i + 1; j < len(hits); j++ {
-			gap := flat[hits[j-1].past:hits[j].at]
+			// lower, NOT flat, and the offsets are why. Every `at`/`past`
+			// above came from FindAllStringIndex over `lower`, and
+			// strings.ToLower is not byte-length preserving: U+212A
+			// KELVIN SIGN folds to a one-byte `k` from three, U+0130
+			// expands. One such rune earlier in a paragraph shifts every
+			// subsequent offset, and this slice then reads the wrong
+			// bytes out of `flat` — silently, because the consequence is
+			// a run that stops being recognised (or starts), which
+			// changes what the two boundary guards adjudicate rather
+			// than producing an error. The gap is lowercased again below
+			// for the " and " test anyway, so on the ASCII corpus this
+			// is byte-for-byte the same and on the rest it is the
+			// correct one. Raised in review of #490.
+			gap := lower[hits[j-1].past:hits[j].at]
 			if len(gap) > maxGap || !strings.ContainsAny(gap, ",&") &&
-				!strings.Contains(strings.ToLower(gap), " and ") {
+				!strings.Contains(gap, " and ") {
 				break
 			}
 			run = append(run, hits[j])
@@ -567,6 +600,43 @@ func partitionRunSide(flat string, inheritingOnly bool) []string {
 		}
 	}
 	return out
+}
+
+// TestPartitionRunSideIndexesOneStringOnly pins the offset half of
+// partitionRunSide, which nothing in the corpus can reach.
+//
+// The hits come from FindAllStringIndex over `lower` and the gap used to
+// be sliced out of `flat`. strings.ToLower is not byte-length
+// preserving — U+212A KELVIN SIGN folds to a one-byte "k" from three,
+// U+0130 expands — so one such rune earlier in a paragraph shifts every
+// subsequent offset and the gap test reads the wrong bytes. The
+// consequence is silent: a run stops being recognised, which changes
+// what the two boundary guards adjudicate rather than producing an
+// error.
+//
+// NO DOCUMENT HAS ONE, which is exactly why this is a unit test and not
+// a corpus observation. Every page in ../docs is ASCII in the region
+// these runs live, so slicing either string was byte-for-byte identical
+// and the whole suite stayed green over the bug — reverting the slice to
+// `flat` reddens this test and nothing else. Raised in review of #490.
+func TestPartitionRunSideIndexesOneStringOnly(t *testing.T) {
+	const run = "styles, components and handlers cross"
+	want := partitionRunSide(run, true)
+	if len(want) < 3 {
+		t.Fatalf("the ASCII control found %v, want a run of at least three: "+
+			"this test's premise is that the same sentence is recognised "+
+			"with and without a folding rune, and the control side of that "+
+			"comparison is not being recognised at all", want)
+	}
+	// U+212A, three bytes, folding to one. Anywhere before the run is
+	// enough — the shift applies to every offset after it.
+	got := partitionRunSide("\u212A "+run, true)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("a KELVIN SIGN before the run changes the answer from %v to "+
+			"%v. The hit offsets are measured in the lowercased string and "+
+			"the gap is being sliced out of a different one, so a rune whose "+
+			"folding changes its byte length moves every later slice", want, got)
+	}
 }
 
 // TestEveryPageThatAnswersWhatCrossesCitesThePartition is the REQUIRE
