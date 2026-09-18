@@ -449,6 +449,17 @@ func (c *countingPost) Post(f func()) {
 // does not divide. Bounded either way. No evaluated figures: the shape
 // survives a retune and a quoted pair does not.
 //
+// AND `every` IS THE CALLER'S Interval, because what sets the post rate
+// is FileWatcher.Interval and this helper cannot see it. A flat 50ms per
+// post is ~39x the cost at the millisecond every caller polls at today —
+// a property of the CALLERS, not of the helper, and this file already
+// holds a 200ms watcher that drainFor's doc invites converting. At n=40
+// that would be eight seconds of unavoidable ticking against a
+// four-second budget: a guaranteed red reported as "the poll goroutine
+// is not running" while it runs exactly as configured. The floor does
+// not scale, because it is about a scheduler granting no slot at all,
+// which no interval changes.
+//
 // THE DISCRIMINATING MUTATION REMOVES ONLY THE FIRST WAIT in
 // TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay — the baseline
 // never advances past the edit made while disabled, the second wait gives
@@ -457,10 +468,14 @@ func (c *countingPost) Post(f func()) {
 // instead: with no cycles the watcher never scans the edit, so there is
 // nothing to replay and every assertion holds VACUOUSLY. An all-pass
 // matrix is the mutation's fault, not the guard's.
-func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64) int64 {
+func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64, every time.Duration) int64 {
 	t.Helper()
 	base := c.n.Load()
-	budget := 2*time.Second + time.Duration(n)*50*time.Millisecond
+	per := 50 * time.Millisecond
+	if every > per {
+		per = every
+	}
+	budget := 2*time.Second + time.Duration(n)*per
 	deadline := time.Now().Add(budget)
 	// HOISTED, so the failure below quotes what was OBSERVED. The loop
 	// exits on the last in-loop check seeing `got < n`, and the poll
@@ -514,25 +529,24 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	tail := func() { ran++ }
 	second := func() {
 		ran++
-		// TWO TAILS, AND THE SECOND IS THE MARGIN. drainUntilPosts
-		// samples `base` on entry, after the first c.Post, so `ran`
-		// counts one closure outside the baseline and the assertion
-		// compares two differently-based numbers. With one tail the
-		// DISHONEST count and `ran` coincide at 2 and `got > ran` does
-		// not fire; the second buys that post back — honest got=1,
-		// dishonest=3, ran=2. Take it out and this fixture stops
-		// discriminating without changing shape.
-		c.Post(tail)
 		c.Post(tail)
 	}
 	c.Post(func() { ran++; c.Post(second) })
 
-	got := drainUntilPosts(t, d, c, 1)
-	if got > int64(ran) {
-		t.Errorf("drainUntilPosts reported %d posts and only %d closures ran; a "+
-			"t.Fatalf quoting that number would claim scans the watcher has not "+
-			"made, which is the overclaim the return value exists to remove",
-			got, ran)
+	got := drainUntilPosts(t, d, c, 1, time.Millisecond)
+	// MINUS THE ONE CLOSURE POSTED BEFORE THE BASELINE. drainUntilPosts
+	// samples `base` on entry, after the first c.Post, so that post is
+	// not in `got` — and comparing `got` against every closure that ran
+	// compares two differently-based counts, handing the assertion a
+	// spare unit of slack that a second tail post then has to buy back.
+	// Rebasing is the same discrimination with one fewer post: honest
+	// got=1 against 1 passes, dishonest got=2 against 1 fails.
+	ranAfterBase := ran - 1
+	if got > int64(ranAfterBase) {
+		t.Errorf("drainUntilPosts reported %d posts and only %d closures posted "+
+			"after its baseline ran; a t.Fatalf quoting that number would claim "+
+			"scans the watcher has not made, which is the overclaim the return "+
+			"value exists to remove", got, ranAfterBase)
 	}
 }
 
@@ -746,7 +760,7 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// next: by the third move of the counter, a scan that began after the
 	// write has finished, and the baseline it advanced is what makes the
 	// change dropped rather than merely late.
-	drainUntilPosts(t, d, c, 3)
+	drainUntilPosts(t, d, c, 3, time.Millisecond)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
 	}
@@ -759,7 +773,7 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// Re-enabling resumes with nothing torn down, and does NOT replay
 	// the edit that happened while it was off.
 	enabled.Set(true)
-	drainUntilPosts(t, d, c, 3)
+	drainUntilPosts(t, d, c, 3, time.Millisecond)
 	if hits != 0 {
 		t.Fatalf("re-enabling replayed %d change(s) made while disabled", hits)
 	}
@@ -840,7 +854,9 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	//
 	// FORTY POSTS IS FORTY CYCLES STARTED, which is as close as the
 	// counter's units and this claim's come anywhere: a poll's scan
-	// FOLLOWS its post, so what is bounded is 39 completed scans. And
+	// FOLLOWS its post, so what is bounded is 39 completed scans — the
+	// overclaim is the scan after the last post, not that post's
+	// closure, which drainUntilPosts' extra drain has run. And
 	// even that holds only while the idle path posts once, which nothing
 	// pins — FileWatcher.Start's no-hit arm continues without a fire post
 	// (filewatcher.go), so a second per-cycle post there would halve this
@@ -856,15 +872,12 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// measure ~51ms here (50.8–51.3 over five runs), so the 40ms drainFor
 	// could not buy the forty polls its message named even with nothing
 	// else running.
-	posts := drainUntilPosts(t, d, c, 40)
+	posts := drainUntilPosts(t, d, c, 40, time.Millisecond)
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
-		// constant. A poll's SCAN FOLLOWS ITS POST, so 40 posts bound
-		// only 39 completed scans however thoroughly the queue is
-		// drained — the overclaim is the scan after the last post, not
-		// that post's closure, which drainUntilPosts' extra drain has
-		// run. And `got` can EXCEED 40 when several posts land between
-		// drains, where the constant would say 40 either way.
+		// constant: what 40 posts bound is stated above, and `got` can
+		// EXCEED 40 when several land between drains, where the
+		// constant would say 40 either way.
 		t.Fatalf("a watcher fired %d times over %d poll posts of an unchanged file",
 			hits, posts)
 	}
