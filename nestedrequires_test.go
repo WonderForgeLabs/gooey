@@ -81,18 +81,19 @@ func TestNestedModulesRequireResolvableGooeyVersions(t *testing.T) {
 	// is visible rather than passing as "nothing to check". It carried a
 	// separate `checked` counter incremented on the line above the
 	// append, which is two names for one quantity and one early
-	// `continue` away from disagreeing. Raised in review of #497.
+	// `continue` away from disagreeing. (The `continue` that argument
+	// named is gone too — it had become the last statement of the loop
+	// below and reached nothing. The hazard it described is real and the
+	// single counter is what removes it; the statement was not the
+	// mechanism.) Raised in review of #497.
 	//
 	// Every own-module require in the tree, so the skew check below can
 	// compare them against each other rather than against a constant.
 	all, mods := allOwnRequires(t)
 	seen := pinsOf(all)
-	{
-		for _, r := range all {
-			if msg := shapeMsg(classifyRequire(r.version), r); msg != "" {
-				t.Error(msg)
-				continue
-			}
+	for _, r := range all {
+		if msg := shapeMsg(classifyRequire(r.version), r); msg != "" {
+			t.Error(msg)
 		}
 	}
 
@@ -275,9 +276,18 @@ type ownRequire struct{ dir, path, version string }
 // rejected require out of the skew and existence populations, so with
 // its reporter gone nothing downstream notices and a v0.0.0 sentinel
 // would sit in the tree in silence. One renderer cannot lose one arm
-// without losing all of them, the `continue` in the caller becomes
-// structural — which pinsOf's doc calls load-bearing — and each shape's
-// own remedy becomes assertable from a table. Raised in review of #497.
+// without losing all of them, and each shape's own remedy becomes
+// assertable from a table.
+//
+// NOT BECAUSE OF A `continue` IN THE CALLER, which this said and which
+// was not true by the time it said it. The caller's loop had a trailing
+// `continue` as its last statement, reaching nothing, inside a bare
+// block left over from when `seen` was accumulated in it. What makes the
+// ordering structural is that pinsOf FILTERS — a rejected require is out
+// of the skew and existence populations before they are read — and that
+// is what pinsOf's doc calls load-bearing. Both the `continue` and the
+// block are gone; a reader deleting dead code should not have to wonder
+// whether a doc means they broke something. Raised in review of #497.
 func shapeMsg(shape requireShape, r ownRequire) string {
 	dir := r.dir
 	switch shape {
@@ -1292,16 +1302,38 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// the plain tag belong to the shape guard, which reports each with
 	// its own remedy, and a second report here would be a second remedy
 	// for one line. Raised in review of #497.
+	//
+	// THE FOURTH ROW IS THE ONE THAT WAS MISSING, and it is the shape
+	// that got past the old hand-written dispatch: a version with NO
+	// LEADING v but a well-formed <stamp>-<rev> tail. classifyRequire
+	// calls it not-a-version and pinsOf drops it; unservableSentinel says
+	// false and revisionOf succeeds, so the old gate let it in. Measured
+	// before the fix, on one require:
+	//
+	//	pinsOf         → 0
+	//	pinPopulations → at[e5cdb56ececd] = "mcp → …"
+	//
+	// With a bogus tail that is one bad require producing two failures
+	// with two different remedies, which is the exact defect pinsOf's own
+	// doc records fixing on the skew path. Raised in review of #497.
 	at, spellings := pinPopulations([]ownRequire{
 		{"apps/x", coreModule, "v0.0.0-00010101000000-000000000000"},
 		{"apps/y", coreModule, "v0.1.0"},
+		{"apps/w", coreModule, "0.0.0-20260913132232-e5cdb56ececd"},
 		{"apps/z", coreModule, "v0.0.0-20260913132232-e5cdb56ececd"},
 	})
 	if len(at) != 1 || at["e5cdb56ececd"] == "" || len(spellings) != 1 {
-		t.Errorf("pinPopulations over a sentinel, a tag and one pin gave at=%v "+
-			"spellings=%v; want just the pin. Anything else reaches the commit "+
-			"checks and reports a line the shape guard has already reported, "+
-			"with a different remedy", at, spellings)
+		t.Errorf("pinPopulations over a sentinel, a tag, a v-less pseudo-version "+
+			"and one pin gave at=%v spellings=%v; want just the pin. Anything "+
+			"else reaches the commit checks and reports a line the shape guard "+
+			"has already reported, with a different remedy", at, spellings)
+	}
+	if got := spellings["0.0.0-20260913132232-e5cdb56ececd"]; got != "" {
+		t.Errorf("the v-less spelling is in the spellings population as %q. It "+
+			"shares a revision with the pin beside it, so it would be reported "+
+			"as a SECOND SPELLING of that commit — advice to unify two lines "+
+			"where the real remedy is that one of them is not a version at all",
+			got)
 	}
 
 	// AND THE ORDERING the reports are built with.
@@ -1381,19 +1413,42 @@ func malformedPseudo(v string) bool {
 func pinPopulations(reqs []ownRequire) (at, spellings map[string]string) {
 	at, spellings = map[string]string{}, map[string]string{}
 	for _, r := range reqs {
-		if unservableSentinel(r.version) {
-			continue // the shape guard reports those, with its own remedy
+		// classifyRequire, NOT A SECOND COPY OF THE DISPATCH. This read
+		// `unservableSentinel` and then `revisionOf` by hand, which is a
+		// different predicate from the one pinsOf asks, and the two came
+		// to disagree. Measured on this tree:
+		//
+		//	classifyRequire("0.0.0-20260913132232-e5cdb56ececd")
+		//	  = not-a-version
+		//	pinsOf                 → 0 requires
+		//	pinPopulations         → at[e5cdb56ececd] = "mcp → …"
+		//
+		// A version missing its leading v but carrying a well-formed
+		// <stamp>-<rev> tail was rejected by the shape gate and ACCEPTED
+		// here. With a bogus tail that is one bad require producing two
+		// failures with two different remedies — "which is not a version"
+		// from the shape guard, and "pins commit …, which is not a commit
+		// in this repository" from the existence guard — which is exactly
+		// the defect pinsOf's own doc records fixing on the skew path,
+		// and exactly the third door unservableSentinel's doc says a
+		// predicate exists to close.
+		//
+		// The stamp loop below already carries the error text for this
+		// state ("pinPopulations is meant to have filtered it out, so the
+		// two walks have come to disagree about what a pin is") and could
+		// not fire: the divergence was upstream of its own guard. Raised
+		// in review of #497.
+		if classifyRequire(r.version) != shapePin {
+			continue // the shape guard reports every other shape, with its own remedy
 		}
 		rev, ok := revisionOf(r.version)
 		if !ok {
-			// TWO POPULATIONS, AND A DIFFERENT REPORTER FOR EACH. A
-			// plain tag, which the shape guard ACCEPTS — the only
-			// thing that mentions one is the caller's tagged t.Logf,
-			// which this file measures to be invisible for a passing
-			// package; or a malformed pseudo-version, which the shape
-			// guard does report, as of the round that added the gate
-			// and left this line saying the opposite of both halves.
-			// Raised in review of #497.
+			// A PLAIN TAG, and that is now the only shape reaching here.
+			// The shape guard ACCEPTS one — it is a version — so nothing
+			// reports it, and the only thing that mentions it is the
+			// caller's tagged t.Logf, which this file measures to be
+			// invisible for a passing package. The malformed-pseudo half
+			// this comment used to describe is filtered above.
 			continue
 		}
 		where := r.dir + " → " + r.path + " " + r.version
