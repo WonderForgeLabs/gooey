@@ -60,9 +60,25 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 // argument a number invites and cannot settle. Raised in review of
 // #502.
 //
-// Derive the current set with
+// Derive the PLANE ACCESSES with
 //
 //	grep -rlE 'Cells(\(\))?\.At\(' --include='*_test.go' apps/wysiwyg
+//
+// AND READERS ARE A SUBSET OF THEM, which is the honest scope of that
+// command and the third spelling of this paragraph. Measured on this
+// tree it answers six files, of which two hold a span reader: this one
+// and components/panel/panel_test.go. The other four are single-cell
+// probes — noticeseparation_test.go and statusaddr_test.go and
+// tracks_test.go read a .Rune, railheight_test.go reads a Style.Bg and
+// no text at all — and a single-cell identity check against a literal
+// is not the shape #516 is about.
+//
+// IT MISSES IN THE OTHER DIRECTION TOO: docs_test.go binds
+// `b := f.Cells` and then walks `b.At(x, y).Rune` over the whole plane,
+// so the one remaining hand-rolled .Rune walk in this package is
+// invisible to the command offered for finding them — the receiver is
+// an alias rather than the `Cells` selector. A grep keys on a spelling;
+// what #516 is scoped by is what the code DOES.
 //
 // THE ALTERNATION HAS TO BE A GROUP, which is why the pattern is an
 // ERE and not either shorter spelling. `Cells\.At\(` misses

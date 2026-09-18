@@ -386,10 +386,17 @@ func viewMenuRows(t *testing.T, which int) []string {
 //
 // THE WINDOW IS WHAT BUYS UNIQUENESS, not the search string.
 // viewMenuRows clips to MenuBar.DropdownBounds, so nothing outside the
-// dropdown interior is in rows at all — measured on the twelve rows it
-// returns, "EDITOR" without the dollar hits exactly 1. The dollar is
+// dropdown interior is in rows at all — measured, "EDITOR" without the
+// dollar hits exactly 1 across everything it returns. The dollar is
 // kept because it is the label a user reads, not because anything
-// depends on it. Raised in review of #502.
+// depends on it.
+//
+// HOW MANY ROWS IT RETURNS IS NOT WRITTEN HERE. The load-bearing half
+// of that measurement is the HIT COUNT; the row count was a sample
+// taken once, right today and wrong the first time anyone adds a View
+// item, with nothing red — which is the rule dock_test.go states one
+// file over and this PR removed a `twelve` for. Raised in review of
+// #502.
 func dropdownRow(t fataler, rows []string, want string) string {
 	t.Helper()
 	var hits []string
@@ -567,16 +574,15 @@ func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
 }
 
 // TestTheRowHelpersRefuseWhatTheyCannotAnswerFor covers every Fatal
-// branch the two helpers have: four of them, which is the arithmetic a
-// "covers the branches with no fixture" claim invites and cannot settle
-// on its own. Five arms, because dropdownRow's single guard fails in two
-// directions and a fixture can only be on one side of it at a time.
+// branch the two helpers have, and there are more arms than branches:
+// dropdownRow's single guard fails in two directions and a fixture can
+// only be on one side of it at a time.
 //
-// NAMED, NOT NUMBERED. The ordinals this paragraph used to carry did not
-// survive their own list — "both are reachable" with no first, a third,
-// a fourth, and then one more appended outside the count — and a reader
-// could map them onto neither the table nor the Fatalfs. The arms are
-// the enumeration; each is described by what it reaches.
+// NAMED, NOT NUMBERED, and that is why neither count is written. Each
+// is a sample taken once — a fifth Fatalf in either helper makes a
+// written "four" wrong with nothing red — and the arms below ARE the
+// enumeration, which is what the next paragraph says. Each is described
+// by what it reaches.
 //
 // THE LABEL TWICE ON ONE ROW is the within-row uniqueness guard, which
 // boxBefore's doc argues is "the within-row half of dropdownRow's
@@ -719,7 +725,7 @@ func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
 			if want := "[x] "; box != want {
 				t.Errorf("boxBefore read %q in front of %q on %q, want %q. The glyph "+
 					"moves no cell the helper reads, so what can fail here is a "+
-					"reader that refuses a CJK row or slices it by the wrong unit",
+					"reader that refuses a CJK row",
 					box, tc.label, row, want)
 			}
 		})
@@ -743,14 +749,11 @@ func TestTheCheckBoxIsReadPastAWideGlyph(t *testing.T) {
 // #502.
 func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	const acute = "\u0301"
-	// ONE SOURCE, and rows[0] is built FROM it. The prefix was spelled a
-	// second time beside the row, and the fixture guard below plus the
-	// counterexample both measured that copy — so dropping 世 from the
-	// row would leave the guard measuring a six-column, six-rune string
+	// ONE SOURCE, and rows[0] is built FROM it: dropping 世 from a row
+	// spelled separately would leave the guard below measuring a string
 	// the helper never sees, boxBefore returning the hand-spelled want,
 	// and the test green over a fixture with no wide glyph in it at all.
 	// That is the rule the comment below states, applied to itself.
-	// Raised in review of #502.
 	const prefix = "世abce" + acute
 	rows := []string{prefix + "Wrap", "  ( ) Other"}
 	if cols, runes := render.StringWidth(prefix), len([]rune(prefix)); cols != runes {
@@ -768,13 +771,9 @@ func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	r := []rune(prefix)
 	runeSlice := string(r[len(r)-4:])
 	if want := "abce" + acute; box != want {
-		// NO CLOSING CLAUSE NAMING THE CELLS. It printed want a fourth
-		// time as "the four CELLS are %q", in the one branch where box
-		// != want — so on a real failure the message said two different
-		// things about the same four cells and the second was false.
-		// box is the four cells by the helper's contract, and it opens
-		// the message. The contrast the sentence wanted is the widths.
-		// Raised in review of #502.
+		// NO CLOSING CLAUSE NAMING THE CELLS: box IS the four cells by
+		// the helper's contract, and it opens the message. The contrast
+		// the sentence wants is the widths.
 		t.Errorf("boxBefore read %q in front of %q on %q, want %q. Four RUNES back "+
 			"from the label is %q, which is %d columns, not four.",
 			box, "Wrap", row, want, runeSlice, render.StringWidth(runeSlice))
