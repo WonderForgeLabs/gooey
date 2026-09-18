@@ -1625,6 +1625,15 @@ source carrying the declared default; `Required` makes absence a load
 error. This is the markup tier of registration, exactly as
 `DependencyProperty.Register` is WPF's code tier.
 
+Those three are the whole of what a *page* sees, and a fourth case is
+not an instantiation site at all: a tool holding the control **file
+itself** has no parent to take a handle from and no attribute to coerce,
+so `markup.Declaration.AbsentValue` gives it the absent-optional answer
+for every declaration — including a `Required` one, which previews as
+the type's zero rather than as an error nobody can act on. That is what
+the designer seeds a control's own names with, so `{{.Title}}` renders
+in the editor instead of failing the build.
+
 The mechanics that keep it inside the framework's constraints:
 
 - **Types are a type-switch table** (`markup.propKinds`), one row per

@@ -901,6 +901,23 @@ func TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved(t *testing.T)
 			doc:  `<p:Foo xmlns:p="` + markup.XNamespace + `" Name="T"/>` + "\n",
 			want: "<p:Foo> is an unknown language element",
 		},
+		{
+			// THE UNPREFIXED SPELLING, and it is the typo the whole
+			// partition exists to diagnose rather than an edge. The
+			// root-position guard asked only the namespace, so this
+			// file fell through every arm: it OPENED, with markup's
+			// "unknown element <Property>" — a sentence about the
+			// document the editor synthesised, not about these bytes,
+			// which markup.Build refuses with "root element must be
+			// <Gooey>, got <Property>" — and ctrl+s then wrote that
+			// synthesised document over the author's file. The disk
+			// assertion below is the one that matters here: the status
+			// was already a refusal and the rewrite happened anyway.
+			// Raised in review of #522.
+			name: "an unprefixed declaration as the whole file",
+			doc:  `<Property Name="T" Type="string"/>` + "\n",
+			want: "write it as <x:Property>",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := workspaceFixture(t)
