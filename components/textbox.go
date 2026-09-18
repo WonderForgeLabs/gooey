@@ -262,20 +262,27 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// from t.scroll rather than from 0, and stops at the field's right
 	// edge, so the SEGMENTATION is proportional to the field.
 	//
-	// THE SLICE IS NOT, and the sentence this replaces claimed the cost
-	// stays proportional to the field full stop. `string(runes[t.scroll:])`
-	// copies the whole tail on every paint — measured in review of #521
-	// at 0.93 ms per call on a 100,000-rune value, out of a 1.14 ms
-	// compose, so it is the dominant term of that frame. Nothing like
-	// the 1.4 s this PR removed, and stated rather than fixed because
-	// the bound cannot be computed cheaply AND correctly: deciding how
-	// many runes can fill `avail` columns needs a rune-width walk, and a
-	// rune sum is neither an upper nor a lower bound on its clusters' —
-	// render.StringWidth("⚠️") is 2 against a rune sum of 1, and a
-	// four-person ZWJ family is 2 against a rune sum of 8. Guessing
-	// short drops glyphs off the right of the field, which is #519
-	// again. The next reader should not rely on a bound that is not
-	// there.
+	// AND SO IS THE SLICE NOW. `string(runes[t.scroll:])` copied the
+	// whole tail on every paint — 0.93 ms per call on a 100,000-rune
+	// value, out of a 1.14 ms compose, so it was the dominant term of
+	// that frame and the last O(len(value)) path in the component. The
+	// paragraph this replaces argued the bound could not be computed,
+	// because a rune sum is neither an upper nor a lower bound on its
+	// clusters' widths — render.StringWidth("⚠️") is 2 against a rune
+	// sum of 1, a four-person ZWJ family is 2 against a rune sum of 8 —
+	// and guessing short drops glyphs off the right of the field, which
+	// is #519 again.
+	//
+	// That is true of GUESSING and false of walking: spanForCols answers
+	// the same question indexAt's forward walk answers, by doubling the
+	// span until the walk has passed the column asked for, so it never
+	// guesses short and never touches more than the window ends up
+	// showing. Raised in review of #521.
+	//
+	// Routing through eachClusterFrom rather than render.EachCluster
+	// also gives this loop the regional-indicator parity correction it
+	// did not have: segmenting `runes[t.scroll:]` directly relies on
+	// scrollFor never handing it an odd offset into a flag run.
 	//
 	// A window that starts in the middle of a cluster would re-segment
 	// from there and split it, and that is not only cosmetic: indexAt
@@ -287,11 +294,8 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// TestTheScrollWindowAlwaysOpensOnAClusterBoundary pins over a grid
 	// rather than a fixture. Setting t.scroll by hand still can. Raised
 	// in the review of #521, which found the click half of it.
-	idx := t.scroll
-	render.EachCluster(string(runes[t.scroll:]), func(cluster string, _, _, w int) bool {
-		i := idx
-		n := len([]rune(cluster))
-		idx += n
+	eachClusterFrom(runes, t.scroll, spanForCols(runes, t.scroll, avail), func(i, n, w int) bool {
+		cluster := string(runes[i : i+n])
 		// A ZERO-WIDTH CLUSTER TAKES A COLUMN, which is what SetString
 		// does with the same string and what this loop refused to do
 		// until #521's review. Such a cluster is a mark with nothing in
@@ -483,6 +487,51 @@ func regionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
 // It re-synchronises: segmentation starts clusterSlack runes before
 // `from` when there is room, and the fragment that produces is skipped.
 // fn returning false stops the walk.
+// spanForCols is an index `to` such that runes[start:to] holds at least
+// cols columns, or len(runes) if the value has no more to give.
+//
+// IT IS THE BOUND Render's doc used to say could not be computed. The
+// question is "how many runes can fill cols columns", and no arithmetic
+// over rune widths answers it — but a WALK does, and the walk need not
+// know the answer in advance: double the span until the clusters in it
+// have passed the column asked for. indexAt's forward walk is the same
+// shape for the same reason; it is not shared because that one needs the
+// cluster it stopped on as it goes, and this one needs only the index.
+//
+// FLOORED AT ONE PER CLUSTER, matching Render's own max(w, 1) — a span
+// measured with zero-width clusters counted as zero is short by one
+// column per leading mark, which is the defect this round's finding 1 is
+// about, one level up.
+//
+// THE MARGIN IS WHY IT DOES NOT RETURN `end`. eachClusterFrom segments a
+// TRUNCATED string, so the last cluster it reports may itself be a
+// truncation of a longer one — returning the index the count reached
+// would hand Render a cluster cut in half. Requiring clusterSlack runes
+// of slack past it is the same assumption the lookback already makes,
+// and it degrades safely: a cluster longer than clusterSlack keeps the
+// loop doubling until the span reaches the end of the value, which is
+// exactly the unbounded behaviour this replaces.
+func spanForCols(runes []rune, start, cols int) int {
+	if start >= len(runes) {
+		return len(runes)
+	}
+	for span := cols + clusterSlack; ; span *= 2 {
+		to := start + span
+		if to >= len(runes) {
+			return len(runes)
+		}
+		got, end := 0, start
+		eachClusterFrom(runes, start, to, func(at, n, w int) bool {
+			got += max(w, 1)
+			end = at + n
+			return got <= cols
+		})
+		if got > cols && end+clusterSlack <= to {
+			return to
+		}
+	}
+}
+
 func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 	if from < 0 {
 		from = 0
@@ -669,6 +718,19 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 		segs = segs[:0]
 		total = reserve
 		eachClusterFrom(runes, from, end, func(at, n, cw int) bool {
+			// FLOORED AT ONE, THE WAY Render FLOORS. Render advances by
+			// max(w, 1) so a value opening with a combining mark is
+			// painted at all; a window that sums the raw width believes
+			// it has a column Render will not give it. Measured on
+			// "\u0301abc" focused with the caret at the end in a
+			// four-column field: the window never scrolled, the caret
+			// block's x < b.X+b.W was false, and the field showed a
+			// value with no caret in it — the injury
+			// TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets
+			// exists for, at the width where the slack runs out. seg.w
+			// carries the floored figure so the drop loop below
+			// subtracts what the total added. Raised in review of #521.
+			cw = max(cw, 1)
 			segs = append(segs, seg{at, n, cw})
 			total += cw
 			return true
@@ -1141,7 +1203,13 @@ func (t *TextBox) indexAt(x int) int {
 				return false
 			}
 			last = at
-			col += w
+			// FLOORED, for Render's reason and windowFloor's — and note
+			// the BACKWARD walk three lines up already floors, because
+			// it goes through caretCols. This one did not, so indexAt
+			// disagreed with itself: every click on a value opening with
+			// a combining mark landed one index late and index 0 was
+			// unreachable by mouse.
+			col += max(w, 1)
 			return true
 		})
 		if col > off || to == len(runes) {
