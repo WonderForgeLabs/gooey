@@ -33,17 +33,6 @@ import (
 // already declared — ChildSpec.Mode and ChildSpec.Only — and a second
 // copy in this file would be the drift markup/elementdef.go's one-literal
 // design exists to prevent. Nothing below names <Tabs> or <Tab>.
-//
-// # Permissive where the catalog is silent, because the build is the gate
-//
-// canHold answers false only where the catalog KNOWS the child is
-// refused. ModeUnknown — an opaque element whose child rule could not be
-// enumerated — and ModeOne, which cannot say whether the slot is already
-// taken, both answer true and let the insert be TRIED. That is safe
-// because addSelected is transactional: it builds the candidate document
-// and reverts on failure, naming both elements. Guessing "no" here would
-// silently move the insert somewhere the user did not ask for; guessing
-// "yes" costs a refusal message that says exactly what happened.
 
 // specOf is the catalog entry for an element name.
 //
@@ -75,6 +64,25 @@ func (ed *editor) specOf(elem string) (markup.ElementSpec, bool) {
 
 // canHold reports whether an element named parent may take a child named
 // elem, as far as the catalog knows.
+//
+// # Permissive where the catalog is silent, because the build is the gate
+//
+// canHold answers false only where the catalog KNOWS the child is
+// refused. ModeUnknown — an opaque element whose child rule could not be
+// enumerated — and ModeOne, which cannot say whether the slot is already
+// taken, both answer true and let the insert be TRIED. That is safe
+// because addSelected is transactional: it builds the candidate document
+// and reverts on failure, naming both elements. Guessing "no" here would
+// silently move the insert somewhere the user did not ask for; guessing
+// "yes" costs a refusal message that says exactly what happened.
+//
+// THIS SECTION USED TO SIT IN THE FILE-OVERVIEW BLOCK at the top, 41
+// lines above the function it is about and separated from it by specOf's
+// doc — so three sites citing it as canHold's sent a reader who followed
+// the citation the way this branch argues citations should be followed
+// to a two-line doc that does not contain it. Moved rather than
+// re-addressed, because the argument belongs beside the switch that
+// implements it.
 func (ed *editor) canHold(parent, elem string) bool {
 	spec, ok := ed.specOf(parent)
 	if !ok {

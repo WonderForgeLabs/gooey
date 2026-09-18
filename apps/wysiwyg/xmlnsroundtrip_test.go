@@ -2226,27 +2226,42 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 			"document, and nothing refused it", got)
 	}
 	// AND THE EXPLANATION, not only the ✗. This is the one end-to-end
-	// exercise of reconcileNamespacesInto's refusal, and it rebinds x: —
-	// the prefix that names ELEMENTS, which encoding/xml scopes to the
-	// subtree declaring them before markup sees the token. The message
-	// explained every prefix with the flat last-wins rule, which is the
-	// EXPRESSION mechanism, so the single path under test was the one
-	// whose stated reason was false and nothing could notice further
-	// drift. A message that tells the author why is a claim, and this
-	// repo holds a claim under test. Raised in review of #501.
+	// exercise of reconcileNamespacesInto's refusal, and it rebinds x:,
+	// so the single path under test is the one whose stated reason has
+	// to be right. A message that tells the author why is a claim, and
+	// this repo holds a claim under test.
 	for _, want := range []string{
+		"one flat document-wide table",
 		"names ELEMENTS",
 		"XML scopes to the subtree that declares them",
-		"one flat document-wide table",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the refusal reads\n\t%q\nand does not carry\n\t%q", got, want)
 		}
 	}
-	if strings.Contains(got, "the last declaration parsed wins") {
-		t.Errorf("the refusal explains an ELEMENT prefix with the expression "+
-			"mechanism — x: does not resolve through markup.parse's flat table, "+
-			"XML scoping resolves it:\n\t%q", got)
+	// AND IN THAT ORDER, which is the whole finding. BOTH mechanisms are
+	// real for x: — markup.parse's ns map takes every xmlns attribute at
+	// any depth (markup/markup.go:949), x: included, so the flat table
+	// re-points x: expressions exactly as it does any other prefix; and
+	// encoding/xml really has scoped the ELEMENT names before markup
+	// sees a token. What separates them is REACHABILITY FROM HERE.
+	// nodeOf's prefixed-element refusal turns back every namespaced
+	// element at any depth on both the open path and the paste path, so
+	// no document this editor can hold contains an x:-prefixed element
+	// and the element half cannot describe anything the author is
+	// looking at. It describes the saved file, later. The expression
+	// half is what happens in the document on screen, so it leads.
+	//
+	// The previous version led with the elements and asserted the flat
+	// table was NOT how x: resolves — the same premise carryDeclarations'
+	// doc had already retracted one commit earlier, back in a
+	// user-facing string rather than a comment, and pinned here in the
+	// wrong direction.
+	if i, j := strings.Index(got, "one flat document-wide table"),
+		strings.Index(got, "names ELEMENTS"); i > j {
+		t.Errorf("the refusal leads with the element scoping, which no document "+
+			"this editor can hold can show the author, and leaves the live "+
+			"consequence second:\n\t%q", got)
 	}
 	if src := ed.source.Get(); strings.Contains(src, other) {
 		t.Errorf("the refused declaration is in the document anyway:\n%s", src)
@@ -2364,6 +2379,94 @@ func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
 			}
 			if src := ed.source.Get(); strings.Contains(src, other) {
 				t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+			}
+		})
+	}
+}
+
+// TestAPasteCannotRebindAPrefixAgainstITSELF closes the half of the
+// rebind rule the comparison could not see.
+//
+// reconcileNamespacesInto compared every declaration against the
+// DOCUMENT's and never against one it had just walked past, so a
+// fragment carrying two bindings of one prefix — nested, or two
+// siblings — was accepted whole and both landed in the file. Measured
+// before the fix, both spellings returned nil.
+//
+// It is the same defect as the document-vs-paste case, not a smaller
+// one: markup.parse keeps ONE FLAT ns map for the whole document
+// (markup/markup.go:949) with no scoping and last-wins, so two bindings
+// inside the paste collide in exactly the table two bindings across the
+// paste boundary collide in. Which is why the fix records into ONE map
+// as the walk goes rather than copying per subtree — a copy would catch
+// the nested spelling and leave the sibling one, which the loader does
+// not distinguish.
+//
+// THE THIRD CASE IS THE COUNTERFACTUAL, and it is the one that would go
+// red if the recording were made to refuse everything it records: an
+// inner declaration REPEATING the outer one is redundant, not
+// conflicting, and is dropped the way a redundant declaration is
+// dropped everywhere else in this function.
+func TestAPasteCannotRebindAPrefixAgainstITSELF(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		src    string
+		refuse bool
+	}{
+		{
+			"nested",
+			`<Canvas xmlns:t="urn:A"><Button Name="B" xmlns:t="urn:B"/></Canvas>`,
+			true,
+		},
+		{
+			"siblings",
+			`<Canvas><Button Name="B" xmlns:t="urn:A"/><Label Name="L" xmlns:t="urn:B"/></Canvas>`,
+			true,
+		},
+		{
+			// COUSINS, which is the fixture that separates one map from
+			// a copy taken at each descent: the first binding is a level
+			// deeper than the second, so any per-subtree copy has gone
+			// out of scope by the time the second is read. markup.parse
+			// has no scope to go out of.
+			"cousins",
+			`<Canvas><VStack><Button Name="B" xmlns:t="urn:A"/></VStack><Label Name="L" xmlns:t="urn:B"/></Canvas>`,
+			true,
+		},
+		{
+			"redundant",
+			`<Canvas xmlns:t="urn:A"><Button Name="B" xmlns:t="urn:A"/></Canvas>`,
+			false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := nodeOf(tc.src)
+			if err != nil {
+				t.Fatalf("the fixture does not parse: %v", err)
+			}
+			err = reconcileNamespacesInto(n, map[string]string{})
+			if tc.refuse {
+				if err == nil {
+					t.Fatalf("a fragment binding t twice was accepted whole, so "+
+						"both declarations reach the file and markup.parse's one "+
+						"flat table hands every t: expression to whichever it "+
+						"parses last:\n%s", n.markup(""))
+				}
+				if !strings.Contains(err.Error(), "xmlns:t") {
+					t.Errorf("the refusal does not name the colliding prefix: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a repeated identical declaration was refused as a "+
+					"conflict: %v", err)
+			}
+			// DROPPED, not kept: the same-URI rule everywhere else in
+			// this function deletes a declaration the document already
+			// makes, and a declaration the FRAGMENT already makes is the
+			// same statement.
+			if _, still := n.Kids[0].Attrs["xmlns:t"]; still {
+				t.Errorf("the redundant inner declaration survived:\n%s", n.markup(""))
 			}
 		})
 	}
