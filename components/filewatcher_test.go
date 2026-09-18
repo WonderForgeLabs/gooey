@@ -406,7 +406,19 @@ type countingPost struct {
 // the nth closure is not yet on the dispatcher's queue — so a waiter
 // released by that count can Drain an empty queue and proceed as though
 // the watcher had been round.
+//
+// A NIL POST IS NOT A POST, and the guard mirrors gooey.Dispatcher.Post,
+// which returns without enqueueing on a nil fn. Counting one reaches the
+// same released-on-an-empty-queue state from the other side: the closure
+// the count promises has not merely not run yet, it does not exist. No
+// caller in this file can produce it — FileWatcher.Start posts two
+// literal closures — so this is a hole in a freshly-asserted invariant
+// rather than a live defect, which is the shape this branch is removing
+// elsewhere in the same file.
 func (c *countingPost) Post(f func()) {
+	if f == nil {
+		return
+	}
 	c.post(f)
 	c.n.Add(1)
 }
@@ -446,7 +458,7 @@ func (c *countingPost) Post(f func()) {
 // expression that produces them — so retuning either constant left the
 // prose wrong with nothing red, which is the sample-taken-once shape
 // CLAUDE.md's Verify section rules against. The shape is the durable
-// half and survives any retuning. Raised in review of #511.
+// half and survives any retuning.
 //
 // THE MUTATION THAT SHOWS THIS WORKS IS NOT THE OBVIOUS ONE. Replacing
 // BOTH waits in TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay
@@ -474,10 +486,14 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 	// goroutine can post between that check and the format — so a second
 	// load prints posts whose closures never ran, the same overclaim the
 	// return path forbids ten lines down. Worse for the reader than for
-	// the assertion: the re-loaded count can have reached n, printing
-	// "posted 3 times in 2.15s, want 3", which reads as a contradiction
-	// and sends the next person to look at the comparison instead of at
-	// the stalled goroutine. Reachable in precisely the scenario this
+	// the assertion: the re-loaded count can have REACHED n, so the
+	// message prints a total equal to the want and reads as a
+	// contradiction — which sends the next person to look at the
+	// comparison instead of at the stalled goroutine. The illustration
+	// here used to spell that out with the budget evaluated for n=3,
+	// eight lines above the expression that produces it, which is the
+	// hazard the paragraph on drainUntilPosts above removed from its own
+	// prose. Reachable in precisely the scenario this
 	// helper exists for — a runner that gives the goroutine no slot for
 	// the whole budget and then schedules it in a burst at the boundary.
 	var got int64
@@ -586,6 +602,25 @@ func TestCountingPostEnqueuesBeforeItCounts(t *testing.T) {
 		t.Fatalf("the counted post ran %d closures, want 1: the order above is a "+
 			"claim about an enqueue, so a post that enqueues nothing satisfies it "+
 			"vacuously", ran)
+	}
+
+	// THE NIL CASE, which is the one way the count can promise a closure
+	// that does not exist. gooey.Dispatcher.Post drops it without
+	// enqueueing, so counting it releases a waiter onto an empty queue —
+	// the same failure the order above forbids, reached from the other
+	// side.
+	delegated := 0
+	c.post = func(f func()) { delegated++; d.Post(f) }
+	c.Post(nil)
+	if n := c.n.Load(); n != 1 {
+		t.Errorf("a nil post left the counter at %d, want 1: the Dispatcher "+
+			"drops a nil fn without enqueueing, so a counted one is a promise "+
+			"of a closure that will never run", n)
+	}
+	if delegated != 0 {
+		t.Errorf("a nil post was delegated %d time(s), want 0: the guard has to "+
+			"come before the delegate, or a fixture's own post sees a call the "+
+			"Dispatcher would not have made", delegated)
 	}
 }
 
@@ -847,7 +882,7 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// nothing else running. The CI story is why the fix is a counter;
 	// this is why the old number was wrong before CI ever saw it. The
 	// interval is named because a retuned one leaves the measurement
-	// silently wrong — raised in review of #511.
+	// silently wrong.
 	//
 	// FORTY POSTS IS FORTY CYCLES ONLY WHILE THE IDLE PATH POSTS ONCE,
 	// and nothing pins that: FileWatcher.Start's no-hit arm continues
@@ -858,7 +893,25 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// rather than a false claim — and n is 40 against a claim that needs
 	// only "the watcher ran", so the margin absorbs a factor of two.
 	// Recorded rather than pinned because the seam that would give a
-	// deterministic pin is #518's. Raised in review of #511.
+	// deterministic pin is #518's.
+	//
+	// AND 40 IS THE COVERAGE, not a margin. This assertion is NEGATIVE —
+	// no fire over an unchanged file — so what it proves is bounded by
+	// how many scans it watched. A handful of cycles says only that a
+	// spurious fire does not happen immediately, which a mis-seeded
+	// baseline passes as readily as a correct one; n is the strength of
+	// the claim, so it is not a knob to turn down for slack.
+	//
+	// IT IS ALSO THE TIGHTEST WALL-CLOCK DEPENDENCY IN THE FILE, and the
+	// shape is again the durable half. drainUntilPosts' budget is a fixed
+	// head start plus a per-post term, while the scheduling demand is two
+	// events per post — so the head start dominates at small n and the
+	// slack PER EVENT falls as n rises, bottoming out at half the
+	// per-post term. This is the largest n in the file, so it has the
+	// least of it. Measured on this tree the whole test completes in
+	// 0.05s, five runs of five, far inside the budget, and it fails
+	// bounded rather than hanging either way — so the residual is
+	// recorded rather than traded away for a weaker assertion.
 	posts := drainUntilPosts(t, d, c, 40)
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
