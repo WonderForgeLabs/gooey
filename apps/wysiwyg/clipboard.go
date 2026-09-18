@@ -874,6 +874,29 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 		}
 		bound, ok := doc[k]
 		if !ok {
+			// RECORDED, so the REST OF THE FRAGMENT is compared against
+			// it. Without this line the walk only ever compares a
+			// declaration against the DOCUMENT's, so a fragment holding
+			// two bindings of one prefix — an outer xmlns:t="urn:A" and
+			// an inner xmlns:t="urn:B", or two siblings — sailed
+			// through and landed both in the file. Measured before the
+			// fix: reconcileNamespacesInto returned nil for
+			// `<Canvas xmlns:t="urn:A"><Button xmlns:t="urn:B"/></Canvas>`
+			// and for the sibling spelling of it. That is the exact
+			// rebind this function exists to refuse, caught when the
+			// second binding is the document's and missed when both are
+			// the paste's, and newly reachable for the same reason the
+			// document-vs-paste case is: before this branch the editor
+			// dropped declarations on the read, so it could not hold two
+			// bindings of one prefix at all.
+			//
+			// ONE MAP, NOT A COPY PER SUBTREE, because markup.parse
+			// keeps ONE FLAT ns map for the whole document
+			// (markup/markup.go:949 — every xmlns: attribute at any
+			// depth, no scoping, last wins). A per-subtree copy would
+			// fix the nesting case and leave the sibling one, where the
+			// loader's table conflicts just as hard.
+			doc[k] = v
 			continue
 		}
 		if bound != v {
@@ -918,12 +941,14 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 				strings.TrimPrefix(k, "xmlns:") + " would silently become the " +
 				"other — which one depends on where this lands"
 			if bound == markup.XNamespace || v == markup.XNamespace {
-				mech = "This prefix names ELEMENTS, which XML scopes to the " +
-					"subtree that declares them, so the two bindings would both " +
-					"stand and what an element means would depend on where it " +
-					"sits — while expressions under " +
-					strings.TrimPrefix(k, "xmlns:") + " read one flat " +
-					"document-wide table that this second declaration re-points"
+				mech = "Expressions under " + strings.TrimPrefix(k, "xmlns:") +
+					" read one flat document-wide table that this second " +
+					"declaration re-points, so one of their two meanings would " +
+					"silently become the other. This prefix also names " +
+					"ELEMENTS, which XML scopes to the subtree that declares " +
+					"them — so in the saved file, once it leaves the designer, " +
+					"both bindings would stand and what an element means would " +
+					"depend on where it sits"
 			}
 			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
 				"already declares it as %q. %s. Rename the prefix in what you are "+
