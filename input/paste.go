@@ -81,9 +81,12 @@ func (e Event) IsPaste() bool { return e.Kind == EventPaste }
 // person, and nothing more is coming. The hold was then permanent — no
 // Esc, the following keystroke swallowed into the CSI parse, and the
 // decoder waking every 40ms for the life of the process (#440). The wait
-// is now bounded at term.PasteMarkerGrace consecutive timeouts, after
-// which DecodeFinal withdraws this exception. An OPEN paste is still not
-// on that scale, for the reason on decodePaste below.
+// is now bounded at term.PasteMarkerGrace consecutive timeouts, ON the
+// last of which DecodeFinal withdraws this exception — so the buffer
+// survives PasteMarkerGrace-1 fruitless timeouts, not PasteMarkerGrace
+// of them. See drainFinal's doc for why the constant is named after the
+// timeout that resolves rather than after the ones it survives. An OPEN
+// paste is still not on that scale, for the reason on decodePaste below.
 func splitPasteMarker(b []byte) bool {
 	if len(b) < 3 {
 		return false

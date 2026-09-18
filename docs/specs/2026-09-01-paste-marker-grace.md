@@ -50,8 +50,10 @@ correctly for one timeout.
 
 ## The decision
 
-Resolve after the **second** consecutive idle timeout. That keeps the paste case
-whole — a real marker's payload lands within one read cycle — and restores
+Resolve **on** the second consecutive idle timeout — after ONE fruitless one,
+not two. The off-by-one is deliberate and is argued below: the constant names
+WHICH timeout resolves the buffer, not how many the buffer survives. That keeps
+the paste case whole — a real marker's payload lands within one read cycle — and restores
 liveness for the typed one.
 
 The issue put the open question as *where the counter lives*, and gave two

@@ -110,9 +110,9 @@ func TestIdleDecodeAlwaysMakesProgress(t *testing.T) {
 // until review of #445: the 3-byte assertion sat in the innermost loop,
 // so the two inputs were hit 18 times between them and the count was of
 // assertion hits rather than of inputs. The breakdown at :44 was the
-// honest form and is kept; this line now agrees with it.) A reader widening the alphabet has to skip
-// what splitPasteMarker accepts, not weaken the assertion. Raised in
-// review of #445.
+// honest form and is kept; this line now agrees with it.) A reader
+// widening the alphabet has to skip what splitPasteMarker accepts, not
+// weaken the assertion.
 func TestIdleDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
 	buf := make([]byte, 4)

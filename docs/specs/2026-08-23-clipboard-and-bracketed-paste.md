@@ -66,8 +66,9 @@ type — Esc, `[`, `2` — and for those the wait never ends: the Esc is
 never delivered, the next keystroke is absorbed into the CSI parse, and the
 decoder wakes every 40ms forever
 ([#440](https://github.com/WonderForgeLabs/gooey/issues/440)). It now resolves
-after `term.PasteMarkerGrace` consecutive timeouts, through
-`input.DecodeFinal`. The unterminated-paste wedge above is explicitly **not**
+ON the `term.PasteMarkerGrace`'th consecutive timeout — after
+`PasteMarkerGrace-1` fruitless ones, which is off by one from the natural
+reading — through `input.DecodeFinal`. The unterminated-paste wedge above is explicitly **not**
 on that scale and still waits indefinitely — see
 [specs/2026-09-01-paste-marker-grace.md](2026-09-01-paste-marker-grace.md).
 

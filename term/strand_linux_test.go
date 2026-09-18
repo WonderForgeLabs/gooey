@@ -553,8 +553,19 @@ func splitMarkerAttempt(t *testing.T) bool {
 	evs := s.Events(16)
 
 	// The handshake byte again: reading `b` back proves the decoder consumed
-	// that read, so ESC [ 2 is in pend and the clock below starts when its
-	// escape timer is armed rather than whenever the write happened to land.
+	// that READ — NOT THAT IT CONSUMED THIS WHOLE WRITE. One write is not
+	// one read, so `ESC [ 2` may still be in the tty buffer when `b`
+	// comes back, and the clock below starts at an arm this goroutine
+	// cannot observe. closedTtyAttempt and partialProgressAttempt say
+	// the same about their own handshakes; this was the third site and
+	// the only one still inferring the arm, which put it 37 lines from
+	// its own capitalised correction below.
+	//
+	// The residue that leaves is written down rather than bounded
+	// (docs/specs/2026-09-01-paste-marker-grace.md, "the third helper
+	// with an unbounded arm"): a late arm lets the tail land while the
+	// prefix is still live, the sequence decodes as one paste, and this
+	// helper returns true having exercised nothing.
 	wrote := time.Now()
 	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
@@ -922,9 +933,10 @@ func loneEscAttempt(t *testing.T) bool {
 	// comment claimed the bound until round sixteen. The bail two lines
 	// up compares `held` — the moment THIS goroutine read the 'b' off a
 	// BUFFERED channel — against `wrote`, so it bounds held-wrote and
-	// nothing else. The arm is set by the decoder AFTER its send
-	// (`out <- ev`, keys.go:179, then `timer.Reset`, keys.go:203), and a
-	// deschedule in between puts the arm arbitrarily far after `held`
+	// nothing else. The arm is set by the decoder AFTER its send: the
+	// `out <- ev` inside drain's success arm, then the conditional
+	// `timer.Reset(EscTimeout)` in DecodeEvents' loop. A deschedule
+	// between the two puts the arm arbitrarily far after `held`
 	// and after `wrote` with the bail seeing none of it. `arm >= wrote`
 	// is derivable and is the LOWER bound; the budget's soundness needs
 	// the upper one. splitMarkerAttempt and partialProgressAttempt
