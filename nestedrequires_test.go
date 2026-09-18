@@ -288,6 +288,34 @@ type ownRequire struct{ dir, path, version string }
 // is what pinsOf's doc calls load-bearing. Both the `continue` and the
 // block are gone; a reader deleting dead code should not have to wonder
 // whether a doc means they broke something. Raised in review of #497.
+// pseudoVersionRoutes is the three ways to get a real pseudo-version,
+// shared by every arm whose answer is "go and get one".
+//
+// SHARED BECAUSE THE SENTINEL'S REMEDY WARNS YOU INTO shapeNotAVersion.
+// It says `go mod edit -require` writes LITERALLY what you hand it, so a
+// bare short hash stays a bare short hash — and when it does, the shape
+// the reader lands on is shapeNotAVersion, whose whole message was one
+// sentence with none of the three routes in it. That arm's own `why` in
+// TestEveryRequireShapeReachesItsOwnArm used to argue a bare hash "is not
+// a shape any remedy can repair in place", which is true and beside the
+// point: it is repaired the way the sentinel is, by fetching a real one.
+//
+// The per-shape assertion still works, because each arm keeps its own
+// leading sentence and is distinguished by that. Raised in review of
+// #497.
+const pseudoVersionRoutes = "Get a real pseudo-version with `GOWORK=off go list -m " +
+	"-f '{{.Version}}' %s@$(git rev-parse origin/main)` (needs the " +
+	"network; GOWORK=off is load-bearing — inside the workspace the " +
+	"committed vendor/ forces -mod=vendor and the query is refused, " +
+	"and -mod=mod is not allowed in workspace mode), or copy the " +
+	"one the rest of the tree already names, or derive it with no " +
+	"network at all: `TZ=UTC git -c core.abbrev=12 log -1 " +
+	"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' " +
+	"origin/main` (TZ=UTC is load-bearing, and the form is exact " +
+	"only while the module is untagged). " +
+	"Keep any `replace` line, which is what makes local development " +
+	"use the checkout."
+
 func shapeMsg(shape requireShape, r ownRequire) string {
 	dir := r.dir
 	switch shape {
@@ -304,23 +332,16 @@ func shapeMsg(shape requireShape, r ownRequire) string {
 			"workspace. Point it at a published commit, and note that "+
 			"`go mod edit -require` writes LITERALLY what you hand it: a "+
 			"bare short hash stays a bare short hash and fails this test "+
-			"again. Get a real pseudo-version with `GOWORK=off go list -m "+
-			"-f '{{.Version}}' %s@$(git rev-parse origin/main)` (needs the "+
-			"network; GOWORK=off is load-bearing — inside the workspace the "+
-			"committed vendor/ forces -mod=vendor and the query is refused, "+
-			"and -mod=mod is not allowed in workspace mode), or copy the "+
-			"one the rest of the tree already names, or derive it with no "+
-			"network at all: `TZ=UTC git -c core.abbrev=12 log -1 "+
-			"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
-			"origin/main` (TZ=UTC is load-bearing, and the form is exact "+
-			"only while the module is untagged). "+
-			"Keep any `replace` line, which is what makes local development "+
-			"use the checkout.",
+			"again. "+pseudoVersionRoutes,
 			dir, r.path, r.version, r.path)
 	// Not a resolution check (no network here), just the shape: a
 	// version the proxy could be asked for at all.
 	case shapeNotAVersion:
-		return fmt.Sprintf("%s requires %s %q, which is not a version", dir, r.path, r.version)
+		return fmt.Sprintf("%s requires %s %q, which is not a version — the "+
+			"proxy has nothing to be asked for. This is the shape the "+
+			"sentinel's remedy above warns you into, and the way out is the "+
+			"same. "+pseudoVersionRoutes,
+			dir, r.path, r.version, r.path)
 	// AND A PSEUDO-VERSION THAT IS NOT ONE IS NOT A TAG. Without
 	// this the failure had no reporter at all: revisionOf wants
 	// exactly twelve hex characters, so a short or clipped tail
@@ -617,19 +638,17 @@ func skewFrom(seen []ownRequire) (newest, newestRev string, behind []skewGroup, 
 // suite deliberately does not have — so it says it cannot compare them
 // rather than pretending. Raised in review of #497.
 func revisionOf(v string) (string, bool) {
-	i := strings.LastIndex(v, "-")
-	if i < 0 || len(v)-i != 13 {
-		return "", false
-	}
 	// AND HEX, because length alone is not the shape. v1.2.3-abcdefghijkl
 	// is a legitimate prerelease tag whose last dash-part is twelve
 	// characters, and it keyed its own bucket as though it were a
-	// revision. Raised in review of #497.
-	for _, c := range v[i+1:] {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", false
-		}
+	// revision. Raised in review of #497. The test is hasRevisionTail
+	// above rather than inline, because THIS FUNCTION ANSWERS FALSE FOR
+	// TWO REASONS and malformedPseudo has to tell them apart — re-deriving
+	// one of them from stampOf made the other unreachable.
+	if !hasRevisionTail(v) {
+		return "", false
 	}
+	i := strings.LastIndex(v, "-")
 	// AND HEX IS NOT ENOUGH EITHER, which is the same finding one round
 	// on: v1.2.3-abcdef123456 is every bit as legitimate a prerelease tag
 	// and IS hex, so shape alone cannot separate the two — measured, it
@@ -1321,12 +1340,25 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		{"apps/y", coreModule, "v0.1.0"},
 		{"apps/w", coreModule, "0.0.0-20260913132232-e5cdb56ececd"},
 		{"apps/z", coreModule, "v0.0.0-20260913132232-e5cdb56ececd"},
+		// TWO PINS AT ONE REVISION, which is what the tree looks like
+		// after the `sed` the existence error's own text names — all of
+		// them carrying the one bad commit. Keeping the FIRST require
+		// per revision was right for asking git and wrong for telling
+		// the reader: they fixed one module, re-ran, and were handed the
+		// next. Raised in review of #497.
+		{"apps/v", coreModule, "v0.0.0-20260913132232-e5cdb56ececd"},
 	})
-	if len(at) != 1 || at["e5cdb56ececd"] == "" || len(spellings) != 1 {
+	if len(at) != 1 || len(spellings) != 1 {
 		t.Errorf("pinPopulations over a sentinel, a tag, a v-less pseudo-version "+
 			"and one pin gave at=%v spellings=%v; want just the pin. Anything "+
 			"else reaches the commit checks and reports a line the shape guard "+
 			"has already reported, with a different remedy", at, spellings)
+	}
+	if got := at["e5cdb56ececd"]; len(got) != 2 {
+		t.Errorf("the revision's population is %v — two requires name that "+
+			"commit and the existence and ancestry errors print this slice, so "+
+			"keeping one of them makes a tree-wide typo a queue of runs rather "+
+			"than one report", got)
 	}
 	if got := spellings["0.0.0-20260913132232-e5cdb56ececd"]; got != "" {
 		t.Errorf("the v-less spelling is in the spellings population as %q. It "+
@@ -1384,22 +1416,60 @@ func TestTwoCommitsInOneSecondReachTheStringFallback(t *testing.T) {
 	}
 }
 
+// hasRevisionTail reports whether v's last dash-part is twelve lowercase
+// hex characters — the SHAPE of a pseudo-version's revision, said
+// without reference to the stamp.
+//
+// It is revisionOf's first half, extracted, and the extraction is the
+// point: revisionOf answers false for TWO reasons — no such tail, and no
+// 14-digit stamp — and everything downstream had to re-derive which.
+// See malformedPseudo.
+func hasRevisionTail(v string) bool {
+	i := strings.LastIndex(v, "-")
+	if i < 0 || len(v)-i != 13 {
+		return false
+	}
+	for _, c := range v[i+1:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // malformedPseudo is the one shape this file could not report: a
 // version TRYING to be a pseudo-version and failing.
 //
-// The discriminator costs nothing and was already in the file, asked for
-// the opposite purpose by revisionOf's stamp test. A plain tag carries no
-// 14-digit stamp and a pseudo-version always does, so "has a stamp and
-// has no revision" separates the two exactly — a legitimate tag answers
-// false whatever its tail looks like, and a clipped or short-abbreviated
-// pseudo-version answers true. A function rather than an inline
-// conjunction for this file's usual reason: the arm is the only evidence
-// the rule holds. Raised in review of #497.
+// TWO WAYS TO FAIL, AND THE FIRST VERSION SAW ONE. It was
+// `!revisionOf(v).ok && stampOf(v) != ""`, which re-derived the reason
+// from stampOf alone — so the case where the STAMP is what is broken was
+// unreachable by construction: a 13- or 15-digit stamp makes stampOf
+// answer "" and the whole thing collapses to "plain tag". Measured on
+// this branch, every one of these was filed as a tag and reported by
+// nothing:
+//
+//	v0.0.0-2026091313223-e5cdb56ececd     13-digit stamp
+//	v0.0.0-202609131322321-e5cdb56ececd   15-digit
+//	v0.0.0--e5cdb56ececd                  no stamp at all
+//	v0.0.0-2026091x132232-e5cdb56ececd    a letter in the stamp
+//
+// Go's pseudo-version form requires EXACTLY 14 digits, so each of these
+// is read as an ordinary prerelease and the proxy is asked for a tag of
+// that name — the same unresolvable require as the clipped revision,
+// with shapeMsg silent and skewFrom filing it under `tagged`, which is
+// the mis-filing shapeMalformed's own comment calls "what let it past
+// every check in this file".
+//
+// THE DISCRIMINATOR IS THE TAIL, asked directly rather than through
+// revisionOf's conjunction. `>= 2` dashes is what keeps a legitimate
+// prerelease tag out: v1.2.3-abcdef123456 has one dash and a hex tail,
+// and the arm at TestEveryRequireShapeReachesItsOwnArm pins that it
+// stays a tag. Raised in review of #497.
 func malformedPseudo(v string) bool {
 	if _, ok := revisionOf(v); ok {
 		return false
 	}
-	return stampOf(v) != ""
+	return stampOf(v) != "" || (hasRevisionTail(v) && strings.Count(v, "-") >= 2)
 }
 
 // pinPopulations splits the tree's own-module requires into the two
@@ -1410,8 +1480,8 @@ func malformedPseudo(v string) bool {
 // require is excluded, and on a healthy tree there is nothing to exclude
 // — so a fixture handed straight to it is the only way an arm can see
 // that a sentinel and a plain tag stay out. Raised in review of #497.
-func pinPopulations(reqs []ownRequire) (at, spellings map[string]string) {
-	at, spellings = map[string]string{}, map[string]string{}
+func pinPopulations(reqs []ownRequire) (at map[string][]string, spellings map[string]string) {
+	at, spellings = map[string][]string{}, map[string]string{}
 	for _, r := range reqs {
 		// classifyRequire, NOT A SECOND COPY OF THE DISPATCH. This read
 		// `unservableSentinel` and then `revisionOf` by hand, which is a
@@ -1452,9 +1522,21 @@ func pinPopulations(reqs []ownRequire) (at, spellings map[string]string) {
 			continue
 		}
 		where := r.dir + " → " + r.path + " " + r.version
-		if _, seen := at[rev]; !seen {
-			at[rev] = where
-		}
+		// EVERY REQUIRE AT THAT REVISION, not the first. One
+		// representative is the right answer for QUERYING git —
+		// existence and ancestry are properties of the commit — and it
+		// was being used for REPORTING too, which is a different
+		// question. The scenario the existence error's own text names is
+		// a `sed` across the tree, where all 36 pins carry the one bad
+		// revision: the reader was handed one module, fixed it, re-ran,
+		// and was handed the next. Thirty-six sequential runs to see
+		// thirty-six lines. skewFrom already solved this the same way
+		// (byRev accumulates and skewGroup.at prints all of them), and
+		// `absent` inherited it, so pinCoverage's some-absent arm
+		// claimed to say WHICH pins were not looked at and named one per
+		// revision. The git commands below still run once per revision.
+		// Raised in review of #497.
+		at[rev] = append(at[rev], where)
 		if _, seen := spellings[r.version]; !seen {
 			spellings[r.version] = where
 		}
@@ -1549,17 +1631,19 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// that reorders itself run to run is hard to read, and a reader
 	// comparing two runs has to diff them. Raised in review of #497.
 	for _, rev := range sortedKeys(at) {
-		where := at[rev]
+		where := strings.Join(at[rev], "\n\t")
 		if _, err := git("cat-file", "-e", rev+"^{commit}"); err != nil {
 			if shallow == "true" {
-				absent = append(absent, where)
+				absent = append(absent, at[rev]...)
 				continue
 			}
-			t.Errorf("%s pins commit %s, which is not a commit in this "+
-				"repository. `go get` of that module fails with \"unknown "+
+			t.Errorf("%d require(s) pin commit %s, which is not a commit in this "+
+				"repository. `go get` of those modules fails with \"unknown "+
 				"revision\" for everybody outside this workspace, and every "+
 				"check that compares pins against each other passes a "+
-				"tree-wide typo — `sed` is how these get rewritten", where, rev)
+				"tree-wide typo — `sed` is how these get rewritten, which is "+
+				"why they are all named here rather than one at a time:\n\t%s",
+				len(at[rev]), rev, where)
 			continue
 		}
 		present[rev] = true
@@ -1567,10 +1651,10 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 			continue
 		}
 		if _, err := git("merge-base", "--is-ancestor", rev, "origin/main"); err != nil {
-			t.Errorf("%s pins commit %s, which exists here but is NOT an "+
+			t.Errorf("%d require(s) pin commit %s, which exists here but is NOT an "+
 				"ancestor of origin/main — a branch commit, or one taken from "+
 				"an unmerged worktree head. A proxy can only serve what the "+
-				"published history contains", where, rev)
+				"published history contains:\n\t%s", len(at[rev]), rev, where)
 		}
 	}
 
@@ -1829,6 +1913,32 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 		{"v0.0.0-20260913132232-e5cdb56", shapeMalformed,
 			"git's default abbreviation is seven, which is this file's own " +
 				"offline remedy with `-c core.abbrev=12` dropped"},
+		// THE OTHER WAY revisionOf SAYS NO, and the four rows below are
+		// the population that was unreachable until this round: the
+		// REVISION is well-formed and the STAMP is not, so re-deriving
+		// the reason from stampOf answered "" and filed each of them as
+		// a plain tag. Go's form wants exactly 14 digits, so every one
+		// is read as an ordinary prerelease and the proxy is asked for a
+		// tag of that name — the same unresolvable require as the
+		// clipped revision above, with nothing saying so.
+		{"v0.0.0-2026091313223-e5cdb56ececd", shapeMalformed,
+			"one digit short: the `sed` across the tree this file's own hazard " +
+				"note names, landing on the stamp instead of the revision"},
+		{"v0.0.0-202609131322321-e5cdb56ececd", shapeMalformed,
+			"one digit long, which no length check that only looks for `short` " +
+				"would catch"},
+		{"v0.0.0--e5cdb56ececd", shapeMalformed,
+			"no stamp at all, which is the degenerate case of both rows above"},
+		{"v0.0.0-2026091x132232-e5cdb56ececd", shapeMalformed,
+			"fourteen characters and not fourteen DIGITS — the shape stampOf " +
+				"rejects for a reason revisionOf cannot report"},
+		// AND THE DISCRIMINATING PAIR, which is what keeps the new arm
+		// from swallowing legitimate tags: same twelve-hex tail, opposite
+		// answer, separated only by whether a stamp is being attempted.
+		// The second dash is the whole test — a prerelease tag has one.
+		{"v1.2.3-abcdef123456", shapePin,
+			"a legitimate prerelease tag whose tail IS twelve hex characters; " +
+				"the row above it differs only by carrying a second dash-part"},
 	} {
 		if got := classifyRequire(tc.v); got != tc.want {
 			t.Errorf("classifyRequire(%q) = %s, want %s — %s", tc.v, got, tc.want, tc.why)
@@ -1846,8 +1956,11 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 		{shapePin, "", "a pin is not wrong about anything, so it has nothing to say"},
 		{shapeSentinel, "GOWORK=off go list -m",
 			"the sentinel's remedy is to go and get a real pseudo-version"},
-		{shapeNotAVersion, "is not a version",
-			"a bare hash is not a shape any remedy can repair in place"},
+		{shapeNotAVersion, "GOWORK=off go list -m",
+			"a bare hash is repaired exactly as the sentinel is — by going and " +
+				"getting a real pseudo-version — and it is the shape the " +
+				"sentinel's own remedy warns you into, since `go mod edit " +
+				"-require` writes literally what it is handed"},
 		{shapeMalformed, "core.abbrev=12",
 			"the malformed one is this file's own offline remedy with a flag " +
 				"dropped, so naming the flag IS the fix"},
