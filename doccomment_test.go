@@ -71,7 +71,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 		fset := gotoken.NewFileSet()
 		f, err := goparser.ParseFile(fset, path, nil, goparser.ParseComments)
 		ok := err == nil && !ast.IsGenerated(f)
-		coverInto(reached, ruled, filepath.Dir(path), modules, err == nil, ok)
+		coverInto(reached, ruled, filepath.Dir(path), modules, ok)
 		if err != nil {
 			// A file that does not parse is not this guard's business —
 			// the compiler is already the instrument for that, and a
@@ -261,19 +261,30 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 // clean tree, where a module always has at least one ordinary file and
 // so both maps agree whatever the order.
 //
-// TWO BOOLEANS RATHER THAN AN *ast.File, which is what makes the fixture
+// A BOOLEAN RATHER THAN AN *ast.File, which is what makes the fixture
 // possible at all. Handing this a file would put the parse and
 // ast.IsGenerated inside it and leave a fixture needing real bytes on
 // disk; planting them under testdata/ is worse than it looks, because
 // testdata is deliberately unpruned here, so a go.mod there would be
 // picked up by BOTH treeWalk and discoverModules and redden
 // TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery for an unrelated
-// reason. The caller keeps the parse; this keeps the order. Raised in
-// review of #503.
-func coverInto(reached, ruled map[string]bool, dir string, modules []string, parsed, applies bool) {
+// reason. The caller keeps the parse; this keeps the order.
+//
+// IT TOOK TWO, AND THE SECOND COULD NOT FAIL. The caller computes
+// `applies` as `err == nil && !ast.IsGenerated(f)`, so `applies` already
+// implies `parsed` and `if parsed && applies` was `if applies` written
+// twice. Measured: replacing it with `if applies` left all seven guard
+// tests green, and the fixture table agreed from the other side — the
+// generated-only row and the does-not-parse row were the SAME call with
+// the same expectations, and no row could have been `{false, true}`.
+// A guard nothing can fail is a claim about a caller that does not
+// exist, so it is gone rather than fixtured. The two fixture rows stay:
+// they are one input to THIS function and two causes at the call site,
+// and the floor's message names both. Raised in review of #503.
+func coverInto(reached, ruled map[string]bool, dir string, modules []string, applies bool) {
 	mod := owningModule(dir, modules)
 	reached[mod] = true
-	if parsed && applies {
+	if applies {
 		ruled[mod] = true
 	}
 }
@@ -298,16 +309,21 @@ func TestTheCoverageMarkingsHaveTheOrderTheirCommentClaims(t *testing.T) {
 	mods := []string{".", mod}
 	for _, tc := range []struct {
 		name             string
-		parsed, applies  bool
+		applies          bool
 		wantR, wantRuled bool
 	}{
-		{"an ordinary file", true, true, true, true},
-		{"a module of nothing but generated code", true, false, true, false},
-		{"a file that does not parse", false, false, true, false},
+		{"an ordinary file", true, true, true},
+		// SAME INPUT, TWO CAUSES, and that is the point of keeping both
+		// rows after the parsed parameter went: at the call site these
+		// are a generated file and an unparseable one, the floor's
+		// !ruled message names both so a reader can tell which, and the
+		// answer coverInto has to give is the same for either.
+		{"a module of nothing but generated code", false, true, false},
+		{"a file that does not parse", false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reached, ruled := map[string]bool{}, map[string]bool{}
-			coverInto(reached, ruled, mod, mods, tc.parsed, tc.applies)
+			coverInto(reached, ruled, mod, mods, tc.applies)
 			if reached[mod] != tc.wantR {
 				t.Errorf("reached[%q] = %v, want %v: the walk yielded the file, so "+
 					"the module is reached whatever the rule then does with it — "+
@@ -352,8 +368,23 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 		// the parse half of the reader's next step deleted in silence,
 		// in the arm whose stated purpose is to separate two causes.
 		// Raised in review of #503.
-		parseHalf   = "go vet ./..."
+		parseHalf = "go vet ./..."
+		// THE FLAG AND THE PATTERN ARE TWO CLAIMS, and pinning the flag
+		// alone left the pattern free. generatedMarkerPattern exists so
+		// that "the instruction and the check that runs it cannot
+		// drift" — TestTheRemediationGrepAgreesWithTheRule reads the
+		// CONST, and this arm asserted only `grep -rLE`, the literal
+		// flag. Measured: handing the %s the unanchored
+		// `Code generated .* DO NOT EDIT` — the exact pattern round 5
+		// fixed, which dropped this file, the most hand-written in the
+		// tree, from a list defined as files that are not generated —
+		// left all seven guard tests green. So the reader of a real
+		// !ruled fault would be handed back the command already
+		// established to point past the file they are looking for.
+		// Asserting the const itself is what closes it. Raised in
+		// review of #503.
 		markerHalf  = "grep -rLE"
+		markerRule  = generatedMarkerPattern
 		noExemption = "no way to mark a module exempt"
 	)
 	for _, tc := range []struct {
@@ -376,7 +407,7 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 			reached: map[string]bool{".": true, "mcp": true},
 			ruled:   map[string]bool{".": true},
 			modules: []string{".", "mcp"},
-			want:    []string{unruled, parseHalf, markerHalf, noExemption},
+			want:    []string{unruled, parseHalf, markerHalf, markerRule, noExemption},
 		},
 		{
 			// A SET WITH NO ROOT MODULE IN IT, which is the only way
@@ -1014,6 +1045,20 @@ var (
 )
 `,
 			want: "KindAlpha",
+			// THE FOURTH LOCATOR, and the one no fixture carried. Three
+			// of stolenComments' four report wordings are pinned by a
+			// wantMsg; this arm asserted only that KindAlpha appears,
+			// and its sibling two entries down pins the OTHER branch of
+			// the same `if`. Measured: changing the condition to
+			// `if false && specDeclares(…)` — so every spec-level
+			// finding reports the non-adjacent wording — left all seven
+			// guard tests green. That is the failure
+			// declaresDirectlyBelow's own comment records for the
+			// top-level arm, reproduced one scope down: a report that
+			// says DIRECTLY BELOW when it is not, or declines to when
+			// it is. Raised in review of #503.
+			wantMsg: "the doc comment on KindBeta opens by naming KindAlpha, which " +
+				"is the entry of this block DIRECTLY BELOW it.",
 		},
 		{
 			name:         "an honest block",
