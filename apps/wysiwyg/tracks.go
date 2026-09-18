@@ -383,7 +383,11 @@ func (ed *editor) removeTrack() {
 		return
 	}
 	at := ed.cursor.index
-	// retains nothing: specs is not reused. cursorTracks hands every verb
+	// NOT THE `retains nothing:` ESCAPE, because specs is a LOCAL and
+	// the guard skips those before it reads an escape at all — a marker
+	// here would be decoration today and pre-armed for the day specs
+	// becomes a field, arriving already-exempt. The prose is the part
+	// worth keeping. specs is not reused: cursorTracks hands every verb
 	// a fresh `append([]string(nil), …)` copy, and writeTracks only reads
 	// it — preview.FormatTracks turns it into one attribute string — so
 	// the whole slice, vacated slot included, is unreachable when this
