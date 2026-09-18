@@ -499,7 +499,12 @@ func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style) 
 type mark struct {
 	x, y  int
 	wrote rune
-	prev  render.Cell
+	// EVERY COLUMN THE CLUSTER COVERS, not just the lead. A fixed array
+	// because nothing this component draws is wider than two columns and
+	// the alternative allocates once per glyph per frame on the paint
+	// path; cols says how many of it are live.
+	prev [2]render.Cell
+	cols int
 }
 
 // restoreMarks puts back what the last frame's guide covered up.
@@ -512,8 +517,18 @@ type mark struct {
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
-		if f.Cells.At(m.x, m.y).Rune == m.wrote {
-			f.Cells.SetCell(m.x, m.y, m.prev)
+		if f.Cells.At(m.x, m.y).Rune != m.wrote {
+			continue
+		}
+		// THE LEAD FIRST, THEN THE REST, and the order is the whole of
+		// it. Writing the lead makes healSeam repair the orphaned
+		// continuation beside it — with the style THAT CELL currently
+		// holds, which is the overlay's, so the seam repair leaves a
+		// blank carrying the guide's background. Restoring the
+		// continuation afterwards is what puts the cell the overlay
+		// found back.
+		for c := 0; c < m.cols; c++ {
+			f.Cells.SetCell(m.x+c, m.y, m.prev[c])
 		}
 	}
 	o.marks = o.marks[:0]
@@ -563,19 +578,33 @@ func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
 // reads back the same — so this is the cheaper of two correct spellings
 // rather than a fix for a measured defect.
 //
-// ONE MARK FOR THE PAIR, deliberately, and the reason is in the buffer
-// rather than here: healSeam repairs a broken pair on any write, so
-// restoring the LEAD to a blank takes its continuation with it, and a
-// foreign write to the lead cannot leave our tail orphaned either. A
-// second mark on the continuation cell would be dead weight —
-// TestTheOverlayTakesBackAWideMark is what holds that.
+// ONE MARK FOR THE PAIR AND BOTH ITS CELLS IN IT. The lift is still one
+// decision — the guard reads the lead, and healSeam means a foreign
+// write to the lead cannot leave our tail orphaned — but WHAT IS PUT
+// BACK is per column, because healSeam repairs the orphaned
+// continuation with the style that cell currently holds, and that is
+// the OVERLAY's. Measured on this component before the fix, drawing 世
+// in the guide's style and lifting it again:
+//
+//	after draw:    c0={世 fg=0,255,0 bg=255,0,0}  c1={Continuation, same}
+//	after restore: c0={' ' style unset}           c1={' ' fg=0,255,0 bg=255,0,0}
+//
+// cursorStyle carries a background, so what survived a lifted mark was a
+// highlighted blank cell on a clean node that will not repaint — which
+// is the persistence this whole mark model exists for.
+//
+// The paragraph this replaces said a second cell would be "dead weight"
+// and cited TestTheOverlayTakesBackAWideMark for it. That test collects
+// .Rune only, so it could not see the style and the claim was true of
+// less than it said. It compares whole render.Cell values now. Raised in
+// review of #524.
 func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st render.Style) {
 	if f == nil || f.Cells == nil {
 		return
 	}
-	cols := max(w, 1)
-	prev := make([]render.Cell, cols)
-	for c := range prev {
+	cols := min(max(w, 1), len(mark{}.prev))
+	var prev [2]render.Cell
+	for c := 0; c < cols; c++ {
 		prev[c] = f.Cells.At(x+c, y)
 		if !blank(prev[c].Rune) {
 			return
@@ -586,7 +615,9 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 		cell.Cluster = cluster
 	}
 	f.Cells.SetCell(x, y, cell)
-	o.marks = append(o.marks, mark{x: x, y: y, wrote: f.Cells.At(x, y).Rune, prev: prev[0]})
+	o.marks = append(o.marks, mark{
+		x: x, y: y, wrote: f.Cells.At(x, y).Rune, prev: prev, cols: cols,
+	})
 }
 
 // blank is what counts as an empty cell. Both spellings occur: a cleared

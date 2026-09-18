@@ -100,37 +100,89 @@ func TestAGutterLabelIsWrittenByCluster(t *testing.T) {
 // doc records — and restoreMarks only lifts a mark whose cell STILL
 // HOLDS THE GLYPH THE OVERLAY PUT THERE.
 //
-// ONE CELL RESTORED, TWO CELLS BACK, which is the claim setCluster's
-// single mark rests on: healSeam repairs a broken pair on any write, so
-// blanking the LEAD takes its continuation with it. A second mark on
-// the continuation cell would be dead weight, and this is what says so
-// rather than the comment there.
+// WHOLE CELLS, NOT RUNES, and that correction is the finding. This
+// collected .Rune only, and the restore put the LEAD back while leaving
+// healSeam's repair of the orphaned continuation carrying the style that
+// cell held — the OVERLAY's. cursorStyle has a background, so what
+// survived a lifted mark was a highlighted blank cell, on a clean node
+// that will not repaint. The rune comparison could not see it, and
+// setCluster's own doc cited this test for a claim it was true of less
+// than. Both halves now: every cell the mark covers is recorded and put
+// back, and this compares render.Cell values.
 //
-// RUNES, NOT render.RowText. An unwritten cell and a space both read
-// back as a space, so a text comparison cannot see a lead-and-tail pair
-// replaced by two blanks — which is the outcome under test. Raised in
-// review of #524.
+// NOT render.RowText either, for the reason that stood before: an
+// unwritten cell and a space both read back as a space, so a text
+// comparison cannot see a lead-and-tail pair replaced by two blanks —
+// which is the outcome under test. Raised in review of #524.
 func TestTheOverlayTakesBackAWideMark(t *testing.T) {
 	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
-	row := func() []rune {
-		out := make([]rune, 10)
+	row := func() []render.Cell {
+		out := make([]render.Cell, 10)
 		for x := range out {
-			out[x] = f.Cells.At(x, 0).Rune
+			out[x] = f.Cells.At(x, 0)
 		}
 		return out
+	}
+	runes := func(cs []render.Cell) string {
+		out := make([]rune, len(cs))
+		for i, c := range cs {
+			out[i] = c.Rune
+		}
+		return string(out)
 	}
 	before := row()
 
 	o := &Overlay{}
-	o.drawText(f, 0, 0, wideWord, render.Style{})
+	// A STYLE WITH A BACKGROUND, because that is what makes the
+	// style half observable at all: restoring a cell to the wrong
+	// style is invisible when the wrong style is the zero one.
+	o.drawText(f, 0, 0, wideWord, render.Style{Bg: render.RGB(190, 180, 90)})
 	if slices.Equal(row(), before) {
 		t.Fatal("nothing was drawn, so the restore below would pass vacuously")
 	}
 	o.restoreMarks(f)
 
-	if got := row(); !slices.Equal(got, before) {
-		t.Errorf("after restoring, the row holds %q, want %q — the overlay cannot "+
-			"take back what it wrote, so the mark is on screen for good",
-			string(got), string(before))
+	// THE DIFFERING COLUMNS, not the whole row: a ten-cell %+v is four
+	// screens of struct and the reader has to diff it by eye to find the
+	// one column that moved.
+	got := row()
+	for x := range got {
+		if got[x] == before[x] {
+			continue
+		}
+		t.Errorf("after restoring, column %d holds %+v and held %+v. Row is now "+
+			"%q against %q — either the overlay cannot take back what it wrote, "+
+			"or it put the glyph back and left its own style on a column",
+			x, got[x], before[x], runes(got), runes(before))
+	}
+}
+
+// TestSetClusterAllocatesNothing is the paint-path pin: the guide writes
+// one of these per cell it draws, every frame it paints.
+//
+// It took `make([]render.Cell, cols)` for a cols that is 1 or 2 for
+// everything this component draws. render.ClipCols one module down keeps
+// its own loop for exactly this property and says so; this is the same
+// claim one level up.
+//
+// THE MUTATION HAS TO USE A VARIABLE SIZE, which is worth recording
+// because the obvious one does not fire: `make([]render.Cell, 2)` is a
+// constant size the compiler can prove and keeps on the stack, so
+// putting a two-element slice back here measures 0 allocations and this
+// test stays green. It is `cols` being unprovable that puts the slice on
+// the heap — measured, the variable-size form allocates 1 per run.
+// Raised in review of #524.
+func TestSetClusterAllocatesNothing(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	o := &Overlay{}
+	got := testing.AllocsPerRun(200, func() {
+		o.setCluster(f, 0, 0, wideWord[:len([]rune(wideWord))], 2, render.Style{})
+		o.marks = o.marks[:0]
+		f.Cells.SetCell(0, 0, render.Cell{Rune: ' '})
+		f.Cells.SetCell(1, 0, render.Cell{Rune: ' '})
+	})
+	if got != 0 {
+		t.Errorf("setCluster and the two resets around it allocate %v per run, "+
+			"want 0 — the per-glyph slice is back on the paint path", got)
 	}
 }
