@@ -32,10 +32,19 @@ func treeSnapshotSchema() map[string]any {
 				"type":        "array",
 				"description": "The control's markup-declared (<x:Property>) properties with current values.",
 				"items": object(map[string]any{
-					"name":   prop_("string", "The declared property name."),
-					"type":   prop_("string", "The declared markup type: string, int, bool, float, duration, color, any."),
-					"value":  map[string]any{"description": "The current value, for types with a markup literal."},
-					"goType": prop_("string", "For Type=\"any\" handles: the %T of what the handle holds."),
+					"name":  prop_("string", "The declared property name."),
+					"type":  prop_("string", "The declared markup type: string, int, bool, float, duration, color, any."),
+					"value": map[string]any{"description": "The current value, for types with a markup literal."},
+					// NOT "%T", WHICH IS WHAT THIS SAID. These descriptions are
+					// plain literals that nothing renders, so the verb was
+					// shipped to every generated client verbatim — and it is
+					// Go jargon a client reading JSON Schema has no use for.
+					// Escaping it as %%T would ship "%%T" instead, which is
+					// worse. The sweep that found it could not see this
+					// string at all until review of #504 widened it past the
+					// top level; rewording is what keeps that widening free
+					// of an exemption table.
+					"goType": prop_("string", "For Type=\"any\" handles: the dynamic Go type of what the handle holds."),
 				}, "name", "type"),
 			},
 			"childrenElided": prop_("integer", "When a depth limit elided this node's children, how many there were."),
@@ -67,11 +76,13 @@ func listValuesSchema() map[string]any {
 			"type":        "array",
 			"description": "Every dotted name in the binding context.",
 			"items": object(map[string]any{
-				"name":   prop_("string", "The dotted name set_value and invoke_command take."),
-				"kind":   enum_("What the name is.", "property", "command", "literal", "value"),
-				"type":   prop_("string", "The property's wire type where it has one: string, boolean, integer, number, color, style, number[]."),
-				"value":  map[string]any{"description": "The current value, where representable."},
-				"goType": prop_("string", "The Go type (%T). Diagnostic only."),
+				"name":  prop_("string", "The dotted name set_value and invoke_command take."),
+				"kind":  enum_("What the name is.", "property", "command", "literal", "value"),
+				"type":  prop_("string", "The property's wire type where it has one: string, boolean, integer, number, color, style, number[]."),
+				"value": map[string]any{"description": "The current value, where representable."},
+				// The same reword as $defs.node's goType above, for the
+				// same reason.
+				"goType": prop_("string", "The Go type. Diagnostic only."),
 			}, "name", "goType"),
 		},
 		"named": map[string]any{

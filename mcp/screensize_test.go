@@ -720,6 +720,76 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 // the one that covers the concatenated tails. The published strings
 // hold no literal % today, so it starts green. Raised in review of
 // #504.
+// schemaField is one described node of a published JSON Schema and the
+// path it sits at.
+type schemaField struct {
+	at   string // a JSON-pointer-ish trail, for the failure message
+	desc string
+	top  bool // a direct property of the schema, not a nested one
+}
+
+// describedFields is every description a published schema carries, at
+// any depth.
+//
+// ONE LEVEL WAS NOT EVERY LEVEL, and the sweep's own doc said it asked
+// both questions "of every published string". It walked
+// schema["properties"] one level deep and skipped anything carrying a
+// $ref, on the reasoning that a $ref is documented where the definition
+// is. The first half is true; the second was not, because the
+// definition was never visited either. The skip was a hole, not a
+// delegation.
+//
+// treeSnapshotSchema is the measurement: every described field lives
+// under $defs.node and its ONLY top-level property is "tree", which is a
+// $ref — so the sweep visited ZERO described fields of that tool's
+// output schema. registrationsArg's items.properties (swap_markup,
+// register_properties) and boundsSchema's x/y/w/h were unreachable the
+// same way. Measured before this walk existed: putting "%s" and "%d"
+// into two $defs.node descriptions left `go test ./mcp` green with vet
+// silent throughout, which is exactly the concatenated-tail case this
+// instrument exists for. Raised in review of #504.
+//
+// $defs IS VISITED DIRECTLY rather than resolved through the $ref. The
+// question is what SHIPS — the whole schema object goes to the client —
+// so a definition nothing references is still published and still worth
+// sweeping, and resolving would need a pointer resolver to reach the
+// same strings. A definition reached twice is visited twice; the checks
+// are idempotent and the path distinguishes the reports.
+func describedFields(m map[string]any) []schemaField {
+	var out []schemaField
+	var walk func(node any, at string, top bool)
+	walk = func(node any, at string, top bool) {
+		switch n := node.(type) {
+		case map[string]any:
+			if d, ok := n["description"].(string); ok || n["type"] != nil {
+				// A NODE WITH A type AND NO description IS THE EMPTY
+				// CASE the caller reports. A container — "properties",
+				// "$defs" — has neither, and must not be reported as an
+				// undescribed field.
+				out = append(out, schemaField{at: at, desc: d, top: top})
+			}
+			for _, key := range []string{"properties", "$defs", "definitions"} {
+				if sub, ok := n[key].(map[string]any); ok {
+					for name, v := range sub {
+						walk(v, at+"/"+name, false)
+					}
+				}
+			}
+			if items, ok := n["items"]; ok {
+				walk(items, at+"[]", false)
+			}
+		}
+	}
+	for _, key := range []string{"properties", "$defs", "definitions"} {
+		if sub, ok := m[key].(map[string]any); ok {
+			for name, v := range sub {
+				walk(v, name, key == "properties")
+			}
+		}
+	}
+	return out
+}
+
 func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 	// A % FOLLOWED BY A FORMAT LETTER, with its flag and width run: what
 	// a tail that was never rendered looks like. "%!"-style residue
@@ -816,40 +886,79 @@ func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 			kind string
 			m    map[string]any
 		}{{"argument", tl.Schema}, {"result field", tl.OutputSchema}} {
-			props, _ := sch.m["properties"].(map[string]any)
-			for name, v := range props {
-				m, _ := v.(map[string]any)
-				// A $ref CARRIES ITS REFERENT'S DESCRIPTION, so a
-				// property that is only a $ref is documented where the
-				// definition is and has nothing of its own to render.
-				// tree_snapshot's "tree" is the one in this inventory;
-				// asserting a description on it would be asserting a
-				// second copy of the node schema's.
-				if _, isRef := m["$ref"]; isRef {
-					continue
-				}
-				d, _ := m["description"].(string)
-				if d == "" {
-					t.Errorf("%s's %q %s publishes an empty description, so the "+
-						"residue check ruled on nothing for it", tl.Name, name, sch.kind)
+			for _, f := range describedFields(sch.m) {
+				if f.desc == "" {
+					// THE EMPTY-DESCRIPTION FLOOR STAYS AT THE TOP
+					// LEVEL, and the residue checks below do not. They
+					// are different claims: "every published string is
+					// free of residue" is true of the whole schema, and
+					// "every field carries a description" is a rule
+					// these schemas make about their top-level
+					// properties and not about an array wrapper or a
+					// $defs entry. Widening both together would have
+					// reported fourteen intermediate nodes as
+					// undescribed — node/children, values[], keys[] and
+					// friends — which is a scope change wearing a bug
+					// fix's clothes. Raised in review of #504.
+					if f.top {
+						t.Errorf("%s's %q %s publishes an empty description, so the "+
+							"residue check ruled on nothing for it", tl.Name, f.at, sch.kind)
+					}
 					continue
 				}
 				described++
-				if strings.Contains(d, "%!") {
+				if strings.Contains(f.desc, "%!") {
 					t.Errorf("%s's %q %s carries fmt residue (%q): a tail grew a "+
 						"%% and Sprintf shipped it to every generated client",
-						tl.Name, name, sch.kind, d)
+						tl.Name, f.at, sch.kind, f.desc)
 				}
-				if v := verb(d); v != "" {
+				if v := verb(f.desc); v != "" {
 					t.Errorf("%s's %q %s ships the unrendered verb %q: %q. A tail "+
 						"that is CONCATENATED rather than Sprintf'd — cellTail and "+
 						"cellProbeRule are the ones in this inventory — reaches the "+
 						"client with the verb intact, which neither vet nor the %%! "+
-						"search can see", tl.Name, name, sch.kind, v, d)
+						"search can see", tl.Name, f.at, sch.kind, v, f.desc)
 				}
 			}
 		}
 	}
+	// AND THE WALK REACHES NESTED DESCRIPTIONS, asserted rather than
+	// assumed. Every published string is clean, so the sweep is green
+	// over a walk that visits nothing below the top level — which is
+	// exactly what it did until review of #504, with tree_snapshot's
+	// entire output schema swept by nothing because its only top-level
+	// property is a $ref. A floor over the COUNT would not have caught
+	// that either; what discriminates is reaching a field that can only
+	// be reached by recursing.
+	//
+	// BOTH DESCENTS, SEPARATELY, because they are two mechanisms and a
+	// single "something nested was seen" floor passes when either one
+	// alone survives — measured: disabling only the properties/$defs
+	// descent leaves the items descent reaching values[] and a combined
+	// count non-zero.
+	var nestedProp, throughItems int
+	for _, tl := range tools {
+		for _, f := range describedFields(tl.OutputSchema) {
+			if strings.Contains(f.at, "[]") {
+				throughItems++
+			}
+			if strings.Contains(f.at, "/") {
+				nestedProp++
+			}
+		}
+	}
+	if nestedProp == 0 {
+		t.Error("the sweep visited no description under a nested `properties` or " +
+			"`$defs` map, so tree_snapshot's $defs.node — whose only top-level " +
+			"property is a $ref, and which holds every described field that tool " +
+			"publishes — is ruled on by nothing")
+	}
+	if throughItems == 0 {
+		t.Error("the sweep visited no description under an `items` schema, so " +
+			"registrationsArg's element properties and every values[]/named[] " +
+			"element are ruled on by nothing")
+	}
+
 	// A FLOOR OVER THE FIELDS, not over the tools: a tool with no
 	// arguments is ordinary, and a sweep that found none at all would
 	// pass against any residue.

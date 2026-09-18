@@ -1488,8 +1488,8 @@ markup operations (`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`,
 `KindPermissionDenied`) so a transport maps them without parsing text —
 gRPC into status codes, MCP into tool errors.
 
-That enumeration is PROSE, and nothing checks it. The seven guards over
-the remote surface all derive from `v1Tools()` — MCP *tool* names —
+That enumeration is PROSE, and nothing checks it. The guards over the
+tool surface all derive from `v1Tools()` — MCP *tool* names —
 while this list is Go *method* names, so a verb added to `Service` and
 not added here goes unnoticed; `ScreenSize` did exactly that, and the
 sibling row in `docs/specs/2026-08-14-island-grants.md` was updated by

@@ -519,18 +519,15 @@ func str(p *prop.Property[string]) string {
 // below is a separate declaration, and the type is what `go doc
 // control.ScreenSize` prints. It is the half this type exists for, and
 // naming only four of these six fields is how it came to be described
-// nowhere on its own surface.
+// nowhere on its own surface. The account of what these comments used to
+// say, and what measurement retired, is in
+// docs/specs/2026-08-10-mcp-server.md.
 type ScreenSize struct {
 	// Cols, Rows is the extent of the surface in cells: the terminal for
 	// an unscoped session, the island's arranged rect for a scoped one.
 	Cols, Rows int
-	// X, Y is that surface's ABSOLUTE top-left on the host's page, which
-	// is the frame SendPointer takes its coordinates in — SendKeys takes
-	// none, and naming it here told a Go caller to convert for an API
-	// that has no coordinates to convert. Raised in review of #504,
-	// along with SendMouse, which is the MCP TOOL name: the Go method is
-	// SendPointer (control/input.go) and this type's own method doc had
-	// it right while the struct doc a `go doc` prints did not. It
+	// X, Y is that surface's ABSOLUTE top-left on the host's page: the
+	// frame SendPointer (control/input.go) takes its coordinates in. It
 	// is (0, 0) for an unscoped session, and for a scoped one it is the
 	// island's own origin — so a guest that never asks lands every click
 	// Y rows too high.
@@ -545,122 +542,73 @@ type ScreenSize struct {
 	CellW, CellH int
 }
 
-// ScreenSize reports the screen this session is allowed to see.
+// ScreenSize reports the screen this session is allowed to see: the
+// visible surface's extent in cells, its absolute origin, and the
+// terminal's cell metrics in pixels.
 //
-// It exists because the only way to learn the screen was to INFER it
-// from the root component's arranged bounds (issue #204), or to read it
-// off screen_text.
+// It exists because the only ways to learn the screen were to infer it
+// from the root component's arranged bounds (issue #204) or to read it
+// off screen_text, and each costs a whole tree or a whole screen to
+// learn two integers. screen_text's lines are trailing-trimmed, so the
+// width it implies is the longest PAINTED line rather than the
+// terminal's; neither workaround carries the cell metrics at all.
 //
-// #204 and an earlier draft of this comment justified the tool by saying
-// the root-bounds inference "equals the terminal only while the root
-// happens to fill it — give the root a margin, a fixed Width or a
-// non-stretch alignment". That is FALSE. Frame arranges the root with
-// Arrange(Rect{0, 0, c.cols, c.rows}) and Base.Arrange stores what it is
-// handed, so the root reports the screen whatever it declares; margin,
-// size and alignment are applied by MeasureChild/ArrangeChild, the
-// sandwich the root — being nobody's child — never passes through. A
-// root declaring Margin, Width, Height, HAlign and VAlign together was
-// measured, and it reported the full terminal —
-// mcp.TestTheRootAlwaysFillsTheScreen pins that, so this paragraph fails
-// rather than rots if the root ever starts honouring its own size.
-//
-// The reasons that survive measurement:
-//
-//   - A SCOPED session's island genuinely is not the screen, and this
-//     tool answers which surface you have BY CONTRACT rather than by a
-//     field: the result IS this session's visible surface, whatever its
-//     scope, so a client never has to ask. The inference does NOT
-//     disagree about the numbers — Service.Tree roots a scoped snapshot
-//     at the island and walk emits bounds from the same
-//     gooey.Bounded.Bounds() call islandBounds makes, so the root bound
-//     IS this tool's cols/rows/x/y, and
-//     TestATreeSnapshotBoundIsAlreadyAbsolute asserts that agreement; it
-//     just costs a whole tree to learn two integers.
-//
-//     NOTE x/y DO NOT DISTINGUISH THE TWO. The payload has six fields
-//     and no scope flag, and (0,0) is what an unscoped session reports
-//     AND what a session scoped to an island arranged at the origin
-//     reports — mcpIslandMarkup is that fixture, which is why
-//     islandOffOriginMarkup had to be added for the origin test. This
-//     bullet claimed the tool supplies "the knowledge that the root it
-//     read was the island rather than the screen", which is a claim
-//     about the payload the payload does not support: the same class as
-//     the margin/Width/alignment claim and the "wrong answer for a
-//     scoped session" claim this comment retires three paragraphs up.
-//     The contract is the stronger argument anyway, and it is
-//     measurable. Raised in review of #504, twice.
-//
-//   - screen_text's lines are trailing-trimmed, so the width it implies
-//     is the longest PAINTED line, not the terminal's.
-//
-//   - Both workarounds cost a whole tree or a whole screen to learn two
-//     integers.
-//
-//   - Neither carries the cell metrics at all.
+// The reason that survives measurement is a CONTRACT rather than a
+// number: the result IS this session's visible surface, whatever its
+// scope, so a client never has to work out which surface it has. The
+// root-bounds inference does not disagree about the numbers — Service.Tree
+// roots a scoped snapshot at the island and walk emits bounds from the
+// same gooey.Bounded.Bounds() call islandBounds makes, which
+// TestATreeSnapshotBoundIsAlreadyAbsolute asserts.
 //
 // A SCOPED SESSION IS TOLD ITS ISLAND'S SIZE, which is the same fiction
 // Screen maintains by cropping to the island: a guest's whole screen is
 // its island. Answering with the terminal would break it in the
 // direction that costs something — a guest told the screen is 60x14 when
 // it may only touch a 60x3 border computes coordinates for cells it
-// cannot reach, and every one of them is REFUSED: mayPoint
-// (control/input.go) denies both arms, a coordinate outside the terminal
-// because nothing would receive it and one inside the terminal but
-// outside the island because the target is not in islandSet. The cost is
-// the one the next paragraph states — unreachable rows plus refused rows
-// — not silence. This sentence said "silence rather than an error" while
-// the paragraph thirteen lines below said "mayPoint refuses anything
-// landing outside the island"; a reader who took the first would conclude
-// out-of-island clicks fail open. Silence IS what an UNSCOPED session
-// gets — mayPoint returns nil with no grant and the event is dispatched
-// to nothing, which is the behaviour the PR body books separately — so
-// the sentence was true of the session this paragraph is not about.
-// Raised in review of #504.
+// cannot reach, and every one is REFUSED rather than silently dropped:
+// mayPoint (control/input.go) denies both arms, a coordinate outside the
+// terminal because nothing would receive it and one inside the terminal
+// but outside the island because the target is not in islandSet.
 //
 // X and Y carry the island's ORIGIN, and they are what make that fiction
 // usable rather than merely comfortable. SendPointer (control/input.go)
-// takes ABSOLUTE screen cells and mayPoint refuses anything landing
-// outside the island, so size alone is not enough to act: an island at
-// y=1 h=3 is told rows=3, and a guest that believes its rows run 0..2
-// has one refused row and one unreachable one. The size says how big the
-// region is; the origin is how the guest turns a position inside it into
-// the coordinate SendPointer accepts. Disclosing it costs nothing that is
-// not already disclosed — a scoped tree_snapshot returns the island
-// root's bounds in absolute coordinates, and the residual "a guest can
-// infer host geometry" is already booked in
+// takes ABSOLUTE screen cells, so size alone is not enough to act: an
+// island at y=1 h=3 is told rows=3, and a guest that believes its rows
+// run 0..2 has one refused row and one unreachable one. The size says
+// how big the region is; the origin is how a guest turns a position
+// inside it into the coordinate SendPointer accepts. Disclosing it costs
+// nothing that is not already disclosed — a scoped tree_snapshot returns
+// the island root's bounds in absolute coordinates — and the residual
+// "a guest can infer host geometry" is booked in
 // docs/specs/2026-08-14-island-grants.md.
 //
 // For an UNSCOPED session the origin is (0,0): the screen is the region.
+// x/y therefore do NOT tell the two apart — a session scoped to an
+// island arranged at the origin reports (0,0) too.
 //
 // The CELL METRICS are not scoped, because they are a property of the
 // terminal rather than of the region: a pixel is the same size inside an
 // island as outside it.
 //
 // They are ZERO when nobody has measured them, and a client must branch
-// on that rather than divide by it. The converse does NOT hold and the
-// schema says so: a non-zero pair may be a real probe OR App's
-// substituted term.DefaultCellW/H, which it fills in for a pixel-plane
-// app. So 0 means "certainly unmeasured"; non-zero means "usable", not
-// "measured". Reporting which would need a provenance bit the caps
-// struct does not carry.
-//
-// THERE ARE TWO SUBSTITUTION SITES, NOT ONE, and this named only the
-// second — so it concluded that "an ordinary cell-plane app reports
-// 0/0", which is false whenever the probe runs. term.Screen.Detect
-// substitutes DefaultCellW/H itself, on `caps.CellW == 0` alone with no
-// plane test (term/term.go), so a PROBED app reports non-zero however it
-// paints. App's own backfill (app.go, `c.CellW <= 0 &&
-// a.pixelPlane(c)`) is the second site and can only fire where the first
-// did not: capabilities pinned with WithCaps, or no probe at all.
-//
-// So 0/0 means the probe never ran AND no pixel-plane backfill applied
-// — which is the ordinary cell-plane default, since the probe is opt-in
-// (gooey.WithCapabilityProbe, "a round trip that only graphics apps
-// need"). Turning the probe on is what makes a cell-plane app report a
-// cell size it never measured. Corrected in review of #504. Substituting the defaults here
+// on that rather than divide by it. The converse does NOT hold, at two
+// substitution sites: term.Screen.Detect substitutes DefaultCellW/H on
+// `caps.CellW == 0` alone with NO plane test (term/term.go), so a probed
+// app reports non-zero however it paints; App's backfill (app.go,
+// `c.CellW <= 0 && a.pixelPlane(c)`) is the second and can only fire
+// where the first did not — capabilities pinned with WithCaps, or no
+// probe at all. So 0 means "certainly unmeasured"; non-zero means
+// "usable", not "measured". Reporting which would need a provenance bit
+// the caps struct does not carry, and substituting the defaults here
 // would answer a question nobody asked the terminal — the same
-// make-it-up-so-the-field-is-populated move this tool exists to replace,
-// since inventing 10x20 is not better than the root-bounds inference.
+// make-it-up-so-the-field-is-populated move this tool exists to replace.
+//
+// Five claims this comment used to make have been retired by
+// measurement, and the account of each is in
+// docs/specs/2026-08-10-mcp-server.md rather than here: `go doc` output
+// is what a package consumer reads, and a reader looking for the
+// contract should not have to walk past the history of what it is not.
 func (s *Service) ScreenSize() (ScreenSize, error) {
 	c, err := s.composer()
 	if err != nil {

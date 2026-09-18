@@ -431,3 +431,71 @@ batch both roll back atomically and the names re-register cleanly;
 standalone register then a plain later swap binds; duplicate/bad-type/
 bad-value wordings; structured round-trip; tools/list surface) plus the
 e2e pty test growing the live app's viewmodel over the wire.
+
+## `screen_size`: five claims measurement retired
+
+`control.Service.ScreenSize`'s godoc carried the account of each of these
+inline. It grew to 113 lines of `go doc` output, most of it narrative about
+what the comment used to say — and `go doc` is the API reference a package
+consumer reads, not a place to look for why a sentence was retired. The
+contract stayed there; the history is here.
+
+Each entry is a claim that was written down, believed, and then falsified by
+running something. They are recorded rather than deleted because four of the
+five are the *plausible* reading — a reader who re-derives them from the same
+starting point will write them again.
+
+- **"The root-bounds inference equals the terminal only while the root happens
+  to fill it — give the root a margin, a fixed `Width` or a non-stretch
+  alignment."** Issue #204 said this and so did an earlier draft of the tool's
+  justification. It is false. `Composer.Frame` arranges the root with
+  `Arrange(Rect{0, 0, c.cols, c.rows})` and `Base.Arrange` stores what it is
+  handed, so the root reports the screen whatever it declares; margin, size and
+  alignment are applied by `MeasureChild`/`ArrangeChild`, the sandwich the root
+  — being nobody's child — never passes through. Measured with a root declaring
+  `Margin`, `Width`, `Height`, `HAlign` and `VAlign` together: it reported the
+  full terminal. `mcp.TestTheRootAlwaysFillsTheScreen` pins it, so the
+  *replacement* claim fails rather than rots if the root ever starts honouring
+  its own size. The reason the tool survives is the contract — the result IS
+  this session's visible surface whatever its scope — not a disagreement about
+  numbers.
+
+- **"x/y supply the knowledge that the root you read was the island rather than
+  the screen."** A claim about the payload the payload does not support. There
+  are six fields and no scope flag, and `(0,0)` is what an unscoped session
+  reports *and* what a session scoped to an island arranged at the origin
+  reports — `mcpIslandMarkup` is exactly that fixture, which is why
+  `islandOffOriginMarkup` had to be added before the origin could be tested at
+  all.
+
+- **"A scoped session told the terminal's size gets silence rather than an
+  error."** The same comment said thirteen lines down that `mayPoint` refuses
+  anything landing outside the island, and a reader who took the first would
+  conclude out-of-island clicks fail open. `mayPoint` (`control/input.go`)
+  denies both arms — outside the terminal because nothing would receive it, and
+  inside the terminal but outside the island because the target is not in
+  `islandSet`. Silence *is* what an **unscoped** session gets, since `mayPoint`
+  returns nil with no grant and the event dispatches to nothing; the sentence
+  was true of the session the paragraph was not about.
+
+- **"An ordinary cell-plane app reports 0/0 for the cell metrics."** True only
+  while the probe is off. There are **two** substitution sites and this named
+  the second: `term.Screen.Detect` substitutes `DefaultCellW/H` on
+  `caps.CellW == 0` alone, with no plane test at all, so a probed cell-plane app
+  in a terminal that ignores `CSI 16 t` reports 10x20; `App.caps`' backfill
+  (`c.CellW <= 0 && a.pixelPlane(c)`) can only fire where the first did not.
+  The surviving rule runs the other way and is the one the clients receive in
+  `mcp.cellProbeRule`: **0 means certainly unmeasured; non-zero means usable,
+  not measured.**
+
+- **`SendMouse` is the MCP tool name, not the Go method.** The Go method is
+  `control.Service.SendPointer`. The type's method doc had it right while the
+  struct field doc — the half `go doc control.ScreenSize` prints, and the half a
+  Go caller meets first — did not. The same paragraph also named `SendKeys` as
+  an API the origin must be converted for; `SendKeys` takes no coordinates.
+
+The general shape, which is why this section exists rather than a line in a
+changelog: **four of the five were corrections to a justification, not to
+behaviour.** The tool did the right thing throughout. What kept being wrong was
+the sentence explaining why — and a wrong justification is what gets a correct
+mechanism removed by the next person simplifying it.
