@@ -27,20 +27,6 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 	}}}
 }
 
-// menuRows is the open dropdown as a terminal would show it. Through
-// render.BufferText — a rune-per-cell read puts the continuation marker
-// in the row, which is what kept a wide-glyph label out of this file's
-// fixtures. See #516. It was this loop written out, byte for byte the
-// same as canvas_test.go's dump; the loop is in render now. Raised in
-// review of #520.
-//
-// THE WINDOW IS THE FRAME, derived from f.Cells rather than written
-// down. A fixed extent is the trap SpanText's own doc names — "a
-// dropdown that moves down the screen, or a composer resized in a later
-// edit, turns the tail of one of these reads into phantom blanks" — and
-// this helper is the reader that paragraph is about. A written-down
-// width also has to agree with a composer width written separately in
-// each test.
 // rowMatch is one row that held a needle and the byte offset it held it
 // at.
 //
@@ -99,8 +85,6 @@ func onlyMatch(t *testing.T, rows []string, needle, ifNone string) rowMatch {
 	return rowMatch{}
 }
 
-func menuRows(f *gooey.Frame) string { return render.BufferText(f.Cells) }
-
 func TestACheckItemDrawsItsBox(t *testing.T) {
 	on := prop.NewSource(false)
 	bar := checkBarFixture(on)
@@ -110,14 +94,14 @@ func TestACheckItemDrawsItsBox(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f)
+	got := frameText(f)
 	if !strings.Contains(got, "[ ] Wrap") {
 		t.Errorf("an unchecked item does not draw an empty box:\n%s", got)
 	}
 
 	on.Set(true)
 	f, _ = c.Frame()
-	got = menuRows(f)
+	got = frameText(f)
 	if !strings.Contains(got, "[x] Wrap") {
 		t.Errorf("after checking, the item does not draw a checked box:\n%s", got)
 	}
@@ -134,7 +118,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(menuRows(f), "\n")
+	rows := strings.Split(frameText(f), "\n")
 	// EVERY MATCH, not the last one, for the reason
 	// TestACheckItemDrawsAWideLabelInItsOwnColumns gives below: this was
 	// an assignment inside the loop with no break, so a second row
@@ -185,7 +169,7 @@ func TestAMenuWithNoCheckItemsKeepsItsOldSpacing(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f)
+	got := frameText(f)
 	if strings.Contains(got, "[ ]") || strings.Contains(got, "[x]") {
 		t.Errorf("a menu with no check items drew a check column:\n%s", got)
 	}
@@ -254,7 +238,7 @@ func TestACheckedMenuIsWideEnoughForItsLabels(t *testing.T) {
 	// menuRows, not a second hand-built window: a written-down extent
 	// reads short on the axis a dropdown moves along, and a short read
 	// comes back as phantom blanks rather than as an error.
-	if got := menuRows(f); !strings.Contains(got, "[x] Wrap long lines") {
+	if got := frameText(f); !strings.Contains(got, "[x] Wrap long lines") {
 		t.Errorf("the label is clipped; the dropdown was sized without the check column:\n%s", got)
 	}
 }
@@ -287,7 +271,7 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// its top. Anything bounds-relative agrees with it only while a
 	// MenuBar sits at y=0, which is the kind of accidental agreement a
 	// moved fixture breaks silently.
-	rows := strings.Split(menuRows(f), "\n")
+	rows := strings.Split(frameText(f), "\n")
 	// ZERO IS THIS TEST'S SUBJECT: the underline overwriting the check
 	// box leaves no intact row at all, so an absent match is the
 	// regression rather than a broken fixture.
@@ -345,7 +329,7 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(menuRows(f), "\n")
+	rows := strings.Split(frameText(f), "\n")
 	// "NO ROW MATCHED" AND "THE ROW IS WRONG" ARE DIFFERENT FAULTS, and
 	// the ifNone here is what keeps them apart. Without it a missing row
 	// reaches the comparison below as `the wide label's row reads ""`,

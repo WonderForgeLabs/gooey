@@ -186,8 +186,8 @@ blanks both pass `!strings.Contains(got, …)` and "the row is empty".**
 Every one of these edges turns a reader that quietly returned nothing
 into a component that appears to have drawn nothing.
 
-Three more things were settled on the CALLER side of the same contract,
-and they are here rather than in the test comments for the reason above —
+The rest of what was settled is on the CALLER side of the same contract,
+and it is here rather than in the test comments for the reason above —
 the rule belongs next to the code, the account of which version was
 superseded does not:
 
@@ -217,11 +217,24 @@ superseded does not:
    one of them (`apps/scene`'s `containsRow`) still building its row from
    `At(x, y).Rune`, which is the defect `RowText` exists to remove and
    the one the sweep's grep cannot see. `BufferText` sits beside
-   `RowText`; the three helpers are one-line delegations, and the eleven
-   remaining directories of [#516] have a name to call rather than a loop
-   to copy. Its trailing newline is on every row *including the last*, so
-   a dump missing its final row is not a prefix of the correct one —
-   which is what keeps a `strings.Contains` assertion over one honest.
+   `RowText`, and the remaining directories of
+   [#516](https://github.com/WonderForgeLabs/gooey/issues/516) have a name
+   to call rather than a loop to copy. Its trailing newline is on every
+   row *including the last*, so a dump missing its final row is not a
+   prefix of the correct one — which is what keeps a `strings.Contains`
+   assertion over one honest.
+
+   **One delegation, not one per file.** Making them one-liners left
+   `dump` and `menuRows` as byte-identical DECLARATIONS in `components` —
+   the duplication moved down a level rather than removed — so there is
+   one `frameText` now, named for what it answers, beside `rowText`
+   (the same mapping for a span). `screen` stays: it maps a
+   `*gooey.Composer`. Collapsing them turned up a FOURTH copy the sweep
+   could not have found, `menugeom_test.go`'s own `frameText(f, w, h)`:
+   the same loop, already going through `RowText`, so no grep for the
+   cell-reader bug matched it — and it ignored `w` outright, which is the
+   written-down extent of item 5 decaying in place rather than merely
+   risking it.
 8. **One row search, not one per test.** `components/menucheck_test.go`
    grew three copies of "every row holding a needle, and fatal unless
    exactly one", two of which redeclared the same local `match` struct

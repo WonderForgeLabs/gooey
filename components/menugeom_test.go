@@ -207,7 +207,7 @@ func TestTheDropdownBoundsAreWhereItPainted(t *testing.T) {
 	}
 	if got := bar.DropdownBounds(); got != want {
 		t.Errorf("DropdownBounds reports %v; the dropdown painted at %v.\n%s",
-			got, want, frameText(f, 40, 12))
+			got, want, frameText(f))
 	}
 }
 
@@ -237,15 +237,6 @@ func TestTheReportedBoundsMoveWithTheOpenMenu(t *testing.T) {
 	if first == (gooey.Rect{}) || second == (gooey.Rect{}) {
 		t.Errorf("an open menu reported the zero Rect: %v then %v", first, second)
 	}
-}
-
-func frameText(f *gooey.Frame, w, h int) string {
-	var b strings.Builder
-	for y := 0; y < h; y++ {
-		b.WriteString(render.RowText(f.Cells, y))
-		b.WriteByte('\n')
-	}
-	return b.String()
 }
 
 // TestTheAccessorsSurviveAMenuListReplacedWhileOpen is finding 1 of the

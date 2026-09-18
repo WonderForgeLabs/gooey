@@ -19,7 +19,7 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 	return gooey.Compose(root, term.Caps{Cols: cols, Rows: rows}, nil)
 }
 
-// dump is the frame as a terminal would show it, one row per line.
+// frameText is the frame as a terminal would show it, one row per line.
 //
 // Through render.BufferText, which leaves the continuation markers out.
 // Reading Cell.Rune instead writes render.Continuation — rune(-1),
@@ -32,6 +32,24 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 // lives now; what stays here is the frame-to-buffer step and the reason
 // the window is not a parameter. Raised in review of #520.
 //
+// AND ONE OF IT, not one per test file. Collapsing the loops left `dump`
+// here and `menucheck_test.go`'s `menuRows` as byte-identical
+// declarations in the same package — the duplication moved down a level
+// rather than removed. There is one frame-to-buffer wrapper now, named
+// for what it answers rather than for the first file that wanted it, and
+// it sits beside `rowText` (colorpicker_test.go), which is the same
+// mapping for a span. `tooltip_test.go`'s `screen` stays: it maps a
+// *gooey.Composer, which is a different step. Raised in review of #520.
+//
+// THE SWEEP'S GREP MISSED A FOURTH COPY, and the name it is called by
+// now is that copy's. `menugeom_test.go` had its own `frameText(f, w, h)`
+// — the same loop, taking the extent as two ints, and IGNORING w
+// entirely, so the 40 written at its one call site meant nothing and the
+// 12 was the composer's height restated. It did not match the sweep's
+// pattern because it already went through render.RowText; what made it a
+// duplicate was the loop around it, which no grep for the cell-reader
+// bug can see. Found while collapsing the other two.
+//
 // THE WINDOW COMES FROM THE FRAME, not from the caller. It used to take
 // cols and rows, written down beside a canvasFrame call that had already
 // said the same two numbers — and SpanText's own doc names what that
@@ -40,7 +58,7 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 // which is the shape that passes on blank input, so the collapsed-child
 // regression would go undetected rather than merely mis-reported. Raised
 // in review of #520.
-func dump(f *gooey.Frame) string { return render.BufferText(f.Cells) }
+func frameText(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 
 func TestCanvasArrangesChildrenAtAbsoluteOffsets(t *testing.T) {
 	a := &Text{Content: Str("A")}
@@ -83,7 +101,7 @@ func TestCanvasConstrainsChildrenToRemainingSpace(t *testing.T) {
 	if got, want := long.Bounds().W, 4; got != want {
 		t.Errorf("width at offset 6 of 10: %d, want %d", got, want)
 	}
-	if got, want := dump(f), "      ABCD\n"; got != want {
+	if got, want := frameText(f), "      ABCD\n"; got != want {
 		t.Errorf("frame:\n%q\nwant:\n%q", got, want)
 	}
 }
@@ -99,7 +117,7 @@ func TestCanvasOverlapPaintsInTreeOrder(t *testing.T) {
 	}}
 	f := canvasFrame(c, 6, 1)
 
-	if got, want := dump(f), "XabX  \n"; got != want {
+	if got, want := frameText(f), "XabX  \n"; got != want {
 		t.Errorf("overlap frame: %q, want %q (later sibling on top)", got, want)
 	}
 }
@@ -119,7 +137,7 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	}}
 	comp := gooey.NewComposer(c, 6, 1)
 	f, _ := comp.Frame()
-	if got, want := dump(f), "XabX  \n"; got != want {
+	if got, want := frameText(f), "XabX  \n"; got != want {
 		t.Fatalf("first frame: %q, want %q", got, want)
 	}
 
@@ -129,7 +147,7 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	if painted != 2 {
 		t.Fatalf("painted %d components, want exactly 2 (the occluded text + its forced occluder)", painted)
 	}
-	if got, want := dump(f), "YabY  \n"; got != want {
+	if got, want := frameText(f), "YabY  \n"; got != want {
 		t.Errorf("after repainting the occluded component: %q, want %q — "+
 			"the occluder must repaint above the new content", got, want)
 	}
@@ -146,10 +164,10 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 func TestCanvasPaintsNoChromeOfItsOwn(t *testing.T) {
 	c := &Canvas{Children: []gooey.Component{at(&Text{Content: Str("keep")}, 1, 0)}}
 	f := canvasFrame(c, 8, 2)
-	before := dump(f)
+	before := frameText(f)
 
 	c.Render(f) // painting the container directly must change nothing
-	if after := dump(f); after != before {
+	if after := frameText(f); after != before {
 		t.Errorf("Canvas.Render altered the buffer:\n%q\nwas:\n%q", after, before)
 	}
 }
@@ -175,7 +193,7 @@ func TestCanvasChildrenKeepLayoutSemantics(t *testing.T) {
 	c := &Canvas{Children: []gooey.Component{hidden, margined}}
 	f := canvasFrame(c, 8, 3)
 
-	if got := dump(f); strings.Contains(got, "gone") {
+	if got := frameText(f); strings.Contains(got, "gone") {
 		t.Errorf("collapsed canvas child painted: %q", got)
 	}
 	// Offset 1 plus a 2-cell left margin puts it at x=3.

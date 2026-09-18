@@ -516,8 +516,11 @@ asserted on. Read a row back with `render.RowText`, and a REGION of one
 with `render.SpanText(b, x, y, w)` — the span form is the one a test
 asserting on a dock header, a menu row or a status gutter actually
 wants, and its absence is why those six helpers grew back one directory
-over ([#516](https://github.com/WonderForgeLabs/gooey/issues/516)). Never
-hand-roll either. To pin one of these,
+over ([#516](https://github.com/WonderForgeLabs/gooey/issues/516)) — and a
+whole BUFFER with `render.BufferText(b)`, which is that loop over every
+row, because a dump of the screen is as common a thing to want as a row
+and every caller that needed one wrote it out. Never hand-roll any of the
+three. To pin one of these,
 use two strings of the same COLUMN width and different rune counts
 (`"世界"` against `"abcd"`) and assert they measure alike; an ASCII
 fixture agrees with itself under either rule and passes against the bug.

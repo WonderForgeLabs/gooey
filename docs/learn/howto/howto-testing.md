@@ -64,8 +64,10 @@ asserting this way:
 - **Text and layout** — read a row, or read `f.Cells.At(x, y).Style` to
   assert color, bold, or reverse video.
 
-  **Never hand-roll the reader.** `render.SpanText` and `render.RowText`
-  exist because writing `Cell.Rune` per column puts `render.Continuation`
+  **Never hand-roll the reader.** `render.SpanText`, `render.RowText` and
+  `render.BufferText` — a region of a row, a whole row, and every row of
+  the buffer newline-terminated — exist because writing `Cell.Rune` per
+  column puts `render.Continuation`
   — the marker that holds a wide glyph's second column — into the string
   as a literal rune, so `"世界"` reads back as something no assertion
   matches and the file cannot hold a wide-glyph fixture at all. Six
