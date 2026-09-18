@@ -15,8 +15,10 @@ nothing about z-order argues with that.
 **Which surfaces are lifted, exactly.** `ToastHost`, `AdornmentLayer`
 and `Popup` **are** lifted — `Popup` through the surface it opens, which
 is the thing that carries the marker and is what a `MenuBar`'s
-**dropdown** is. Grep for `OverlaysPage()` and those three types are
-what you find.
+**dropdown** is. Grep for `OverlaysPage()` and you find `AdornmentLayer`,
+`ToastHost` and `popupSurface` — the surface, not `Popup`, which is the
+indirection the clause above describes and the reason this instruction
+names a type the rest of this page tells you not to write down.
 
 **A `MenuBar` is not one of them, and the distinction is the useful
 half.** The bar is an ordinary component: `Grid.Row` places it, it

@@ -207,6 +207,35 @@ func (l *AdornmentLayer) Remove(a Adornment) {
 			// an accident of scheduling standing in for an invariant,
 			// which is what this PR argues against everywhere else.
 			// Raised in review of #456.
+			//
+			// AND IT IS WHAT MAKES A MID-Arrange REMOVAL A PANIC rather
+			// than a wrong pixel, which is the cost of taking it and is
+			// written here because this is the line that creates the
+			// hazard. Arrange ranges over a slice header captured once,
+			// so a Remove reached from inside that loop — through
+			// a.Place, through the adornment's own Arrange under
+			// ArrangeChild, or through orphaned() below — shortens
+			// l.adorns while the range still has the old len. The clear
+			// then zeroes a slot the loop has yet to visit: at len 3
+			// with the last element removed, iteration 2 reads nil, the
+			// PointerFollower assertion answers ok=false, and a.Anchor()
+			// is called on a nil interface. Before the clear that read
+			// was a stale-but-live adornment — wrong, not fatal.
+			//
+			// The same trade is stated at StatusBar.ChildComponents
+			// (statusbar.go), ItemsView.sync (itemsview.go) and
+			// FocusManager.Resync (input.go), each for its own walk, and
+			// this was the one site that took it without saying so.
+			//
+			// NOT REACHABLE TODAY, and that is why it is written rather
+			// than guarded: the only two `orphanable` implementors in
+			// the tree (tooltip.go, validation.go) nil their
+			// back-pointers and nothing else, and neither Tooltip nor
+			// ValidationMarker calls Remove from layout. A custom
+			// adornment is app code and app code is what reaches Place
+			// and Arrange, so the next person to write one needs this
+			// sentence rather than a nil check standing in for it.
+			// Raised in review of #456.
 			clear(l.adorns[len(l.adorns):cap(l.adorns)])
 			if l.structure != nil {
 				l.structure()

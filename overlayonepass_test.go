@@ -1217,9 +1217,11 @@ func resetBase(rhs ast.Expr, text func(ast.Expr) string) (base, kind string) {
 //
 // WHAT COUNTS AS A RESET IS NARROWER THAN WHAT RETAINS, and that scope
 // now lives on resetBase above, where the matching happens, rather than
-// IT RETURNS WHERE AND WHETHER THE ORDER MATTERS, not a bool, and the
-// argument is zeroesTopIn's one screen down, made about the other
-// exemption. `clear(x[:cap(x)])` and `clearToCap(x)` name the whole
+// here — the argument is zeroesTopIn's, one screen down, made about the
+// other exemption.
+//
+// IT RETURNS WHERE AND WHETHER THE ORDER MATTERS, not a bool.
+// `clear(x[:cap(x)])` and `clearToCap(x)` name the whole
 // backing array whenever they run, so they are order-free.
 // `clear(x[len(x):cap(x)])` is not: its Low reads len, and len is
 // precisely what the reset changes. Placed BEFORE the reset it clears
