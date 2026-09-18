@@ -7,7 +7,6 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/input"
-	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // A page with an adornment layer: a tooltipped Text host over a filler
@@ -397,19 +396,3 @@ func TestTooltipWithoutALayerShowsNothing(t *testing.T) {
 		t.Fatal("the tooltip claims to be shown with no layer to show in")
 	}
 }
-
-// screen is the composition as a terminal would show it. Through
-// render.BufferText, which omits the continuation markers a rune-per-cell
-// read would write into any row holding a wide glyph. See #516. The
-// third copy of that loop in this package, and now a delegation like the
-// other two. Raised in review of #520.
-//
-// THE WINDOW COMES FROM THE COMPOSER, not from the caller. It took w and
-// h, and its call sites sit in two files each writing 30, 4 or 30, 5
-// beside a separately constructed composer — while this same file builds
-// a 40-wide one elsewhere, which is what makes the divergence latent
-// rather than theoretical. A read wider than the buffer is phantom
-// blanks (SpanText's own doc says so) and every caller here compares two
-// screens for equality, where blanks on both sides agree. Raised in
-// review of #520.
-func screen(c *gooey.Composer) string { return render.BufferText(c.Cells()) }

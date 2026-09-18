@@ -224,17 +224,27 @@ superseded does not:
    prefix of the correct one — which is what keeps a `strings.Contains`
    assertion over one honest.
 
-   **One delegation, not one per file.** Making them one-liners left
-   `dump` and `menuRows` as byte-identical DECLARATIONS in `components` —
-   the duplication moved down a level rather than removed — so there is
-   one `frameText` now, named for what it answers, beside `rowText`
-   (the same mapping for a span). `screen` stays: it maps a
-   `*gooey.Composer`. Collapsing them turned up a FOURTH copy the sweep
-   could not have found, `menugeom_test.go`'s own `frameText(f, w, h)`:
-   the same loop, already going through `RowText`, so no grep for the
-   cell-reader bug matched it — and it ignored `w` outright, which is the
-   written-down extent of item 5 decaying in place rather than merely
-   risking it.
+   **One delegation, not one per file — and one FILE, not one per
+   consumer.** Making them one-liners left `dump` and `menuRows` as
+   byte-identical DECLARATIONS in `components`: the duplication moved
+   down a level rather than being removed. Collapsing them turned up a
+   FOURTH copy the sweep could not have found, `menugeom_test.go`'s own
+   `frameText(f, w, h)` — the same loop, already going through
+   `RowText`, so no grep for the cell-reader bug matched it, and it
+   ignored `w` outright, which is the written-down extent of item 5
+   decaying in place rather than merely risking it.
+
+   Naming the survivor for what it answers was half the repair; it still
+   LIVED in the first file that wanted it, under a doc block about
+   dropdowns. That placement is the mechanism behind the staleness, not
+   a tidiness matter: while the explanation for a shared helper sits in
+   one consumer, every other consumer retells it in its own comments and
+   the copies drift apart — six of them in `menucheck_test.go` went on
+   naming `menuRows` after it was deleted. `components/readback_test.go`
+   holds all four now (`rowText`, `frameText`, `screen`, and the
+   `rowMatch`/`matchRows`/`onlyMatch` row search), with the
+   continuation-marker reasoning stated once at the top, so the next
+   directory of the sweep copies a file rather than a loop.
 8. **One row search, not one per test.** `components/menucheck_test.go`
    grew three copies of "every row holding a needle, and fatal unless
    exactly one", two of which redeclared the same local `match` struct

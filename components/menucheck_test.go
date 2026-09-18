@@ -27,64 +27,6 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 	}}}
 }
 
-// rowMatch is one row that held a needle and the byte offset it held it
-// at.
-//
-// PAIRED, because the two answers are about one match. Three tests in
-// this file each grew their own version of this search, and two of them
-// had already taken the row from one pass and the offset from another —
-// correct only while a neighbouring `len == 1` guard happened to make
-// them agree. Loosening such a guard to "at least one" slices one row at
-// an offset measured in another: a wrong column in a failure message at
-// best, an out-of-range slice at worst.
-type rowMatch struct{ row, byteAt int }
-
-// matchRows is every row of rows holding needle, with where.
-//
-// EVERY CANDIDATE, NOT THE FIRST. Two of the three copies stopped at the
-// first hit, so a second matching row — a second item, a status line
-// echoing the label, a scrolled duplicate — was resolved by iteration
-// order and the other became invisible. Every claim these tests make is
-// POSITIONAL, about a specific column of a specific row, so two
-// candidates is a fault to name rather than a choice to make.
-func matchRows(rows []string, needle string) []rowMatch {
-	var out []rowMatch
-	for y, r := range rows {
-		if i := strings.Index(r, needle); i >= 0 {
-			out = append(out, rowMatch{y, i})
-		}
-	}
-	return out
-}
-
-// onlyMatch is matchRows with "and exactly one", which is what every
-// caller wants.
-//
-// ifNone is the caller's: "no row matched" and "the row is wrong" are
-// different faults, and which one zero means is test-specific — for one
-// test it is the regression under test, for another it is the dropdown
-// not painting at all. Folding a generic sentence in here would lose
-// that.
-func onlyMatch(t *testing.T, rows []string, needle, ifNone string) rowMatch {
-	t.Helper()
-	got := matchRows(rows, needle)
-	if len(got) == 1 {
-		return got[0]
-	}
-	if len(got) == 0 {
-		t.Fatalf("no row holds %q. %s\n%s", needle, ifNone, strings.Join(rows, "\n"))
-	}
-	var at []int
-	for _, m := range got {
-		at = append(at, m.row)
-	}
-	t.Fatalf("%q appears on rows %v, want exactly one. The assertion below is "+
-		"positional — a column of a specific row — so picking one of two by "+
-		"iteration order would hide whichever it did not pick:\n%s",
-		needle, at, strings.Join(rows, "\n"))
-	return rowMatch{}
-}
-
 func TestACheckItemDrawsItsBox(t *testing.T) {
 	on := prop.NewSource(false)
 	bar := checkBarFixture(on)
@@ -123,7 +65,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	// TestACheckItemDrawsAWideLabelInItsOwnColumns gives below: this was
 	// an assignment inside the loop with no break, so a second row
 	// holding "Wrap" was resolved by iteration order and the other became
-	// invisible. menuRows just widened from a fixed 14 rows to the whole
+	// invisible. frameText just widened from a fixed 14 rows to the whole
 	// frame, which is more rows for a second match to hide in. Raised in
 	// review of #520.
 	const noItem = "This test compares ONE lead column against another, so " +
@@ -139,7 +81,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	// so the offsets differ exactly when the columns do.
 	//
 	// That argument is true of today's fixture and is no longer
-	// CONSTRAINED. menuRows reads the whole frame now, so `len(wrap) == 1
+	// CONSTRAINED. frameText reads the whole frame now, so `len(wrap) == 1
 	// && len(plain) == 1` no longer implies both matches are dropdown
 	// rows sharing a border prefix — only that each word appears once
 	// anywhere on screen. A byte comparison over two rows with different
@@ -235,7 +177,7 @@ func TestACheckedMenuIsWideEnoughForItsLabels(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	// menuRows, not a second hand-built window: a written-down extent
+	// frameText, not a second hand-built window: a written-down extent
 	// reads short on the axis a dropdown moves along, and a short read
 	// comes back as phantom blanks rather than as an error.
 	if got := frameText(f); !strings.Contains(got, "[x] Wrap long lines") {
@@ -267,7 +209,7 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// the prefix is narrow, which it is in this fixture and is not in
 	// TestACheckItemDrawsAWideLabelInItsOwnColumns thirty lines below.
 	//
-	// THE ROW INDEX IS THE ROW, because menuRows reads the frame from
+	// THE ROW INDEX IS THE ROW, because frameText reads the frame from
 	// its top. Anything bounds-relative agrees with it only while a
 	// MenuBar sits at y=0, which is the kind of accidental agreement a
 	// moved fixture breaks silently.
@@ -292,7 +234,7 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	}
 }
 
-// TestACheckItemDrawsAWideLabelInItsOwnColumns is the fixture menuRows
+// TestACheckItemDrawsAWideLabelInItsOwnColumns is the fixture frameText
 // could not hold before it read through render.SpanText, and it is the
 // half of #516 that matters: converting a reader proves nothing on its
 // own — the fixture it UNBLOCKS is what pins a claim.
@@ -338,15 +280,10 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 	// class SpanText's own doc names: a read drifted off the surface
 	// comes back as blanks rather than short, so going short is not the
 	// signal either.
-	//
-	// len(rows)-1 because menuRows TERMINATES each line with a newline,
-	// so Split hands back a trailing empty element that is not a row of
-	// the window — and this sentence exists to name the window, so the
-	// number in it has to BE the window.
 	hit := onlyMatch(t, rows, "Wrap", fmt.Sprintf(
-		"The dropdown did not paint: none of the %d rows of the %dx%d frame "+
-			"holds it, which is a different fault from the row being mis-sized.",
-		len(rows)-1, f.Cells.W, f.Cells.H))
+		"The dropdown did not paint: none of the %dx%d frame's rows holds it, "+
+			"which is a different fault from the row being mis-sized.",
+		f.Cells.W, f.Cells.H))
 	// TRIMMED AT BOTH ENDS, because the claim is RELATIVE: the right
 	// border lands one column after the glyphs. TrimRight alone made the
 	// assertion depend on the dropdown starting at column 0, which holds

@@ -212,8 +212,7 @@ func RowText(b *Buffer, y int) string {
 // — apps/wysiwyg's onScreen and apps/scene's containsRow, the second of
 // them still building a row with `At(x, y).Rune` and so unable to hold a
 // wide glyph at all. A whole-BUFFER read is as common as a whole-ROW
-// read and had no name, so every caller invented one. Raised in review
-// of #520.
+// read and had no name, so every caller invented one.
 //
 // The trailing newline is on EVERY row including the last, so a
 // three-row buffer and the first three rows of a four-row one do not

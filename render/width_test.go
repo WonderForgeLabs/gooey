@@ -317,7 +317,7 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	// and a sample of one. "ENDS past" rather than "runs past", too —
 	// the span's head is inside the buffer and only its tail is not,
 	// which is what makes the first two columns blanks-from-the-buffer
-	// and the rest blanks-from-the-rule. Raised in review of #520.
+	// and the rest blanks-from-the-rule.
 	const x, w = 2, 8
 	if got, want := SpanText(b, x, 0, w), "        "; got != want {
 		t.Errorf("a span ending %d columns past the buffer = %q, want %q",
@@ -345,7 +345,7 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 // A WIDE GLYPH IN THE FIXTURE, because a buffer reader that walked cells
 // instead of delegating to RowText would put render.Continuation in the
 // middle of row 1 and still pass an ASCII-only test — the defect #516
-// exists for, one level up. Raised in review of #520.
+// exists for, one level up.
 func TestBufferTextIsEveryRowNewlineTerminated(t *testing.T) {
 	b := NewBuffer(4, 3)
 	b.SetString(0, 0, "ab", Style{})
