@@ -633,39 +633,11 @@ func TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge(t *testing.T) {
 	tb.setCaret(2) // on 西, reachable with Home then two rights
 	f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
 
-	found := -1
-	for x := 0; x < 4; x++ {
-		if f.Cells.At(x, 0).Style.Reverse {
-			found = x
-			break
-		}
+	if got := reversedText(f); got != "西" {
+		t.Errorf("the reversed cells of %q hold %q, want 西 — the caret sits ON "+
+			"the character it precedes, and an empty answer means nothing on "+
+			"screen says where it is", render.RowText(f.Cells, 0), got)
 	}
-	if found < 0 {
-		t.Fatalf("row %q carries no reversed cell: the caret is on 西 and "+
-			"nothing on screen says so", render.SpanText(f.Cells, 0, 0, 4))
-	}
-	if got := f.Cells.At(found, 0).Rune; got != '西' {
-		t.Errorf("the reversed cell holds %q, want 西 — the caret sits ON the "+
-			"character it precedes", got)
-	}
-}
-
-// reversedText is the text of the reversed cells in the first w columns
-// of row 0, in order.
-//
-// Cell.Text() rather than Cell.Rune, because a reversed cell may hold a
-// multi-rune cluster and a rune would report only its lead — which is
-// the distinction three of the tests below exist to make. A wide
-// cluster's continuation cell carries no text, so a two-column glyph
-// still contributes its cluster once.
-func reversedText(f *gooey.Frame, w int) string {
-	var b strings.Builder
-	for x := 0; x < w; x++ {
-		if c := f.Cells.At(x, 0); c.Style.Reverse {
-			b.WriteString(c.Text())
-		}
-	}
-	return b.String()
 }
 
 // TestAnEmojiPresentationSequenceScrollsByItsColumnsNotItsRunes is
@@ -743,7 +715,7 @@ func TestTheCaretIsVisibleOnAnEmojiPresentationSequenceAtTheWindowsEdge(t *testi
 			tb.setCaret(1) // on the wide glyph, one Right from Home
 			f := gooey.Compose(tb, term.Caps{Cols: 2, Rows: 1}, nil)
 
-			if got := reversedText(f, 2); got != tc.want {
+			if got := reversedText(f); got != tc.want {
 				t.Errorf("the reversed cells spell %q, want %q; the row reads %q. "+
 					"The caret is on the second character of %q in a field two "+
 					"columns wide, so that character is the whole field and it "+
@@ -838,7 +810,7 @@ func TestASelectionOverHalfAClusterHighlightsTheWholeGlyph(t *testing.T) {
 			tb.setAnchor(tc.anchor)
 			f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
 
-			if got := reversedText(f, 4); got != tc.want {
+			if got := reversedText(f); got != tc.want {
 				t.Errorf("selection [%d,%d) over %q reverses %q, want %q; the row "+
 					"reads %q. A selection the user made and cannot see is worse "+
 					"than no selection: the caret arm is suppressed while one is "+
@@ -1147,9 +1119,80 @@ func TestACombiningMarkSurvivesTheRuneItDecorates(t *testing.T) {
 	on.SetFocused(true)
 	on.setCaret(1) // the mark itself
 	f = gooey.Compose(on, term.Caps{Cols: 8, Rows: 1}, nil)
-	if !f.Cells.At(0, 0).Style.Reverse {
-		t.Error("the caret is on the combining mark and cell 0 is not reversed: " +
-			"nothing on screen says where the caret is")
+	// THE WHOLE CLUSTER, spelled with the escape rather than the glyph:
+	// the fixture is DECOMPOSED and a precomposed literal here would look
+	// identical in the source and compare unequal.
+	if want, got := "e\u0301", reversedText(f); got != want {
+		t.Errorf("the caret is on the combining mark and the reversed cells "+
+			"hold %q, want the whole cluster %q: the caret belongs to the one "+
+			"glyph on screen, and nothing reversed means nothing on screen says "+
+			"where it is", got, want)
+	}
+}
+
+// TestAFieldWithNoRoomLeftStillSubscribesToItsStyles is the pin for the
+// Style/InvalidStyle hoist, and a damage count is the only instrument
+// that can make it — CLAUDE.md: "a damage-count assertion is the only
+// pin for a repaint claim".
+//
+// Render's early returns are where the Get-order rule bites: a Get below
+// one drops out of the dependency set on the frames that take it, and
+// the component goes deaf to that property with no error and no panic.
+// The commit that hoisted these two argued it costs no observable
+// STALENESS, which is true of the pixels — a prompt filling the field
+// paints nothing that reads either style. It is not true of the
+// SUBSCRIPTION, and that is observable: with the Gets hoisted, setting
+// the style invalidates the paint node and the next frame repaints 1;
+// with them back below the `avail <= 0` return, it repaints 0. Nothing
+// else in this package could see that, which is why a mutation moving
+// them back was silent.
+//
+// THE PROMPT IS THE MECHANISM. It is clipped to the field's width, so a
+// prompt as wide as the field leaves avail == 0 and Render returns
+// before anything below it runs.
+func TestAFieldWithNoRoomLeftStillSubscribesToItsStyles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(sty, invalid *prop.Property[render.Style])
+		err  string
+	}{
+		{"Style", func(sty, _ *prop.Property[render.Style]) {
+			sty.Set(render.Style{Bold: true})
+		}, ""},
+		// InvalidStyle is read only on the error path, so this arm needs
+		// the error set for the Get to run at all.
+		{"InvalidStyle", func(_, invalid *prop.Property[render.Style]) {
+			invalid.Set(render.Style{Underline: true})
+		}, "no"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sty := prop.NewSource(render.Style{})
+			invalid := prop.NewSource(render.Style{})
+			tb := &TextBox{
+				Text:         prop.NewSource("abcdef"),
+				Prompt:       prop.NewSource(">>>>"),
+				Error:        prop.NewSource(tc.err),
+				Style:        sty,
+				InvalidStyle: invalid,
+			}
+			c := gooey.NewComposer(tb, 4, 1)
+			c.Frame()
+
+			// THE PREMISE FIRST: a field with room left would repaint for
+			// an unrelated reason and this would prove nothing.
+			if got := render.RowText(c.Cells(), 0); got != ">>>>" {
+				t.Fatalf("the field painted %q, want the prompt filling all four "+
+					"columns — with room to spare Render never reaches its "+
+					"avail check and this measures nothing", got)
+			}
+			tc.set(sty, invalid)
+			if _, painted := c.Frame(); painted != 1 {
+				t.Errorf("setting %s repainted %d components, want 1: Render "+
+					"returned before reading it, so the paint node never "+
+					"subscribed and the field is deaf to that property",
+					tc.name, painted)
+			}
+		})
 	}
 }
 
@@ -1274,14 +1317,7 @@ func TestTheCaretSurvivesAWindowThatOpensOnACombiningMark(t *testing.T) {
 	tb.setCaret(11) // the mark itself, with the window well to its right
 	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
-	reversed := false
-	for x := 0; x < 6; x++ {
-		if f.Cells.At(x, 0).Style.Reverse {
-			reversed = true
-			break
-		}
-	}
-	if !reversed {
+	if reversedText(f) == "" {
 		t.Errorf("no cell in the field is reversed with the caret at 11 of %q: "+
 			"the user is typing into a field whose caret is nowhere on screen. "+
 			"Row: %q", value, render.RowText(f.Cells, 0))
@@ -1387,16 +1423,12 @@ func TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets(t *testing.T) {
 			"the defect #519 is about", got, w)
 	}
 
-	reversed := 0
-	for x := 0; x < cols; x++ {
-		if f.Cells.At(x, 0).Style.Reverse {
-			reversed++
-		}
-	}
-	if reversed != 1 {
-		t.Errorf("%d cells reversed with the caret at 0 of %q, want 1: the user "+
-			"is typing into a focused field whose caret is nowhere on screen. "+
-			"Row: %q", reversed, value, render.RowText(f.Cells, 0))
+	if got := reversedText(f); got != "\u0301" {
+		t.Errorf("the reversed cells hold %q with the caret at 0 of %q, want the "+
+			"mark itself: an empty answer is a user typing into a focused field "+
+			"whose caret is nowhere on screen, and any other answer is the caret "+
+			"on the wrong cluster. Row: %q",
+			got, value, render.RowText(f.Cells, 0))
 	}
 
 	// AND THE THIRD ARM IS WHERE THE SLACK RUNS OUT. Both arms above run
