@@ -1189,9 +1189,13 @@ tracking is high-frequency — except to components that opt in via
 through hover.
 
 Focus-follows-click and hover tracking are both skipped while the
-pointer is **captured**. The retarget is skipped for a captured
-**move**, and only for that: it decides what "the hit" means, and a
-captured move has no hit for it to decide about. A `MouseRelease` while
+pointer is **captured**. The retarget is skipped wherever the WALK is —
+a captured move, a captured wheel, and a press arriving while the
+capture is held, the three the enumeration forty lines above gives —
+because with no hit test there is no hit for it to decide about. (This
+sentence named the move alone, "and only for that", while the
+enumeration above it was already correct: one page, two rules, one
+screen apart.) A `MouseRelease` while
 captured still hit-tests and still retargets — and the answer is
 load-bearing there rather than incidental, because `within(captor, hit)`
 is asked of the retargeted hit to decide whether a click is synthesized

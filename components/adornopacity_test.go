@@ -111,6 +111,9 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	}
 	// receiver -> set of methods it declares, over the non-test files.
 	methods := map[string]map[string]bool{}
+	// The INTERFACE types declared here. Their methods promote to
+	// whatever embeds them; they are not themselves shipped adornments.
+	ifaces := map[string]bool{}
 	// type -> the types it embeds, for the promotion pass below.
 	embeds := map[string][]string{}
 	for _, f := range files {
@@ -143,6 +146,48 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 				for _, sp := range gd.Specs {
 					ts, ok := sp.(*ast.TypeSpec)
 					if !ok {
+						continue
+					}
+					// AN INTERFACE PROMOTES ITS METHODS TOO, and a
+					// struct embedding one gets every method in it. A
+					// decorator wrapping another adornment —
+					// `type wrap struct{ Adornment }` — is the natural
+					// way to write one, and it was invisible here:
+					// receiverName named the embed, promotion looked up
+					// methods["Adornment"], and that map was empty
+					// because an interface declares no FuncDecl.
+					// Measured in review of #458: such a type has Anchor
+					// and Place, is opaque at OverlayRankAdornment, and
+					// the guard passed with it in the package.
+					//
+					// THE INTERFACE ITSELF IS NOT AN ADORNMENT, which is
+					// what ifaces below is for. Adornment has Anchor and
+					// Place and does NOT require HitTestTransparent — so
+					// collecting its methods without excluding the type
+					// reports the contract as an opaque adornment. What
+					// the guard is about is the concrete types that
+					// satisfy it.
+					if it, ok := ts.Type.(*ast.InterfaceType); ok && it.Methods != nil {
+						ifaces[ts.Name.Name] = true
+						for _, fld := range it.Methods.List {
+							if len(fld.Names) == 0 {
+								// An embedded interface: the same
+								// promotion question one level in, and
+								// the fixed point below resolves it.
+								// gooey.Component is the case here, and
+								// qualifiedEmbed answers for it.
+								if e := receiverName(fld.Type); e != "" {
+									embeds[ts.Name.Name] = append(embeds[ts.Name.Name], e)
+								}
+								continue
+							}
+							if methods[ts.Name.Name] == nil {
+								methods[ts.Name.Name] = map[string]bool{}
+							}
+							for _, n := range fld.Names {
+								methods[ts.Name.Name][n.Name] = true
+							}
+						}
 						continue
 					}
 					st, ok := ts.Type.(*ast.StructType)
@@ -220,8 +265,9 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	// embedding must not do is make the type disappear.
 	//
 	// WHAT THIS STILL CANNOT SEE, stated rather than glossed: a type
-	// embedding one declared in ANOTHER package. The scan parses *.go
-	// here and nothing else, so promotion stops at the package boundary.
+	// embedding one declared in ANOTHER package — a struct or an
+	// interface alike. The scan parses *.go here and nothing else, so
+	// promotion stops at the package boundary.
 	// That residue is narrower than the gap it closes — every adornment
 	// this package ships is declared in it — but it is a residue, and
 	// the doc's claim is scoped to match rather than left absolute.
@@ -253,6 +299,9 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	// review of #458.
 	var adornments []string
 	for recv, m := range methods {
+		if ifaces[recv] {
+			continue // the contract, not a thing that paints
+		}
 		if m["Anchor"] && m["Place"] {
 			adornments = append(adornments, recv)
 		}

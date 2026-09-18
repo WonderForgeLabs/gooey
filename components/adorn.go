@@ -347,7 +347,9 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // This paragraph first said "declaring", which answers a different
 // question; correcting it to "an embedder that inherits the method
 // PASSES" then answered a third. It is neither: inside the check, not
-// exempted, and still owing an entry. Raised in review of #458, twice. A fourth adornment comes
+// exempted, and still owing an entry. Raised in review of #458, twice.
+//
+// A fourth adornment comes
 // under it on the commit that adds it, where the sentence this replaces
 // ("the grep to run rather than a count to trust here") asked the reader
 // to do the walk by hand and would have gone on reading true while a new

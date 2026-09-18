@@ -113,11 +113,15 @@ under "What is deliberately NOT changed" with the word "still" — which
 would send someone bisecting a drag-hover regression past the very
 branch that introduced it. On the base, `DispatchMouse` called
 `HitTest` unconditionally and capture decided only where the event
-went; the walk ran and both its results were discarded. A `MouseMove`
-with a captor now runs no walk at all, in dispatch and in
-`FocusManager.MouseTarget` alike — the latter matters because
+went; the walk ran and both its results were discarded. Three kinds now run no
+walk at all, in dispatch and in `FocusManager.MouseTarget` alike: a
+captured **move**, a captured **wheel**, and a **press arriving while
+the capture is held**. Only an unheld press and a release still
+hit-test. The `MouseTarget` half is the load-bearing one, because
 `control/input.go`'s `Service.mayPoint` asks it per pointer event for
-every guest. Corrected in review of #458.
+every guest — so a reader sizing that cost from this paragraph has to
+see all three, and this paragraph named the move alone for two rounds
+after the other two shipped. Corrected in review of #458.
 
 **An adornment is at the top rank**, above popups and above toasts, and
 `AdornmentLayer`'s own transparency does not reach its children — each

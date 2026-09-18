@@ -623,8 +623,10 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// !m.held since it was written, so the two disagreed about when they
 	// walk while the comment gave a reason covering only the release.
 	// Reachable the way the wheel is: a press mid-drag, while a splitter
-	// or a scrollbar holds the pointer. Raised in review of #458. The first version of this skip took
-	// MouseMove alone and called it "exactly the case where both
+	// or a scrollbar holds the pointer. Raised in review of #458.
+	//
+	// THE WHEEL WAS THE FIRST OF THE TWO. The first version of this skip
+	// took MouseMove alone and called it "exactly the case where both
 	// consumers are dead" — a captured WheelUp/WheelDown falls to the
 	// default arm, where target(hit) is the captor and setHover is never
 	// reached, so it discarded the walk too and went on paying for it.
@@ -761,10 +763,18 @@ func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
 	// path #465 made dearest, on the one caller furthest from the
 	// change. TestADragIsNotWalkedForByAQueryEither pins it.
 	//
-	// It is also what makes docs/learn/concepts/input-routing.md's "a
-	// MouseMove arriving with the pointer captured performs no hit test
-	// at all" a statement about the framework rather than about one
-	// function. Raised in review of #458.
+	// It is also what makes docs/learn/concepts/input-routing.md's rule —
+	// only an unheld press and a release hit-test at all — a statement
+	// about the framework rather than about one function.
+	//
+	// THE QUOTATION THAT WAS HERE NAMED ONE EVENT KIND, and the commit
+	// that broadened the rule rewrote that bullet without rewriting this
+	// quotation of it: `grep "performs no hit test at all"` over that
+	// file matched nothing. A quoted string attributed to a named file
+	// is a citation, and nothing in this repo checks prose quotations
+	// ACROSS files — so it is paraphrased rather than re-quoted, which
+	// is the form a rename or a rewording cannot silently falsify.
+	// Raised in review of #458.
 	if m.captor != nil && !(ev.Kind == input.MousePress && !m.held) {
 		return m.captor
 	}
