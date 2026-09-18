@@ -896,19 +896,7 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // in the tree to live and rides with envAttrs instead, written back
 // here. Added for #517.
 func envelopeHead(attrs map[string]string, decls []*node) string {
-	prefix, bound := declPrefix(attrs, decls)
-	if len(decls) > 0 && !bound {
-		// THE PREFIX AND THE BINDING TRAVEL TOGETHER. Writing x: without
-		// an xmlns:x on this tag saves a file markup.Build refuses, and
-		// saveOpenFile is not gated on the build, so the editor reported
-		// "✓ saved" over it. Two documents reached it, both legal and
-		// both measured: one binding the same prefix on <Gooey> AND on
-		// the content root (envelopeAttrs drops the envelope's copy as
-		// redundant, which it is for MEANING and is not for this), and
-		// one whose declaration binds the namespace as its own default
-		// xmlns. Raised in review of #522.
-		attrs = withDeclBinding(attrs, prefix)
-	}
+	attrs, prefix := envelopeParts(attrs, decls)
 	var b strings.Builder
 	b.WriteString(gooeyOpen(attrs))
 	for _, d := range decls {
@@ -918,6 +906,68 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 		b.WriteString(q.markup("  "))
 	}
 	return b.String()
+}
+
+// envelopeParts is the <Gooey> attributes the save will actually write
+// and the prefix its declarations go out under — the half of
+// envelopeHead that decides what the FILE binds, split out from the half
+// that renders it.
+//
+// It is split because a second caller needs the decision and not the
+// bytes: reconcileNamespaces has to know which prefixes the saved
+// envelope binds in order to refuse a paste that rebinds one, and
+// deriving that from the returned string would mean parsing markup this
+// function has just finished writing. Splitting it is also what stops
+// the two drifting — a change to the minting rule below moves the
+// refusal with it, where a mirror of the rule in clipboard.go would go
+// one scope short the next time this grows, which is exactly how it
+// went one scope short this time. Raised in review of #522.
+//
+// THE PREFIX AND THE BINDING TRAVEL TOGETHER. Writing x: without an
+// xmlns:x on the tag saves a file markup.Build refuses, and
+// saveOpenFile is not gated on the build, so the editor reported
+// "✓ saved" over it. Two documents reached it, both legal and both
+// measured: one binding the same prefix on <Gooey> AND on the content
+// root (envelopeAttrs drops the envelope's copy as redundant, which it
+// is for MEANING and is not for this), and one whose declaration binds
+// the namespace as its own default xmlns. Raised in review of #522.
+func envelopeParts(attrs map[string]string, decls []*node) (map[string]string, string) {
+	prefix, bound := declPrefix(attrs, decls)
+	if len(decls) > 0 && !bound {
+		attrs = withDeclBinding(attrs, prefix)
+	}
+	return attrs, prefix
+}
+
+// envelopeNamespaces adds to into every prefix binding the saved
+// envelope carries — the ones on <Gooey> itself, minted binding
+// included, and the ones each declaration is written out with.
+//
+// INTO, and not a fresh map, because these are seeded before the
+// document's own and the order is the contract: markup.parse merges
+// every declaration into one flat map in document order and the last
+// one parsed wins, and the envelope and its declaration children are
+// both outside — and before — the content root.
+//
+// declAttrs, not d.Attrs: a declaration's binding of markup.XNamespace
+// under some OTHER prefix is dropped on the way out, so it is not a
+// binding the file has and a paste that re-points it conflicts with
+// nothing. Reading the node's own attrs instead would refuse pastes the
+// saved document has no quarrel with. Added for #522.
+func envelopeNamespaces(attrs map[string]string, decls []*node, into map[string]string) {
+	head, prefix := envelopeParts(attrs, decls)
+	for k, v := range head {
+		if isNamespaceAttr(k) {
+			into[k] = v
+		}
+	}
+	for _, d := range decls {
+		for k, v := range declAttrs(d.Attrs, prefix) {
+			if isNamespaceAttr(k) {
+				into[k] = v
+			}
+		}
+	}
 }
 
 // declPrefix is the prefix these declarations are written back under,
@@ -943,8 +993,16 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 // if some declaration does not carry that same one — which is the only
 // case where writing the prefix alone would save a file markup refuses.
 func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
-	if p, ok := declBinding(attrs); ok {
-		return p, true
+	// ONE SCAN OF attrs, READ TWICE. declBinding answers both questions
+	// in one pass — the prefix the envelope binds, or, when it binds
+	// none, the spelling a mint would use with the envelope's own
+	// prefixes avoided — and this used to call it a second time in the
+	// mint branch only because p was scoped to the if. Two calls on one
+	// unchanged map cannot disagree, but a reader has to prove that
+	// before moving on. Raised in review of #522.
+	envPrefix, envBound := declBinding(attrs)
+	if envBound {
+		return envPrefix, true
 	}
 	prefix := ""
 	for _, d := range decls {
@@ -954,8 +1012,7 @@ func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 		}
 	}
 	if prefix == "" {
-		p, _ := declBinding(attrs) // the minted spelling, collisions avoided
-		return p, false
+		return envPrefix, false // the minted spelling, collisions avoided
 	}
 	for _, d := range decls {
 		if p, ok := declBinding(d.Attrs); !ok || p != prefix {

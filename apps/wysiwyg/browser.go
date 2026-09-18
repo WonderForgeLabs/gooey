@@ -366,6 +366,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// two — TestEnvAttrsIsAssignedWhereTheDocumentIs checks that from the
 	// AST rather than leaving it to three comments. Raised in review of
 	// #501.
+	//
 	// A FILE WHOSE ROOT IS A DECLARATION IS REFUSED HERE, because nodeOf
 	// deliberately lets a root-position x-namespaced element through for
 	// the PASTE path (see there) and this is the one caller that would

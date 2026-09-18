@@ -945,8 +945,10 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // belongs written down. Raised in review of #501.
 //
 // AND ed.envAttrs, WHICH IS A THIRD SCOPE AND NOT A SECOND. The
-// paragraph above enumerated two and there are three, which is the
-// shape a future reader trusts: ed.root is excluded because it is NOT
+// paragraph above enumerated two and there are four — three when this
+// was written, and the fourth below is what a growing envelope did to
+// the count, which is the reason a reader should not take the number
+// from prose here either: ed.root is excluded because it is NOT
 // in the save, and ed.envAttrs is included for the mirror-image reason
 // — it is what the saved <Gooey> carries and it is not reachable from
 // ed.doc(). Open a document whose envelope keeps xmlns:x (an element
@@ -959,17 +961,40 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // are siblings of the content root — but the enumeration was one scope
 // short, not the reach. Raised in review of #501.
 //
+// AND A FOURTH, WHICH IS ed.envDecls AND THE BINDING MINTED BESIDE IT.
+// The third-scope paragraph above was written when the saved envelope
+// was gooeyOpen(ed.envAttrs) and nothing else. It is now
+// envelopeHead(ed.envAttrs, ed.envDecls) (main.go), which writes two
+// bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
+// re-emitted by declAttrs, and a freshly minted xmlns:<prefix> on
+// <Gooey> whenever declPrefix reports the document binds the namespace
+// nowhere the save will still carry. Both land in the file and both
+// enter markup.parse's one flat document-wide table, so both are
+// rebindable by a paste, and neither was compared.
+//
+// Measured on this branch before the fix, through openWorkspaceFile and
+// pasteMarkup: a file whose <Gooey> binds nothing and whose
+// <p:Property> carries its own xmlns:p accepted a paste binding p: to a
+// different URI and wrote it to disk, while the byte-identical paste
+// into a document holding that binding on the envelope was refused.
+// The editor's answer turned on which of two places the binding had
+// reached the file from, which is not a distinction the author can see.
+// Raised in review of #522.
+//
+// envelopeNamespaces rather than a second reading of ed.envDecls here:
+// what matters is what the SAVE writes, minting and declAttrs' drops
+// included, and that decision lives in one function beside the writer.
+// A mirror of it in this file is how the enumeration went one scope
+// short twice.
+//
 // SEEDED FIRST, then overwritten by the document's own. The envelope is
-// the outermost element, so if a prefix is declared in both, the
-// document's declaration is the later one and markup.parse's
-// last-wins is what this has to agree with.
+// the outermost element and its declaration children sit between it and
+// the content root, so if a prefix is declared in both, the document's
+// declaration is the later one and markup.parse's last-wins is what
+// this has to agree with.
 func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
-	for k, v := range ed.envAttrs {
-		if isNamespaceAttr(k) {
-			doc[k] = v
-		}
-	}
+	envelopeNamespaces(ed.envAttrs, ed.envDecls, doc)
 	collectNamespaces(ed.doc(), doc)
 	return reconcileNamespacesInto(n, doc, map[string]string{})
 }

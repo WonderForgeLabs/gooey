@@ -2276,379 +2276,114 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 	}
 }
 
-// TestAPasteCannotRebindAPrefixAgainstITSELF closes the half of the
-// rebind rule the comparison could not see.
+// TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold is the sibling above
+// one scope out: the saved envelope binds prefixes ed.envAttrs has
+// never held, and a paste may not re-point those either.
 //
-// reconcileNamespacesInto compared every declaration against the
-// DOCUMENT's and never against one it had just walked past, so a
-// fragment carrying two bindings of one prefix — nested, or two
-// siblings — was accepted whole and both landed in the file. Measured
-// before the fix, both spellings returned nil.
+// TWO SHAPES, AND THEY REACH THE FILE BY DIFFERENT ROUTES — which is
+// the point, because the editor's answer must not depend on the route:
 //
-// It is the same defect as the document-vs-paste case, not a smaller
-// one: markup.parse keeps ONE FLAT ns map for the whole document
-// (markup.parse's `a.Name.Space == "xmlns"` arm) with no scoping and
-// last-wins, so two bindings
-// inside the paste collide in exactly the table two bindings across the
-// paste boundary collide in. Which is why the fix records into ONE map
-// as the walk goes rather than copying per subtree — a copy would catch
-// the nested spelling and leave the sibling one, which the loader does
-// not distinguish.
+//   - carried: one declaration holds its own xmlns:p, declPrefix reports
+//     the document binds the namespace already, and declAttrs re-emits
+//     that binding on the declaration element in the saved file;
+//   - minted: the declarations disagree about how they bind it (one
+//     prefixed, one as its own default xmlns), so declPrefix reports
+//     bound == false and withDeclBinding puts a fresh xmlns:p on
+//     <Gooey> that no opened byte ever contained.
 //
-// THE THIRD CASE IS THE COUNTERFACTUAL, and it is the one that would go
-// red if the recording were made to refuse everything it records: an
-// inner declaration REPEATING the outer one is redundant, not
-// conflicting, and is dropped the way a redundant declaration is
-// dropped everywhere else in this function.
+// Both were ACCEPTED before #522's reconcileNamespaces widening, with
+// the byte-identical paste into the envelope-bound document refused by
+// the test above. The fixtures are the discriminator rather than the
+// assertion text: each was run against the narrow scope set and each
+// wrote the rebinding to disk.
 //
-// EVERY REFUSING ARM PASSES AN EMPTY DOCUMENT, which is what makes this
-// test the place the message's OTHER half is pinned. Both colliding
-// bindings are in the fragment, so any sentence naming the open document
-// as the other party is false here — and the assertion that used to
-// stand, `Contains(err, "xmlns:t")`, was true under that wording too. It
-// watched the misattribution land and stayed green. The arms now assert
-// the party and the remedy, and restoring the single old message turns
-// all three red (mutation-checked).
-func TestAPasteCannotRebindAPrefixAgainstITSELF(t *testing.T) {
+// The refusal MESSAGE is not asserted here beyond its ✗ — the sibling
+// above owns that text, and repeating it would make a reworded message
+// three failures instead of one.
+func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
+	const other = "urn:gooey:test:522:not-x"
+	decl := func(prefixed bool, name, def string) string {
+		if prefixed {
+			return `  <p:Property xmlns:p="` + markup.XNamespace +
+				`" Name="` + name + `" Type="string" Default="` + def + `"/>`
+		}
+		return `  <Property xmlns="` + markup.XNamespace +
+			`" Name="` + name + `" Type="string" Default="` + def + `"/>`
+	}
 	for _, tc := range []struct {
-		name   string
-		src    string
-		refuse bool
+		name, why string
+		decls     []string
 	}{
 		{
-			"nested",
-			`<Canvas xmlns:t="urn:A"><Button Name="B" xmlns:t="urn:B"/></Canvas>`,
-			true,
+			name: "carried",
+			why: "the declaration carries its own xmlns:p and declAttrs " +
+				"re-emits it, so the saved file binds p: from a place " +
+				"ed.envAttrs never sees",
+			decls: []string{decl(true, "A", "a")},
 		},
 		{
-			"siblings",
-			`<Canvas><Button Name="B" xmlns:t="urn:A"/><Label Name="L" xmlns:t="urn:B"/></Canvas>`,
-			true,
-		},
-		{
-			// COUSINS, which is the fixture that separates one map from
-			// a copy taken at each descent: the first binding is a level
-			// deeper than the second, so any per-subtree copy has gone
-			// out of scope by the time the second is read. markup.parse
-			// has no scope to go out of.
-			"cousins",
-			`<Canvas><VStack><Button Name="B" xmlns:t="urn:A"/></VStack><Label Name="L" xmlns:t="urn:B"/></Canvas>`,
-			true,
-		},
-		{
-			"redundant",
-			`<Canvas xmlns:t="urn:A"><Button Name="B" xmlns:t="urn:A"/></Canvas>`,
-			false,
+			name: "minted",
+			why: "the two declarations bind the namespace differently, so " +
+				"declPrefix reports it unbound and withDeclBinding mints " +
+				"xmlns:p onto <Gooey> — a binding no opened byte held",
+			decls: []string{decl(true, "A", "a"), decl(false, "B", "b")},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			n, err := nodeOf(tc.src)
-			if err != nil {
-				t.Fatalf("the fixture does not parse: %v", err)
+			root := workspaceFixture(t)
+			doc := "<Gooey>\n" + strings.Join(tc.decls, "\n") + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="Existing" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n" +
+				`</Gooey>` + "\n"
+			if err := os.WriteFile(filepath.Join(root, "decl.gooey"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
 			}
-			err = reconcileNamespacesInto(n, map[string]string{}, map[string]string{})
-			if tc.refuse {
-				if err == nil {
-					t.Fatalf("a fragment binding t twice was accepted whole, so "+
-						"both declarations reach the file and markup.parse's one "+
-						"flat table hands every t: expression to whichever it "+
-						"parses last:\n%s", n.markup(""))
-				}
-				if !strings.Contains(err.Error(), "xmlns:t") {
-					t.Errorf("the refusal does not name the colliding prefix: %v", err)
-				}
-				// THE PARTY, NOT JUST THE PREFIX. Every arm here has
-				// BOTH bindings in the clipboard against an empty
-				// document, so a sentence naming the document is false
-				// on all three — and `Contains(err, "xmlns:t")` held
-				// under the wording that did, which is why this arm
-				// watched the misattribution go in and said nothing.
-				// Asserting the remedy too, because that was the half
-				// with a cost: it sent the author to change a
-				// declaration their file does not contain.
-				if strings.Contains(err.Error(), "this document") ||
-					strings.Contains(err.Error(), "the document's own declaration") {
-					t.Errorf("the refusal blames the open document for a conflict "+
-						"whose two bindings are both in the paste — the document "+
-						"passed here declares nothing, and an author following "+
-						"the remedy goes looking for a declaration that is not "+
-						"in their file: %v", err)
-				}
-				if !strings.Contains(err.Error(), "declares xmlns:t twice") {
-					t.Errorf("the refusal does not say the paste declares the "+
-						"prefix twice, which is the one fact that locates the "+
-						"conflict for the author: %v", err)
-				}
-				// AND THE MECHANISM, which nothing asserted at all.
-				// `mech` was built once above the fromDoc split and
-				// interpolated into both refusals, so the
-				// fragment-internal message carried the document-vs-
-				// paste clause "which one depends on where this lands"
-				// — false on every arm here, where both bindings are in
-				// the clipboard and their order is fixed by the
-				// fragment, and contradicted by the very next clause of
-				// the same sentence. An unasserted string is one nobody
-				// is stopping from saying that. Raised in review of
-				// #501.
-				if strings.Contains(err.Error(), "depends on where this lands") {
-					t.Errorf("the refusal tells the author the winner is "+
-						"position-dependent, but both bindings are in the paste "+
-						"and their relative order is fixed by the fragment — the "+
-						"later one wins wherever it lands, which the rest of the "+
-						"same message already says: %v", err)
-				}
-				if !strings.Contains(err.Error(), "wherever it lands") {
-					t.Errorf("the refusal does not say which of the two wins, "+
-						"which is the fact an author needs to pick one to "+
-						"rename: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("a repeated identical declaration was refused as a "+
-					"conflict: %v", err)
-			}
-			// DROPPED, not kept: the same-URI rule everywhere else in
-			// this function deletes a declaration the document already
-			// makes, and a declaration the FRAGMENT already makes is the
-			// same statement.
-			if _, still := n.Kids[0].Attrs["xmlns:t"]; still {
-				t.Errorf("the redundant inner declaration survived:\n%s", n.markup(""))
-			}
-		})
-	}
-}
 
-// TestAModeOneParentingFaultReachesTheBackstop falsifies the premise the
-// three reworded seams used to carry.
-//
-// The claim was that canHold refuses every parenting fault before the
-// insert, so nothing reaching the rebuild backstop is about parenting.
-// canHold's "Permissive where the catalog is silent, because the build
-// is the gate" states the opposite in its own words and argues FOR it:
-// canHold answers false only where the catalog KNOWS the child is
-// refused, and ModeOne cannot know whether the slot is already taken, so
-// the insert is tried and the revert names both elements. This is that
-// path — a real parenting fault arriving at the line that said parenting
-// faults cannot arrive.
-//
-// It is the structural half of the same argument
-// TestCanHoldIsPermissiveWhereTheCatalogIsSilent makes about canHold
-// alone: that one stops at the predicate, this one follows it to the
-// message. Raised in review of #501.
-func TestAModeOneParentingFaultReachesTheBackstop(t *testing.T) {
-	ed, _ := buildPage(t)
-	spec, ok := ed.specOf("Border")
-	if !ok {
-		t.Fatal("no <Border> in the catalog")
-	}
-	if spec.Children.Mode != markup.ModeOne {
-		t.Skipf("<Border> is %v, not ModeOne; this test needs the can't-tell case", spec.Children.Mode)
-	}
-
-	border := &node{
-		Elem:  "Border",
-		Attrs: map[string]string{"Name": "Full", "Canvas.Left": "0", "Canvas.Top": "0"},
-		Kids:  []*node{{Elem: "Text", Body: "taken", Attrs: map[string]string{"Name": "Taken"}}},
-	}
-	ed.doc().Kids = append(ed.doc().Kids, border)
-	ed.rebuild()
-	if ed.docRoot == nil {
-		t.Fatalf("the full <Border> fixture does not build: %q", ed.status.Get())
-	}
-
-	// THE GATE LETS IT THROUGH, which is the premise being falsified.
-	if !ed.canHold("Border", "Text") {
-		t.Fatal("canHold refused a <Text> for a <Border>, so the insert never " +
-			"reaches the backstop and this test cannot say anything about it")
-	}
-
-	ed.sel = border
-	ed.pasteMarkup(`<Text Name="Second">second</Text>`)
-
-	got := ed.status.Get()
-	if !strings.HasPrefix(got, "✗") {
-		t.Fatalf("a second child pasted into a ModeOne <Border> reported %q; "+
-			"the loader refuses that document, so this test is not looking at "+
-			"the refusal it is about", got)
-	}
-	if !strings.Contains(got, "exactly one child") {
-		t.Errorf("the refusal does not carry the loader's own reason, so the "+
-			"backstop is not the one under test here: %s", got)
-	}
-	if !strings.Contains(got, "<Text>") || !strings.Contains(got, "<Border>") {
-		t.Errorf("the refusal names neither the pasted element nor where it "+
-			"was going — which is the concession addplan.go makes canHold's "+
-			"permissiveness on: %s", got)
-	}
-}
-
-// TestTheOtherTwoSeamsDoNotClaimAParentingCause is the second and third
-// of the three backstops that asserted one.
-//
-// A fix applied at one of several identical seams is the shape that
-// leaves the others open, and carryDeclarations' own comment says so
-// three files over. The paste seam was reworded first; the palette add
-// and the demote emitted "<X> does not go inside <Y>" on the same
-// evidence.
-//
-// THE DOCUMENT IS BROKEN BEFORE EITHER GESTURE, and by a third party:
-// commitEdit has no docRoot == nil revert of its own (the six that do are
-// insertSubtree, addSelected, deleteSelected, promoteSelected,
-// demoteSelected and duplicateSelected), so a value the loader refuses
-// leaves the build failed. The next insert is then reverted and blamed
-// for an attribute on a node the user did not touch. That makes this the
-// sharpest form of the finding: the cause is not merely "not the
-// parenting", it is not the inserted element at all.
-//
-// THE BROKEN NODE IS A THIRD ONE, and it has to be. The first draft broke
-// the very node the demote then moved, and the loader answered with
-// "Canvas.Left is contributed by a <Canvas> parent, but this element's
-// parent is <Border>" — a fault the move DID cause, which would have made
-// the demote arm agree with the assertion for the wrong reason. The node
-// carrying the refused value is now one neither gesture touches.
-//
-// BOTH DIRECTIONS, as the paste seam's test does: dropping the clause
-// entirely would pass an assertion that only forbids the wrong noun, so
-// the real cause and both element names have to survive. Raised in
-// review of #501.
-func TestTheOtherTwoSeamsDoNotClaimAParentingCause(t *testing.T) {
-	// EACH SEAM PICKS A TARGET THE CATALOG IS HAPPY WITH, because a
-	// container that also refuses the insert masks the fault under test:
-	// a palette add into the full <Border> reports "needs exactly one
-	// child" and the pane's value is never reached. What is wanted here
-	// is the case where the parenting is fine and the document is not.
-	for _, seam := range []struct {
-		name string
-		// gesture runs the insert on a document that is already
-		// failing, and answers the element it inserted and the one it
-		// was going into.
-		gesture func(t *testing.T, ed *editor, host, after *node) (string, string)
-	}{
-		{"palette add", func(t *testing.T, ed *editor, host, after *node) (string, string) {
-			ed.sel = ed.doc()
-			ed.paletteSel.Set(paletteIndex(t, ed, "Text"))
-			ed.addSelected()
-			return "Text", ed.doc().Elem
-		}},
-		{"demote", func(t *testing.T, ed *editor, host, after *node) (string, string) {
-			ed.sel = after // nests into the preceding sibling
-			ed.demoteSelected()
-			return after.Elem, host.Elem
-		}},
-	} {
-		t.Run(seam.name, func(t *testing.T) {
 			ed, _ := buildPage(t)
-			host := &node{
-				Elem:  "Canvas",
-				Attrs: map[string]string{"Name": "Host", "Canvas.Left": "0", "Canvas.Top": "0"},
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("decl.gooey")
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+				t.Fatalf("opening the fixture reports %q, want a build", got)
 			}
-			after := &node{
-				Elem:  "Text",
-				Body:  "sibling",
-				Attrs: map[string]string{"Name": "Sibling"},
+			// THE PREMISE, and it is the half that makes this test
+			// different from its sibling: the binding must NOT be in
+			// either scope the narrow reconcileNamespaces collected, or
+			// the arm passes for the sibling's reason.
+			if got, ok := ed.envAttrs["xmlns:p"]; ok {
+				t.Fatalf("ed.envAttrs already binds p to %q, so this arm is "+
+					"measuring the envelope scope the sibling test owns", got)
 			}
-			broken := &node{
-				Elem:  "Text",
-				Body:  "elsewhere",
-				Attrs: map[string]string{"Name": "Elsewhere", "Canvas.Left": "0", "Canvas.Top": "8"},
+			if _, onRoot := ed.doc().Attrs["xmlns:p"]; onRoot {
+				t.Fatal("the binding came down onto the content root, so this " +
+					"arm is measuring the ordinary document scope")
 			}
-			ed.doc().Kids = append(ed.doc().Kids, host, after, broken)
-			ed.rebuild()
-			if ed.docRoot == nil {
-				t.Fatalf("the fixture does not build: %q", ed.status.Get())
+			if len(ed.envDecls) != len(tc.decls) {
+				t.Fatalf("ed.envDecls holds %d declarations, want %d — the "+
+					"fixture did not reach the scope this arm is about",
+					len(ed.envDecls), len(tc.decls))
 			}
-
-			// THE THIRD PARTY. A value the loader refuses, committed
-			// through the properties pane, which does not revert — on a
-			// node neither gesture below goes near. That missing revert
-			// is #531; commitEdit is the one mutator of seven without
-			// it, and the skip below is what retires this arm when it
-			// gains one.
-			ed.sel = broken
-			editAttr(t, ed, "Canvas.Left", "not-a-number")
-			if ed.docRoot != nil {
-				t.Skipf("the properties pane now reverts its own refusals "+
-					"(status %q), so this seam can no longer be reached with a "+
-					"fault the insert did not cause — #531 is the issue that "+
-					"asked for that revert, and closing it is what retires "+
-					"this arm", ed.status.Get())
+			// And the saved envelope must actually bind it, or there is
+			// nothing for the paste to conflict with.
+			if head := envelopeHead(ed.envAttrs, ed.envDecls); !strings.Contains(
+				head, `xmlns:p="`+markup.XNamespace+`"`) {
+				t.Fatalf("the saved envelope binds p: nowhere:\n%s", head)
 			}
 
-			elem, into := seam.gesture(t, ed, host, after)
+			ed.pasteMarkup(`<Gooey>` + "\n" +
+				`  <Text Name="Pasted" xmlns:p="` + other + `">hi</Text>` + "\n" +
+				`</Gooey>` + "\n")
 
-			got := ed.status.Get()
-			if !strings.HasPrefix(got, "✗") {
-				t.Fatalf("the %s reported %q on a document that does not "+
-					"build; this test is not looking at the refusal it is "+
-					"about", seam.name, got)
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+				t.Errorf("pasting a fragment that binds p to a DIFFERENT uri "+
+					"reports %q, want a refusal: %s, and markup.parse's one "+
+					"flat last-wins table then hands every p: element in the "+
+					"saved file to the pasted uri", got, tc.why)
 			}
-			if strings.Contains(got, "does not go inside") {
-				t.Errorf("the %s blames the parenting for a fault on a "+
-					"different node entirely — the attribute the properties "+
-					"pane refused: %s", seam.name, got)
-			}
-			if !strings.Contains(got, "not-a-number") {
-				t.Errorf("the %s drops the loader's own reason, so the author "+
-					"is told the insert failed and not what to fix: %s",
-					seam.name, got)
-			}
-			if !strings.Contains(got, "<"+elem+">") || !strings.Contains(got, "<"+into+">") {
-				t.Errorf("the %s names neither the element nor where it was "+
-					"going: %s", seam.name, got)
+			if src := ed.source.Get(); strings.Contains(src, other) {
+				t.Errorf("the refused declaration is in the document anyway:\n%s", src)
 			}
 		})
-	}
-}
-
-// TestAPastedEnvelopesXDeclarationIsDropped pins a silent drop as
-// intended rather than leaving it to be read as an oversight.
-//
-// carryDeclarations skips markup.XNamespace so the declaration "stays on
-// the envelope". On the OPEN path that means kept — openWorkspaceFile
-// holds the envelope in ed.envAttrs. On the PASTE path unwrapGooey
-// discards the envelope, so the same skip means discarded, with no
-// message. The two paths share a function whose comment argues the open
-// path's case, which is why this needed a test rather than a sentence.
-//
-// Dropping is right: x: names ELEMENTS, its <x:Property> elements are
-// siblings of the content root, and a pasted fragment is a content
-// subtree — a carried declaration would scope nothing. The asymmetry
-// against xmlns:t in the same envelope is the assertion, because that is
-// what looks like a bug and is not.
-//
-// IT IS SAFE ONLY BECAUSE nodeOf REFUSES A PREFIXED ELEMENT, so nothing
-// the model can hold uses x: and no drop can strand a live prefix. That
-// is a second function holding this one up, and #522 proposes to relax
-// exactly it. When it does, this test is the thing that goes red.
-func TestAPastedEnvelopesXDeclarationIsDropped(t *testing.T) {
-	src := `<Gooey xmlns:x="` + markup.XNamespace + `" xmlns:t="urn:t" ` +
-		`Graphics="halfblock"><Canvas Name="P" Canvas.Left="0" Canvas.Top="0">` +
-		`<Button Name="B"/></Canvas></Gooey>`
-	n, err := nodeOf(src)
-	if err != nil {
-		t.Fatalf("the fixture does not parse: %v", err)
-	}
-	root, ok := unwrapGooey(n)
-	if !ok {
-		t.Fatalf("a <Gooey> over one root did not unwrap")
-	}
-	if got, ok := root.Attrs["xmlns:t"]; !ok || got != "urn:t" {
-		t.Errorf("the envelope's xmlns:t did not reach the content root (got %q, "+
-			"present=%v). carryDeclarations moves a prefix the root does not "+
-			"already declare, and without it a pasted document's expression "+
-			"prefixes are lost — which is #472's own bug surviving through "+
-			"paste:\n%s", got, ok, root.markup(""))
-	}
-	if got, ok := root.Attrs["xmlns:x"]; ok {
-		t.Errorf("the envelope's xmlns:x was carried onto the content root as "+
-			"%q. x: names ELEMENTS and XML scopes those to the subtree that "+
-			"declares them, so moving it down changes what it covers — the "+
-			"scope change carryDeclarations' markup.XNamespace skip exists to "+
-			"prevent:\n%s", got, root.markup(""))
-	}
-	if got, ok := root.Attrs["Graphics"]; ok {
-		t.Errorf("the envelope's Graphics=%q reached the content root. A "+
-			"fragment must not carry the source document's envelope", got)
 	}
 }
