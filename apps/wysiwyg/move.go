@@ -210,7 +210,16 @@ func (ed *editor) demoteSelected() bool {
 		// revert exists to prevent (#454 review).
 		ed.abortHistory()
 		ed.rebuild()
-		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + host.Elem +
+		// NEUTRAL VERB, for insertSubtree's reasons — the third of the
+		// three seams that asserted a parenting cause after a failed
+		// rebuild. The gate above this one is canHold, which passes
+		// ModeOne and ModeUnknown through by design, and the demote
+		// also breaks the container the child LEFT; neither fault is
+		// "<n> does not go inside <host>". The pre-check at the top of
+		// promoteSelected keeps that wording and is right to: there the
+		// catalog HAS refused, before anything was moved. Raised in
+		// review of #501.
+		ed.status.Set("✗ <" + n.Elem + "> was not moved into <" + host.Elem +
 			">: " + refused)
 		return false
 	}

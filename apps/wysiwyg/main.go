@@ -2881,7 +2881,17 @@ func (ed *editor) addSelected() {
 		// AFTER the second rebuild, which sets the status to "✓ builds":
 		// the document is whole again, and the sentence explaining what
 		// was refused has to survive it saying so.
-		ed.status.Set("✗ <" + spec.Name + "> does not go inside <" + into.Elem +
+		//
+		// NEUTRAL VERB, for insertSubtree's reasons — this is the same
+		// backstop at a second seam, and a fix applied at one of three
+		// identical seams is the shape that leaves the others open.
+		// "does not go inside" asserts a parenting cause this line
+		// cannot have established: the palette add reaches it when the
+		// SEED fails to build and when the document was already broken
+		// elsewhere, neither of which is about <into>. It still names
+		// both elements, which is the concession addplan.go:44-46 makes
+		// canHold's permissiveness on. Raised in review of #501.
+		ed.status.Set("✗ <" + spec.Name + "> was not added to <" + into.Elem +
 			">: " + refused)
 	}
 }
