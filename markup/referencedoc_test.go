@@ -282,10 +282,10 @@ var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 // THE SIDE IS A PARAMETER, and the parameter is the whole of finding
 // #490 round 9. The forbid guard adjudicates a PROPER SUBSET of the
 // inheriting side, so it counts only that side. The require guard asks
-// a different question — "does this
-// paragraph answer what crosses by naming fields" — and `Values` and
-// `Named` in one sentence is exactly that answer, given from the
-// isolating side. Measured: docs/architecture.md's second answering
+// a different question — "does this paragraph answer what crosses by
+// naming fields" — and `Values` and `Named` in one sentence is exactly
+// that answer, given from the isolating side. Measured:
+// docs/architecture.md's second answering
 // paragraph names only those two, so under the inheriting-only bar it
 // was never adjudicated and deleting its citation left both boundary
 // guards green — the per-page-vs-per-paragraph defect the round before
@@ -468,43 +468,6 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 	}
 }
 
-// THE UNFORMATTED SPELLING IS HALF OF IT, and leaving it out made the
-// guard a check on markup rather than on prose: "styles, registered
-// components, handlers, includes" is the four-of-ten answer #314 is
-// about, written out, and it sat in docs/markup-reference.md's
-// <ItemsView.ItemTemplate> paragraph with only `xmlns` in backticks —
-// invisible for two rounds.
-//
-// Matching bare names ONE AT A TIME was measured first and rejected:
-// case-insensitively, "components" and "styles" are English, and the
-// corpus answered with two paragraphs that MENTION fields rather than
-// answer the crossing question (the `Elements`-cost paragraph in the
-// reference, and the Declared registry note in
-// docs/specs/2026-08-10-mcp-server.md). Noise a reader learns to widen
-// is the failure this guard's own doc warns about, so the signature is
-// the RUN instead — see partitionRunSide. A sentence that mentions a
-// field does not produce one; a stale answer to "what crosses" always
-// does.
-//
-// THIS PARAGRAPH SAT ABOVE A `checked++` until #490's review. The
-// rewrite that made these functions moved the logic and left its
-// twenty-line justification at the old call site, where the statement
-// underneath it was a counter — so a reader auditing why bare names are
-// matched at all, and what the one-at-a-time widening cost, landed on
-// an increment. The same defect the same commit fixed one function
-// over. Raised in review of #490.
-//
-// partitionRunSide is every partition field on the side asked for that
-// is named inside one comma-or-and list of three or more of them,
-// case-insensitively — the shape of a prose answer to "what crosses a
-// control boundary", and nothing else in the corpus. The side is a
-// parameter for backtickedPartition's reason.
-//
-// Three rather than two, and a bounded gap between them: two names a
-// clause apart is an ordinary sentence ("Styles and Named are handled
-// differently"), and the separators a list uses are short. The gap is
-// measured in the flattened paragraph, so a list wrapped over three
-// source lines is still one run. Raised in review of #490.
 // partitionWords is one `\bname\b` pattern per partition field, built
 // once.
 //
@@ -525,6 +488,47 @@ var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
 	return out
 })
 
+// THE UNFORMATTED SPELLING IS HALF OF IT, and leaving it out made the
+// guard a check on markup rather than on prose: "styles, registered
+// components, handlers, includes" is the four-of-ten answer #314 is
+// about, written out, and it sat in docs/markup-reference.md's
+// <ItemsView.ItemTemplate> paragraph with only `xmlns` in backticks —
+// invisible for two rounds.
+//
+// Matching bare names ONE AT A TIME was measured first and rejected:
+// case-insensitively, "components" and "styles" are English, and the
+// corpus answered with two paragraphs that MENTION fields rather than
+// answer the crossing question (the `Elements`-cost paragraph in the
+// reference, and the Declared registry note in
+// docs/specs/2026-08-10-mcp-server.md). Noise a reader learns to widen
+// is the failure this guard's own doc warns about, so the signature is
+// the RUN instead — see partitionRunSide. A sentence that mentions a
+// field does not produce one; a stale answer to "what crosses" always
+// does.
+//
+// THIS PARAGRAPH SAT ABOVE A `checked++` until #490's review, and then
+// above a regexp cache. The rewrite that made these functions moved the
+// logic and left its twenty-line justification at the old call site,
+// where the statement underneath it was a counter; the move that fixed
+// that landed one declaration short, with no blank line before
+// partitionWords' own comment, so Go read the two as one group and gave
+// all of this to the cache while partitionRunSide had none. A comment
+// moved onto the wrong declaration is the same defect as a comment left
+// behind one — godoc attaches a group to whatever follows it, and
+// neither move is visible to anything but a reader. Raised in review of
+// #490, twice.
+//
+// partitionRunSide is every partition field on the side asked for that
+// is named inside one comma-or-and list of three or more of them,
+// case-insensitively — the shape of a prose answer to "what crosses a
+// control boundary", and nothing else in the corpus. The side is a
+// parameter for backtickedPartition's reason.
+//
+// Three rather than two, and a bounded gap between them: two names a
+// clause apart is an ordinary sentence ("Styles and Named are handled
+// differently"), and the separators a list uses are short. The gap is
+// measured in the flattened paragraph, so a list wrapped over three
+// source lines is still one run. Raised in review of #490.
 func partitionRunSide(flat string, inheritingOnly bool) []string {
 	const maxGap = 30 // ", registered " and friends; not a clause
 

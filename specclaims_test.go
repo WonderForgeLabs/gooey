@@ -446,9 +446,11 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 		for _, f := range unresolved(cites, funcs) {
 			t.Errorf("%s:%d cites %s in a comment and %s.\n\t%s\n"+
 				"A renamed test leaves the sentence reading as a reference to "+
-				"something. Fix the name, or — if it is a shape rather than a "+
-				"reference — drop the backticks, which is how this file already "+
-				"spells a name that is not live. (#468)",
+				"something. Fix the name, or reword the sentence so it does not "+
+				"claim a test. DELETING THE BACKTICKS IS NOT THE FIX, though it "+
+				"would silence this: the backticks are the only reason this "+
+				"citation is checked at all, so removing them retires the claim "+
+				"instead of settling it — see goCitations' doc and #530. (#468)",
 				f.file, f.line, f.cited(), f.why, f.text)
 		}
 	}
@@ -466,11 +468,37 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 //
 // Go has no headings and no fences, so it needs none of readProse: the
 // parser separates comment from code, which is the only classification
-// this corpus requires. It also has no plannedMarker and wants none — a
-// comment proposing a test that does not exist is describing work, and
-// this file's own rule covers it: a name that is not a live reference is
-// spelled WITHOUT backticks, which is honest and needs nothing to
-// classify it.
+// this corpus requires.
+//
+// WHAT IT ADJUDICATES IS A SMALL FRACTION OF ITS OWN CORPUS, and the
+// sentence that used to stand here claimed otherwise: "a name that is
+// not a live reference is spelled WITHOUT backticks, which is honest and
+// needs nothing to classify it." Measured over the 617 files
+// goCommentSources reaches, the corpus is the other way round — TWO
+// backticked citations against roughly thirteen hundred bare Test
+// mentions, of which 39 across 31 distinct names do not resolve. The
+// bare ones are overwhelmingly live references, several of them added by
+// the same commits that add guards. So backticks are not a liveness
+// convention this tree follows; they are an accident of how one author
+// felt about formatting on the day, and the guard checks whichever
+// citations that accident happened to mark.
+//
+// THE FLOOR BELOW IS WHAT KEEPS THIS FROM BEING VACUOUS, not evidence of
+// coverage: goCited == 0 catches the pattern drifting to nothing, and at
+// a population of two it is very nearly that test already.
+//
+// LIVENESS AS THE CLASSIFIER is the fix and it is #530 rather than this
+// PR, because it is a sweep and not a rule change: 12 of the 31 are line
+// -wrap artifacts a join rule would resolve, ~9 are schematic
+// placeholders (TestX, TestFoo) needing a rule of their own that is not
+// a skip list, and ~19 are names that genuinely do not resolve and need
+// a rename chased or a sentence reworded. The measurement and the
+// breakdown are on the issue so the next person does not re-derive them.
+// Raised in review of #490.
+//
+// It has no plannedMarker and wants none: the Markdown half needs one
+// because a spec's "Implementation plan" section proposes tests for
+// issues not yet built, and a Go comment has no such section.
 func goCitations(t *testing.T, path string) []citation {
 	t.Helper()
 	c, err := goCommentIndex()

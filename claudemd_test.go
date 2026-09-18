@@ -2312,8 +2312,8 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // UNEXPORTED ONES INCLUDED, which is the wrong way round for a SKIP
 // list: every name in here is a citation this guard stops checking, so
 // an unexported vendored identifier — which no page can legitimately be
-// citing, since
-// a consumer cannot name one — was silently widening the exemption.
+// citing, since a consumer cannot name one — was silently widening the
+// exemption.
 // ast.IsExported is the check the sentence already claimed. No page
 // cites an unexported vendored name today, so removing the check again
 // turns nothing red — which is the honest status of a tightening, and
