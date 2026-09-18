@@ -50,8 +50,9 @@ import (
 // consumer's comments and the copies went stale independently. FOUR
 // readers, distinguished by what they read rather than by who asked: a
 // region of a row, a whole row of a buffer, a whole frame, a whole
-// composition. Plus the one row search every positional assertion in
-// this package needs.
+// composition. Plus reversedText, which reads a STYLE rather than text
+// and so answers a different question, and the one row search every
+// positional assertion in this package needs.
 //
 // `row` was the last one out, and it was the one with the most call
 // sites — which is the shape to distrust: the helper everyone uses is
@@ -104,6 +105,31 @@ func frameText(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 // frameText: the two differ by where the buffer comes from, not by what
 // is done with it.
 func screen(c *gooey.Composer) string { return render.BufferText(c.Cells()) }
+
+// reversedText is the text of the reversed cells of row 0, in order.
+//
+// Cell.Text() rather than Cell.Rune, because a reversed cell may hold a
+// multi-rune cluster and a rune would report only its lead — which is
+// the distinction three tests in textbox_test.go exist to make. A wide
+// cluster's continuation cell carries no text, so a two-column glyph
+// still contributes its cluster once.
+//
+// THE EXTENT COMES FROM THE FRAME, per this file's own header. It took
+// a width, written at each call site beside the term.Caps that had
+// already said the same number — `reversedText(f, 2)` under
+// `Cols: 2` — which is the written-down-window class the header is
+// about, and a read wider than the buffer is phantom blanks rather than
+// an error. There are no reversed cells in phantom blanks, so the
+// failure would have been a SILENTLY shorter answer.
+func reversedText(f *gooey.Frame) string {
+	var b strings.Builder
+	for x := 0; x < f.Cells.W; x++ {
+		if c := f.Cells.At(x, 0); c.Style.Reverse {
+			b.WriteString(c.Text())
+		}
+	}
+	return b.String()
+}
 
 // rowMatch is one row that held a needle and the byte offset it held it
 // at.
