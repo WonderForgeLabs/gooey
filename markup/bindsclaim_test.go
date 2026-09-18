@@ -198,10 +198,19 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 // the catalog says is not a binding should not load, and honouring it
 // would have made BindsLiteral a lie in the other direction.
 //
-// OF #488's ORIGINAL ELEVEN, two remain plus one: TypeAhead.Key reads a
-// rune, ButtonBar.Separator a string, and Companion.Log a string — none
-// of which litBool or litInt can refuse, because every one of those
-// spellings is a readable value. Deleting the nine is what the test
+// TWO OF #488's ORIGINAL ELEVEN REMAIN — TypeAhead.Key, which reads a
+// rune, and ButtonBar.Separator, which reads a string. Neither litBool
+// nor litInt can refuse either, because every spelling of a rune or a
+// string is a readable value.
+//
+// Companion.Log is the third name in the list below and is NOT one of
+// the eleven. It arrived the same way the Validate entries did — the
+// harness reaching further, rather than anything changing in the loader
+// — and it is a string for the same reason the other two survive. It is
+// named here rather than left to arithmetic: the lead-in said "of
+// #488's original eleven, two remain plus one" and then gave three
+// names, leaving the reader to work out which was the extra and where
+// it came from, one paragraph above a block added to stop exactly that. Deleting the nine is what the test
 // above demands, and it is why it demands it: a note about a bug that
 // is gone spends the attention that would find the next one.
 //

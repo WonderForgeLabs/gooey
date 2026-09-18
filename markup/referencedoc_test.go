@@ -268,6 +268,199 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 // `Handlers` and `Rules` as an ANALOGY — is reported as an enumeration
 // leaving out seven fields. Measured, one false positive across the
 // whole corpus, which is one more than a guard like this survives.
+// TestTheBoundaryGuardsPickTheirTable is the pin for partitionFor, and
+// it is a pin on the direction of the error rather than on the mapping.
+//
+// The failing shape was not "a guard is silent"; it was "a guard fires
+// and its remedy is wrong". A row-seam paragraph judged against
+// boundaryPartition is reported for leaving out `Declared`, which a row
+// does NOT inherit (#512) — so the author who follows the message makes
+// the page false. That is the assertion below: the two tables disagree
+// on the probe paragraph, one way round.
+//
+// THE PROBE IS SYNTHETIC ON PURPOSE. Both row-seam paragraphs in the
+// corpus escape the old guards by accident — one because a contrastive
+// clause happens to put the string `boundaryPartition` in it, the other
+// because it does not answer by NAMING — so a fixture taken from the
+// corpus would pass against the bug. This is the paragraph a row-seam
+// page would get if it were written the way this branch asks pages to
+// be written.
+func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
+	const probe = "A row inherits `Styles`, `Components`, `Elements` and " +
+		"`Handlers` from the page; the reasons live in `markup.rowPartition`."
+
+	if !enumeratesThePartition(probe) || !answersByNaming(probe) ||
+		!answersWhatCrosses.MatchString(probe) {
+		t.Fatal("the probe does not clear the triggers, so it measures nothing " +
+			"about which table the guards then reach for")
+	}
+	if _, table := partitionFor(probe); table != "rowPartition" {
+		t.Errorf("a paragraph about the row seam is judged against %s", table)
+	}
+
+	// THE DIRECTION. Against the row table the probe is exhaustive;
+	// against the control table it is reported as incomplete, and the
+	// field it is told to add is one a row must not claim.
+	named := namedPartitionFields(probe, true)
+	miss := func(part map[string]struct {
+		inherit bool
+		why     string
+	}) []string {
+		var out []string
+		for _, name := range inheritingFields(part) {
+			if !named[name] {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	has := func(names []string, want string) bool {
+		for _, n := range names {
+			if n == want {
+				return true
+			}
+		}
+		return false
+	}
+	// NOT EXHAUSTIVENESS — the probe is short and leaves fields out under
+	// either table, which is the ordinary finding this guard exists to
+	// report. What separates a noisy finding from a WRONG one is a single
+	// field: `Declared`. The control seam says it crosses and the row
+	// seam says it does not (#512), so under the wrong table the author
+	// is told to add the one name that would make the page false.
+	if wrong := miss(boundaryPartition); !has(wrong, "Declared") {
+		t.Errorf("judged against the control seam the probe is told to add %v, "+
+			"and Declared is not among them — that asymmetry is what makes the "+
+			"wrong table a wrong REMEDY rather than a noisy one, so without it "+
+			"this test does not measure the finding", wrong)
+	}
+	if right := miss(rowPartition); has(right, "Declared") {
+		t.Errorf("judged against the row seam the probe is still told to add "+
+			"Declared (%v), so the two tables agree here and nothing above "+
+			"discriminates", right)
+	}
+	// AND THE UNCITED FORM, which is the population these guards actually
+	// hunt: a deleted citation is what they are looking for, so a
+	// dispatch that can only read a citation answers "control seam" for
+	// every paragraph it is asked about. Measured — with the vocabulary
+	// arm removed and only the citation arms left, the probe above still
+	// resolves to rowPartition (it cites one) and nothing goes red.
+	const uncited = "Inside an `<ItemsView.ItemTemplate>` a row inherits " +
+		"`Styles`, `Components`, `Elements` and `Handlers` from the page."
+	if !enumeratesThePartition(uncited) || !answersByNaming(uncited) {
+		t.Fatal("the uncited probe does not clear the triggers, so it measures " +
+			"nothing about the vocabulary arm")
+	}
+	if _, table := partitionFor(uncited); table != "rowPartition" {
+		t.Errorf("a row-seam paragraph with NO citation is judged against %s, "+
+			"which is every paragraph these guards exist to catch", table)
+	}
+
+	// AND THE CITATION WINS OVER THE VOCABULARY. The fixture is a
+	// control-seam paragraph that mentions the row seam CONTRASTIVELY —
+	// which is how docs/markup-reference.md actually writes the pair —
+	// so the vocabulary alone would send it to the wrong table and the
+	// citation is what saves it.
+	const boundary = "What crosses a control boundary is " +
+		"`markup.boundaryPartition`: `Styles`, `Components`, `Elements` and " +
+		"`Handlers` inherit. The per-row context an `<ItemsView.ItemTemplate>` " +
+		"is realized in is a different partition with the opposite default."
+	if !rowSeamVocabulary.MatchString(boundary) {
+		t.Fatal("the contrastive fixture no longer matches the row vocabulary, " +
+			"so it cannot show the citation overruling it")
+	}
+	if _, table := partitionFor(boundary); table != "boundaryPartition" {
+		t.Errorf("a control-seam paragraph that mentions the row seam "+
+			"contrastively is judged against %s", table)
+	}
+}
+
+// rowSeamVocabulary is how a paragraph says it is about the ROW seam
+// rather than the control boundary, WITHOUT naming a table.
+//
+// DELIBERATELY NARROW, and a bare `\brow\b` is the reason. The control
+// seam's own paragraph in docs/markup-reference.md says "carries a row
+// per field with the reason" — a table row, not a template row — so the
+// obvious pattern classifies the boundary paragraph as a row-seam one
+// and then reports it for citing the wrong table. These are the forms a
+// paragraph uses when the SEAM is its subject.
+var rowSeamVocabulary = regexp.MustCompile(`(?i)ItemTemplate|\bper[- ]row\b|\brow context\b|\ba row (?:inherits|is not a boundary)\b`)
+
+// partitionFor picks the table a paragraph is answering ABOUT.
+//
+// THE TABLE WAS HARDCODED, and there are two of them. Both guards below
+// took `boundaryPartition` as the only answer, and
+// docs/markup-reference.md now carries two paragraphs whose table is
+// `rowPartition` — which disagrees with it on six fields. Measured with
+// a throwaway probe in review of #490, on a row-seam paragraph written
+// the way this branch asks paragraphs to be written:
+//
+//	"A row inherits `Styles`, `Components`, `Elements` and `Handlers`
+//	 from the page; the reasons live in `markup.rowPartition`."
+//
+// TestNoPageEnumeratesTheBoundaryPartition reported it as leaving out
+// `Declared` — which a row does NOT inherit (#512) — so an author
+// following the failure message makes the page WRONG. The sibling guard
+// then demanded a citation of the other seam's table.
+//
+// THE CITATION WINS WHERE THERE IS ONE, because a paragraph that names
+// its table has already answered this question and a vocabulary guess
+// cannot overrule it. That is not a formality: docs/markup-reference.md
+// writes the two seams contrastively, so a control-seam paragraph
+// naming <ItemsView.ItemTemplate> to say the row is DIFFERENT matches
+// the row vocabulary outright.
+//
+// The vocabulary is only for the uncited paragraph — which is the whole
+// population these guards exist to catch, since a deleted citation is
+// what they are looking for.
+//
+// A PARAGRAPH NAMING BOTH TABLES goes to the row, and that is a
+// tie-break rather than a derivation. The contrast is drawn from the
+// row's side in this corpus — the row's paragraph has to say "not the
+// control seam's", while the control's has no reason to name the row
+// table — and markup-reference.md:936 is the one paragraph that does it.
+// A control-seam paragraph contrastively naming `markup.rowPartition`
+// would be judged against the row's table; none exists, and the arm
+// below is where that would be changed.
+//
+// The residue, stated rather than bounded: a row-seam paragraph that
+// cites no table AND uses none of the vocabulary above is judged against
+// the control seam's. It is reported for "leaving out" fields a row does
+// not inherit, which is the defect above in a narrower window. Both
+// row-seam paragraphs in the corpus today are covered twice over — each
+// cites `markup.rowPartition` and each names `<ItemsView.ItemTemplate>`
+// or "per-row" — so this is a claim about paragraphs nobody has written
+// yet.
+func partitionFor(flat string) (map[string]struct {
+	inherit bool
+	why     string
+}, string) {
+	switch {
+	case strings.Contains(flat, "rowPartition"):
+		return rowPartition, "rowPartition"
+	case strings.Contains(flat, "boundaryPartition"):
+		return boundaryPartition, "boundaryPartition"
+	case rowSeamVocabulary.MatchString(flat):
+		return rowPartition, "rowPartition"
+	}
+	return boundaryPartition, "boundaryPartition"
+}
+
+// inheritingFields is every exported field a partition says crosses.
+func inheritingFields(part map[string]struct {
+	inherit bool
+	why     string
+}) []string {
+	var out []string
+	for name, rule := range part {
+		if rule.inherit && isExportedField(name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 
 // backtickedWord is hoisted for the reason partitionWords is, and this
@@ -408,14 +601,6 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 		t.Fatalf("no markdown under %s, so this guard read nothing", root)
 	}
 
-	var everyInheriting []string
-	for name, rule := range boundaryPartition {
-		if rule.inherit && isExportedField(name) {
-			everyInheriting = append(everyInheriting, name)
-		}
-	}
-	sort.Strings(everyInheriting)
-
 	checked := 0
 	for _, page := range pages {
 		b, err := os.ReadFile(page)
@@ -454,11 +639,16 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// argument for each.
 			named := namedPartitionFields(flat, true)
 			checked++
-			if strings.Contains(flat, "boundaryPartition") {
+			// WHICH TABLE, chosen per paragraph: see partitionFor. The
+			// two disagree on six fields, so judging a row-seam
+			// paragraph against the control seam's list reports it for
+			// leaving out what a row correctly does not inherit.
+			part, table := partitionFor(flat)
+			if strings.Contains(flat, table) {
 				continue // cites the source rather than copying it
 			}
 			var missing []string
-			for _, name := range everyInheriting {
+			for _, name := range inheritingFields(part) {
 				if !named[name] {
 					missing = append(missing, name)
 				}
@@ -471,9 +661,9 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 				"control author those fields do not cross, which is #314 "+
 				"restated as prose. Either name them all — and expect to be "+
 				"wrong again the next time Context grows one — or point at "+
-				"markup.boundaryPartition, which is what the reference and the "+
+				"markup.%s, which is what the reference and the "+
 				"three pages corrected in #490 do:\n\t%s",
-				page, len(named), strings.Join(missing, ", "), flat)
+				page, len(named), strings.Join(missing, ", "), table, flat)
 		}
 	}
 	if checked == 0 {
@@ -706,7 +896,9 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 			if !answersWhatCrosses.MatchString(flat) {
 				continue
 			}
-			if strings.Contains(flat, "boundaryPartition") {
+			// THE SEAM PICKS THE TABLE, not the guard: partitionFor.
+			_, table := partitionFor(flat)
+			if strings.Contains(flat, table) {
 				cited = true
 				if answersByNaming(flat) {
 					adjudicated++
@@ -714,8 +906,8 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 				continue
 			}
 			if answersByNaming(flat) {
-				t.Errorf("%s answers what crosses a control boundary by naming "+
-					"fields and does not cite markup.boundaryPartition:\n\t%s\n"+
+				t.Errorf("%s answers what crosses a context seam by naming "+
+					"fields and does not cite markup."+table+":\n\t%s\n"+
 					"Every such paragraph has to point at the partition, not just "+
 					"the first one on the page — this guard used to stop at the "+
 					"first citation, so a second answering paragraph could lose "+
