@@ -2889,8 +2889,9 @@ func (ed *editor) addSelected() {
 		// cannot have established: the palette add reaches it when the
 		// SEED fails to build and when the document was already broken
 		// elsewhere, neither of which is about <into>. It still names
-		// both elements, which is the concession addplan.go:44-46 makes
-		// canHold's permissiveness on. Raised in review of #501.
+		// both elements, which is the concession canHold's "Permissive
+		// where the catalog is silent, because the build is the gate"
+		// makes its permissiveness on. Raised in review of #501.
 		ed.status.Set("✗ <" + spec.Name + "> was not added to <" + into.Elem +
 			">: " + refused)
 	}

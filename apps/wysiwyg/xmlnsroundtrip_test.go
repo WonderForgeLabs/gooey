@@ -839,6 +839,23 @@ func TestAPastedConflictingDeclarationIsRefused(t *testing.T) {
 			"it would have been rebound to — the one thing the author needs to "+
 			"act on it", got)
 	}
+	// AND THE OTHER SIDE OF THE MECHANISM BRANCH. t: names EXPRESSIONS —
+	// it is a handler namespace, resolved through markup.parse's one
+	// flat ns table — so the flat last-wins sentence is the true one
+	// here, and it is the x: arm in
+	// TestAPasteCannotRebindAPrefixTheEnvelopeHolds that must not carry
+	// it. Asserting only one side would let the branch collapse back to
+	// a single sentence in either direction with one test still green.
+	// Raised in review of #501.
+	if got := ed.status.Get(); !strings.Contains(got, "the last declaration parsed wins") {
+		t.Errorf("the refusal reads\n\t%q\nand does not carry the flat "+
+			"last-wins mechanism, which is the true one for a prefix that "+
+			"names expressions", got)
+	}
+	if got := ed.status.Get(); strings.Contains(got, "names ELEMENTS") {
+		t.Errorf("the refusal explains an EXPRESSION prefix with the element "+
+			"mechanism:\n\t%q", got)
+	}
 	// THE DOCUMENT, not just the status: a refusal that reported itself
 	// and mutated anyway is the failure mode insertSubtree's revert-on-a
 	// -failed-rebuild exists for.
@@ -2114,12 +2131,35 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 		`  <Button Name="Pasted" Content="go"/>` + "\n" +
 		`</Gooey>` + "\n")
 
-	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+	got := ed.status.Get()
+	if !strings.HasPrefix(got, "✗") {
 		t.Errorf("pasting a fragment that binds x to a DIFFERENT uri reports "+
 			"%q. The envelope's declaration is not reachable from ed.doc(), so "+
 			"nothing compared the two: the second binding is now inside the "+
-			"document, and markup.parse's flat last-wins table hands every "+
-			"x: element in the saved file to the pasted uri", got)
+			"document, and nothing refused it", got)
+	}
+	// AND THE EXPLANATION, not only the ✗. This is the one end-to-end
+	// exercise of reconcileNamespacesInto's refusal, and it rebinds x: —
+	// the prefix that names ELEMENTS, which encoding/xml scopes to the
+	// subtree declaring them before markup sees the token. The message
+	// explained every prefix with the flat last-wins rule, which is the
+	// EXPRESSION mechanism, so the single path under test was the one
+	// whose stated reason was false and nothing could notice further
+	// drift. A message that tells the author why is a claim, and this
+	// repo holds a claim under test. Raised in review of #501.
+	for _, want := range []string{
+		"names ELEMENTS",
+		"XML scopes to the subtree that declares them",
+		"one flat document-wide table",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal reads\n\t%q\nand does not carry\n\t%q", got, want)
+		}
+	}
+	if strings.Contains(got, "the last declaration parsed wins") {
+		t.Errorf("the refusal explains an ELEMENT prefix with the expression "+
+			"mechanism — x: does not resolve through markup.parse's flat table, "+
+			"XML scoping resolves it:\n\t%q", got)
 	}
 	if src := ed.source.Get(); strings.Contains(src, other) {
 		t.Errorf("the refused declaration is in the document anyway:\n%s", src)
@@ -2135,8 +2175,9 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 //
 // The claim was that canHold refuses every parenting fault before the
 // insert, so nothing reaching the rebuild backstop is about parenting.
-// addplan.go:39-46 states the opposite in its own words and argues FOR
-// it: canHold answers false only where the catalog KNOWS the child is
+// canHold's "Permissive where the catalog is silent, because the build
+// is the gate" states the opposite in its own words and argues FOR it:
+// canHold answers false only where the catalog KNOWS the child is
 // refused, and ModeOne cannot know whether the slot is already taken, so
 // the insert is tried and the revert names both elements. This is that
 // path — a real parenting fault arriving at the line that said parenting
@@ -2271,13 +2312,18 @@ func TestTheOtherTwoSeamsDoNotClaimAParentingCause(t *testing.T) {
 
 			// THE THIRD PARTY. A value the loader refuses, committed
 			// through the properties pane, which does not revert — on a
-			// node neither gesture below goes near.
+			// node neither gesture below goes near. That missing revert
+			// is #531; commitEdit is the one mutator of seven without
+			// it, and the skip below is what retires this arm when it
+			// gains one.
 			ed.sel = broken
 			editAttr(t, ed, "Canvas.Left", "not-a-number")
 			if ed.docRoot != nil {
 				t.Skipf("the properties pane now reverts its own refusals "+
 					"(status %q), so this seam can no longer be reached with a "+
-					"fault the insert did not cause", ed.status.Get())
+					"fault the insert did not cause — #531 is the issue that "+
+					"asked for that revert, and closing it is what retires "+
+					"this arm", ed.status.Get())
 			}
 
 			elem, into := seam.gesture(t, ed, host, after)

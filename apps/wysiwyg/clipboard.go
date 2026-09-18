@@ -376,13 +376,18 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		//     signal and nothing resets it. The properties pane has no
 		//     revert of its own, so a value it refuses leaves the build
 		//     failed and the next paste is reverted and blamed for it.
+		//     That is #531, filed rather than left here: six mutators
+		//     share this revert and commitEdit is the seventh with none,
+		//     and a live defect recorded only in a comment dies with the
+		//     comment. Raised in review of #501.
 		//
 		// The neutral verb is the only clause true of all three, and it
 		// still names both elements so an author with several panes
 		// open knows which paste failed. An earlier draft of this
 		// comment justified the reword with "canHold already refused
-		// every parenting fault before the append": addplan.go:39-46
-		// says the opposite in its own words, and
+		// every parenting fault before the append": canHold's
+		// "Permissive where the catalog is silent, because the build is
+		// the gate" says the opposite in its own words, and
 		// TestCanHoldIsPermissiveWhereTheCatalogIsSilent pins it.
 		// Corrected in review of #501.
 		ed.status.Set("✗ <" + n.Elem + "> was not pasted into <" + into.Elem +
@@ -882,13 +887,48 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 			// message asserted the first case as the outcome, which is
 			// wrong half the time and reads as a promise about which
 			// meaning survives. Raised in review of #501.
+			//
+			// AND THE MECHANISM IS NOT ONE MECHANISM, which is why this
+			// branches. The sentence above is true of a prefix that names
+			// EXPRESSIONS — a handler or value namespace, resolved
+			// through markup.parse's flat ns table. It is not how the x
+			// namespace resolves: x: names ELEMENTS, and encoding/xml
+			// has already applied real XML subtree scoping to
+			// t.Name.Space before markup sees the token, which is the
+			// distinction carryDeclarations refuses to move
+			// markup.XNamespace on and TestTheXPropertyRefusalNamesTheRoot
+			// is about. Two bindings of x: do not merge and one does not
+			// win: both stand, and which one an element means depends on
+			// where it sits.
+			//
+			// The refusal is the same either way, and deliberately so —
+			// parse's flat table takes EVERY xmlns attribute at any
+			// depth, x: included, so the second binding still re-points
+			// any expression under that prefix even where the elements
+			// scope. What changes is only what the author is told, and a
+			// message that tells them why is making a claim this repo
+			// holds under test like any other. The one end-to-end
+			// exercise of this refusal,
+			// TestAPasteCannotRebindAPrefixTheEnvelopeHolds, rebinds x:
+			// — so the arm that reached it was the arm whose explanation
+			// was wrong. That test asserts this text now. Raised in
+			// review of #501.
+			mech := "One flat prefix map covers the whole document and the last " +
+				"declaration parsed wins, so one of the two meanings of " +
+				strings.TrimPrefix(k, "xmlns:") + " would silently become the " +
+				"other — which one depends on where this lands"
+			if bound == markup.XNamespace || v == markup.XNamespace {
+				mech = "This prefix names ELEMENTS, which XML scopes to the " +
+					"subtree that declares them, so the two bindings would both " +
+					"stand and what an element means would depend on where it " +
+					"sits — while expressions under " +
+					strings.TrimPrefix(k, "xmlns:") + " read one flat " +
+					"document-wide table that this second declaration re-points"
+			}
 			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
-				"already declares it as %q. One flat prefix map covers the whole "+
-				"document and the last declaration parsed wins, so one of the two "+
-				"meanings of %s would silently become the other — which one depends "+
-				"on where this lands. Rename the prefix in what you are pasting, or "+
-				"change the document's own declaration deliberately", k, v, bound,
-				strings.TrimPrefix(k, "xmlns:"))
+				"already declares it as %q. %s. Rename the prefix in what you are "+
+				"pasting, or change the document's own declaration deliberately",
+				k, v, bound, mech)
 		}
 		delete(n.Attrs, k)
 	}
