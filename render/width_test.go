@@ -424,8 +424,7 @@ func TestANonPositiveWidthIsTheEmptyStringNotBlanks(t *testing.T) {
 // nothing at all, because a per-cell map has no blank cell to report.
 //
 // Three functions, three answers, one input: asserted together so the
-// asymmetry is chosen rather than noticed later. Raised in review of
-// #520.
+// asymmetry is chosen rather than noticed later.
 func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
 	b := NewBuffer(4, 1)
 	b.SetString(0, 0, "ab", Style{})

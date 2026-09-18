@@ -39,19 +39,23 @@ import (
 // — and a WHOLE ROW is render.RowText, never rowText(f, 0, y, <the
 // composer's width>), because a literal repeating a width declared
 // somewhere above it is the same phantom-blanks decay one level down.
-// This paragraph claimed all three readers derived their window, and two
-// whole-row reads spelled as spans survived the conversion underneath
-// that claim (components/layout_test.go, components/colorpicker_test.go)
-// — a reader who takes the sentence at its word does not go looking.
+// The account of how this rule came to have counterexamples inside its
+// own package is in the spec's readback section, which is where this
+// branch decided such accounts live.
 //
 // ONE OF EACH, IN ONE FILE. These are package-scope names called from
-// four test files, and each lived in the first file that happened to
-// want it — under a doc block about dropdowns, or about a colour picker
-// — so the explanation was retold in each consumer's comments and the
-// copies went stale independently. Three readers, distinguished by what
-// they read rather than by who asked: a region of a row, a whole frame,
-// a whole composition. Plus the one row search every positional
-// assertion in this package needs.
+// many test files, and each lived in the first file that happened to
+// want it — under a doc block about dropdowns, or about a colour picker,
+// or about the Composer — so the explanation was retold in each
+// consumer's comments and the copies went stale independently. FOUR
+// readers, distinguished by what they read rather than by who asked: a
+// region of a row, a whole row of a buffer, a whole frame, a whole
+// composition. Plus the one row search every positional assertion in
+// this package needs.
+//
+// `row` was the last one out, and it was the one with the most call
+// sites — which is the shape to distrust: the helper everyone uses is
+// the one nobody notices is somewhere odd.
 //
 // [#358]: https://github.com/WonderForgeLabs/gooey/issues/358
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
@@ -68,6 +72,18 @@ func rowText(f *gooey.Frame, x, y, w int) string {
 	return render.SpanText(f.Cells, x, y, w)
 }
 
+// row is the whole of row y of a BUFFER, trailing blanks trimmed.
+//
+// TRIMMED, AND THAT IS THE WHOLE DIFFERENCE FROM rowText. The two names
+// are one letter apart in one package and agree about nothing else: this
+// takes a *render.Buffer and reads the whole row; rowText takes a
+// *gooey.Frame, reads a caller-chosen span, and pads rather than trims.
+// A reader who has internalised one mis-reads the other, which is why
+// this is stated here rather than at either call site.
+func row(b *render.Buffer, y int) string {
+	return strings.TrimRight(render.RowText(b, y), " ")
+}
+
 // frameText is the frame as a terminal would show it, one row per line.
 //
 // THE FOURTH COPY OF THIS LOOP IS WHAT IT IS NAMED AFTER.
@@ -77,7 +93,7 @@ func rowText(f *gooey.Frame, x, y, w int) string {
 // composer's height. No grep for the cell-reader bug could find it: it
 // already went through render.RowText, and what made it a duplicate was
 // the loop around it. The three it joins were `dump`, `menuRows` and
-// `screen` — the last of which is still a declaration nine lines below,
+// `screen` — the last of which is still a declaration of its own below,
 // because a composer is not a frame; only its loop went to
 // render.BufferText.
 func frameText(f *gooey.Frame) string { return render.BufferText(f.Cells) }

@@ -1,22 +1,11 @@
 package components
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
-	"github.com/WonderForgeLabs/gooey/render"
 )
-
-// row is the row as a terminal would read it, trailing blanks trimmed.
-// The readback itself is render.RowText, which is where the
-// continuation markers get skipped: building the string here cell by
-// cell rendered them as literal runes, so no fixture in this package
-// could hold a wide glyph and be asserted on.
-func row(b *render.Buffer, y int) string {
-	return strings.TrimRight(render.RowText(b, y), " ")
-}
 
 func TestComposerDamageIsPerComponent(t *testing.T) {
 	a := prop.NewSource("aaa")

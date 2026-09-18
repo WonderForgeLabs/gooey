@@ -260,10 +260,25 @@ superseded does not:
    one consumer, every other consumer retells it in its own comments and
    the copies drift apart — six of them in `menucheck_test.go` went on
    naming `menuRows` after it was deleted. `components/readback_test.go`
-   holds all four now (`rowText`, `frameText`, `screen`, and the
+   holds them all now (`rowText`, `row`, `frameText`, `screen`, and the
    `rowMatch`/`matchRows`/`onlyMatch` row search), with the
    continuation-marker reasoning stated once at the top, so the next
    directory of the sweep copies a file rather than a loop.
+
+   **The last one out had the most call sites.** `row(b, y)` — a whole
+   row of a `*render.Buffer` with trailing blanks trimmed — stayed in
+   `components/composer_test.go` under its own retelling of the
+   continuation-marker reasoning while being called from
+   `background_test.go`, `buttonchrome_test.go`,
+   `canvas_bg_restore_test.go` and more, so the file that stated *"one
+   of each, in one file"* was three sentences from a counterexample with
+   more consumers than any helper it listed. That is the shape to
+   distrust: the helper everyone uses is the one nobody notices is
+   somewhere odd. It also sits one letter from `rowText` and agrees with
+   it about nothing — different receiver, whole row against a span,
+   trimmed against padded — which is the trap item 6 names, one level
+   up, so the distinguishing behaviour is now stated where both
+   declarations are visible at once.
 8. **One row search, not one per test.** `components/menucheck_test.go`
    grew three copies of "every row holding a needle, and fatal unless
    exactly one", two of which redeclared the same local `match` struct

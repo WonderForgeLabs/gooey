@@ -145,7 +145,7 @@ func TestTextBoxRendersPromptTextAndCaret(t *testing.T) {
 	tb.setCaret(2)
 	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
-	if got, want := rowText(f, 0, 0, 10), "> hi█     "; got != want {
+	if got, want := render.RowText(f.Cells, 0), "> hi█     "; got != want {
 		t.Errorf("rendered %q, want %q", got, want)
 	}
 }
@@ -159,7 +159,7 @@ func TestTextBoxScrollsToKeepTheCaretVisible(t *testing.T) {
 	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
 	// Caret is at the end, so the tail is what shows.
-	if got := rowText(f, 0, 0, 6); !strings.Contains(got, "p") {
+	if got := render.RowText(f.Cells, 0); !strings.Contains(got, "p") {
 		t.Errorf("narrow field showed %q; the caret end must stay visible", got)
 	}
 }
@@ -282,7 +282,7 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 			tb.setCaret(len([]rune(text)))
 		}
 		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-		return rowText(f, 0, 0, 10)
+		return render.RowText(f.Cells, 0)
 	}
 	caret := compose("世界", true)
 	plain := compose("世界", false)
