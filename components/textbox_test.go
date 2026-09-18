@@ -145,7 +145,7 @@ func TestTextBoxRendersPromptTextAndCaret(t *testing.T) {
 	tb.setCaret(2)
 	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
 
-	if got, want := render.SpanText(f.Cells, 0, 0, 10), "> hi█     "; got != want {
+	if got, want := rowText(f, 0, 0, 10), "> hi█     "; got != want {
 		t.Errorf("rendered %q, want %q", got, want)
 	}
 }
@@ -159,7 +159,7 @@ func TestTextBoxScrollsToKeepTheCaretVisible(t *testing.T) {
 	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
 	// Caret is at the end, so the tail is what shows.
-	if got := render.SpanText(f.Cells, 0, 0, 6); !strings.Contains(got, "p") {
+	if got := rowText(f, 0, 0, 6); !strings.Contains(got, "p") {
 		t.Errorf("narrow field showed %q; the caret end must stay visible", got)
 	}
 }
@@ -282,11 +282,38 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 			tb.setCaret(len([]rune(text)))
 		}
 		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-		return render.SpanText(f.Cells, 0, 0, 10)
+		return rowText(f, 0, 0, 10)
 	}
 	caret := compose("世界", true)
 	plain := compose("世界", false)
 	mixed := compose("a世b", false)
+	// ONE TABLE, AND NO SKIP. The table is the base branch's (#520) and
+	// stays: `want` used to be set three times and read nowhere while
+	// three bespoke t.Errorf blocks re-spelled the constants by hand, so
+	// a fourth shape could get a tripwire and no assertion, or the
+	// reverse, with nothing red. The `why` column is the only part of
+	// those three blocks that differed.
+	//
+	// THE SKIP LOOP IS WHAT DOES NOT SURVIVE THE MERGE, and deleting it
+	// is this commit's job rather than an accident of resolving a
+	// conflict. #520 wrote it to retire by CONDITION — it fired only
+	// while a row still read the documented buggy render — and said in
+	// its own comment that #519's fixing commit deletes the whole loop
+	// rather than leaving a branch that can no longer be taken. This is
+	// that commit: all three rows read correctly here, so the condition
+	// is false and the loop is gone. Taking either side of the conflict
+	// wholesale would have been wrong — HEAD's side loses the two shapes
+	// #520 added after review, and the incoming side reinstates a skip
+	// citing an issue this branch closes.
+	shapes := []struct{ got, want, shape, why string }{
+		{caret, wantCaret, "the focused row with the caret after both glyphs",
+			"the two glyphs occupy FOUR columns, so the caret belongs in column 4"},
+		{plain, wantPlain, "the unfocused row",
+			"the glyphs occupy their own columns with no caret to make room for"},
+		{mixed, wantMixed, "the unfocused mixed-width row",
+			"a narrow glyph either side of a wide one is the arrangement a " +
+				"per-rune advance loses in the middle rather than at the end"},
+	}
 
 	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
 	// to stand beside it are gone for opposite reasons.
@@ -307,18 +334,10 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// SetString lay the continuation themselves, and render/cell.go says
 	// of the remaining displacement branch that it is only reachable by
 	// assigning Cells directly.
-	if got, want := caret, wantCaret; got != want {
-		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
-			"the caret belongs in column 4", got, want)
-	}
-	if got, want := plain, wantPlain; got != want {
-		t.Errorf("unfocused, rendered %q, want %q — the glyphs occupy their own "+
-			"columns with no caret to make room for", got, want)
-	}
-	if got, want := mixed, wantMixed; got != want {
-		t.Errorf("unfocused, rendered %q, want %q — a narrow glyph either side "+
-			"of a wide one is the arrangement a per-rune advance loses in the "+
-			"middle rather than at the end", got, want)
+	for _, tw := range shapes {
+		if tw.got != tw.want {
+			t.Errorf("%s rendered %q, want %q — %s", tw.shape, tw.got, tw.want, tw.why)
+		}
 	}
 }
 

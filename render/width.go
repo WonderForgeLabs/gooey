@@ -188,6 +188,7 @@ func ClipCols(s string, w int) string {
 // "世\ufffd界\ufffd" and no fixture in the repo could contain one. A
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
+//
 // A nil buffer is answered here rather than left to SpanText: `b.W` is
 // evaluated in the argument list, so a nil buffer would fault before the
 // guard one call down could run, inside this package with the caller off
@@ -199,6 +200,36 @@ func RowText(b *Buffer, y int) string {
 		return ""
 	}
 	return SpanText(b, 0, y, b.W)
+}
+
+// BufferText is every row of b, newline-terminated — the whole screen as
+// a terminal would show it.
+//
+// IT EXISTS BECAUSE THE SAME EIGHT LINES KEPT BEING WRITTEN. Three test
+// files in `components` alone held byte-identical copies of this loop
+// after #516 removed their width parameters, each under its own comment
+// explaining the same two things, and two more live outside that package
+// — apps/wysiwyg's onScreen and apps/scene's containsRow, the second of
+// them still building a row with `At(x, y).Rune` and so unable to hold a
+// wide glyph at all. A whole-BUFFER read is as common as a whole-ROW
+// read and had no name, so every caller invented one.
+//
+// The trailing newline is on EVERY row including the last, so a
+// three-row buffer and the first three rows of a four-row one do not
+// compare equal — a dump missing its last row is a different string, not
+// a prefix.
+//
+// A nil buffer is the empty string, for RowText's reason.
+func BufferText(b *Buffer) string {
+	if b == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for y := 0; y < b.H; y++ {
+		sb.WriteString(RowText(b, y))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }
 
 // SpanText is RowText over w columns starting at x — what that part of
@@ -261,15 +292,10 @@ func RowText(b *Buffer, y int) string {
 // than a panic inside strings.Repeat, which is the ONE arrangement where
 // the guard changes an answer rather than restating what the loop
 // already does. ClipCols answers `w <= 0` the same way, and the reason
-// is the same: zero columns of a terminal is nothing, not one blank.
-//
-// It is stated rather than left to the loop because a width can ARRIVE
-// as a difference — an extent minus an origin, a remaining budget — so
-// a negative one is a value a caller produces rather than a caller
-// error. The hazard is the one the padding paragraph above describes, at
-// the other end: "" passes `!strings.Contains(got, …)` and "the row is
-// empty" exactly as blanks do, so a span that silently collapsed to
-// nothing reads as a component that drew nothing.
+// is the same: zero columns of a terminal is nothing, not one blank. Why
+// that is a stated contract rather than whatever the loop happens to do
+// is item 4 of docs/specs/2026-08-27-display-width.md's readback
+// section.
 //
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
 func SpanText(b *Buffer, x, y, w int) string {

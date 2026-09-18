@@ -18,23 +18,6 @@ func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Prop
 	return p, v, f
 }
 
-// rowText is w columns of row y, from column x, as a terminal would show
-// them — render.SpanText's own signature, with its arguments passed
-// straight through. Through SpanText for the reason #516 gives: a
-// rune-per-cell read writes the continuation marker into the row and
-// makes a wide glyph unassertable.
-//
-// IT TOOK y BEFORE w, which is the argument-order trap this sweep
-// reasoned out at length over components/box_test.go's rowString and
-// then applied to one wrapper and not the other, in the same package,
-// in the same commit. Every parameter is an int, so `rowText(f, 0, 30)`
-// reads as x=0 to anyone who has just internalised
-// SpanText(b, x, y, w), compiles either way, and returns blanks rather
-// than failing. Raised in review of #520.
-func rowText(f *gooey.Frame, x, y, w int) string {
-	return render.SpanText(f.Cells, x, y, w)
-}
-
 func TestColorPickerArrowsSelectChannelAndAdjustValue(t *testing.T) {
 	p, v, _ := pickerAt(render.TrueColor, render.RGB(10, 20, 30))
 

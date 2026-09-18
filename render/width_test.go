@@ -280,7 +280,7 @@ func TestSpanTextCutThroughAGlyphReadsShortOrLong(t *testing.T) {
 //
 // The fixture makes the two answers DIFFERENT strings rather than
 // asserting one: row 0 and row 1 hold different text, so reading
-// (x=1, y=0) and (x=0, y=1) cannot agree. Raised in review of #520.
+// (x=1, y=0) and (x=0, y=1) cannot agree.
 func TestSpanTextTakesXBeforeY(t *testing.T) {
 	b := NewBuffer(4, 2)
 	b.SetString(0, 0, "abcd", Style{})
@@ -311,8 +311,17 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	b := NewBuffer(4, 1)
 	b.SetString(0, 0, "ab", Style{})
 
-	if got, want := SpanText(b, 2, 0, 8), "        "; got != want {
-		t.Errorf("a span running %d columns past the buffer = %q, want %q", 6, got, want)
+	// THE OVERSHOOT IS DERIVED, not written down beside the fixture that
+	// produces it: x+w-b.W is 6 today and stays right when the fixture
+	// moves, which is the difference CLAUDE.md draws between a number
+	// and a sample of one. "ENDS past" rather than "runs past", too —
+	// the span's head is inside the buffer and only its tail is not,
+	// which is what makes the first two columns blanks-from-the-buffer
+	// and the rest blanks-from-the-rule.
+	const x, w = 2, 8
+	if got, want := SpanText(b, x, 0, w), "        "; got != want {
+		t.Errorf("a span ending %d columns past the buffer = %q, want %q",
+			x+w-b.W, got, want)
 	}
 	if got, want := SpanText(b, -2, 0, 4), "  ab"; got != want {
 		t.Errorf("a span starting left of column 0 = %q, want %q", got, want)
@@ -322,15 +331,46 @@ func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
 	}
 }
 
+// TestBufferTextIsEveryRowNewlineTerminated pins the two things a
+// caller of a whole-buffer read depends on and cannot see from the
+// signature: that it reads EVERY row, and that the last one carries its
+// newline like the rest.
+//
+// THE LAST NEWLINE IS THE HALF WORTH PINNING. Without it a dump missing
+// its final row is a PREFIX of the correct one, and every
+// strings.Contains assertion over such a dump passes — which is the
+// class CLAUDE.md calls a check that can quietly report the wrong
+// answer. With it the two strings simply differ.
+//
+// A WIDE GLYPH IN THE FIXTURE, because a buffer reader that walked cells
+// instead of delegating to RowText would put render.Continuation in the
+// middle of row 1 and still pass an ASCII-only test — the defect #516
+// exists for, one level up.
+func TestBufferTextIsEveryRowNewlineTerminated(t *testing.T) {
+	b := NewBuffer(4, 3)
+	b.SetString(0, 0, "ab", Style{})
+	b.SetString(0, 1, "世界", Style{})
+
+	const want = "ab  \n世界\n    \n"
+	if got := BufferText(b); got != want {
+		t.Errorf("BufferText = %q, want %q: every row, each ending in a newline, "+
+			"and a wide glyph read as itself rather than as a rune and a "+
+			"continuation marker", got, want)
+	}
+	if got := BufferText(nil); got != "" {
+		t.Errorf("BufferText(nil) = %q, want the empty string — RowText answers a "+
+			"nil buffer the same way and this is the loop over it", got)
+	}
+}
+
 // TestANonPositiveWidthIsTheEmptyStringNotBlanks is the shape the
 // off-buffer enumeration went past: three out-of-range shapes, then nil,
 // and never `w <= 0`.
 //
-// SPLIT OUT, because most of the ways it can go red are about NOT
-// padding, and the first line CI prints is the test's name. It lived
-// inside TestSpanTextPadsWhereTheBufferIsNot, which by then pinned five
-// separate contracts, so a failure here reported the padding contract
-// breaking. Raised in review of #520.
+// SPLIT OUT FROM THE PADDING TEST, because most of the ways it can go
+// red are about NOT padding, and the first line CI prints is the test's
+// name. Folded in with five other contracts, a failure here reports the
+// padding contract breaking.
 //
 // A width can ARRIVE as a difference — an extent minus an origin, a
 // remaining budget — so a negative one is a value a caller produces

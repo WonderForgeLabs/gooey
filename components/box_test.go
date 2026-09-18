@@ -38,28 +38,6 @@ func outsideWrites(t *testing.T, b *render.Buffer, r gooey.Rect) {
 	}
 }
 
-// rowString reads w columns of row y starting at x — render.SpanText's
-// signature exactly, and its arguments passed straight through.
-//
-// It appended b.At(x, y).Rune, which is the rune-per-cell reader
-// render.SpanText exists to retire — and it survived #516's sweep
-// because that issue derives its site list from
-// `grep -rln 'WriteRune(.*\.Rune)'` and this spells the same defect
-// with append. The grep under-counts; the defect has two spellings.
-//
-// IDENTICAL, not merely same-ordered. It took an exclusive END column
-// while the function under it takes a WIDTH, so the third argument
-// changed meaning across one call — and both readings were live at the
-// call sites: `rowString(b, 0, r.Y+i, 8)` is a correct end column AND a
-// correct width, and nothing in the call says which the helper wants.
-// A wrapper that takes the opposite ORDER from the function under it is
-// a trap this helper was already reordered to avoid; one that takes a
-// different MEANING for the same position is the same trap one step
-// quieter, and it compiles either way. Raised in review of #520.
-func rowString(b *render.Buffer, x, y, w int) string {
-	return render.SpanText(b, x, y, w)
-}
-
 func TestDrawBoxRunesShape(t *testing.T) {
 	b := filled(12, 6)
 	r := gooey.Rect{X: 1, Y: 1, W: 6, H: 4}
@@ -71,7 +49,7 @@ func TestDrawBoxRunesShape(t *testing.T) {
 		"#╰────╯#",
 	}
 	for i, w := range want {
-		if got := rowString(b, 0, r.Y+i, 8); got != w {
+		if got := render.SpanText(b, 0, r.Y+i, 8); got != w {
 			t.Errorf("row %d = %q, want %q", r.Y+i, got, w)
 		}
 	}
@@ -139,7 +117,7 @@ func TestDrawBoxTitleClipsAndNeverStrandsPadding(t *testing.T) {
 		r := gooey.Rect{X: 1, Y: 1, W: tc.w, H: 3}
 		DrawBoxRunes(b, r, render.Style{})
 		DrawBoxTitle(b, r, "title", render.Style{})
-		if got := rowString(b, r.X, r.Y, r.W); got != tc.want {
+		if got := render.SpanText(b, r.X, r.Y, r.W); got != tc.want {
 			t.Errorf("w=%d top row = %q, want %q", tc.w, got, tc.want)
 		}
 		outsideWrites(t, b, r)

@@ -186,6 +186,79 @@ blanks both pass `!strings.Contains(got, …)` and "the row is empty".**
 Every one of these edges turns a reader that quietly returned nothing
 into a component that appears to have drawn nothing.
 
+The rest of what was settled is on the CALLER side of the same contract,
+and it is here rather than in the test comments for the reason above —
+the rule belongs next to the code, the account of which version was
+superseded does not:
+
+5. **A whole-row read is `RowText`, never `SpanText(b, 0, y, b.W)`.**
+   `RowText` *is* that expression, and it carries a nil guard the
+   hand-rolled loops do not. Three converted readers were left spelling
+   it the long way in the commit that wrote the rule down, which is the
+   same defect the sweep is about one level up.
+6. **A wrapper with the same signature is not worth its own comment.**
+   `components/box_test.go`'s `rowString` ended up as `SpanText`'s
+   parameters passed straight through, under seventeen lines explaining
+   that a wrapper taking a different *meaning* for the same position is a
+   quiet trap. That is an argument for deleting the wrapper, and it was
+   deleted. `components/colorpicker_test.go`'s `rowText` earns its keep
+   because it maps `*gooey.Frame` to `f.Cells`; it takes `SpanText`'s
+   order for the same reason. A wrapper that earns its keep has to be
+   USED, though: five sites in the same package went on calling
+   `SpanText(f.Cells, 0, 0, n)` beside it, so the rule and the package
+   disagreed in the commit that stated the rule. They go through
+   `rowText` now — either the mapping is worth a wrapper everywhere or
+   it is worth one nowhere.
+7. **A whole-BUFFER read is `render.BufferText`, and it had no name.**
+   Removing the width parameters in item 5 left `components`' `dump`,
+   `menuRows` and `screen` as byte-identical eight-line loops, each under
+   its own comment explaining continuation markers and where the window
+   comes from — and two more of the same loop live outside that package,
+   one of them (`apps/scene`'s `containsRow`) still building its row from
+   `At(x, y).Rune`, which is the defect `RowText` exists to remove and
+   the one the sweep's grep cannot see. `BufferText` sits beside
+   `RowText`, and the remaining directories of
+   [#516](https://github.com/WonderForgeLabs/gooey/issues/516) have a name
+   to call rather than a loop to copy. Its trailing newline is on every
+   row *including the last*, so a dump missing its final row is not a
+   prefix of the correct one — which is what keeps a `strings.Contains`
+   assertion over one honest.
+
+   **One delegation, not one per file — and one FILE, not one per
+   consumer.** Making them one-liners left `dump` and `menuRows` as
+   byte-identical DECLARATIONS in `components`: the duplication moved
+   down a level rather than being removed. Collapsing them turned up a
+   FOURTH copy the sweep could not have found, `menugeom_test.go`'s own
+   `frameText(f, w, h)` — the same loop, already going through
+   `RowText`, so no grep for the cell-reader bug matched it, and it
+   ignored `w` outright, which is the written-down extent of item 5
+   decaying in place rather than merely risking it.
+
+   Naming the survivor for what it answers was half the repair; it still
+   LIVED in the first file that wanted it, under a doc block about
+   dropdowns. That placement is the mechanism behind the staleness, not
+   a tidiness matter: while the explanation for a shared helper sits in
+   one consumer, every other consumer retells it in its own comments and
+   the copies drift apart — six of them in `menucheck_test.go` went on
+   naming `menuRows` after it was deleted. `components/readback_test.go`
+   holds all four now (`rowText`, `frameText`, `screen`, and the
+   `rowMatch`/`matchRows`/`onlyMatch` row search), with the
+   continuation-marker reasoning stated once at the top, so the next
+   directory of the sweep copies a file rather than a loop.
+8. **One row search, not one per test.** `components/menucheck_test.go`
+   grew three copies of "every row holding a needle, and fatal unless
+   exactly one", two of which redeclared the same local `match` struct
+   and cross-referenced each other in comments written to keep the copies
+   in sync. `matchRows` and `onlyMatch` are the one spelling, over a
+   `rowMatch` rather than a bare `match` — a package-scope test type in a
+   package with dozens of test files owes the next file a hint rather
+   than a redeclaration error; the
+   zero-match diagnosis stays per-test, because "no row matched" means
+   the regression under test in one of them and "the dropdown did not
+   paint" in another. Two of the three copies also took the FIRST hit, so
+   a second matching row was resolved by iteration order while every
+   claim they make is positional.
+
 ## Rejected alternatives
 
 **Reserve by the lead rune's width instead of the cluster's.** Suggested
