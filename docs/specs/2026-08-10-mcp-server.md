@@ -499,3 +499,15 @@ changelog: **four of the five were corrections to a justification, not to
 behaviour.** The tool did the right thing throughout. What kept being wrong was
 the sentence explaining why — and a wrong justification is what gets a correct
 mechanism removed by the next person simplifying it.
+
+A sixth correction belongs with them without being one of them, because it is
+the same failure one layer down and not a claim anybody believed. `App.caps`'
+doc cited `term/term.go:291` for `term.Screen.Detect`'s `caps.CellW == 0`
+substitution — the first of the two sites the fourth entry above is about. By
+the time #504 read it, line 291 had become the middle of `DecoderDone`'s doc
+comment, so a reader checking the cell-metrics rule landed on the decoder
+tripwire with nothing to tell them they were in the wrong place. A line number
+in prose rots silently and nothing can see it go: the three other surfaces
+carrying this rule (`mcp.cellProbeRule`, `control.ScreenSize`'s doc,
+`docs/learn/08-remote-control.md`) all cite by name, and `App.caps` now does
+too.

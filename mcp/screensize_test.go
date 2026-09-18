@@ -692,34 +692,6 @@ func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
 	}
 }
 
-// TestNoPublishedToolSchemaShipsFmtResidue is the check above widened to
-// every tool, because the hazard is not screen_size's.
-//
-// The test above was written for four rendered descriptions in one
-// schema. send_mouse's x and y became the fifth and sixth in the round
-// after — they render pointerFrameRule, for the same reason the origin
-// tails render, and a guard scoped to one function would not have
-// covered them. A tail that grows a literal %, or a second verb added
-// for one axis, ships %!s(MISSING) into a published JSON Schema with
-// gofmt, vet, -race and every inventory guard green; whose schema it is
-// makes no difference to the client reading it. Raised in review of
-// #504.
-//
-// TWO RESIDUES, because only one of these tails goes through Sprintf.
-// extentTail, originTail and pointerFrameRule are rendered, so a
-// mismatched verb in them is caught by go vet's printf check at build
-// time for a constant format and by the "%!" search here for a computed
-// one. cellTail is plain CONCATENATION (schemas.go), and cellProbeRule
-// reaches clients twice that way — through cellTail into
-// cellWidth/cellHeight, and directly into screen_size's Description
-// (tools.go). A "%s" added to either ships VERBATIM: vet sees no format
-// call at all, and nothing ever rendered it, so there is no "%!" to
-// find. The asymmetry is invisible from this test, which reads as
-// covering all six descriptions alike — so the sweep asks both
-// questions of every published string, and the unconsumed-verb half is
-// the one that covers the concatenated tails. The published strings
-// hold no literal % today, so it starts green. Raised in review of
-// #504.
 // schemaField is one described node of a published JSON Schema and the
 // path it sits at.
 type schemaField struct {
@@ -790,6 +762,40 @@ func describedFields(m map[string]any) []schemaField {
 	return out
 }
 
+// TestNoPublishedToolSchemaShipsFmtResidue is the check above widened to
+// every tool, because the hazard is not screen_size's.
+//
+// The test above was written for four rendered descriptions in one
+// schema. send_mouse's x and y became the fifth and sixth in the round
+// after — they render pointerFrameRule, for the same reason the origin
+// tails render, and a guard scoped to one function would not have
+// covered them. A tail that grows a literal %, or a second verb added
+// for one axis, ships %!s(MISSING) into a published JSON Schema with
+// gofmt, vet, -race and every inventory guard green; whose schema it is
+// makes no difference to the client reading it. Raised in review of
+// #504.
+//
+// TWO RESIDUES, because only one of these tails goes through Sprintf.
+// extentTail, originTail and pointerFrameRule are rendered, so a
+// mismatched verb in them is caught by go vet's printf check at build
+// time for a constant format and by the "%!" search here for a computed
+// one. cellTail is plain CONCATENATION (schemas.go), and cellProbeRule
+// reaches clients twice that way — through cellTail into
+// cellWidth/cellHeight, and directly into screen_size's Description
+// (tools.go). A "%s" added to either ships VERBATIM: vet sees no format
+// call at all, and nothing ever rendered it, so there is no "%!" to
+// find. The asymmetry is invisible from this test, which reads as
+// covering all six descriptions alike — so the sweep asks both
+// questions of every published string, and the unconsumed-verb half is
+// the one that covers the concatenated tails. The published strings
+// hold no literal % today, so it starts green. Raised in review of
+// #504.
+//
+// IT SITS DIRECTLY ABOVE THE FUNC, with no unbroken run of comment
+// lines between it and any other declaration: a doc block spliced onto
+// the comment of a neighbouring type attaches to that type, and the
+// paragraph above — the one that refuses simplifying this to a single
+// "%!" search — then no longer sits beside what it is refusing.
 func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 	// A % FOLLOWED BY A FORMAT LETTER, with its flag and width run: what
 	// a tail that was never rendered looks like. "%!"-style residue

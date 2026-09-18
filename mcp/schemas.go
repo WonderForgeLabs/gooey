@@ -166,7 +166,13 @@ const (
 		"one arranged partly offscreen names cells no terminal has, and the far " +
 		"corner converted through x/y is outside the screen."
 	originTail = " of the surface's %s edge — add it to a position within the surface " +
-		"to put the coordinate in the space send_mouse reads. 0 when unscoped. It " +
+		"to put the coordinate in the space send_mouse reads. 0 when unscoped. " +
+		"The converse does NOT hold: a session scoped to an island arranged at " +
+		"the screen origin reports 0 too, so x/y do not tell a scoped session " +
+		"from an unscoped one and 0 is no evidence that this surface is the " +
+		"terminal. Which of the two you have is answered by CONTRACT — the " +
+		"result is this session's visible surface, whatever its scope — not by " +
+		"reading it off the numbers. It " +
 		"fixes the coordinate space, not the outcome: whether a point is acted on " +
 		"still depends on what is under it. Applies to a position read off " +
 		"`screen_text`, which is homed at (0,0); bounds from `tree_snapshot` are " +
