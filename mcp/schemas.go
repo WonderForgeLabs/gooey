@@ -146,8 +146,11 @@ func validateMarkupSchema() map[string]any {
 // copies were left standing. Raised in review of #504.
 const (
 	extentTail = " in cells. For a scoped session this is the island's %s, not the " +
-		"terminal's. 0 is a real answer, not an error: a scoped session whose island " +
-		"is collapsed or not yet arranged reports 0x0 and shows nothing. It may also " +
+		"terminal's. 0 is a real answer, not an error, and it has two causes: a " +
+		"scoped session whose island is collapsed or not yet arranged reports 0x0, " +
+		"and ANY session reports 0x0 where the terminal itself has no size — a pty " +
+		"nobody ran stty on is 0x0 and paints nothing. Neither is a fault to report " +
+		"back, and an unscoped session is not evidence of a collapsed island. It may also " +
 		"EXCEED the terminal's: the island's arranged rect is reported unclipped, so " +
 		"one arranged partly offscreen names cells no terminal has, and the far " +
 		"corner converted through x/y is outside the screen."
@@ -227,12 +230,18 @@ const cellProbeRule = "0 MEANS the host never probed the terminal — branch on 
 // What x/y buy is the right coordinate SPACE; the routing is its own
 // question.
 //
-// A ZERO cols/rows IS AN ANSWER. A scoped session whose island is
-// collapsed or not yet arranged resolves successfully to a zero-size
-// rect — control.islandRect returns it rather than the islandGone denial,
-// because the island is not gone — so screen_size reports 0x0 and
-// screen_text is empty. The schema said 0 only for the cell metrics,
-// leaving a client to read cols:0 as a bug in the host. Raised in review
+// A ZERO cols/rows IS AN ANSWER, WITH TWO CAUSES. A scoped session whose
+// island is collapsed or not yet arranged resolves successfully to a
+// zero-size rect — control.islandRect returns it rather than the
+// islandGone denial, because the island is not gone — so screen_size
+// reports 0x0 and screen_text is empty. And an UNSCOPED session reports
+// 0x0 whenever the terminal has no size: the unscoped arm reads buf.W/H
+// straight off the composer, and a pty nobody ran stty on is 0x0 (this
+// repo's own demo workflows say so in as many words). Naming only the
+// island left a client one explanation for a value with two causes, so
+// it would answer "your island is collapsed" to a session that holds no
+// grant. The schema said 0 only for the cell metrics, leaving a client
+// to read cols:0 as a bug in the host. Raised in review
 // of #504.
 //
 // cols/rows deliberately do NOT claim to be "the range send_mouse

@@ -44,11 +44,20 @@ Read:
   anything outside the island. The size alone would hand a guest
   coordinates its own pointer call rejects.
 
-  Two limits stated rather than implied. The cell metrics are `0` when the
-  host never ran the capability probe, which is opt-in and so the usual
-  case for a cell-plane app; the tool reports the zero rather than
-  substituting `term.DefaultCellW/H`, because inventing a measurement is
-  the habit this tool exists to replace. And **#204 is closed on the MCP
+  Two limits stated rather than implied. The cell metrics are `0` only
+  where the host is CERTAINLY unmeasured, and the converse does not hold
+  — `0` means nobody probed, non-zero means *usable*, not *measured*.
+  Two sites substitute `term.DefaultCellW/H` behind a client's back:
+  `term.Screen.Detect` does it on `caps.CellW == 0` with no plane test
+  at all, so even a cell-plane app run with the probe in a terminal that
+  ignores `CSI 16 t` reports 10x20; and `App.caps` does it for a
+  pixel-plane host with a pinned encoder that never probed. A client
+  must branch on the zero rather than divide by the number, and must not
+  read a non-zero as evidence the terminal was measured — sizing a
+  picture against an invented 10x20 is the habit this tool exists to
+  replace. `mcp.cellProbeRule` is the one spelling of that sentence the
+  clients receive, and it states both directions; this bullet used to
+  state only "never probed ⇒ 0", which is the direction that is false. And **#204 is closed on the MCP
   surface only** — `control.Service.ScreenSize` is where both transports
   could call it, but `grpc/controlserver.go` has a `ScreenText` RPC and no
   size verb, so a gRPC client still infers the screen. Adding it is a

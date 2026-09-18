@@ -101,6 +101,65 @@ func TestTheRootAlwaysFillsTheScreen(t *testing.T) {
 	}
 }
 
+// TestAnUnscopedZeroExtentIsAnAnswerToo is the second cause of a 0x0,
+// and the schema named only the first.
+//
+// extentTail explained a zero extent as "a scoped session whose island
+// is collapsed or not yet arranged". An UNSCOPED session reports 0x0 as
+// well, whenever the terminal has no size — the unscoped arm reads
+// buf.W/buf.H straight off the composer, and a pty nobody ran stty on
+// is 0x0 and paints nothing, which this repo's own demo workflows say
+// in as many words. A client with one explanation for a value with two
+// causes answers "your island is collapsed" to a session holding no
+// grant, or treats the zero as impossible and divides by it.
+//
+// THE SIZE IS SET BEFORE THE SERVER EXISTS, because this is about the
+// terminal having no size at all rather than about a resize: a Resize
+// through the service would go through the same path either way, and
+// what is under test is the value the unscoped arm reads. Raised in
+// review of #504.
+func TestAnUnscopedZeroExtentIsAnAnswerToo(t *testing.T) {
+	app := newTestApp(t, screenSizeRootMarkup, nil)
+	done := make(chan struct{})
+	app.Post(func() {
+		app.cols, app.rows = 0, 0
+		app.attach(app.comp.Root())
+		close(done)
+	})
+	<-done
+
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := newClient(t, s)
+
+	sz := c.json("screen_size", nil)
+	// NOT AN ERROR, which is the half a client branches on first: a
+	// denial and a zero are different answers and only one of them says
+	// the session is still usable.
+	if _, isErr := sz["error"]; isErr {
+		t.Fatalf("screen_size on a zero-sized terminal answered with an error: %v", sz)
+	}
+	if got := sz["cols"]; got != float64(0) {
+		t.Errorf("cols = %v on an unscoped session whose terminal is 0x0, want 0", got)
+	}
+	if got := sz["rows"]; got != float64(0) {
+		t.Errorf("rows = %v on an unscoped session whose terminal is 0x0, want 0", got)
+	}
+	// AND THE SCHEMA HAS TO SAY SO. The value above is what the code
+	// does; this is the claim a client reads, and it was the half that
+	// named only the island.
+	d, _ := screenSizeSchema()["properties"].(map[string]any)
+	cols, _ := d["cols"].(map[string]any)
+	desc, _ := cols["description"].(string)
+	if !strings.Contains(desc, "ANY session") {
+		t.Errorf("cols' description explains a zero extent as\n\t%q\nwhich does "+
+			"not cover the unscoped terminal-has-no-size cause this test just "+
+			"produced", desc)
+	}
+}
+
 // TestTheCellMetricsSayWhenNobodyMeasured pins BOTH arms, because the
 // interesting one is the zero.
 //
@@ -665,10 +724,69 @@ func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 	// A % FOLLOWED BY A FORMAT LETTER, with its flag and width run: what
 	// a tail that was never rendered looks like. "%!"-style residue
 	// cannot match it — "!" is neither a flag nor a letter — so the two
-	// checks are independent rather than one subsuming the other, and
-	// "%%" is left alone because an escaped percent is a legal thing for
-	// a description to carry.
-	verb := regexp.MustCompile(`%[-+ #0]*[0-9.]*[a-zA-Z]`)
+	// checks are independent rather than one subsuming the other.
+	//
+	// THE PREVIOUS SPELLING DID NOT DO WHAT THE SENTENCE ABOVE IT SAID.
+	// It was `%[-+ #0]*[0-9.]*[a-zA-Z]`, under a claim that "%%" is left
+	// alone because an escaped percent is a legal thing to carry. It was
+	// not left alone, and neither was an ordinary percentage. A SPACE is
+	// a legal Go flag and was in the class, so any percent followed by a
+	// space and a letter matched:
+	//
+	//	"50%% done"    →  "% d"
+	//	"100% of it"   →  "% o"
+	//	"a %% b"       →  "% b"
+	//	"50% done."    →  "% d"
+	//
+	// A guard that is right about the case it was written for and wrong
+	// about the case its own comment excludes gets LOOSENED rather than
+	// obeyed the first time it cries wolf, and this is the one
+	// instrument covering the concatenated tails — where vet is blind
+	// and there is no "%!" to find.
+	//
+	// ONE CHANGE CARRIES ALL FOUR ROWS, and saying so is the point of
+	// having measured. Dropping the space flag removes every row above;
+	// narrowing the letters to Go's actual verbs removes none of them
+	// and is kept only because a prose letter after a width run ("%5z")
+	// is not a verb and should not read as one. Stripping "%%" before
+	// the search was the third change I wrote and it is NOT here: with
+	// the space gone it removes no row either, and it would make the
+	// matcher strictly less sensitive — a published "%%s" is a
+	// concatenated tail shipping "%s" to a client, which is exactly what
+	// this looks for.
+	//
+	// THE SPACE FLAG IS A DELIBERATE HOLE, not an oversight: "% d" and
+	// "% x" are real Go verbs and an unrendered one now goes unseen. It
+	// is the cheaper miss. A description carrying "100% of the terminal
+	// width" is a sentence somebody will write, and " d"/" x" after a
+	// percent is not a shape any published tail here has; the
+	// alternative trades a plausible false alarm for an implausible
+	// false negative. Raised in review of #504.
+	verbs := regexp.MustCompile(`%[-+#0]*[0-9.]*[bcdeEfFgGopqstTvxXU]`)
+	verb := verbs.FindString
+	// AND THE MATCHER IS ASSERTED, because every published string is
+	// clean today, so the sweep below starts green and would stay green
+	// over any matcher at all — including one that matches nothing.
+	// These arms are what make the three measured rows above a
+	// regression rather than a note. Raised in review of #504.
+	for _, tc := range []struct{ in, want string }{
+		{"ships %s here", "%s"},
+		{"%-3d wide", "%-3d"},
+		{"reports %v", "%v"},
+		{"50%% done", ""},
+		{"100% of it", ""},
+		{"a %% b", ""},
+		{"50% done.", ""},
+		{"no percent at all", ""},
+		// NOT EXCLUDED, and deliberately: a published description is a
+		// RENDERED string, so a literal "%%" in one came from
+		// concatenation and ships "%s" to every generated client.
+		{"%%s", "%s"},
+	} {
+		if got := verb(tc.in); got != tc.want {
+			t.Errorf("verb(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 	s := &Server{}
 	tools := s.v1Tools()
 	if len(tools) == 0 {
@@ -682,7 +800,7 @@ func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 		if strings.Contains(tl.Description, "%!") {
 			t.Errorf("%s's description carries fmt residue: %q", tl.Name, tl.Description)
 		}
-		if v := verb.FindString(tl.Description); v != "" {
+		if v := verb(tl.Description); v != "" {
 			t.Errorf("%s's description ships the unrendered verb %q to every "+
 				"generated client: %q. This one is CONCATENATED rather than "+
 				"Sprintf'd, so neither vet's printf check nor the %%! search "+
@@ -722,7 +840,7 @@ func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
 						"%% and Sprintf shipped it to every generated client",
 						tl.Name, name, sch.kind, d)
 				}
-				if v := verb.FindString(d); v != "" {
+				if v := verb(d); v != "" {
 					t.Errorf("%s's %q %s ships the unrendered verb %q: %q. A tail "+
 						"that is CONCATENATED rather than Sprintf'd — cellTail and "+
 						"cellProbeRule are the ones in this inventory — reaches the "+
