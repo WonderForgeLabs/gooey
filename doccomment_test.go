@@ -195,9 +195,18 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 	for _, mod := range modules {
 		switch {
 		case !reached[mod]:
-			faults = append(faults, fmt.Sprintf("the walk yielded no .go file under %q, "+
-				"which is a module of this tree: a guard that stops at a module boundary "+
-				"reports green for code it never read", mod))
+			faults = append(faults, fmt.Sprintf("the walk yielded no .go file under %[1]q, "+
+				"which is a module of this tree. TWO CAUSES, and this arm cannot tell "+
+				"them apart: a prune ate the module's files, in which case a guard that "+
+				"stops at a module boundary is reporting green for code it never read; "+
+				"or the module genuinely holds no Go. `find %[1]s -name '*.go'` "+
+				"separates them — files listed means the prune, nothing listed means the "+
+				"second, and the second is a real answer rather than a fault to fix. "+
+				"Reachable today: tools/ holds one .go file, doc.go, whose whole purpose "+
+				"is prose, so renaming it puts this module in the second case with no "+
+				"prune anywhere. This arm asserted the first until review of #503, and "+
+				"the reader who trusted it went looking through treeWalk for a prune "+
+				"that was not there", mod))
 		case !ruled[mod]:
 			faults = append(faults, fmt.Sprintf("every .go file under %[1]q was skipped — it "+
 				"did not parse, or it is generated — so this guard read the module and "+
@@ -229,26 +238,35 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 		unreached = "yielded no .go file"
 		unruled   = "was skipped"
 		unowned   = "no module in this"
+		// BOTH CAUSES, which is the half the unreached arm did not say.
+		// Identification and diagnosis are different claims and the
+		// arm can pass the first while failing the second, so they are
+		// asserted separately rather than as one phrase. Raised in
+		// review of #503.
+		twoCauses = "the module genuinely holds no Go"
+		separator = "-name '*.go'"
 	)
 	for _, tc := range []struct {
 		name           string
 		reached, ruled map[string]bool
 		modules        []string
-		want           string
+		// want is EVERY phrase the fault must carry. Empty means no
+		// fault at all.
+		want []string
 	}{
 		{
 			name:    "a module the walk never reached",
 			reached: map[string]bool{".": true},
 			ruled:   map[string]bool{".": true},
 			modules: []string{".", "mcp"},
-			want:    unreached,
+			want:    []string{unreached, twoCauses, separator},
 		},
 		{
 			name:    "a module reached but never ruled on",
 			reached: map[string]bool{".": true, "mcp": true},
 			ruled:   map[string]bool{".": true},
 			modules: []string{".", "mcp"},
-			want:    unruled,
+			want:    []string{unruled},
 		},
 		{
 			// A SET WITH NO ROOT MODULE IN IT, which is the only way
@@ -259,7 +277,7 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 			reached: map[string]bool{"": true, "apps/gitui": true, "mcp": true},
 			ruled:   map[string]bool{"": true, "apps/gitui": true, "mcp": true},
 			modules: []string{"apps/gitui", "mcp"},
-			want:    unowned,
+			want:    []string{unowned},
 		},
 		{
 			name:    "a module covered both ways",
@@ -270,7 +288,7 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := moduleFloorFaults(tc.reached, tc.ruled, tc.modules)
-			if tc.want == "" {
+			if len(tc.want) == 0 {
 				if len(got) != 0 {
 					t.Fatalf("a fully covered set reported %v, so the floor fires on "+
 						"modules it has no complaint about", got)
@@ -280,11 +298,14 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("reported %d faults, want exactly 1: %v", len(got), got)
 			}
-			if !strings.Contains(got[0], tc.want) {
-				t.Errorf("reported %q, want the %q wording — the two arms are "+
-					"distinguishable only by what they say, so the wrong one sends "+
-					"the reader to look for a prune that is not there, or past one "+
-					"that is", got[0], tc.want)
+			for _, want := range tc.want {
+				if !strings.Contains(got[0], want) {
+					t.Errorf("reported %q, want the %q wording — the arms are "+
+						"distinguishable only by what they say, so the wrong one sends "+
+						"the reader to look for a prune that is not there, or past one "+
+						"that is, and an arm that names one of two causes sends them "+
+						"looking for the other", got[0], want)
+				}
 			}
 		})
 	}
@@ -322,7 +343,16 @@ func TestTheRemediationGrepAgreesWithTheRule(t *testing.T) {
 			t.Errorf("%s: ast.IsGenerated says %v and the arm's grep says %v, so the "+
 				"remediation this floor prints names a different set of files than "+
 				"the walk skipped, and the reader is sent past the file they are "+
-				"looking for", path, rule, grep)
+				"looking for.\n\nTWO RESOLUTIONS, and the pattern is not always the "+
+				"one to change. The grep matches the marker at the start of ANY line; "+
+				"ast.IsGenerated accepts it only BEFORE the package clause, and no "+
+				"anchored pattern can express that — so a hand-written file carrying "+
+				"the marker at column 0 after the package clause (a raw string literal "+
+				"is the way it happens, and this file's own generated fixture is one "+
+				"edit from being written that way) diverges legitimately. If %[1]s is "+
+				"such a file, move the marker off column 0 there rather than widening "+
+				"the approximation this floor is built on. Raised in review of #503",
+				path, rule, grep)
 		} else if rule {
 			generated++
 		}
@@ -820,6 +850,27 @@ func alpha() {}
 			want: "alpha",
 		},
 		{
+			// THE SAME LOSS IN THE OTHER ORDER, and this arm exists to
+			// make the miss VISIBLE rather than to assert the guard is
+			// complete. opensBy reads the first word of the group, so
+			// when the honest doc is the upper one the merged group
+			// opens with the name it always had, every arm agrees, and
+			// alpha below is bare with nothing said about it. The
+			// argument against widening is on opensBy; what belongs
+			// here is a want:"" that goes red the day somebody widens
+			// it, so the accepted class is a decision rather than an
+			// assumption. Raised in review of #503.
+			name:         "the same lost blank line in the honest order is not caught",
+			wantExamined: 1,
+			src: `// beta reports the thing.
+// alpha is a different thing entirely, and the blank line that used to
+// separate these two groups is gone.
+func beta() {}
+
+func alpha() {}
+`,
+		},
+		{
 			// AN UNDERSCORE IS PART OF THE NAME. It was in opensBy's
 			// decoration cutset for markdown emphasis, which Go doc
 			// comments do not have, so `_handler` trimmed to `handler`,
@@ -1270,6 +1321,29 @@ func docsExamined(f *ast.File) int {
 // possessive — so widening it cannot invent a match: the result either
 // spells an identifier some declaration below actually introduces, or
 // no arm fires.
+//
+// # The order it cannot see, and why it is not widened
+//
+// It reads the FIRST word of the whole group, so the lost-blank-line
+// shape — seven of the eight findings this guard was written for — is
+// caught only when the stolen doc was the UPPER group. Reverse the two
+// and the merged group opens with the honest doc's own name, every arm
+// agrees, and the declaration below is bare with nothing said about it.
+// Measured on stolenComments directly: the stolen-first fixture reports
+// the theft, the honest-first one reports nothing, and both are one
+// keystroke from the same file.
+//
+// THE OBVIOUS WIDENING IS THE WRONG FIX, and that was measured before
+// it was rejected. Scanning every later line and paragraph opening
+// across this tree yields a dozen candidates — render/width.go's
+// EachCluster doc opening a paragraph with ClipCols, startable.go's
+// Delays with Start, term/clipboard.go, components/tabs.go,
+// paint/paint.go and more — and every one read is an honest cross
+// reference. A rule that fires on those is a rule nobody can leave on.
+// First-word-only is therefore load-bearing rather than incidental, and
+// the accepted miss is written down here and given a want:"" fixture
+// arm, the way documented() records the struct-field gap. Raised in
+// review of #503.
 func opensBy(doc *ast.CommentGroup) string {
 	fields := strings.Fields(doc.Text())
 	if len(fields) == 0 {
