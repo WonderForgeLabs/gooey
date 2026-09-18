@@ -131,7 +131,16 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	for _, s := range moduleFloorFaults(reached, ruled, modules) {
 		t.Error(s)
 	}
-	t.Logf("examined %d doc comments across %d files", examined, files)
+	// BEHIND !t.Failed(), the way TestTheRemediationGrepAgreesWithTheRule
+	// is and for the sharper reason. The floor errors immediately above
+	// say a module contributed NOTHING — the corpus is short by an
+	// unknown amount — and this line then prints a population figure as
+	// though it were the tree's. That figure is also what the PR body
+	// sends readers to as the authoritative count, so the misread is the
+	// intended reading path. Raised in review of #503.
+	if !t.Failed() {
+		t.Logf("examined %d doc comments across %d files", examined, files)
+	}
 }
 
 // generatedMarkerPattern is the ERE the !ruled arm below hands the
@@ -462,6 +471,106 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 			"iterates the module set — the root module would leave it in silence",
 			len(moduleDirs))
 	}
+	// AND THE PRUNE POLICY, POSITIVELY, because the floor above cannot
+	// see it. The floor is per-module BOOLEAN reachability — a module
+	// faults only when it loses its LAST file — so any narrowing of this
+	// walk that leaves one file per module standing is invisible to it,
+	// and a narrowing of the FILE filter is a strictly easier edit than
+	// a prune of a module directory. Measured on this branch, each with
+	// the whole root suite green and no output at all:
+	//
+	//	&& !strings.HasSuffix(path, "_test.go") on the .go case
+	//	    613 files / 4667 doc comments  →  285 / 2422
+	//	|| name == "testdata" on the prune above
+	//	    613 / 4667  →  609 / 4656
+	//
+	// The first is the one that matters: it removes the population this
+	// guard's own rationale is built on — nobody runs `go doc` on a test
+	// file, so a stolen doc there is found by reading only — and where
+	// most of its repairs have landed. The second contradicts the prune
+	// comment above in the same function, which states that testdata is
+	// deliberately not pruned.
+	//
+	// STATEMENTS OF THAT COMMENT'S OWN POLICY, not a count. A count is
+	// the thing this file refuses twice elsewhere, and it would fail on
+	// the next file anyone adds; these fail only when the policy changes,
+	// which is when someone should be reading this. The residual is the
+	// same one the module floor has and is named on
+	// TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery: a narrowing
+	// applied to the policy and to these assertions together.
+	//
+	// THREE OF THE FOUR DISCRIMINATE AND THE FOURTH IS BELT-AND-BRACES,
+	// and saying which is which is the point of writing the matrix down.
+	// treeWalk is shared by three tests, so a fatal here reddens all
+	// three:
+	//
+	//	mutation to this function              failing tests
+	//	  none                                   0
+	//	  drop _test.go from the .go case        3
+	//	  prune testdata                         3
+	//	  stop pruning vendor                    3
+	//	  stop pruning dot-directories           0
+	//
+	// The last row is the honest one: the dot-directory assertion below
+	// cannot fire in a fresh clone or in CI, because both offenders it
+	// is written for are UNTRACKED — .claude/worktrees/ holds whole
+	// checkouts of this repo, apps/kanban/worker/.venv appears once
+	// somebody runs that example — and this checkout has neither with Go
+	// in it. It is kept as the statement of a policy whose violation is
+	// silent on the machines that have those directories, not as a
+	// discriminating assertion; treating it as one would be the
+	// over-crediting this file's subject is about. Raised in review of
+	// #503.
+	var tests, fixtures, vendored, hidden string
+	for _, f := range files {
+		s := filepath.ToSlash(f)
+		if strings.HasSuffix(s, "_test.go") && tests == "" {
+			tests = s
+		}
+		if fixtures == "" && strings.Contains(s, "/testdata/") {
+			fixtures = s
+		}
+		if vendored == "" && (s == "vendor" || strings.HasPrefix(s, "vendor/") ||
+			strings.Contains(s, "/vendor/")) {
+			vendored = s
+		}
+		if hidden == "" {
+			for _, seg := range strings.Split(s, "/") {
+				if len(seg) > 1 && seg[0] == '.' {
+					hidden = s
+					break
+				}
+			}
+		}
+	}
+	if tests == "" {
+		t.Fatalf("the walk found %d .go files and not one of them is a _test.go: "+
+			"the file filter has been narrowed to non-test sources, which is the "+
+			"population this guard exists for — a doc comment in a test file is "+
+			"reached by reading and by nothing else — and the module floor cannot "+
+			"see it, because every module still contributes its non-test files",
+			len(files))
+	}
+	if fixtures == "" {
+		t.Fatalf("the walk found %d .go files and not one of them is under a "+
+			"testdata/ directory: the prune above states that testdata is "+
+			"deliberately NOT pruned because a fixture is still a file someone "+
+			"reads, and that sentence had nothing behind it — pruning testdata "+
+			"drops four files here and leaves every module contributing, so the "+
+			"floor stays silent", len(files))
+	}
+	if vendored != "" {
+		t.Fatalf("the walk yielded %q: vendor/ is other people's code and the prune "+
+			"above says so, and a theft in it is not this tree's to fix", vendored)
+	}
+	if hidden != "" {
+		t.Fatalf("the walk yielded %q, which has a dot-directory in its path: the "+
+			"prune above is depth-wide for two untracked offenders that exist on "+
+			"working machines and in no fresh clone (.claude/worktrees/ holds whole "+
+			"checkouts of this repo, apps/kanban/worker/.venv vendors Go of its "+
+			"own), so this fails on a developer's tree and passes in CI either way",
+			hidden)
+	}
 	return files, moduleDirs
 }
 
@@ -631,6 +740,21 @@ func TestTheDocCommentGuardCatchesWhatItIsFor(t *testing.T) {
 		wantExamined int
 	}{
 		{
+			// THE TOP-LEVEL LOCATOR IS ASSERTED HERE AND NOWHERE ELSE.
+			// wantMsg was set on the block arm and the spec arm only, so
+			// the third report site's locator — "the declaration DIRECTLY
+			// BELOW it" — was carried by no fixture. That is the exact
+			// phrase declaresDirectlyBelow's own comment records as
+			// having been FALSE: a doc naming the fifth const of the
+			// block below it was announced as directly below, five
+			// entries from where the name is. The behaviour is pinned
+			// (reverting declaresDirectlyBelow to scan every spec reddens
+			// "a later entry of the block below it is a cross
+			// reference"); the WORDING was not, and two rounds of this
+			// review have turned on a remediation sentence being wrong
+			// while the behaviour was right. This is the arm a reader
+			// reaches first, which is why it is the one that carries it.
+			// Raised in review of #503.
 			name:         "a function stolen from",
 			wantExamined: 1,
 			src: `// alpha does the alpha thing.
@@ -639,6 +763,11 @@ func beta() {}
 func alpha() {}
 `,
 			want: "alpha",
+			wantMsg: "the doc comment on beta opens by naming alpha, which is the " +
+				"declaration DIRECTLY BELOW it. That is a doc comment that was " +
+				"separated from what it documents — either beta was inserted " +
+				"between it and alpha, or the blank line between two comment " +
+				"groups was lost, and either way alpha is now undocumented.",
 		},
 		{
 			name:         "an honest comment that names itself",
