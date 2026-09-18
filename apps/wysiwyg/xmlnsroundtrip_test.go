@@ -2194,3 +2194,115 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 			"paste, want %q", got, markup.XNamespace)
 	}
 }
+
+// TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold is the sibling above
+// one scope out: the saved envelope binds prefixes ed.envAttrs has
+// never held, and a paste may not re-point those either.
+//
+// TWO SHAPES, AND THEY REACH THE FILE BY DIFFERENT ROUTES — which is
+// the point, because the editor's answer must not depend on the route:
+//
+//   - carried: one declaration holds its own xmlns:p, declPrefix reports
+//     the document binds the namespace already, and declAttrs re-emits
+//     that binding on the declaration element in the saved file;
+//   - minted: the declarations disagree about how they bind it (one
+//     prefixed, one as its own default xmlns), so declPrefix reports
+//     bound == false and withDeclBinding puts a fresh xmlns:p on
+//     <Gooey> that no opened byte ever contained.
+//
+// Both were ACCEPTED before #522's reconcileNamespaces widening, with
+// the byte-identical paste into the envelope-bound document refused by
+// the test above. The fixtures are the discriminator rather than the
+// assertion text: each was run against the narrow scope set and each
+// wrote the rebinding to disk.
+//
+// The refusal MESSAGE is not asserted here beyond its ✗ — the sibling
+// above owns that text, and repeating it would make a reworded message
+// three failures instead of one.
+func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
+	const other = "urn:gooey:test:522:not-x"
+	decl := func(prefixed bool, name, def string) string {
+		if prefixed {
+			return `  <p:Property xmlns:p="` + markup.XNamespace +
+				`" Name="` + name + `" Type="string" Default="` + def + `"/>`
+		}
+		return `  <Property xmlns="` + markup.XNamespace +
+			`" Name="` + name + `" Type="string" Default="` + def + `"/>`
+	}
+	for _, tc := range []struct {
+		name, why string
+		decls     []string
+	}{
+		{
+			name: "carried",
+			why: "the declaration carries its own xmlns:p and declAttrs " +
+				"re-emits it, so the saved file binds p: from a place " +
+				"ed.envAttrs never sees",
+			decls: []string{decl(true, "A", "a")},
+		},
+		{
+			name: "minted",
+			why: "the two declarations bind the namespace differently, so " +
+				"declPrefix reports it unbound and withDeclBinding mints " +
+				"xmlns:p onto <Gooey> — a binding no opened byte held",
+			decls: []string{decl(true, "A", "a"), decl(false, "B", "b")},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workspaceFixture(t)
+			doc := "<Gooey>\n" + strings.Join(tc.decls, "\n") + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="Existing" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n" +
+				`</Gooey>` + "\n"
+			if err := os.WriteFile(filepath.Join(root, "decl.gooey"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("decl.gooey")
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+				t.Fatalf("opening the fixture reports %q, want a build", got)
+			}
+			// THE PREMISE, and it is the half that makes this test
+			// different from its sibling: the binding must NOT be in
+			// either scope the narrow reconcileNamespaces collected, or
+			// the arm passes for the sibling's reason.
+			if got, ok := ed.envAttrs["xmlns:p"]; ok {
+				t.Fatalf("ed.envAttrs already binds p to %q, so this arm is "+
+					"measuring the envelope scope the sibling test owns", got)
+			}
+			if _, onRoot := ed.doc().Attrs["xmlns:p"]; onRoot {
+				t.Fatal("the binding came down onto the content root, so this " +
+					"arm is measuring the ordinary document scope")
+			}
+			if len(ed.envDecls) != len(tc.decls) {
+				t.Fatalf("ed.envDecls holds %d declarations, want %d — the "+
+					"fixture did not reach the scope this arm is about",
+					len(ed.envDecls), len(tc.decls))
+			}
+			// And the saved envelope must actually bind it, or there is
+			// nothing for the paste to conflict with.
+			if head := envelopeHead(ed.envAttrs, ed.envDecls); !strings.Contains(
+				head, `xmlns:p="`+markup.XNamespace+`"`) {
+				t.Fatalf("the saved envelope binds p: nowhere:\n%s", head)
+			}
+
+			ed.pasteMarkup(`<Gooey>` + "\n" +
+				`  <Text Name="Pasted" xmlns:p="` + other + `">hi</Text>` + "\n" +
+				`</Gooey>` + "\n")
+
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+				t.Errorf("pasting a fragment that binds p to a DIFFERENT uri "+
+					"reports %q, want a refusal: %s, and markup.parse's one "+
+					"flat last-wins table then hands every p: element in the "+
+					"saved file to the pasted uri", got, tc.why)
+			}
+			if src := ed.source.Get(); strings.Contains(src, other) {
+				t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+			}
+		})
+	}
+}
