@@ -331,8 +331,7 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// assertion, or the reverse, and nothing would go red — in the test
 	// whose whole design is about not relying on somebody remembering.
 	// The `why` column is what the three bespoke t.Errorf blocks were
-	// carrying and is the only part of them that differed. Raised in
-	// review of #520.
+	// carrying and is the only part of them that differed.
 	shapes := []struct{ got, want, buggy, shape, why string }{
 		{caret, wantCaret, "  █       ", "the focused row with the caret after both glyphs",
 			"the two glyphs occupy FOUR columns, so the caret belongs in column 4"},

@@ -66,8 +66,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	// an assignment inside the loop with no break, so a second row
 	// holding "Wrap" was resolved by iteration order and the other became
 	// invisible. frameText just widened from a fixed 14 rows to the whole
-	// frame, which is more rows for a second match to hide in. Raised in
-	// review of #520.
+	// frame, which is more rows for a second match to hide in.
 	const noItem = "This test compares ONE lead column against another, so " +
 		"an absent item leaves nothing to compare."
 	wrap := onlyMatch(t, rows, "Wrap", noItem)
