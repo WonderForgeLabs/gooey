@@ -61,11 +61,8 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	f, _ := c.Frame()
 
 	rows := strings.Split(frameText(f), "\n")
-	// EVERY MATCH, not the last one, for the reason
-	// TestACheckItemDrawsAWideLabelInItsOwnColumns gives below: this was
-	// an assignment inside the loop with no break, so a second row
-	// holding "Wrap" was resolved by iteration order and the other became
-	// invisible. frameText just widened from a fixed 14 rows to the whole
+	// EVERY MATCH, not the last one — matchRows' own doc carries the
+	// reason. frameText just widened from a fixed 14 rows to the whole
 	// frame, which is more rows for a second match to hide in.
 	const noItem = "This test compares ONE lead column against another, so " +
 		"an absent item leaves nothing to compare."
@@ -80,11 +77,11 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	// so the offsets differ exactly when the columns do.
 	//
 	// That argument is true of today's fixture and is no longer
-	// CONSTRAINED. frameText reads the whole frame now, so `len(wrap) == 1
-	// && len(plain) == 1` no longer implies both matches are dropdown
-	// rows sharing a border prefix — only that each word appears once
-	// anywhere on screen. A byte comparison over two rows with different
-	// prefixes is then a column comparison only by coincidence, and
+	// CONSTRAINED. frameText reads the whole frame now, so what onlyMatch
+	// guarantees is that each word appears exactly once ANYWHERE ON
+	// SCREEN — not that both matches are dropdown rows sharing a border
+	// prefix. A byte comparison over two rows with different prefixes is
+	// then a column comparison only by coincidence, and
 	// docs/specs/2026-09-05-menu-item-icons.md:118 records this exact
 	// trap springing twice already in menu code. The two widths are
 	// computed for the message regardless, so comparing them costs
