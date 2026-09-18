@@ -28,10 +28,24 @@ const EscTimeout = 40 * time.Millisecond
 // ESC [ 2 is a strict prefix of ESC [ 200 ~ AND three keys a person can
 // type. input.Decode holds it rather than resolving it, on the reasoning
 // that the rest of a real marker is already on the wire — true for a
-// paste, false for the typing, and in the typing case the hold is
-// permanent: the Esc is never delivered, the next keystroke is absorbed
-// into the CSI parse, and the loop below re-arms its timer every 40ms
-// for the rest of the process's life (#440).
+// paste, false for the typing. In the typing case the hold WAS permanent
+// (#440): the Esc was never delivered, the next keystroke was absorbed
+// into the CSI parse, and the loop below re-armed its timer every 40ms
+// for the rest of the process's life. It is bounded now, by this
+// constant — drainFinal withdraws the hold on the PasteMarkerGrace'th
+// timeout, and keys.go's re-arm is gated on `stalls < PasteMarkerGrace`,
+// which is the other half of the same change.
+//
+// PAST TENSE BECAUSE IT IS PAST, and this was the one copy still saying
+// otherwise. input/decode.go ("the hold WAS permanent … is NOW bounded
+// in time"), input/paste.go ("The wait is now bounded") and drainFinal's
+// own comment ("used to be justified by") all state it this way; this
+// paragraph described the fixed bug in the present tense with a trailing
+// (#440) as the only signal, twelve lines above the loop that no longer
+// does it — and it is the doc a reader lands on from
+// term.PasteMarkerGrace. Three copies, one not updated, which is the
+// shape this branch has spent nineteen rounds finding elsewhere. Raised
+// in review of #445.
 //
 // TWO, so the buffer survives one timeout and the window is 80ms. Lower
 // is not available, and the two values below it fail DIFFERENTLY. At one

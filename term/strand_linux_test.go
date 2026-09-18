@@ -125,11 +125,11 @@ func TestATypedPasteMarkerPrefixDoesNotStrandTheDecoder(t *testing.T) {
 	// A sleep here was the first version and it raced its own subject.
 	// Sleeping past the two timeouts cannot make a broken decoder pass,
 	// but it can make a WORKING one fail: if the decoder goroutine is
-	// delayed past the sleep, 'z' lands before the second timeout,
-	// stalls resets, and ESC [ 2 z decodes as one complete unmapped
-	// four-byte CSI emitting nothing — so the test fails at its deadline
-	// with the message for the bug under test, and a scheduling flake on
-	// a shared runner reads as a regression. Raised in review of #445.
+	// delayed past the sleep, 'z' lands before the second timeout, stalls
+	// resets, and ESC [ 2 z decodes as one complete unmapped four-byte CSI
+	// emitting nothing — so the test fails at its deadline with the
+	// message for the bug under test, and a scheduling flake on a shared
+	// runner reads as a regression.
 	if ev := next(t, evs, "the Esc never arrived: three bytes that are half a "+
 		"paste marker and also three keys a person typed are being held "+
 		"forever. Two causes, and this assertion cannot tell them apart: "+
@@ -243,13 +243,13 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 			break
 		}
 	}
-	// THE THRESHOLD THE LOOP BREAKS ON IS THE THRESHOLD THE MESSAGE
-	// CLAIMS ON. This arm read `silent > 0` while silentEnough was 5, so
-	// ONE silent attempt among nineteen late ones named the regression —
-	// and one silent attempt is exactly the benign reading the constant
-	// exists to rule out, a single split read before the close. The gap
-	// only opens on a loaded machine, which is the machine this repo's
-	// self-hosted runners are. Raised in review of #445.
+	// THE THRESHOLD THE LOOP BREAKS ON IS THE THRESHOLD THE MESSAGE CLAIMS
+	// ON. This arm read `silent > 0` while silentEnough was 5, so ONE
+	// silent attempt among nineteen late ones named the regression — and
+	// one silent attempt is exactly the benign reading the constant exists
+	// to rule out, a single split read before the close. The gap only
+	// opens on a loaded machine, which is the machine this repo's
+	// self-hosted runners are.
 	switch {
 	case silent >= silentEnough:
 		t.Fatalf("%d attempts produced NO event after the tty closed (%d "+
@@ -275,8 +275,8 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 			silent, attempts, late, drifted, silentEnough)
 	}
 	// A CAUSE PER COUNT, because the two routes here establish different
-	// things and a single sentence over both named the timer for
-	// attempts that never reached it. Raised in review of #445.
+	// things and a single sentence over both named the timer for attempts
+	// that never reached it.
 	t.Fatalf("none of %d attempts measured the grace window: %d arrived after "+
 		"the close but late enough that the timer could have produced them, and "+
 		"%d were abandoned before the close because the handshake drifted more "+
@@ -298,8 +298,8 @@ func TestAClosedTtyResolvesAHeldPrefixBeforeTheDecoderExits(t *testing.T) {
 // resolving anything — so rendering it as "the timer resolved the prefix
 // first" names a cause the attempt never established. That is the same
 // class this file corrected twice already (the threshold the loop breaks
-// on is the threshold the message claims on, and the silent arm's NO
-// CAUSE NAMED). Raised in review of #445.
+// on is the threshold the message claims on, and the silent arm's NO CAUSE
+// NAMED).
 type attemptOutcome int
 
 const (
@@ -319,17 +319,33 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	if err := s.Raw(); err != nil {
 		t.Fatalf("raw: %v", err)
 	}
-	// PER ATTEMPT, NOT PER TEST. openPTY registers its close on the
-	// PARENT t, which is right for a test that opens one pty and wrong
-	// for a retry loop: twenty inconclusive attempts held twenty pty
-	// pairs open and left twenty decoder goroutines parked on a read
-	// that would never return, all until the test ended. Restore is what
-	// joins the decoder — it closes the tty and waits, bounded by
-	// DecoderTimeout — so releasing the fd alone would not have been
-	// enough. openPTY's own cleanup still runs later and closes an
-	// already-closed file, which is a no-op. Raised in review of #445.
+	// PER ATTEMPT, NOT PER TEST. openPTY registers its close on the PARENT
+	// t, which is right for a test that opens one pty and wrong for a
+	// retry loop: twenty inconclusive attempts held twenty pty pairs open
+	// and left twenty decoder goroutines parked on a read that would never
+	// return, all until the test ended. Restore is what joins the decoder
+	// — it closes the tty and waits, bounded by DecoderTimeout — so
+	// releasing the fd alone would not have been enough. openPTY's own
+	// cleanup still runs later and closes an already-closed file, which is
+	// a no-op.
 	defer func() {
 		s.Restore()
+		// AND THE TEARDOWN HALF OF THE CLAIM, which was asserted in prose
+		// and by nothing else. Restore sets decLeaked from joinDecoder,
+		// and every helper in this file threw it away.
+		//
+		// This one matters most: closedTtyAttempt is the only place in
+		// the tree that tears a Screen down with a HELD MARKER PREFIX
+		// still in pend, which is exactly the drain(drainFinal)
+		// chunks-closed path this PR changes. term/lifecycle_test.go
+		// reads DecoderLeaked four times and never in that shape. Raised
+		// in review of #445.
+		if s.DecoderLeaked() {
+			t.Errorf("the decoder was still reading the tty %v after Restore "+
+				"returned, with a paste-marker prefix held in pend — the close "+
+				"path drains through DecodeFinal now, and a leak here means that "+
+				"drain did not let the reader finish", DecoderTimeout)
+		}
 		master.Close()
 	}()
 	evs := s.Events(16)
@@ -340,15 +356,15 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// "write, then close" alone loses the prefix on most runs and the
 	// test measures nothing.
 	//
-	// WHAT READING THE 'b' BACK PROVES is that the decoder consumed a
-	// read — not that it consumed THIS WHOLE WRITE. One write is not one
-	// read: the slave may return "b" and "\x1b[2" separately, and a
-	// hung-up pty discards input still queued, so the prefix can be gone
-	// before the close. Four bytes from one write come back in one
-	// 128-byte read essentially always, which makes this unlikely rather
-	// than impossible — and the receive below is non-fatal for exactly
-	// that residue, because a lost prefix is an attempt that could not be
-	// made, not a decoder that dropped an Esc. Raised in review of #445.
+	// WHAT READING THE 'b' BACK PROVES is that the decoder consumed a read
+	// — not that it consumed THIS WHOLE WRITE. One write is not one read:
+	// the slave may return "b" and "\x1b[2" separately, and a hung-up pty
+	// discards input still queued, so the prefix can be gone before the
+	// close. Four bytes from one write come back in one 128-byte read
+	// essentially always, which makes this unlikely rather than impossible
+	// — and the receive below is non-fatal for exactly that residue,
+	// because a lost prefix is an attempt that could not be made, not a
+	// decoder that dropped an Esc.
 	wrote := time.Now()
 	if _, err := master.Write([]byte("b\x1b[2")); err != nil {
 		t.Fatalf("write to master: %v", err)
@@ -381,15 +397,14 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// THE TWO LABELS WERE SWAPPED HERE, and swapped against this
 	// paragraph's own heading, against the `held < arm + 2*EscTimeout`
 	// condition it goes on to state, and against the guard below, whose
-	// arithmetic sentence has always been right. A reader deciding
-	// whether the EscTimeout/4 guard is still needed would have read
-	// this and concluded it defends the direction that is already
-	// conservative. Raised in review of #445, twice.
+	// arithmetic sentence has always been right. A reader deciding whether
+	// the EscTimeout/4 guard is still needed would have read this and
+	// concluded it defends the direction that is already conservative.
 	held := time.Now()
 	// AND THE DRIFT IS MEASURED, the way splitMarkerAttempt measures it
-	// below. Sampling `held` after a receive on a BUFFERED channel is
-	// what makes the paragraph above a hazard rather than an observation:
-	// at a drift of 2*EscTimeout the stall path has already escalated and
+	// below. Sampling `held` after a receive on a BUFFERED channel is what
+	// makes the paragraph above a hazard rather than an observation: at a
+	// drift of 2*EscTimeout the stall path has already escalated and
 	// pushed Esc, [, 2 into the channel before master.Close() runs, so
 	// nextOrNone returns an ALREADY-QUEUED Esc with time.Since(held) ≈ 0,
 	// every assertion below passes, and the attempt reports
@@ -398,7 +413,7 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// the doc above calls worse than red. `arm >= wrote`, because the
 	// decoder cannot arm for bytes it has not read, so held-minus-wrote
 	// bounds held-minus-arm from above and is the discriminator the
-	// elapsed check below cannot be. Raised in review of #445.
+	// elapsed check below cannot be.
 	if held.Sub(wrote) > EscTimeout/4 {
 		// NOT attemptLate: nothing has been closed or observed yet, so
 		// there is no timer to blame. See attemptOutcome.
@@ -431,11 +446,11 @@ func closedTtyAttempt(t *testing.T) attemptOutcome {
 	// receiving `b` from a BUFFERED channel, and the decoder sends that
 	// event before it arms the escape timer — so if the test goroutine is
 	// descheduled, `held` lands after the arm by that much. Budgeting the
-	// full stall latency then lets a timer-delivered Esc measure just under
-	// it and be credited to the close, which is the false pass this retry
-	// loop exists to prevent. One EscTimeout is still orders of magnitude
-	// above the close path's real latency — it resolves on a failed read,
-	// not on a deadline. Raised in review of #445.
+	// full stall latency then lets a timer-delivered Esc measure just
+	// under it and be credited to the close, which is the false pass this
+	// retry loop exists to prevent. One EscTimeout is still orders of
+	// magnitude above the close path's real latency — it resolves on a
+	// failed read, not on a deadline.
 	if elapsed := time.Since(held); elapsed >= EscTimeout {
 		return attemptLate // the timer could have done this; attribute nothing
 	}
@@ -498,8 +513,7 @@ func TestASplitPasteMarkerStillPastes(t *testing.T) {
 	// lines BELOW — the same class as the "seventy lines below" this
 	// branch already removed, and inconsistent with its own neighbour
 	// upstream, which names splitMarkerAttempt outright. A name cannot
-	// drift; a direction does, every time something moves between the
-	// two. Raised in review of #445.
+	// drift; a direction does, every time something moves between the two.
 	const attempts = 40
 	for i := range attempts {
 		if splitMarkerAttempt(t) {
@@ -529,6 +543,11 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// runs forty attempts rather than twenty.
 	defer func() {
 		s.Restore()
+		// Its sibling in closedTtyAttempt carries the reasoning.
+		if s.DecoderLeaked() {
+			t.Errorf("the decoder was still reading the tty %v after Restore "+
+				"returned", DecoderTimeout)
+		}
 		master.Close()
 	}()
 	evs := s.Events(16)
@@ -562,7 +581,7 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// the resolved Esc and this helper HARD-FAILS with the #419 message,
 	// which the retry loop cannot absorb. A scheduling stall wearing the
 	// costume of a regression, in the one direction the record did not
-	// acknowledge. Raised in review of #445 round nine.
+	// acknowledge.
 	if held.Sub(wrote) > EscTimeout/4 {
 		return false // held may be a quarter-timeout past the arm; attribute nothing
 	}
@@ -599,8 +618,8 @@ func splitMarkerAttempt(t *testing.T) bool {
 	// EscTimeout/2 on an idle machine and less exactly when the machine is
 	// the reason it is needed — which is the trade, and the retry loop is
 	// what absorbs it. That last clause was true of the bails and NOT of
-	// the read below, which hard-failed; the branch at the !IsPaste arm
-	// is what makes it true of both. Raised in review of #445.
+	// the read below, which hard-failed; the branch at the !IsPaste arm is
+	// what makes it true of both.
 	time.Sleep(EscTimeout + EscTimeout/4)
 	if _, err := master.Write([]byte("00~payload\x1b[201~")); err != nil {
 		t.Fatalf("write to master: %v", err)
@@ -676,7 +695,7 @@ func splitMarkerAttempt(t *testing.T) bool {
 		// The cost, stated: it makes the PasteMarkerGrace = 1 kill
 		// probabilistic, the same way the spec already concedes this row
 		// holds probabilistically. TestPasteMarkerGraceHasAFloor is the
-		// deterministic pin and is unaffected. Raised in review of #445.
+		// deterministic pin and is unaffected.
 		if ev.IsKey() && ev.Key.Key == input.KeyEsc &&
 			time.Since(wrote) >= 2*EscTimeout {
 			return false // the grace had already expired; attribute nothing
@@ -865,6 +884,11 @@ func loneEscAttempt(t *testing.T) bool {
 	}
 	defer func() {
 		s.Restore()
+		// Its sibling in closedTtyAttempt carries the reasoning.
+		if s.DecoderLeaked() {
+			t.Errorf("the decoder was still reading the tty %v after Restore "+
+				"returned", DecoderTimeout)
+		}
 		master.Close()
 	}()
 	evs := s.Events(16)
@@ -909,15 +933,14 @@ func loneEscAttempt(t *testing.T) bool {
 	//
 	// THE RESIDUE IS INCONCLUSIVENESS, NOT A VACUOUS PASS, which is the
 	// one way this helper differs from its two siblings and is worth
-	// stating in the same breath. A large deschedule pushes a HEALTHY
-	// Esc past wrote+60ms, nextOrNone times out, and the attempt returns
-	// false — so the loop retries, and twenty of them exhausting is a
-	// Fatal naming both causes. It cannot go the other way: the
-	// drainLive mutation emits no earlier than arm+2*EscTimeout >=
-	// wrote+80ms, which is outside this budget however the arm drifted,
-	// so no amount of scheduling noise turns the mutation green here.
-	// The spec carries this beside splitMarkerAttempt's and
-	// partialProgressAttempt's. Raised in review of #445.
+	// stating in the same breath. A large deschedule pushes a HEALTHY Esc
+	// past wrote+60ms, nextOrNone times out, and the attempt returns false
+	// — so the loop retries, and twenty of them exhausting is a Fatal
+	// naming both causes. It cannot go the other way: the drainLive
+	// mutation emits no earlier than arm+2*EscTimeout >= wrote+80ms, which
+	// is outside this budget however the arm drifted, so no amount of
+	// scheduling noise turns the mutation green here. The spec carries
+	// this beside splitMarkerAttempt's and partialProgressAttempt's.
 	ev, got := nextOrNone(evs, EscTimeout+EscTimeout/2-time.Since(wrote))
 	if !got {
 		return false // late; it may be the machine, and a retry is expected to say
@@ -935,12 +958,11 @@ func loneEscAttempt(t *testing.T) bool {
 func TestPasteMarkerGraceHasAFloor(t *testing.T) {
 	if PasteMarkerGrace < 2 {
 		// TWO CONSEQUENCES, NAMED SEPARATELY, because 1 and 0 break
-		// different things and a reader who lands on 0 needs the one
-		// that describes what they actually did. This message used to
-		// state only the value-1 story, next to a term suite that would
-		// also be failing on timeouts — sending them looking for a
-		// stranded paste marker when what they removed was the escape
-		// timeout. Raised in review of #445.
+		// different things and a reader who lands on 0 needs the one that
+		// describes what they actually did. This message used to state
+		// only the value-1 story, next to a term suite that would also be
+		// failing on timeouts — sending them looking for a stranded paste
+		// marker when what they removed was the escape timeout.
 		if PasteMarkerGrace < 1 {
 			t.Fatalf("PasteMarkerGrace is %d. At 0 the re-arm condition in "+
 				"DecodeEvents (`stalls < PasteMarkerGrace`) is false on the "+
@@ -1037,6 +1059,11 @@ func partialProgressAttempt(t *testing.T) bool {
 	}
 	defer func() {
 		s.Restore()
+		// Its sibling in closedTtyAttempt carries the reasoning.
+		if s.DecoderLeaked() {
+			t.Errorf("the decoder was still reading the tty %v after Restore "+
+				"returned", DecoderTimeout)
+		}
 		master.Close()
 	}()
 	evs := s.Events(16)
@@ -1188,14 +1215,14 @@ func partialProgressAttempt(t *testing.T) bool {
 		// whenever the decoder reads promptly. 2*EscTimeout-EscTimeout/4
 		// is 70ms, the midpoint of the two.
 		//
-		// The cost, stated: the same concession splitMarkerAttempt's
-		// bail makes. A deschedule long enough to push the mutation's
-		// own Esc past 70ms turns a real kill into an inconclusive
-		// attempt, so the #419 kill through THIS branch is
-		// probabilistic across the retry loop rather than certain on
-		// one attempt. It is not the pin on PasteMarkerGrace itself —
-		// grace = 1 is caught at the unmodified-Esc premise far above,
-		// which this bail is nowhere near. Raised in review of #445.
+		// The cost, stated: the same concession splitMarkerAttempt's bail
+		// makes. A deschedule long enough to push the mutation's own Esc
+		// past 70ms turns a real kill into an inconclusive attempt, so the
+		// #419 kill through THIS branch is probabilistic across the retry
+		// loop rather than certain on one attempt. It is not the pin on
+		// PasteMarkerGrace itself — grace = 1 is caught at the
+		// unmodified-Esc premise far above, which this bail is nowhere
+		// near.
 		if ev.IsKey() && ev.Key.Key == input.KeyEsc &&
 			time.Since(escAt) >= 2*EscTimeout-EscTimeout/4 {
 			return false // the remainder's grace had already expired

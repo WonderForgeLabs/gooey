@@ -41,8 +41,12 @@ import (
 //     property of the sweep — the same accident this branch diagnoses in
 //     TestFinalDecodeMakesProgressOnNestedEscapes, whose inherited
 //     alphabet could not spell the thing that file is about. Measured
-//     here: adding '2' produces 18 stranding inputs ("\x1b[2" ×17 and
-//     "\x1b[20" ×1) and reddens the sweep against a CORRECT decoder.
+//     here: adding '2' produces TWO stranding inputs, "\x1b[2" and
+//     "\x1b[20", and reddens the sweep against a CORRECT decoder. They
+//     were reached 17 and 1 times respectively when the 3-byte assertion
+//     sat in the innermost loop; hoisting it (review of #445) makes each
+//     reached once per distinct buffer, which is what a count of inputs
+//     should mean.
 //   - TestIdleDecodeMakesProgressOnEscBeforeAMouseReport is safe because
 //     every input in it is SEVEN BYTES OR MORE, so the buffer itself can
 //     never be one of the ≤5-byte prefixes splitPasteMarker accepts, and
@@ -100,20 +104,33 @@ func TestIdleDecodeAlwaysMakesProgress(t *testing.T) {
 // carries for its five-byte ceiling. These buffers are three and four
 // bytes long, inside splitPasteMarker's 3-to-5-byte hold, so the only
 // reason assertProgress's absolute holds here is that "\x1b[2…" cannot
-// be spelled from the bytes below. Measured: adding '2' yields 18
-// stranding inputs and turns this test red against a decoder doing
-// exactly what it should. A reader widening the alphabet has to skip
+// be spelled from the bytes below. Measured: adding '2' yields TWO
+// stranding inputs — "\x1b[2" and "\x1b[20" — and turns this test red
+// against a decoder doing exactly what it should. (That figure read 18
+// until review of #445: the 3-byte assertion sat in the innermost loop,
+// so the two inputs were hit 18 times between them and the count was of
+// assertion hits rather than of inputs. The breakdown at :44 was the
+// honest form and is kept; this line now agrees with it.) A reader widening the alphabet has to skip
 // what splitPasteMarker accepts, not weaken the assertion. Raised in
 // review of #445.
 func TestIdleDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
 	buf := make([]byte, 4)
+	// ONE ASSERTION PER LENGTH, AT THAT LENGTH'S OWN LOOP LEVEL, the way
+	// TestFinalDecodeMakesProgressOnNestedEscapes does it. The 3-byte
+	// call sat in the innermost loop, so every 3-byte buffer was asserted
+	// 16 times — which is where the "18 stranding inputs" figure came
+	// from: two distinct inputs, hit 18 times. Hoisting makes the
+	// measurement the number of INPUTS, which is what the comment above
+	// claims it is, and drops 16x redundant work on the 3-byte tier.
+	// Raised in review of #445.
 	for _, w := range alpha {
 		for _, x := range alpha {
 			for _, y := range alpha {
+				buf[0], buf[1], buf[2] = w, x, y
+				assertProgress(t, buf[:3])
 				for _, z := range alpha {
-					buf[0], buf[1], buf[2], buf[3] = w, x, y, z
-					assertProgress(t, buf[:3])
+					buf[3] = z
 					assertProgress(t, buf[:4])
 				}
 			}

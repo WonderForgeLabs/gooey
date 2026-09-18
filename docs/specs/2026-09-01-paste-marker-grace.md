@@ -608,3 +608,36 @@ range, and the test's own comment claimed the coverage. Measured in review of
 The lesson generalizes past this file: when a sweep is widened to cover a new
 rule, check that its ALPHABET can spell the rule's inputs, not only that its
 lengths reach them.
+
+## Where the correction history lives, and where it does not
+
+Round twenty of this PR's review measured `term/strand_linux_test.go` at 697
+comment lines out of 1218 — 57% — carrying 30 `review of #445` annotations,
+with 69 across the branch against roughly 150 lines of changed production
+logic. The observation behind the number is the one that matters: most of that
+volume is *correction history* rather than contract, and a record that outlives
+what it describes, in a file where nothing re-verifies it, is the exact hazard
+this whole change is about.
+
+The provenance markers are gone from that file — 28 down to 12, and the
+twelve that remain are mid-sentence clauses where the round IS the fact
+("the third was added in review of #445: the spec's zero row…"), not trailing
+attributions. This document is where the round-by-round account belongs,
+because it is one place rather than thirty and because a reader auditing the
+history comes here for it.
+
+**What deliberately stayed in the test file** is every paragraph that says
+what a reader must not re-introduce. A sentence like "this arm read
+`silent > 0` while `silentEnough` was 5" reads as archaeology and is not: it
+is the residual, stated in the only form that survives — the specific edit
+that was wrong, next to the code that would accept it again. Stripping those
+to "the threshold the loop breaks on is the threshold the message claims on"
+would leave a rule with no failing case attached, which is how a rule gets
+read as a preference. The division is therefore by WHAT A PARAGRAPH DOES, not
+by whether it mentions a past state: an attribution moves here, a
+counterexample stays there.
+
+That division is a judgement and not a check, so it is worth saying plainly
+that nothing enforces it. The measurable half is the annotation count, and
+the number above is a sample taken once — count them if you want today's
+figure.
