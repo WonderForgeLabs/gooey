@@ -382,20 +382,24 @@ func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 }
 
 // countingPost wraps the dispatcher's Post and counts what the watcher
-// hands it. It is a CLOCK DRIVEN BY THE WATCHER ITSELF, and the reason
-// it exists is that wall-clock waiting is not.
+// hands it: a CLOCK DRIVEN BY THE WATCHER ITSELF, which wall-clock
+// waiting is not.
 //
-// IT COUNTS POSTS, WHICH ARE NOT CYCLES. Each poll cycle posts the paths
-// request; a cycle whose scan finds a change posts the fire as well. So n
-// posts is somewhere between n/2 and n cycles, so every caller has to
-// state its claim in the units it actually measures. What the counter
-// guarantees is a LOWER bound: n posts cannot have happened in fewer
-// than n/2 cycles, and the poll goroutine is serial, so a scan sits
-// between any two of them. That is the property the callers rest on,
-// and it holds whatever the machine was doing in between.
+// IT COUNTS POSTS, WHICH ARE NOT CYCLES. A cycle posts the paths
+// request, and one whose scan found a change posts the fire too, so n
+// posts is between n/2 and n cycles and every caller states its claim in
+// the units it measures. The guarantee is a LOWER bound — n posts cannot
+// have happened in fewer than n/2 cycles, and the poll goroutine is
+// serial, so a scan sits between any two of them — and it holds whatever
+// the machine was doing in between.
 //
 // atomic because the posts come from the poll goroutine and the reads
 // from the test's.
+//
+// THE ZERO VALUE IS NOT USABLE: post must be set first, and a nil one
+// panics rather than being swallowed — the asymmetry with the nil-fn
+// guard below is deliberate, since a swallowed nil delegate makes every
+// post a silent no-post and takes the whole budget to report it.
 type countingPost struct {
 	n    atomic.Int64
 	post func(func())
@@ -409,12 +413,10 @@ type countingPost struct {
 //
 // A NIL POST IS NOT A POST, and the guard mirrors gooey.Dispatcher.Post,
 // which returns without enqueueing on a nil fn. Counting one reaches the
-// same released-on-an-empty-queue state from the other side: the closure
-// the count promises has not merely not run yet, it does not exist. No
-// caller in this file can produce it — FileWatcher.Start posts two
-// literal closures — so this is a hole in a freshly-asserted invariant
-// rather than a live defect, which is the shape this branch is removing
-// elsewhere in the same file.
+// released-on-an-empty-queue state from the other side: the closure the
+// count promises does not merely not-run-yet, it does not exist. No
+// caller here can produce one, so it is a hole in the invariant rather
+// than a live defect.
 func (c *countingPost) Post(f func()) {
 	if f == nil {
 		return
@@ -424,78 +426,51 @@ func (c *countingPost) Post(f func()) {
 }
 
 // drainUntilPosts pumps the dispatcher until the watcher has posted n
-// more times than it had at base, and it is what a test means by "let
-// the watcher get past this edit".
+// more times than it had at base — what a test means by "let the watcher
+// get past this edit". It returns the delta it observed, so a caller can
+// say what happened rather than restate the number it asked for.
 //
-// The fixed 40ms window it replaces read as generous and was not: the
-// deadline is absolute, so it buys 40 poll cycles on an idle machine
-// and can buy ZERO on a loaded CI runner, where forty milliseconds of
-// wall clock may hold no scheduling slot for the poll goroutine at all.
-// A zero-cycle wait leaves the baseline where it was, so the change made
-// while disabled is still pending — and re-enabling then delivers it,
-// which is the assertion failing. Measured on #501's CI run 34786453065:
-// "re-enabling replayed 1 change(s) made while disabled", green on the
-// same commit locally at -count=20.
+// A FIXED WINDOW CANNOT SAY THAT. The 40ms deadline it replaces is
+// absolute: forty poll cycles idle, and ZERO on a loaded runner, where
+// forty milliseconds of wall clock may hold no scheduling slot for the
+// poll goroutine at all. A zero-cycle wait leaves the baseline where it
+// was, so a change made while disabled is still pending and re-enabling
+// delivers it — "re-enabling replayed 1 change(s) made while disabled",
+// seen on CI and green on the same commit locally.
 //
-// THE BASELINE IS SAMPLED HERE, not passed in. Nothing else uses it,
-// and a parameter every caller would compute the same way one line up is
-// a place for them to differ.
+// THE BASELINE IS SAMPLED HERE, not passed in: nothing else uses it, and
+// a parameter every caller computes the same way one line up is a place
+// for them to differ.
 //
-// AND THE DEADLINE SCALES WITH n, BUT THE PER-POST SLACK DOES NOT — it
-// shrinks, and that is the shape rather than a bug in it. waitFor's two
-// seconds are for ONE event; this waits for n round trips of a goroutine
-// the test does not schedule, and one caller wants forty of them. The
-// two-second base is a FLOOR against a runner that gives the poll
-// goroutine no slot at all, not a per-post allowance, so it does not
-// divide — the per-post share of it falls as n rises, and only the
-// marginal term scales. At the intervals these callers use, even the
-// tightest per-post figure the formula produces is orders of magnitude
-// above what a post costs on an idle machine; bounded either way, so a
-// watcher that has genuinely stopped polling fails rather than hanging.
+// THE BUDGET IS A FLOOR PLUS A MARGINAL TERM, so the per-post slack
+// SHRINKS as n rises. waitFor's seconds are for ONE event; this waits for
+// n round trips of a goroutine the test does not schedule, and the floor
+// is against a runner that gives that goroutine no slot at all, so it
+// does not divide. Bounded either way. No evaluated figures: the shape
+// survives a retune and a quoted pair does not.
 //
-// THE SHAPE, NOT THE ARITHMETIC. This paragraph evaluated the formula
-// at both call sites and quoted three figures, one line from the
-// expression that produces them — so retuning either constant left the
-// prose wrong with nothing red, which is the sample-taken-once shape
-// CLAUDE.md's Verify section rules against. The shape is the durable
-// half and survives any retuning.
-//
-// THE MUTATION THAT SHOWS THIS WORKS IS NOT THE OBVIOUS ONE. Replacing
-// BOTH waits in TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay
-// with a single Drain passes 400 runs out of 400: with no cycles at all
-// the watcher never scans the edit, so there is nothing to replay and
-// every assertion passes VACUOUSLY. An all-pass mutation matrix is the
-// mutation's fault, not the guard's.
-//
-// The discriminating one removes only the FIRST wait. The baseline then
-// never advances past the edit made while disabled, the second wait
-// gives the re-enabled watcher a cycle to deliver it, and the test fails
-// with CI's own message — "re-enabling replayed 1 change(s) made while
-// disabled" — 200 runs out of 200, deterministically rather than as a
-// flake. Measured both ways.
-//
-// It returns the delta it observed so a caller can say what actually
-// happened rather than restating the number it asked for.
+// THE DISCRIMINATING MUTATION REMOVES ONLY THE FIRST WAIT in
+// TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay — the baseline
+// never advances past the edit made while disabled, the second wait gives
+// the re-enabled watcher a cycle to deliver it, and the test fails with
+// CI's own message. Replacing BOTH waits with a single Drain passes
+// instead: with no cycles the watcher never scans the edit, so there is
+// nothing to replay and every assertion holds VACUOUSLY. An all-pass
+// matrix is the mutation's fault, not the guard's.
 func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64) int64 {
 	t.Helper()
 	base := c.n.Load()
 	budget := 2*time.Second + time.Duration(n)*50*time.Millisecond
 	deadline := time.Now().Add(budget)
 	// HOISTED, so the failure below quotes what was OBSERVED. The loop
-	// exits because the last in-loop check saw `got < n`, and the poll
+	// exits on the last in-loop check seeing `got < n`, and the poll
 	// goroutine can post between that check and the format — so a second
-	// load prints posts whose closures never ran, the same overclaim the
-	// return path forbids ten lines down. Worse for the reader than for
-	// the assertion: the re-loaded count can have REACHED n, so the
-	// message prints a total equal to the want and reads as a
-	// contradiction — which sends the next person to look at the
-	// comparison instead of at the stalled goroutine. The illustration
-	// here used to spell that out with the budget evaluated for n=3,
-	// eight lines above the expression that produces it, which is the
-	// hazard the paragraph on drainUntilPosts above removed from its own
-	// prose. Reachable in precisely the scenario this
-	// helper exists for — a runner that gives the goroutine no slot for
-	// the whole budget and then schedules it in a burst at the boundary.
+	// load prints posts whose closures never ran, the overclaim the
+	// return path forbids below. It can even print a total that has
+	// REACHED n, which reads as a contradiction and sends the next
+	// person to the comparison instead of to the stalled goroutine.
+	// Reachable in exactly the scenario this helper exists for: no slot
+	// for the whole budget, then a burst at the boundary.
 	var got int64
 	for time.Now().Before(deadline) {
 		disp.Drain()
@@ -522,19 +497,16 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 // TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan pins the number
 // the diagnostics above quote.
 //
-// The helper's whole reason for returning a count is that the constant
-// it replaces claims one scan more than is guaranteed. Reading the
-// counter AFTER the final Drain has the same failure: Dispatcher.Drain
-// takes the queue and runs it with the lock released, so anything posted
-// while it runs lands in a NEXT drain that never comes — counted, not
-// run. The poll goroutine at a 1ms interval is exactly that, and a race
-// is not a fixture, so the posting here happens from INSIDE a drained
-// closure, where the ordering is forced rather than likely.
+// Reading the counter AFTER the final Drain over-reports: Drain takes
+// the queue and runs it with the lock released, so anything posted while
+// it runs lands in a NEXT drain that never comes — counted, not run. The
+// poll goroutine at a 1ms interval is exactly that, and a race is not a
+// fixture, so the posting here happens from INSIDE a drained closure,
+// where the ordering is forced rather than likely.
 //
 // `>` rather than `!=`, because under-reporting is sound and this
 // fixture does under-report: the message says how many posts are KNOWN
-// to have run, and a count of two claiming three is the only direction
-// that can mislead.
+// to have run, and only over-reporting misleads.
 func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	d := gooey.NewDispatcher()
 	c := &countingPost{post: d.Post}
@@ -542,17 +514,14 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	tail := func() { ran++ }
 	second := func() {
 		ran++
-		// TWO, AND THE MARGIN IS ONE POST. Measured with one tail:
-		// honest got=1, dishonest=2, ran=2 — the honest and dishonest
-		// counts are 1 and 2, not equal; what coincides is the
-		// DISHONEST count and `ran`, which is exactly why `got > ran`
-		// would not fire. The slack is the base offset: drainUntilPosts
+		// TWO TAILS, AND THE SECOND IS THE MARGIN. drainUntilPosts
 		// samples `base` on entry, after the first c.Post, so `ran`
-		// counts one closure that sits outside the baseline and the
-		// assertion compares two differently-based numbers. The second
-		// tail is what buys that post back — with it, honest got=1,
-		// dishonest=3, ran=2, and a dishonest count fires. Take it out
-		// and this fixture stops discriminating without changing shape.
+		// counts one closure outside the baseline and the assertion
+		// compares two differently-based numbers. With one tail the
+		// DISHONEST count and `ran` coincide at 2 and `got > ran` does
+		// not fire; the second buys that post back — honest got=1,
+		// dishonest=3, ran=2. Take it out and this fixture stops
+		// discriminating without changing shape.
 		c.Post(tail)
 		c.Post(tail)
 	}
@@ -570,12 +539,10 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 // TestCountingPostEnqueuesBeforeItCounts pins the order the comment on
 // Post calls the whole contract.
 //
-// Nothing else could, and that is the point: every post in this file's
-// fixtures completes on one goroutine before the next Load, so swapping
-// the two statements is unobservable there — measured, the components
-// suite stays green at -count=10 with the increment moved first. An
-// invariant asserted in prose and enforced by nothing is the shape this
-// branch is removing elsewhere in the same file.
+// Nothing else could: every post in this file's other fixtures completes
+// on one goroutine before the next Load, so swapping the two statements
+// is unobservable there — measured, the suite stays green with the
+// increment moved first.
 //
 // THE SAMPLE IS TAKEN AT ENQUEUE TIME, from inside the func Post
 // delegates to, which is the one instant between the two statements. The
@@ -771,19 +738,14 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 
 	write(t, dir, "a.txt", "two", t2)
 	// THREE POSTS MAY BE TWO CYCLES, and three is still the right number.
-	//
-	// A DISABLED WATCHER STILL POSTS THE FIRE. The poll loop posts it
-	// unconditionally once a scan reports a hit (FileWatcher.Start), and
-	// it is fire() — on the UI goroutine — that reads Enabled and returns.
-	// That is what this test's own header means by "Enabled gates the HIT,
-	// not the poll", so the sequence here can be paths, fire, paths: two
-	// cycles. Measured with a println beside the post.
-	//
-	// What makes three enough either way is that the poll goroutine is
-	// SERIAL and a scan sits between a paths post and the next post: by
-	// the time the counter has moved three times, at least one scan that
-	// began after the write has finished, and the baseline it advanced is
-	// what makes the change dropped rather than merely late.
+	// A disabled watcher still POSTS the fire — the poll loop posts it
+	// once a scan reports a hit, and it is fire(), on the UI goroutine,
+	// that reads Enabled and returns — so the sequence here can be paths,
+	// fire, paths. What makes three enough either way is that the poll
+	// goroutine is SERIAL and a scan sits between a paths post and the
+	// next: by the third move of the counter, a scan that began after the
+	// write has finished, and the baseline it advanced is what makes the
+	// change dropped rather than merely late.
 	drainUntilPosts(t, d, c, 3)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
@@ -869,63 +831,40 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// COUNTED FOR THE SAME REASON, and here it is the assertion's floor
 	// rather than its correctness: this is a NEGATIVE claim, so a window
 	// that bought no polls would pass it without the watcher having run
-	// at all. An unchanged file makes a cycle post exactly once, so forty
-	// posts is forty cycles here — the one call site where the counter's
-	// units and the claim's coincide.
+	// at all. n IS THEREFORE THE COVERAGE, not a margin: a handful of
+	// cycles says only that a spurious fire does not happen immediately,
+	// which a mis-seeded baseline passes as readily as a correct one. It
+	// is also the largest n in the file and so the tightest wall-clock
+	// dependency in it, by the shrinking-slack shape drainUntilPosts sets
+	// out — but it fails bounded rather than hanging.
+	//
+	// FORTY POSTS IS FORTY CYCLES STARTED, which is as close as the
+	// counter's units and this claim's come anywhere: a poll's scan
+	// FOLLOWS its post, so what is bounded is 39 completed scans. And
+	// even that holds only while the idle path posts once, which nothing
+	// pins — FileWatcher.Start's no-hit arm continues without a fire post
+	// (filewatcher.go), so a second per-cycle post there would halve this
+	// assertion's coverage with no test going red. It still fails CLOSED
+	// and says "poll posts", so it is a coverage risk rather than a false
+	// claim; recorded rather than pinned because the seam that would give
+	// a deterministic pin is #518's.
 	//
 	// AND THE WINDOW IT REPLACES WAS ALREADY TOO SHORT ON AN IDLE
 	// MACHINE, which is worth recording because the rest of this PR
-	// argues from the loaded runner. At the Interval set above — one
+	// argues from the loaded runner: at the Interval set above — one
 	// millisecond, which is what the figure depends on — forty posts
-	// measure ~51ms here (50.8–51.3 over five runs), so the 40ms
-	// drainFor could not buy the forty polls its message named even with
-	// nothing else running. The CI story is why the fix is a counter;
-	// this is why the old number was wrong before CI ever saw it. The
-	// interval is named because a retuned one leaves the measurement
-	// silently wrong.
-	//
-	// FORTY POSTS IS FORTY CYCLES ONLY WHILE THE IDLE PATH POSTS ONCE,
-	// and nothing pins that: FileWatcher.Start's no-hit arm continues
-	// without a fire post (filewatcher.go), so a second per-cycle post
-	// added there would halve this negative assertion's coverage with no
-	// test going red. The assertion still fails CLOSED and its message
-	// says "poll posts" rather than "polls", so this is a coverage risk
-	// rather than a false claim — and n is 40 against a claim that needs
-	// only "the watcher ran", so the margin absorbs a factor of two.
-	// Recorded rather than pinned because the seam that would give a
-	// deterministic pin is #518's.
-	//
-	// AND 40 IS THE COVERAGE, not a margin. This assertion is NEGATIVE —
-	// no fire over an unchanged file — so what it proves is bounded by
-	// how many scans it watched. A handful of cycles says only that a
-	// spurious fire does not happen immediately, which a mis-seeded
-	// baseline passes as readily as a correct one; n is the strength of
-	// the claim, so it is not a knob to turn down for slack.
-	//
-	// IT IS ALSO THE TIGHTEST WALL-CLOCK DEPENDENCY IN THE FILE, and the
-	// shape is again the durable half. drainUntilPosts' budget is a fixed
-	// head start plus a per-post term, while the scheduling demand is two
-	// events per post — so the head start dominates at small n and the
-	// slack PER EVENT falls as n rises, bottoming out at half the
-	// per-post term. This is the largest n in the file, so it has the
-	// least of it. Measured on this tree the whole test completes in
-	// 0.05s, five runs of five, far inside the budget, and it fails
-	// bounded rather than hanging either way — so the residual is
-	// recorded rather than traded away for a weaker assertion.
+	// measure ~51ms here (50.8–51.3 over five runs), so the 40ms drainFor
+	// could not buy the forty polls its message named even with nothing
+	// else running.
 	posts := drainUntilPosts(t, d, c, 40)
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
-		// constant. With no hit a cycle posts once, so the two numbers
-		// coincide — but a poll's SCAN FOLLOWS ITS POST, so 40 posts
-		// bound only 39 completed scans, and "40 polls" claims one more
-		// than that however thoroughly the queue is drained. The
-		// overclaim is about the scan after the last post, not about
-		// that post's closure: drainUntilPosts drains once more before
-		// returning and every one of `got` has run, which is the
-		// invariant argued at its return. The count rather than the
-		// constant for a second reason — `got` can EXCEED 40 when
-		// several posts land between drains, and the constant would say
-		// 40 either way.
+		// constant. A poll's SCAN FOLLOWS ITS POST, so 40 posts bound
+		// only 39 completed scans however thoroughly the queue is
+		// drained — the overclaim is the scan after the last post, not
+		// that post's closure, which drainUntilPosts' extra drain has
+		// run. And `got` can EXCEED 40 when several posts land between
+		// drains, where the constant would say 40 either way.
 		t.Fatalf("a watcher fired %d times over %d poll posts of an unchanged file",
 			hits, posts)
 	}
@@ -1057,15 +996,12 @@ func TestAFileChangeSchedulesAFrameAndAnIdlePollDoesNot(t *testing.T) {
 	// untouched. prop.Set does not compare, so a watcher that Set
 	// anything per poll would repaint the page several times a second
 	// forever and nothing else in this file would notice.
-	// THE WINDOW, NOT A POLL COUNT, and that is the same overclaim this
-	// PR removes 150 lines up. A 40ms drain buys ~40 polls at a 1ms
-	// interval on an idle machine and can buy zero on the runner this
-	// branch exists because of, so a message naming forty is asserting
-	// something the test cannot observe. countingPost cannot wrap this
-	// one — the watcher posts through Composer.Start — so the honest
-	// repair is to the message: say what was waited, not what was
-	// assumed. The assertion itself still fails closed: zero polls cannot
-	// schedule a frame either.
+	// THE WINDOW, NOT A POLL COUNT: a 40ms drain buys ~40 polls idle and
+	// can buy zero on a loaded runner, so a message naming forty asserts
+	// what the test cannot observe. countingPost cannot wrap this one —
+	// the watcher posts through Composer.Start — so the repair is to the
+	// message: say what was waited, not what was assumed. It still fails
+	// closed; zero polls cannot schedule a frame either.
 	//
 	// THE SEAM IS THE MISSING PIECE, not the will: Composer.Start reads
 	// d.Post straight off the Dispatcher inside its loop, so a test that
