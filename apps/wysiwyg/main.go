@@ -714,8 +714,12 @@ func (n *node) markup(indent string) string {
 // author to put it, and so does every file saved before this change — so
 // this is the spelling the editor has to read. It is not the spelling the
 // editor now WRITES: this function moves an attribute prefix down onto
-// the root, envelopeAttrs computes the complement, and gooeyOpen writes
-// that complement back. Raised in review of #501.
+// the root and RETURNS THE SET IT MOVED, envelopeAttrs subtracts that
+// set, and gooeyOpen writes what is left back. Not "computes the
+// complement", which is what this said and what envelopeAttrs' own doc
+// spends a paragraph refusing to do: a second predicate over the same
+// attributes is the shape three rounds of this branch kept reaching for
+// and getting wrong. Raised in review of #501.
 //
 // THE ROOT'S OWN DECLARATION IS LEFT ALONE, and the reason is not XML
 // subtree scoping — markup.parse keeps one flat, document-wide ns map
@@ -795,21 +799,33 @@ func (n *node) markup(indent string) string {
 // expression it had just rendered. A fix applied at one of two
 // identical seams is the shape that leaves the other one open. Raised
 // in review of #501.
-func carryDeclarations(env, root *node) {
+//
+// IT RETURNS WHAT IT MOVED, which is the only way its complement can be
+// exact. envelopeAttrs re-derived the answer from values and the two
+// predicates disagreed in one place — a prefix declared at both levels
+// with the SAME URI, which this function skips on key presence and that
+// one dropped on value equality. See there. Raised in review of #501.
+func carryDeclarations(env, root *node) map[string]bool {
+	var moved map[string]bool
 	for k, v := range env.Attrs {
 		if !isNamespaceAttr(k) || v == markup.XNamespace {
 			continue
 		}
 		if _, ok := root.Attrs[k]; !ok {
 			root.Attrs[k] = v
+			if moved == nil {
+				moved = map[string]bool{}
+			}
+			moved[k] = true
 		}
 	}
+	return moved
 }
 
 // envelopeAttrs is everything on a <Gooey> that did NOT move down with
 // carryDeclarations — kept so gooeyOpen can write it back. Call it AFTER
-// carryDeclarations and pass the same root: the question it answers is
-// what actually carried, not what was eligible to.
+// carryDeclarations and pass the set it returned: the question it
+// answers is what actually carried, not what was eligible to.
 //
 // THE COMPLEMENT IS OBSERVED, NOT ASSUMED. This dropped every xmlns:
 // unconditionally while carryDeclarations skips a prefix the root
@@ -835,13 +851,24 @@ func carryDeclarations(env, root *node) {
 //	rebuilt  = "<Gooey>"  over  <Canvas … xmlns:x="…">
 //
 // — the exact relocation the sibling guard exists to prevent, reached
-// through the complement instead. Value-equality is not the question;
-// "did carryDeclarations put it there" is, and for this one URI the
-// answer is always no. Raised in review of #501.
-func envelopeAttrs(env, root *node) map[string]string {
+// through the complement instead. Raised in review of #501.
+//
+// SO IT IS NO LONGER DERIVED AT ALL. Both repairs above narrowed a
+// re-derivation of the sibling's decision, and a third route was left:
+// an ordinary prefix declared at both levels with the SAME URI.
+// carryDeclarations skips it on key presence and this dropped it on
+// value equality, so <Gooey xmlns:t="urn:a"> over <Canvas
+// xmlns:t="urn:a"> saved as a bare <Gooey> — the same relocation again,
+// bracketed on both sides by tests that could not see it (one uses two
+// URIs, the other uses one URI but only markup.XNamespace, which the
+// exception short-circuits). Two predicates cannot be kept in agreement
+// by a comment saying they agree; this now takes the SET
+// carryDeclarations actually moved, so there is one decision and no
+// complement to get wrong. Raised in review of #501, three times.
+func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 	out := make(map[string]string, len(env.Attrs))
 	for k, v := range env.Attrs {
-		if isNamespaceAttr(k) && v != markup.XNamespace && root.Attrs[k] == v {
+		if moved[k] {
 			continue
 		}
 		out[k] = v
@@ -1361,6 +1388,26 @@ func nodeOf(src string) (*node, error) {
 			// what the x-namespace exemption below answers, which is why
 			// the namespace is exempted here rather than refused.
 			// Raised in review of #501.
+			//
+			// IT ALSO CHANGES WHICH REFUSAL FIRES TODAY, on files in
+			// this tree, and the paragraph above read as though the
+			// consequence were entirely forward-looking. nodeOf runs
+			// BEFORE openWorkspaceFile's `len(n.Kids) != 1` check
+			// (browser.go), so every document here that declares a
+			// dependency property now gets this message instead of "a
+			// <Gooey> document needs exactly one root element, found N".
+			// Which documents those are is a grep, not a list —
+			//
+			//	git grep -l "<x:Property" -- "*.gooey"
+			//
+			// — and both messages refuse a document the loader accepts,
+			// so this is a wording change rather than a regression:
+			// #517 is the refusal itself and predates this branch. What
+			// is worth recording is that the new wording reads as a
+			// fault in the author's file where the old one read as the
+			// designer's own gap, and that the window is the life of
+			// this branch: #522's markup.XNamespace exemption removes
+			// it. Raised in review of #501, round after.
 			//
 			// THE TEST IS NOT `t.Name.Space != ""`, and that is the
 			// whole reason this needs a scope stack. encoding/xml
@@ -3496,7 +3543,18 @@ func (ed *editor) addSelected() {
 		// AFTER the second rebuild, which sets the status to "✓ builds":
 		// the document is whole again, and the sentence explaining what
 		// was refused has to survive it saying so.
-		ed.status.Set("✗ <" + spec.Name + "> does not go inside <" + into.Elem +
+		//
+		// NEUTRAL VERB, for insertSubtree's reasons — this is the same
+		// backstop at a second seam, and a fix applied at one of three
+		// identical seams is the shape that leaves the others open.
+		// "does not go inside" asserts a parenting cause this line
+		// cannot have established: the palette add reaches it when the
+		// SEED fails to build and when the document was already broken
+		// elsewhere, neither of which is about <into>. It still names
+		// both elements, which is the concession canHold's "Permissive
+		// where the catalog is silent, because the build is the gate"
+		// makes its permissiveness on. Raised in review of #501.
+		ed.status.Set("✗ <" + spec.Name + "> was not added to <" + into.Elem +
 			">: " + refused)
 	}
 }

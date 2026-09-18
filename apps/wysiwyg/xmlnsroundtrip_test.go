@@ -157,11 +157,11 @@ func TestReopeningTheRebuiltSourceIsStable(t *testing.T) {
 // declaration behind on the root.
 //
 // reconcileNamespaces has nothing to compare — the pasted node declares
-// nothing — so the paste reaches insertSubtree's rebuild backstop,
-// which prefixed every refusal with a parenting claim it cannot have
-// established: canHold refuses parenting faults before the append, so
-// everything reaching that line failed for some other reason. Measured
-// before the fix:
+// nothing — so the paste reaches insertSubtree's rebuild backstop, which
+// prefixed every refusal with a parenting claim it cannot have
+// established. The backstop knows a rebuild failed and nothing about
+// whose fault it is; here the fault is the pasted node's own content.
+// Measured before the fix:
 //
 //	✗ <Button> does not go inside <Canvas>: markup: <Button
 //	  Click="{{t:Fire}}">: markup: undeclared namespace prefix "t"
@@ -201,8 +201,9 @@ func TestAnUndeclaredPrefixIsNotReportedAsAParentingFault(t *testing.T) {
 	}
 	if strings.Contains(got, "does not go inside") {
 		t.Errorf("a namespace failure is reported as a parenting failure. "+
-			"<Button> goes inside <Canvas> perfectly well, and canHold has "+
-			"already said so before this backstop runs: %s", got)
+			"<Button> goes inside <Canvas> perfectly well; the backstop that "+
+			"wrote this knows only that a rebuild failed, and the cause was "+
+			"after the colon all along: %s", got)
 	}
 	if !strings.Contains(got, `"t"`) {
 		t.Errorf("the refusal does not name the prefix that is missing, which "+
@@ -411,8 +412,8 @@ func TestOnlyARealDeclarationComesDownFromTheEnvelope(t *testing.T) {
 // what is REJECTED — leaving the plain form implemented twice and
 // asserted nowhere. It is not cosmetic: Go's decoder applies a default
 // namespace to ELEMENT names, so keeping one sets Element.Space for the
-// whole subtree, and markup compares that against XNamespace
-// (markup/markup.go:1073).
+// whole subtree, and markup compares that against XNamespace (build's
+// `e.Space == markup.XNamespace` arm, markup/markup.go).
 //
 // WHICH ELEMENT CARRIES IT is the assertion, not merely that the URI
 // appears. This was named "…IsCarriedToo" and checked only
@@ -637,43 +638,63 @@ func TestAnAmpersandInAnAttributeSurvivesASave(t *testing.T) {
 // map, so this is fidelity rather than meaning — and it is exactly the
 // class envelopeAttrs' comment claimed immunity from. Raised in review
 // of #501.
+//
+// BOTH URI ARRANGEMENTS, and the second is the one three rounds of this
+// finding kept missing. carryDeclarations decides by KEY PRESENCE and
+// envelopeAttrs decided by VALUE EQUALITY, so they agreed everywhere
+// except a prefix declared at both levels with the SAME URI — skipped by
+// the first, dropped by the second, envelope declaration gone. The
+// coverage bracketed it without touching it: this test used two URIs,
+// and TestAnElementPrefixSurvivesBeingDeclaredAtBothLevels uses one URI
+// but only markup.XNamespace, which the old exception short-circuited
+// before the comparison. envelopeAttrs now takes the SET
+// carryDeclarations moved, so there is no second predicate to disagree
+// with. Raised in review of #501.
 func TestABothLevelsDeclarationKeepsTheEnvelopesCopy(t *testing.T) {
-	handlerNS(t, "urn:B")
-	root := workspaceFixture(t)
-	doc := `<Gooey xmlns:t="urn:A">` + "\n" +
-		`  <Canvas Name="Root" xmlns:t="urn:B">` + "\n" +
-		`    <Button Name="B" Content="go"/>` + "\n" +
-		`  </Canvas>` + "\n" +
-		`</Gooey>` + "\n"
-	if err := os.WriteFile(filepath.Join(root, "both.gooey"), []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct{ name, envURI, rootURI string }{
+		{"different URIs at the two levels", "urn:A", "urn:B"},
+		{"the SAME URI at the two levels", "urn:a", "urn:a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handlerNS(t, tc.rootURI)
+			root := workspaceFixture(t)
+			doc := `<Gooey xmlns:t="` + tc.envURI + `">` + "\n" +
+				`  <Canvas Name="Root" xmlns:t="` + tc.rootURI + `">` + "\n" +
+				`    <Button Name="B" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n" +
+				`</Gooey>` + "\n"
+			if err := os.WriteFile(filepath.Join(root, "both.gooey"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	ed, _ := buildPage(t)
-	ed.setDispatcher(gooey.NewDispatcher())
-	ed.setWorkspace(root)
-	ed.openWorkspaceFile("both.gooey")
-	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
-		t.Fatalf("opening the fixture reports %q, want a build", got)
-	}
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("both.gooey")
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+				t.Fatalf("opening the fixture reports %q, want a build", got)
+			}
 
-	src := ed.source.Get()
-	envelope, below, _ := strings.Cut(src, "\n")
-	if !strings.Contains(envelope, `xmlns:t="urn:A"`) {
-		t.Errorf("the envelope's own declaration is gone from the file. "+
-			"carryDeclarations declined to move it because the root already "+
-			"declares the prefix, and envelopeAttrs dropped it anyway:\n%s", src)
-	}
-	if !strings.Contains(below, `xmlns:t="urn:B"`) {
-		t.Errorf("the root's own declaration did not survive:\n%s", src)
-	}
+			src := ed.source.Get()
+			envelope, below, _ := strings.Cut(src, "\n")
+			if !strings.Contains(envelope, `xmlns:t="`+tc.envURI+`"`) {
+				t.Errorf("the envelope's own declaration is gone from the file. "+
+					"carryDeclarations declined to move it because the root already "+
+					"declares the prefix, and envelopeAttrs dropped it anyway:\n%s", src)
+			}
+			if !strings.Contains(below, `xmlns:t="`+tc.rootURI+`"`) {
+				t.Errorf("the root's own declaration did not survive:\n%s", src)
+			}
 
-	// AND IT IS STABLE, so keeping the envelope's copy is a fixed point
-	// rather than a second document that reopens differently again.
-	ed.openWorkspaceFile("both.gooey")
-	if second := ed.source.Get(); second != src {
-		t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
-			src, second)
+			// AND IT IS STABLE, so keeping the envelope's copy is a fixed
+			// point rather than a second document that reopens differently
+			// again.
+			ed.openWorkspaceFile("both.gooey")
+			if second := ed.source.Get(); second != src {
+				t.Errorf("the document moved on its second pass.\nfirst:\n%s\nsecond:\n%s",
+					src, second)
+			}
+		})
 	}
 }
 
@@ -681,8 +702,9 @@ func TestABothLevelsDeclarationKeepsTheEnvelopesCopy(t *testing.T) {
 // pointed at the one namespace markup reserves.
 //
 // A default xmlns of wonderforge.io/gooey/x puts XNamespace on every
-// element beneath the root, and markup.build refuses those by name
-// (markup/markup.go:1073). Before the carry-down the editor dropped the
+// element beneath the root, and markup.build refuses those by name (its
+// `e.Space == markup.XNamespace` arm). Before the carry-down the editor
+// dropped the
 // declaration and so opened a document markup.Build itself will not
 // load; now the two agree. That is an improvement rather than a
 // regression, which is exactly why it is worth an assertion — a later
@@ -816,6 +838,23 @@ func TestAPastedConflictingDeclarationIsRefused(t *testing.T) {
 		t.Errorf("the refusal is %q, which does not name the prefix and the uri "+
 			"it would have been rebound to — the one thing the author needs to "+
 			"act on it", got)
+	}
+	// AND THE OTHER SIDE OF THE MECHANISM BRANCH. t: names EXPRESSIONS —
+	// it is a handler namespace, resolved through markup.parse's one
+	// flat ns table — so the flat last-wins sentence is the true one
+	// here, and it is the x: arm in
+	// TestAPasteCannotRebindAPrefixTheEnvelopeHolds that must not carry
+	// it. Asserting only one side would let the branch collapse back to
+	// a single sentence in either direction with one test still green.
+	// Raised in review of #501.
+	if got := ed.status.Get(); !strings.Contains(got, "the last declaration parsed wins") {
+		t.Errorf("the refusal reads\n\t%q\nand does not carry the flat "+
+			"last-wins mechanism, which is the true one for a prefix that "+
+			"names expressions", got)
+	}
+	if got := ed.status.Get(); strings.Contains(got, "names ELEMENTS") {
+		t.Errorf("the refusal explains an EXPRESSION prefix with the element "+
+			"mechanism:\n\t%q", got)
 	}
 	// THE DOCUMENT, not just the status: a refusal that reported itself
 	// and mutated anyway is the failure mode insertSubtree's revert-on-a
@@ -1995,8 +2034,8 @@ func editorIdents(d ast.Node) map[string]bool {
 //
 //	func (ed *editor) …            receiver
 //	func writeX(ed *editor, …)     parameter, incl. a package-level literal
-//	ed := newEditor(root)          main.go:348
-//	ed := &editor{…}               main.go:1512
+//	ed := newEditor(root)          newEditor's caller, main.go
+//	ed := &editor{…}               the &editor literal in main.go
 //
 // The NEGATIVE arm is the one that keeps this from being a tautology: a
 // binding of some other type must NOT be collected, or onEd stops
@@ -2179,12 +2218,35 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 		`  <Button Name="Pasted" Content="go"/>` + "\n" +
 		`</Gooey>` + "\n")
 
-	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+	got := ed.status.Get()
+	if !strings.HasPrefix(got, "✗") {
 		t.Errorf("pasting a fragment that binds x to a DIFFERENT uri reports "+
 			"%q. The envelope's declaration is not reachable from ed.doc(), so "+
 			"nothing compared the two: the second binding is now inside the "+
-			"document, and markup.parse's flat last-wins table hands every "+
-			"x: element in the saved file to the pasted uri", got)
+			"document, and nothing refused it", got)
+	}
+	// AND THE EXPLANATION, not only the ✗. This is the one end-to-end
+	// exercise of reconcileNamespacesInto's refusal, and it rebinds x: —
+	// the prefix that names ELEMENTS, which encoding/xml scopes to the
+	// subtree declaring them before markup sees the token. The message
+	// explained every prefix with the flat last-wins rule, which is the
+	// EXPRESSION mechanism, so the single path under test was the one
+	// whose stated reason was false and nothing could notice further
+	// drift. A message that tells the author why is a claim, and this
+	// repo holds a claim under test. Raised in review of #501.
+	for _, want := range []string{
+		"names ELEMENTS",
+		"XML scopes to the subtree that declares them",
+		"one flat document-wide table",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal reads\n\t%q\nand does not carry\n\t%q", got, want)
+		}
+	}
+	if strings.Contains(got, "the last declaration parsed wins") {
+		t.Errorf("the refusal explains an ELEMENT prefix with the expression "+
+			"mechanism — x: does not resolve through markup.parse's flat table, "+
+			"XML scoping resolves it:\n\t%q", got)
 	}
 	if src := ed.source.Get(); strings.Contains(src, other) {
 		t.Errorf("the refused declaration is in the document anyway:\n%s", src)
@@ -2302,6 +2364,188 @@ func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
 			}
 			if src := ed.source.Get(); strings.Contains(src, other) {
 				t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+			}
+		})
+	}
+}
+
+// TestAModeOneParentingFaultReachesTheBackstop falsifies the premise the
+// three reworded seams used to carry.
+//
+// The claim was that canHold refuses every parenting fault before the
+// insert, so nothing reaching the rebuild backstop is about parenting.
+// canHold's "Permissive where the catalog is silent, because the build
+// is the gate" states the opposite in its own words and argues FOR it:
+// canHold answers false only where the catalog KNOWS the child is
+// refused, and ModeOne cannot know whether the slot is already taken, so
+// the insert is tried and the revert names both elements. This is that
+// path — a real parenting fault arriving at the line that said parenting
+// faults cannot arrive.
+//
+// It is the structural half of the same argument
+// TestCanHoldIsPermissiveWhereTheCatalogIsSilent makes about canHold
+// alone: that one stops at the predicate, this one follows it to the
+// message. Raised in review of #501.
+func TestAModeOneParentingFaultReachesTheBackstop(t *testing.T) {
+	ed, _ := buildPage(t)
+	spec, ok := ed.specOf("Border")
+	if !ok {
+		t.Fatal("no <Border> in the catalog")
+	}
+	if spec.Children.Mode != markup.ModeOne {
+		t.Skipf("<Border> is %v, not ModeOne; this test needs the can't-tell case", spec.Children.Mode)
+	}
+
+	border := &node{
+		Elem:  "Border",
+		Attrs: map[string]string{"Name": "Full", "Canvas.Left": "0", "Canvas.Top": "0"},
+		Kids:  []*node{{Elem: "Text", Body: "taken", Attrs: map[string]string{"Name": "Taken"}}},
+	}
+	ed.doc().Kids = append(ed.doc().Kids, border)
+	ed.rebuild()
+	if ed.docRoot == nil {
+		t.Fatalf("the full <Border> fixture does not build: %q", ed.status.Get())
+	}
+
+	// THE GATE LETS IT THROUGH, which is the premise being falsified.
+	if !ed.canHold("Border", "Text") {
+		t.Fatal("canHold refused a <Text> for a <Border>, so the insert never " +
+			"reaches the backstop and this test cannot say anything about it")
+	}
+
+	ed.sel = border
+	ed.pasteMarkup(`<Text Name="Second">second</Text>`)
+
+	got := ed.status.Get()
+	if !strings.HasPrefix(got, "✗") {
+		t.Fatalf("a second child pasted into a ModeOne <Border> reported %q; "+
+			"the loader refuses that document, so this test is not looking at "+
+			"the refusal it is about", got)
+	}
+	if !strings.Contains(got, "exactly one child") {
+		t.Errorf("the refusal does not carry the loader's own reason, so the "+
+			"backstop is not the one under test here: %s", got)
+	}
+	if !strings.Contains(got, "<Text>") || !strings.Contains(got, "<Border>") {
+		t.Errorf("the refusal names neither the pasted element nor where it "+
+			"was going — which is the concession addplan.go makes canHold's "+
+			"permissiveness on: %s", got)
+	}
+}
+
+// TestTheOtherTwoSeamsDoNotClaimAParentingCause is the second and third
+// of the three backstops that asserted one.
+//
+// A fix applied at one of several identical seams is the shape that
+// leaves the others open, and carryDeclarations' own comment says so
+// three files over. The paste seam was reworded first; the palette add
+// and the demote emitted "<X> does not go inside <Y>" on the same
+// evidence.
+//
+// THE DOCUMENT IS BROKEN BEFORE EITHER GESTURE, and by a third party:
+// commitEdit has no docRoot == nil revert of its own (the six that do are
+// insertSubtree, addSelected, deleteSelected, promoteSelected,
+// demoteSelected and duplicateSelected), so a value the loader refuses
+// leaves the build failed. The next insert is then reverted and blamed
+// for an attribute on a node the user did not touch. That makes this the
+// sharpest form of the finding: the cause is not merely "not the
+// parenting", it is not the inserted element at all.
+//
+// THE BROKEN NODE IS A THIRD ONE, and it has to be. The first draft broke
+// the very node the demote then moved, and the loader answered with
+// "Canvas.Left is contributed by a <Canvas> parent, but this element's
+// parent is <Border>" — a fault the move DID cause, which would have made
+// the demote arm agree with the assertion for the wrong reason. The node
+// carrying the refused value is now one neither gesture touches.
+//
+// BOTH DIRECTIONS, as the paste seam's test does: dropping the clause
+// entirely would pass an assertion that only forbids the wrong noun, so
+// the real cause and both element names have to survive. Raised in
+// review of #501.
+func TestTheOtherTwoSeamsDoNotClaimAParentingCause(t *testing.T) {
+	// EACH SEAM PICKS A TARGET THE CATALOG IS HAPPY WITH, because a
+	// container that also refuses the insert masks the fault under test:
+	// a palette add into the full <Border> reports "needs exactly one
+	// child" and the pane's value is never reached. What is wanted here
+	// is the case where the parenting is fine and the document is not.
+	for _, seam := range []struct {
+		name string
+		// gesture runs the insert on a document that is already
+		// failing, and answers the element it inserted and the one it
+		// was going into.
+		gesture func(t *testing.T, ed *editor, host, after *node) (string, string)
+	}{
+		{"palette add", func(t *testing.T, ed *editor, host, after *node) (string, string) {
+			ed.sel = ed.doc()
+			ed.paletteSel.Set(paletteIndex(t, ed, "Text"))
+			ed.addSelected()
+			return "Text", ed.doc().Elem
+		}},
+		{"demote", func(t *testing.T, ed *editor, host, after *node) (string, string) {
+			ed.sel = after // nests into the preceding sibling
+			ed.demoteSelected()
+			return after.Elem, host.Elem
+		}},
+	} {
+		t.Run(seam.name, func(t *testing.T) {
+			ed, _ := buildPage(t)
+			host := &node{
+				Elem:  "Canvas",
+				Attrs: map[string]string{"Name": "Host", "Canvas.Left": "0", "Canvas.Top": "0"},
+			}
+			after := &node{
+				Elem:  "Text",
+				Body:  "sibling",
+				Attrs: map[string]string{"Name": "Sibling"},
+			}
+			broken := &node{
+				Elem:  "Text",
+				Body:  "elsewhere",
+				Attrs: map[string]string{"Name": "Elsewhere", "Canvas.Left": "0", "Canvas.Top": "8"},
+			}
+			ed.doc().Kids = append(ed.doc().Kids, host, after, broken)
+			ed.rebuild()
+			if ed.docRoot == nil {
+				t.Fatalf("the fixture does not build: %q", ed.status.Get())
+			}
+
+			// THE THIRD PARTY. A value the loader refuses, committed
+			// through the properties pane, which does not revert — on a
+			// node neither gesture below goes near. That missing revert
+			// is #531; commitEdit is the one mutator of seven without
+			// it, and the skip below is what retires this arm when it
+			// gains one.
+			ed.sel = broken
+			editAttr(t, ed, "Canvas.Left", "not-a-number")
+			if ed.docRoot != nil {
+				t.Skipf("the properties pane now reverts its own refusals "+
+					"(status %q), so this seam can no longer be reached with a "+
+					"fault the insert did not cause — #531 is the issue that "+
+					"asked for that revert, and closing it is what retires "+
+					"this arm", ed.status.Get())
+			}
+
+			elem, into := seam.gesture(t, ed, host, after)
+
+			got := ed.status.Get()
+			if !strings.HasPrefix(got, "✗") {
+				t.Fatalf("the %s reported %q on a document that does not "+
+					"build; this test is not looking at the refusal it is "+
+					"about", seam.name, got)
+			}
+			if strings.Contains(got, "does not go inside") {
+				t.Errorf("the %s blames the parenting for a fault on a "+
+					"different node entirely — the attribute the properties "+
+					"pane refused: %s", seam.name, got)
+			}
+			if !strings.Contains(got, "not-a-number") {
+				t.Errorf("the %s drops the loader's own reason, so the author "+
+					"is told the insert failed and not what to fix: %s",
+					seam.name, got)
+			}
+			if !strings.Contains(got, "<"+elem+">") || !strings.Contains(got, "<"+into+">") {
+				t.Errorf("the %s names neither the element nor where it was "+
+					"going: %s", seam.name, got)
 			}
 		})
 	}
