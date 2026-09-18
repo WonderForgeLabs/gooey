@@ -301,10 +301,13 @@ func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
 	// its own comment that #519's fixing commit deletes the whole loop
 	// rather than leaving a branch that can no longer be taken. This is
 	// that commit: all three rows read correctly here, so the condition
-	// is false and the loop is gone. Taking either side of the conflict
-	// wholesale would have been wrong — HEAD's side loses the two shapes
-	// #520 added after review, and the incoming side reinstates a skip
-	// citing an issue this branch closes.
+	// is false and the loop is gone. Taking either side of the first
+	// conflict wholesale would have been wrong — this branch's side lost
+	// the two shapes #520 added after review, and the base's side
+	// reinstated a skip citing an issue this branch closes. The
+	// resolution is settled here; a later merge of the same base is the
+	// same decision again, and the only thing the base has changed in
+	// this function since is dropping a provenance marker.
 	shapes := []struct{ got, want, shape, why string }{
 		{caret, wantCaret, "the focused row with the caret after both glyphs",
 			"the two glyphs occupy FOUR columns, so the caret belongs in column 4"},

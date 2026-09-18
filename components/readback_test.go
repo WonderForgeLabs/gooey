@@ -20,17 +20,29 @@ import (
 // through render.SpanText, render.RowText or render.BufferText, which do
 // not write it.
 //
-// THE WINDOW COMES FROM WHAT WAS PAINTED, never from the caller. Each of
-// these took its extent as parameters, written down beside a composer
-// that had already said the same numbers — and a read wider than the
-// buffer is phantom blanks rather than an error (render.SpanText's own
-// doc says so), so widening a composer in a later edit turns the tail of
-// every read into blanks. Several call sites here compare two screens
-// for equality, where blanks on both sides agree, and one is
-// `!strings.Contains(got, "gone")`, which passes on blank input
-// outright. Deriving the extent from the frame is what removes that
-// class, and it is why none of them takes a width it was not given by
-// the thing it is reading.
+// THE WINDOW COMES FROM WHAT WAS PAINTED — for frameText and screen,
+// which is the pair this paragraph is about. Each took its extent as
+// parameters, written down beside a composer that had already said the
+// same numbers — and a read wider than the buffer is phantom blanks
+// rather than an error (render.SpanText's own doc says so), so widening
+// a composer in a later edit turns the tail of every read into blanks.
+// Several call sites here compare two screens for equality, where blanks
+// on both sides agree, and one is `!strings.Contains(got, "gone")`,
+// which passes on blank input outright. Deriving the extent from the
+// frame is what removes that class, and neither of those two now takes a
+// width it was not given by the thing it is reading.
+//
+// rowText IS THE EXCEPTION, AND IT IS THE RULE ITSELF THAT MOVES. It
+// exists to read a caller-chosen REGION, so its window cannot come from
+// the frame; what it owes instead is that the region be a real one. A
+// span is the caller's business — a menu's lead column, a picker's bar
+// — and a WHOLE ROW is render.RowText, never rowText(f, 0, y, <the
+// composer's width>), because a literal repeating a width declared
+// somewhere above it is the same phantom-blanks decay one level down.
+// This paragraph claimed all three readers derived their window, and two
+// whole-row reads spelled as spans survived the conversion underneath
+// that claim (components/layout_test.go, components/colorpicker_test.go)
+// — a reader who takes the sentence at its word does not go looking.
 //
 // ONE OF EACH, IN ONE FILE. These are package-scope names called from
 // four test files, and each lived in the first file that happened to
@@ -64,8 +76,10 @@ func rowText(f *gooey.Frame, x, y, w int) string {
 // written at its one call site meant nothing and the 12 restated the
 // composer's height. No grep for the cell-reader bug could find it: it
 // already went through render.RowText, and what made it a duplicate was
-// the loop around it. The three it joins were `dump`, `menuRows` and the
-// body now in render.BufferText.
+// the loop around it. The three it joins were `dump`, `menuRows` and
+// `screen` — the last of which is still a declaration nine lines below,
+// because a composer is not a frame; only its loop went to
+// render.BufferText.
 func frameText(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 
 // screen is the composition as a terminal would show it.

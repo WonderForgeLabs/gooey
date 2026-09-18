@@ -196,19 +196,38 @@ superseded does not:
    hand-rolled loops do not. Three converted readers were left spelling
    it the long way in the commit that wrote the rule down, which is the
    same defect the sweep is about one level up.
+
+   **And the long way outlives the loop, because a wrapper takes the
+   width too.** Two more whole-row reads survived the conversion as
+   `rowText(f, 0, y, <literal>)`, each literal a copy of a width
+   declared dozens of lines above it — `components/layout_test.go`'s
+   `20` (the composer's, 46 lines up) and
+   `components/colorpicker_test.go`'s `30` (`pickerAt`'s `Cols`, 197
+   lines up). Both assertions are ABSENCE claims —
+   `TrimSpace(row) != ""` and `!strings.Contains(row, "xterm")` — so the
+   phantom blanks a widened fixture would hand them do not fail, they
+   pass. They read `render.RowText(f.Cells, y)` now. What let them
+   survive is that `components/readback_test.go`'s header claimed all
+   three readers derive their window from the frame; `rowText` does not
+   and cannot, so the header now states the rule it actually has, and
+   this item is that rule.
 6. **A wrapper with the same signature is not worth its own comment.**
    `components/box_test.go`'s `rowString` ended up as `SpanText`'s
    parameters passed straight through, under seventeen lines explaining
    that a wrapper taking a different *meaning* for the same position is a
    quiet trap. That is an argument for deleting the wrapper, and it was
-   deleted. `components/colorpicker_test.go`'s `rowText` earns its keep
-   because it maps `*gooey.Frame` to `f.Cells`; it takes `SpanText`'s
-   order for the same reason. A wrapper that earns its keep has to be
-   USED, though: five sites in the same package went on calling
-   `SpanText(f.Cells, 0, 0, n)` beside it, so the rule and the package
-   disagreed in the commit that stated the rule. They go through
-   `rowText` now — either the mapping is worth a wrapper everywhere or
-   it is worth one nowhere.
+   deleted. `rowText` earns its keep because it maps `*gooey.Frame` to
+   `f.Cells`; it takes `SpanText`'s order for the same reason. It lived
+   in `components/colorpicker_test.go` when this item was written and
+   lives in `components/readback_test.go` now, per item 7 — one helper
+   named by two files four paragraphs apart is the staleness item 7 is
+   about, and this is the paragraph a reader consults when deciding
+   whether the next directory's wrapper is worth keeping. A wrapper that
+   earns its keep has to be USED, though: five sites in the same package
+   went on calling `SpanText(f.Cells, 0, 0, n)` beside it, so the rule
+   and the package disagreed in the commit that stated the rule. They go
+   through `rowText` now — either the mapping is worth a wrapper
+   everywhere or it is worth one nowhere.
 7. **A whole-BUFFER read is `render.BufferText`, and it had no name.**
    Removing the width parameters in item 5 left `components`' `dump`,
    `menuRows` and `screen` as byte-identical eight-line loops, each under
