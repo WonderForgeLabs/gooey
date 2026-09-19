@@ -75,7 +75,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	// above names both mistakes and calls one of them worse; neither had
 	// a counterfactual, because the only thing driving this bookkeeping
 	// was the clean tree, where both markings agree. Measured: adding
-	// `ruled[owningModule(…)] = true` beside the reached line — the exact
+	// `ruled[moduleOwningDir(…)] = true` beside the reached line — the exact
 	// "worse" state — left the guard tests green. The marking moved into
 	// coverage() so a fixture can drive it, the same extraction
 	// moduleFloorFaults got one level down and for the same reason.
@@ -228,7 +228,7 @@ const generatedMarkerPattern = `^// Code generated .* DO NOT EDIT\.[[:space:]]*$
 // root suite GREEN, with no output. Its two siblings pin the inputs
 // (TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery pins that treeWalk
 // finds the same modules as discoverModules,
-// TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay pins owningModule's
+// TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay pins moduleOwningDir's
 // attribution) and neither reached the loop that turns them into a
 // failure. This is the same extraction the file already applies to
 // stolenComments, for the same reason. Raised in review of #503.
@@ -245,7 +245,7 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 	// A FILE NO MODULE CLAIMS, checked ahead of the loop because the
 	// loop structurally cannot see it: "" is not a module of this tree,
 	// so it appears in no entry of `modules` and the coverage recorded
-	// against it is iterated by nothing. owningModule answers "" only
+	// against it is iterated by nothing. moduleOwningDir answers "" only
 	// when the module set holds no "." — the root module is the fallback
 	// owner for every file no nested module contains — which is the
 	// shape a walk that yielded the nested go.mod files and not the
@@ -332,7 +332,7 @@ func moduleFloorFaults(reached, ruled map[string]bool, modules []string) []strin
 // they are one input to THIS function and two causes at the call site,
 // and the floor's message names both. Raised in review of #503.
 func coverInto(reached, ruled map[string]bool, dir string, modules []string, applies bool) {
-	mod := owningModule(dir, modules)
+	mod := moduleOwningDir(dir, modules)
 	reached[mod] = true
 	if applies {
 		ruled[mod] = true
@@ -461,7 +461,7 @@ func TestTheModuleFloorReportsWhichFaultItFound(t *testing.T) {
 		},
 		{
 			// A SET WITH NO ROOT MODULE IN IT, which is the only way
-			// owningModule answers "". The two arms below iterate
+			// moduleOwningDir answers "". The two arms below iterate
 			// `modules`, and "" is in no module set, so this fault has
 			// to be found before the loop or not at all.
 			name:    "a file no module in the set claims",
@@ -685,7 +685,7 @@ func treeWalk(t *testing.T) (files, moduleDirs []string) {
 	}
 	if !rooted {
 		t.Fatalf("the walk found %d go.mod files and none of them is the root "+
-			"module's: owningModule's fallback is the root module, so every file no "+
+			"module's: moduleOwningDir's fallback is the root module, so every file no "+
 			"nested module claims would attribute to no module at all, and the floor "+
 			"iterates the module set — the root module would leave it in silence",
 			len(moduleDirs))
@@ -899,7 +899,7 @@ func TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery(t *testing.T) {
 	}
 }
 
-// owningModule is the module a parsed file belongs to: the longest
+// moduleOwningDir is the module a parsed file belongs to: the longest
 // directory holding a go.mod that contains dir. A module whose own
 // directory holds no .go file — only packages below it — is still
 // covered, because every one of those packages attributes back to it.
@@ -931,7 +931,15 @@ func TestTheGuardsModuleFloorMatchesTheTreesOwnDiscovery(t *testing.T) {
 // contain: the exact defect the paragraph above says the longest-prefix
 // rule closes, reintroduced by the one directory name that is spelled
 // with a character and matches none.
-func owningModule(dir string, moduleDirs []string) string {
+// NAMED moduleOwningDir, NOT owningModule, because overlayonepass_test.go
+// declares an owningModule of its own in this same package — a
+// path-walking one that stats for go.mod rather than choosing the
+// longest prefix from a list. Both landed from separate branches and
+// the merge is where they met. This one is renamed because the other
+// reached main first; the two answer different questions and neither
+// should be folded into the other. Raised by the merge for review of
+// #503.
+func moduleOwningDir(dir string, moduleDirs []string) string {
 	owner, found := "", false
 	for _, m := range moduleDirs {
 		if m != "." && dir != m && !strings.HasPrefix(dir, m+string(filepath.Separator)) {
@@ -2210,25 +2218,25 @@ func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 	// every file is in a subdirectory — which is every tree except this
 	// one, where a .go file happens to sit in the repo root.
 	mods := []string{".", "apps/gitui", "mcp"}
-	if got := owningModule("input", mods); got != "." {
+	if got := moduleOwningDir("input", mods); got != "." {
 		t.Errorf("a file parsed under input/ is attributed to %q, not the root "+
 			"module, so the floor means \"a .go file sits in the repo root\" rather "+
-			"than what owningModule's comment says", got)
+			"than what moduleOwningDir's comment says", got)
 	}
 	// AND IT IS NOT SATISFIED BY SOMEBODY ELSE'S CODE. This is the arm
 	// the first version could not have: under "anywhere beneath", every
 	// nested module's files covered "." as well, so the root module —
 	// the one this guard lives in — had no independent entry at all.
-	if got := owningModule("apps/gitui", mods); got == "." {
+	if got := moduleOwningDir("apps/gitui", mods); got == "." {
 		t.Error("a file in the apps/gitui module is attributed to the root module, " +
 			"so the root module's floor entry is satisfied by code it does not contain")
 	}
-	if got := owningModule("mcp/cmd/server", mods); got != "mcp" {
+	if got := moduleOwningDir("mcp/cmd/server", mods); got != "mcp" {
 		t.Errorf("a file parsed under mcp/cmd/server is attributed to %q rather than "+
 			"the mcp module, so a module whose own directory holds no .go file is "+
 			"not covered after all", got)
 	}
-	if got := owningModule("mcpx", mods); got == "mcp" {
+	if got := moduleOwningDir("mcpx", mods); got == "mcp" {
 		t.Error("a sibling directory whose name merely starts with the module's " +
 			"counts as covering it")
 	}
@@ -2240,19 +2248,19 @@ func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 	// sit here unnoticed; the fixture supplies one. Raised in review of
 	// #503.
 	short := []string{".", "z"}
-	if got := owningModule("z", short); got != "z" {
+	if got := moduleOwningDir("z", short); got != "z" {
 		t.Errorf("a file in the single-character module z/ is attributed to %q; "+
 			"the root module's directory is one character long too, so a length "+
 			"comparison cannot tell the shortest prefix from the shortest name", got)
 	}
-	if got := owningModule("z/cmd/tool", short); got != "z" {
+	if got := moduleOwningDir("z/cmd/tool", short); got != "z" {
 		t.Errorf("a file under z/cmd/tool is attributed to %q rather than the z "+
 			"module", got)
 	}
 	// AND THE ROOT STILL WINS WHEN NOTHING ELSE CLAIMS THE FILE — the
 	// half a prefixLen that simply returns 0 would break, since owner's
 	// zero value measures 0 as well.
-	if got := owningModule("input", short); got != "." {
+	if got := moduleOwningDir("input", short); got != "." {
 		t.Errorf("a file under input/ is attributed to %q rather than the root "+
 			"module, so the fallback stopped being reachable", got)
 	}
@@ -2261,19 +2269,19 @@ func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 	// anyone editing this test, and a module added tomorrow INSIDE an
 	// existing one is the case the prefix version got wrong.
 	nested := []string{".", "apps/gitui", "apps/gitui/plugin"}
-	if got := owningModule("apps/gitui/plugin/cmd", nested); got != "apps/gitui/plugin" {
+	if got := moduleOwningDir("apps/gitui/plugin/cmd", nested); got != "apps/gitui/plugin" {
 		t.Errorf("a file in a module nested inside another is attributed to %q, so "+
 			"the parent's floor entry is satisfied by its child's files", got)
 	}
 
-	// A MODULE SET WITH NO ROOT IN IT. owningModule has no fallback
+	// A MODULE SET WITH NO ROOT IN IT. moduleOwningDir has no fallback
 	// then and answers "", and "" is not a module of this tree — so the
 	// floor's loop, which iterates the module set, never looks at it.
 	// Both halves are asserted because either alone is satisfied by a
 	// guard that sees nothing: the first pins WHERE the coverage went,
 	// the second pins that somebody says so. Raised in review of #503.
 	rootless := []string{"apps/gitui", "mcp"}
-	if got := owningModule("input", rootless); got != "" {
+	if got := moduleOwningDir("input", rootless); got != "" {
 		t.Errorf("a root-module file in a set holding no root module is attributed "+
 			"to %q; the fallback IS the root module and there is not one here", got)
 	}

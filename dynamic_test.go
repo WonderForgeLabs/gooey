@@ -259,3 +259,65 @@ func (t *ticker) Start(func(func())) func() {
 	t.started++
 	return func() { t.stopped++ }
 }
+
+// TestTheFocusOrderReleasesItsTailAndKeepsItsLiveSlots is about the
+// slice Order() publishes, and it pins ONE of the two things the clear's
+// placement decides. Which one is worth stating, because the obvious
+// reading of the name is the other.
+//
+// It pins the RELEASE: after a shrink, the entries past the new length
+// are nil, so the departed stops are not held for the manager's
+// lifetime. Removing the clear reddens it (measured).
+//
+// It does NOT pin the PLACEMENT. Whether the clear runs before m.walk or
+// after it, the slots the walk refills are non-nil by the time anything
+// outside Resync can look — the before-form's hole is open only DURING
+// the walk, and nothing in this package re-enters there. Converting
+// m.order back to the before-form leaves this test green (measured), and
+// the argument for the after-form is the one in Resync's comment: it is
+// free, and it is the form that stays correct when someone does re-enter.
+//
+// What no placement can give a stashed slice is its old length back —
+// the entries past the new len ARE the components being released. That
+// is Order()'s doc's job, and the first version of this test asserted
+// the impossible half of it. Raised in review of #456.
+func TestTheFocusOrderReleasesItsTailAndKeepsItsLiveSlots(t *testing.T) {
+	stops := make([]Component, 8)
+	for i := range stops {
+		stops[i] = &eater{label: *lbl("s")}
+	}
+	box := &dynBox{}
+	box.set(stops...)
+	c := NewComposer(box, 20, 12)
+	c.Frame()
+
+	stashed := c.Focus().Order()
+	if len(stashed) != len(stops) {
+		t.Fatalf("the focus order has %d stops, want %d — the fixture must SHRINK "+
+			"for this to measure anything", len(stashed), len(stops))
+	}
+
+	box.set(stops[0])
+	c.Frame()
+	now := c.Focus().Order()
+	if len(now) != 1 {
+		t.Fatalf("after the shrink the order has %d stops, want 1", len(now))
+	}
+	for i := range now {
+		if now[i] == nil {
+			t.Errorf("focus slot %d of %d is nil after the re-sync that refilled "+
+				"it. A clear placed before m.walk zeroes the live slots as well "+
+				"as the tail, and every walk over m.order between the two reads "+
+				"the hole", i, len(now))
+		}
+	}
+	for i := len(now); i < len(stashed); i++ {
+		if stashed[i] != nil {
+			t.Errorf("focus slot %d still holds a component after the tree shrank "+
+				"from %d stops to %d. Nothing reaches it again — a list that goes "+
+				"from ten thousand rows to ten never writes those slots — so the "+
+				"departed components are alive for as long as the FocusManager is",
+				i, len(stashed), len(now))
+		}
+	}
+}

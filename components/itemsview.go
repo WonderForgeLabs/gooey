@@ -192,6 +192,15 @@ func (v *ItemsView) AcceptsFocus() bool { return !v.NoFocus }
 // The view calls it when the realized window changes — see dynamic.go.
 func (v *ItemsView) SetStructureHook(fn func()) { v.structure = fn }
 
+// ChildComponents is the realized window's rows, in view order.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT REALIZATION, the same claim
+// FocusManager.Order and AdornmentLayer.Adornments carry — and this is
+// the one that actually shrinks at runtime. sync refills v.kids in place
+// and then clears what the refill did not reach, so scrolling to a
+// shorter row set leaves a stashed return at its OLD length with
+// everything past the new one reading nil. Copy what you need, or call
+// again after the scroll. Raised in review of #456.
 func (v *ItemsView) ChildComponents() []gooey.Component { return v.kids }
 
 // Err reports a template error from the most recent realization. Markup
@@ -317,10 +326,23 @@ func (v *ItemsView) sync(src ItemSource, top, count, sel int) {
 		return
 	}
 	v.rows = next
+	// THE WINDOWED LIST, which is the case clearToCap's own doc argues
+	// from: scrolling to a shorter row set left every previous row's
+	// component reachable past len. See clearToCap in the root package.
+	// Raised in review of #456.
 	v.kids = v.kids[:0]
 	for _, r := range next {
 		v.kids = append(v.kids, r)
 	}
+	// AFTER THE REFILL, because v.kids is what ChildComponents hands out
+	// and sync is reached from Arrange. Clearing first zeroes [0, len)
+	// too, so an outer walk holding a slice a previous ChildComponents
+	// returned would read nil where it had read a stale-but-live
+	// component — and ArrangeChild(nil, …) is a panic rather than a
+	// wrong pixel. Nothing in the tree re-enters that way today; the
+	// after-form is free, so this takes it anyway, which is the same
+	// argument statusbar.go makes. Corrected in review of #456.
+	clear(v.kids[len(v.kids):cap(v.kids)])
 	if v.structure != nil {
 		v.structure()
 	}

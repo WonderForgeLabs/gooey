@@ -87,10 +87,35 @@ func (p *Property[T]) Get() T {
 		for _, d := range p.n.deps {
 			delete(d.dependents, &p.n)
 		}
+		// The tail is cleared, not just the length: these are the
+		// nodes this computed used to depend on, and a computed whose
+		// dependency set shrinks would hold the old ones past len until
+		// the slot is written again. prop has no clearToCap of its own
+		// — the builtin is what that function wraps. Raised in review of
+		// #456.
+		//
+		// AFTER compute() HAS REFILLED THE SET, which matters here more
+		// than anywhere else the same reset appears: this is the one
+		// site on a genuinely per-frame path — inside Get, for every
+		// dirty computed, which is every paint node that repaints.
+		// Every other site is a structural re-sync and can afford cap.
+		// Clearing after costs cap minus len, which is zero in the
+		// steady state where a component's dependency set is stable and
+		// non-zero exactly when the set SHRANK — the case the clear is
+		// for. Raised in review of #456.
 		p.n.deps = p.n.deps[:0]
 		evalStack = append(evalStack, &p.n)
 		p.value = p.compute()
+		// ZEROED, NOT CLEARED TO CAP, and the difference is the hot
+		// path. A pop releases exactly one slot, and this one runs on
+		// every computed evaluation in the process — clearing to cap
+		// here would be O(depth) per pop and O(depth²) per evaluation.
+		// Without it evalStack holds one *node per level of the deepest
+		// chain the process ever evaluated, for its lifetime. Raised in
+		// review of #456.
+		evalStack[len(evalStack)-1] = nil
 		evalStack = evalStack[:len(evalStack)-1]
+		clear(p.n.deps[len(p.n.deps):cap(p.n.deps)])
 		p.n.dirty = false
 		p.evals++
 	}

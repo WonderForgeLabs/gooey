@@ -523,10 +523,18 @@ func pathFirst(m []string) (ident, path string, lo, hi int) {
 	return m[4], m[1], lo, hi
 }
 
-// citeWindow is how far from the cited line the identifier may sit. Small
-// on purpose: the point of a line number is that it is precise, and a
-// window wide enough to always find the symbol is a window that has
-// stopped checking anything.
+// citeWindow is how far from the cited line the guard will LOOK for the
+// identifier, which is not the same as how far it may sit.
+//
+// It was the tolerance until review of #456: a symbol found anywhere in
+// the window satisfied the citation, so six composer.go citations that
+// were each short by exactly two stayed green from the edit that moved
+// them. A citation is either right or correctable, and this is what
+// decides which — inside the window the report names the line to write,
+// outside it the reader has to go looking. Small on purpose for the
+// second half: a window wide enough to always find the symbol finds the
+// WRONG one, which is what the word-boundary check one layer down is
+// also about.
 const citeWindow = 3
 
 // citationProblems is the check itself, over a document and a way to
@@ -739,6 +747,48 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 						"line %d holds %q. Any edit above a cited line moves it, so "+
 						"the citation rots without anyone touching what it describes.",
 					path, lo, ident, leaf, citeWindow, lo, strings.TrimSpace(s[lo-1])))
+				continue
+			}
+			// DRIFT INSIDE THE WINDOW, which is the state the window
+			// itself creates and could not report. citeWindow exists so
+			// a citation survives a line added next to what it names,
+			// and the cost of that tolerance is a citation that is
+			// WRONG BY ONE OR TWO and stays green forever — measured
+			// here in review of #456, where six composer.go citations
+			// were each short by exactly two and the guard had been
+			// passing over them since the edit that moved them.
+			//
+			// A drift the window can still see is a drift the guard can
+			// CORRECT, which is what separates this from the case
+			// above: the symbol was found, so the message can name the
+			// line to write. Outside the window there is nothing to
+			// suggest and the reader has to go looking.
+			//
+			// The exact place is the cited line for a single-line
+			// citation and the whole span for a range, because a range
+			// names a region deliberately and the symbol may sit
+			// anywhere in it.
+			exLo, exHi := lo, lo
+			if hi > lo {
+				exHi = hi
+			}
+			if !identRe(leaf).MatchString(codeOnly(code(path)[max(0, exLo-1):min(len(s), exHi)])) {
+				at := lo
+				for d := 1; d <= citeWindow; d++ {
+					if lo-d >= 1 && identRe(leaf).MatchString(codeOnly(code(path)[lo-1-d:lo-d])) {
+						at = lo - d
+						break
+					}
+					if lo+d <= len(s) && identRe(leaf).MatchString(codeOnly(code(path)[lo-1+d:lo+d])) {
+						at = lo + d
+						break
+					}
+				}
+				problems = append(problems, fmt.Sprintf(
+					"cites %s:%d for %s, and %q is at line %d — near enough that "+
+						"citeWindow accepts it, which is how a citation stays green "+
+						"while being wrong. Write %d.",
+					path, lo, ident, leaf, at, at))
 			}
 		}
 		if hits > 0 {
@@ -1066,7 +1116,22 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // two, and it is a VALUE rather than a floor for the reason the
 // assertion above gives: a >= would let a demotion hide behind an
 // addition in the same commit.
-const wantIdentChecked = 21
+//
+// +2 with #439's overlay ranks: the z-order section gained lined
+// citations for appendByRank and for the rank-ordered hit walk, and a
+// lined citation in this file is a CHECKED one — the guard verifies the
+// line still holds the symbol. Raising the number is the half that says
+// so; the six numbers it sits beside all moved in the same change and
+// were corrected rather than stripped, for the same reason.
+//
+// THE BASE MOVED UNDER IT, which is why this says +2 rather than naming
+// the pair. #490 landed on main while this branch was open and retired
+// a lined citation in favour of a by-name one — the same trade this
+// guard exists to notice, made deliberately — so the number this
+// branch adds two to is main's, not the one it forked from. Stating
+// the delta rather than the arithmetic is what survives the next such
+// merge.
+const wantIdentChecked = 24
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.
@@ -1311,12 +1376,35 @@ func TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor(t *testing.T) {
 				"is a broken one")
 	})
 
+	// THE WINDOW'S EDGE IS REPORTED NOW, NOT ACCEPTED, and this arm used
+	// to assert the opposite. citeWindow's reach is what lets the guard
+	// find the symbol at all, and finding it is what lets the report
+	// name the line to write — so its job changed from "how wrong a
+	// citation may be" to "how far the correction may be looked for".
+	// Six composer.go citations were each short by exactly two and had
+	// been green since the edit that moved them, which is what a
+	// tolerance buys you. Raised in review of #456.
+	//
+	// STILL PER FORM, for the reason the arms above give: hardcoding
+	// citeForms[0] leaves a fourth form's reach unpinned the day it is
+	// added, and reports it as a pass.
 	for _, form := range citeForms {
 		t.Run("the window's edge, "+form.name, func(t *testing.T) {
 			md := form.sample("Alpha", "fake.go", edgeLine)
-			accepts(t, md, read, fmt.Sprintf("`Alpha` is exactly citeWindow (%d) "+
-				"lines from the cited line — the window does not reach as far as "+
-				"it says", citeWindow))
+			problems, forms, _ := citationProblems(md, read)
+			if len(forms) == 0 {
+				t.Fatalf("the guard matched no citation form in %q, so it looked at "+
+					"nothing — which is indistinguishable from the accept this arm "+
+					"used to assert", md)
+			}
+			want := fmt.Sprintf("Write %d.", identLine)
+			if !strings.Contains(strings.Join(problems, "\n"), want) {
+				t.Errorf("the guard did not report %q as drifted, or reported it "+
+					"without the correction %q: %v\n`Alpha` is exactly citeWindow "+
+					"(%d) lines from the cited line — near enough for the window to "+
+					"find it, which is the whole reason the report can say where to "+
+					"point instead.", md, want, problems, citeWindow)
+			}
 		})
 	}
 

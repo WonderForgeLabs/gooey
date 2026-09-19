@@ -75,6 +75,18 @@ func (b *ButtonBar) Measure(avail gooey.Size) gooey.Size {
 			l.Visibility = m.was
 		}
 	}
+	// cutMember holds a gooey.Component, so this tail retains buttons
+	// from the last measure. See clearToCap in the root package. Raised
+	// in review of #456.
+	//
+	// BEFORE THE REFILL, AND IT HAS TO BE: the reset is here in Measure
+	// and the appends are in Arrange, so "after the refill" would put
+	// the clear at the end of Arrange — where the next Measure's [:0]
+	// re-exposes everything it just cleared. b.cut is not published by
+	// ChildComponents either, so the re-entrancy the after-form buys
+	// elsewhere has no reader here. Raised in review of #456, round
+	// two.
+	clear(b.cut[:cap(b.cut)])
 	b.cut = b.cut[:0]
 
 	b.sizes = b.sizes[:0]
