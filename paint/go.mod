@@ -18,12 +18,13 @@ module github.com/WonderForgeLabs/gooey/paint
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61
+	github.com/WonderForgeLabs/gooey v0.0.0-20260913132232-e5cdb56ececd
 	github.com/fogleman/gg v1.3.0
 )
 
 require (
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
