@@ -487,6 +487,9 @@ test go red.
 | the helper idiom not counted as a read | `TestTheHelperIdiomIsAChildRead` |
 | a pseudo-element's own `Build` not scanned | `TestAPseudoElementsOwnBuildIsScanned` |
 | `specOf` rebuilds the catalog | `TestAttrRowsDoesNotRebuildTheCatalog` |
+| a held attribute fault dropped where the build returns clean | `TestADeferralBuysNoSilenceWhereNoDiagnosisFollows` |
+| the layout surface refused on a def whose axes cannot be derived | `TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef` |
+| a layout attribute accepted and dropped on a component with no `Layout` | `TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName` |
 
 The palette test asserts the **derivation** rather than three names: every
 element some other entry restricts itself to is absent, and every restricted

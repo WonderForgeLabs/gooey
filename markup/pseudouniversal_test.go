@@ -605,6 +605,87 @@ func TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef(t *testing.T) {
 	}
 }
 
+// layoutlessComponent is a gooey.Component that does NOT embed Base, so
+// it implements no gooey.HasLayout and applyLayout has nothing to write
+// to. Everything else in this package's fixtures embeds Base, which is
+// exactly why the shape below went unmeasured.
+type layoutlessComponent struct{}
+
+func (layoutlessComponent) Measure(gooey.Size) gooey.Size { return gooey.Size{} }
+func (layoutlessComponent) Arrange(gooey.Rect)            {}
+func (layoutlessComponent) Bounds() gooey.Rect            { return gooey.Rect{} }
+func (layoutlessComponent) Render(*gooey.Frame)           {}
+
+// TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName is the THIRD
+// shape, and the suite could not tell it from the second until review of
+// #486 measured it.
+//
+// Two different facts share AxesKnown == false on a def: its Build
+// returns something that honours the universal layout row, or something
+// that has no Layout at all. The arm above fixtures the first — its
+// Build returns a *components.Text, which embeds Base — and the round
+// that widened TakesLayout applied the widening to both. For this one
+// applyLayout opened with `if !ok { return nil }`, so <LogPane
+// Margin="2"/> was accepted, dropped, and reported nowhere: #461's own
+// defect, arriving through the gate written to close it.
+//
+// The answer is not to refuse it in the catalog — whether the built
+// value implements gooey.HasLayout is unknowable until Build has run —
+// but to make the loader SAY SO. The message names every attribute that
+// would have been dropped, which is what the author has to delete or
+// make applicable.
+func TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{"Bareish": {
+		Name:  "Bareish",
+		Known: true,
+		Doc:   "A host element whose Build returns a component with no Layout.",
+		Attrs: []AttrSpec{{Name: "Label", Kind: KindString, Origin: OriginBuiltin}},
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			return layoutlessComponent{}, nil
+		},
+	}}}
+	spec, ok := ctx.spec("Bareish")
+	if !ok {
+		t.Fatal("the fixture did not resolve")
+	}
+	if spec.AxesKnown {
+		t.Fatal("the fixture is not the discriminating shape — a def with no " +
+			"Proto must report AxesKnown false")
+	}
+
+	// THE ATTRIBUTE CHECK LETS IT THROUGH, which is the half the catalog
+	// can answer and the reason the loader has to answer the other half.
+	if !TakesLayout(spec) {
+		t.Fatal("the catalog refuses the layout surface for this def, so the " +
+			"loader below is never reached and this test measures nothing")
+	}
+
+	_, err := Build([]byte(`<Gooey><Bareish Label="a" Margin="2" Grid.Row="0"/></Gooey>`), ctx)
+	if err == nil {
+		t.Fatal("<Bareish Margin=\"2\" Grid.Row=\"0\"/> loaded. The component it " +
+			"builds has no Layout, so both attributes were accepted and " +
+			"dropped — no error, no warning, and a document that does not " +
+			"lay out the way it reads")
+	}
+	for _, want := range []string{"Margin", "Grid.Row", "Bareish"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %s:\n\t%v\n"+
+				"An author has to know WHICH attributes to remove, and on "+
+				"which element", want, err)
+		}
+	}
+
+	// AND THE NON-LAYOUT UNIVERSALS ARE NOT REFUSED. Name and Tooltip are
+	// universal too and neither goes through the Layout, so a component
+	// without one still honours them; refusing them here would trade a
+	// silent drop for a false alarm.
+	if _, err := Build([]byte(`<Gooey><Bareish Label="a" Name="pane"/></Gooey>`), ctx); err != nil {
+		t.Errorf("<Bareish Name=\"pane\"/> is refused (%v), and Name does not "+
+			"go through the Layout — the refusal is scoped to the attributes "+
+			"applyLayout is the only consumer of", err)
+	}
+}
+
 // TestAMisplacedPseudoElementReportsItsPlacement is finding 1 of #486's
 // round 1, and the defect it pins is a RIGHT ANSWER TO THE WRONG
 // QUESTION.
@@ -2008,10 +2089,19 @@ func TestADeferralBuysNoSilenceWhereNoDiagnosisFollows(t *testing.T) {
 		},
 		{
 			// THE DEFERRAL ITSELF, on the child that has a diagnosis to
-			// defer to. Without this arm the narrowing could be widened
-			// into a removal and nothing would say so.
+			// defer to.
+			//
+			// THE ATTRIBUTE HAS TO BE ONE THE VOCABULARY REFUSES on this
+			// element, and Name is not: ctx.vocabulary writes
+			// allowed["Name"] with builds=true, so <Row Name="Zonk"> had
+			// no attribute fault to hold and the placement error came
+			// from defRow.Build under either implementation — reducing
+			// holdIfMisplaced to `return err` left all four arms green.
+			// Measured in review of #486. Margin is refused on a
+			// misplaced <Row>, so the hold is what this arm now
+			// exercises; the same mutation reddens it.
 			"a universal on a misplaced element defers to the placement fault",
-			`<Gooey><VStack><Row Name="Zonk" Label="a"/></VStack></Gooey>`,
+			`<Gooey><VStack><Row Margin="2" Label="a"/></VStack></Gooey>`,
 			"only valid directly inside <Table>",
 		},
 	} {

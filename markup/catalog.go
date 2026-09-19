@@ -385,7 +385,21 @@ type ElementSpec struct {
 	// which is. TakesLayout is where that mattered; see its doc for the
 	// measurement.
 	AxesKnown bool
-	Doc       string
+	// Builds reports that this spec came from an ElementDef carrying a
+	// Build — so the loader runs that Build and hands the result to
+	// applyLayout. It exists to scope the !AxesKnown arm of TakesLayout
+	// to the only specs it was measured on.
+	//
+	// The three literal-built specs have no Proto either, so !AxesKnown
+	// is true of all of them: Context.Components entries
+	// (OriginRegistered), Context.Includes controls (OriginInclude),
+	// and apps/wysiwyg's bare ElementSpec{Name: elem} fallback for an
+	// element the catalog does not know. Without this field
+	// TakesLayout(ElementSpec{}) answered true and the designer offered
+	// the whole universal row set, plus every attached grant, on
+	// unknown elements — measured in review of #486.
+	Builds bool
+	Doc    string
 }
 
 // universalAttrs is the surface every element with a Layout accepts,
@@ -858,8 +872,22 @@ func AttrsFor(e ElementSpec, parent string) []AttrSpec {
 // A pseudo-element also has no Proto, so !AxesKnown holds for it — but it
 // builds NO component, which is a reason to withhold the layout surface
 // that survives knowing everything about it.
+// AND THE ARM IS SCOPED TO A DEF THAT BUILDS, because "nobody can say"
+// is true of three literal-built spec shapes that have no Build here at
+// all — registered components, include controls, and the bare
+// ElementSpec{Name: elem} an unknown element gets. TakesLayout of the
+// zero value answered true without this conjunct. Review of #486
+// measured the consequence on a registered builder: AttrsFor offered
+// [HAlign Height Margin Name Tooltip VAlign Visibility Width] where it
+// had offered Name alone.
+//
+// What remains inside the arm — a def whose Build returns a component
+// with no Layout — is no longer silent either: applyLayout REPORTS the
+// layout attributes it cannot apply rather than returning nil, so the
+// answer here is "accepted and honoured, or refused by name", never
+// "accepted and dropped".
 func TakesLayout(e ElementSpec) bool {
-	return (e.HasLayout || !e.AxesKnown) && !e.NonVisual && !e.Pseudo
+	return (e.HasLayout || (!e.AxesKnown && e.Builds)) && !e.NonVisual && !e.Pseudo
 }
 
 // BuiltinElements returns the DECLARED table: the element vocabulary

@@ -339,6 +339,7 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		Attaches:  attaches,
 		HasLayout: hasLayout,
 		AxesKnown: axesKnown,
+		Builds:    d.Build != nil,
 		Doc:       d.Doc,
 	}
 }

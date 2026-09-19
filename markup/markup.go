@@ -1275,7 +1275,31 @@ func applyTooltipShorthand(e Element, w gooey.Component, ctx *Context) error {
 func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 	hl, ok := w.(gooey.HasLayout)
 	if !ok {
-		return nil
+		// A COMPONENT WITH NO LAYOUT REFUSES THE ATTRIBUTES RATHER THAN
+		// DROPPING THEM. This returned nil, so <Thing Margin="2"
+		// Grid.Row="0"/> loaded and meant nothing whenever Thing's
+		// Build returned a component that does not embed Base —
+		// accepted, dropped, reported nowhere, which is this package's
+		// definition of the defect. The attribute check cannot answer
+		// it: TakesLayout reads a catalog spec, and whether the built
+		// value implements gooey.HasLayout is known only here, after
+		// Build has run. Raised in review of #486, on the round that
+		// let an unknowable def through the check.
+		var dropped []string
+		for k := range e.Attrs {
+			if layoutOnlyName(k) {
+				dropped = append(dropped, k)
+			}
+		}
+		if len(dropped) == 0 {
+			return nil
+		}
+		sort.Strings(dropped)
+		return fmt.Errorf("markup: <%s %s=%q>: this element builds a component "+
+			"with no Layout, so %s would be accepted and never applied. Remove "+
+			"%s, or embed gooey.Base in what <%s> builds",
+			e.Name, dropped[0], e.Attrs[dropped[0]], strings.Join(dropped, ", "),
+			strings.Join(dropped, ", "), e.Name)
 	}
 	l := hl.LayoutProps()
 	for k, v := range e.Attrs {
@@ -1383,6 +1407,28 @@ func layoutInt(l *gooey.Layout, name string) *int {
 		return &l.Top
 	}
 	return nil
+}
+
+// layoutOnlyName reports whether name is an attribute applyLayout is
+// the only consumer of — the universal LAYOUT row and the attached
+// properties. Name and Tooltip are deliberately absent: both are
+// universal but neither goes through the Layout, so a component with no
+// Layout still honours them and refusing them would be wrong.
+//
+// It is a switch over the same names layoutInt and applyLayout's own
+// switch already spell, rather than a derived set, because those two are
+// where the names are defined and a third table would be the drift this
+// package keeps removing. Raised in review of #486.
+func layoutOnlyName(name string) bool {
+	var probe gooey.Layout // layoutInt returns a field POINTER; it needs a struct
+	if layoutInt(&probe, name) != nil {
+		return true
+	}
+	switch name {
+	case "Margin", "HAlign", "VAlign", "Visibility":
+		return true
+	}
+	return false
 }
 
 // ParseThickness reads MAUI's Thickness syntax — "4", "4,2", or
