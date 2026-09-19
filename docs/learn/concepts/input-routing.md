@@ -79,8 +79,9 @@ Four framework behaviors run before your code sees anything:
   surface). `HitTest` still answers with the component that paints last
   under the cell — that is a query — but dispatch routes to the outermost
   frozen ancestor, which takes the event, the capture, the focus a press
-  moves, and the click synthesized on release. A frozen subtree is also out of focus order,
-  scoped bindings, mnemonics and hover watchers. See the
+  moves, and the click synthesized on release. A frozen subtree is also
+  out of focus order, scoped bindings, mnemonics and hover watchers. See
+  the
   [design-surface spec](../../specs/2026-08-11-design-surface.md).
 - **Hover** moves to the nearest hover target at or above the hit —
   except while a drag is in flight. While the pointer is captured, only

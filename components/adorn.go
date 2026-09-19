@@ -408,11 +408,10 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // PASSES" then answered a third. It is neither: inside the check, not
 // exempted, and still owing an entry. Raised in review of #458, twice.
 //
-// A fourth adornment comes
-// under it on the commit that adds it, where the sentence this replaces
-// ("the grep to run rather than a count to trust here") asked the reader
-// to do the walk by hand and would have gone on reading true while a new
-// one shipped opaque.
+// A fourth adornment comes under it on the commit that adds it, where
+// the sentence this replaces ("the grep to run rather than a count to
+// trust here") asked the reader to do the walk by hand and would have
+// gone on reading true while a new one shipped opaque.
 //
 // What the check cannot reach is a third-party adornment: Add is
 // exported and Adornment is an interface, so one written outside this

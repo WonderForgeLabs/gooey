@@ -409,9 +409,9 @@ func ArrangeChild(w Component, slot Rect) {
 // pre-cleared before any paintable test (composer.go), so it writes
 // blanks over a sibling beneath it (#508), and a hidden CONTAINER's
 // bounds are filled deliberately. Collapsed is the one that truly
-// contributes nothing, because its bounds are zero. See Hidden's own contract in the
-// Visibility const block; this function is what hitTest reads so the two
-// planes ask the visibility question the same way.
+// contributes nothing, because its bounds are zero. See Hidden's own
+// contract in the Visibility const block; this function is what hitTest
+// reads, so the two planes ask the visibility question the same way.
 func paintable(w Component) bool {
 	l := LayoutOf(w)
 	return l == nil || l.Visibility == Visible
