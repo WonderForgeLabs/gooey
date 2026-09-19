@@ -2154,7 +2154,8 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 	}
 	// AND IN THAT ORDER, which is the whole finding. BOTH mechanisms are
 	// real for x: — markup.parse's ns map takes every xmlns attribute at
-	// any depth (markup/markup.go:949), x: included, so the flat table
+	// any depth (markup.parse's `a.Name.Space == "xmlns"` arm),
+	// x: included, so the flat table
 	// re-points x: expressions exactly as it does any other prefix; and
 	// encoding/xml really has scoped the ELEMENT names before markup
 	// sees a token. What separates them is REACHABILITY FROM HERE.
@@ -2196,7 +2197,8 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 //
 // It is the same defect as the document-vs-paste case, not a smaller
 // one: markup.parse keeps ONE FLAT ns map for the whole document
-// (markup/markup.go:949) with no scoping and last-wins, so two bindings
+// (markup.parse's `a.Name.Space == "xmlns"` arm) with no scoping and
+// last-wins, so two bindings
 // inside the paste collide in exactly the table two bindings across the
 // paste boundary collide in. Which is why the fix records into ONE map
 // as the walk goes rather than copying per subtree — a copy would catch

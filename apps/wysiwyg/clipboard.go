@@ -744,6 +744,7 @@ func (ed *editor) pasteMarkup(src string) {
 // (mutation-checked). The reason is narrower and real: the round trip is
 // a second parse that can FAIL, and a failure there would report a paste
 // as unparseable after it had already parsed once.
+//
 // THE ENVELOPE'S DECLARATIONS COME WITH IT. <Gooey> is where a
 // hand-written document puts its xmlns — it is where markup's own error
 // tells the author to put it — and where every file saved before this
@@ -926,7 +927,8 @@ func reconcileNamespacesInto(n *node, doc, own map[string]string) error {
 			//
 			// ONE MAP, NOT A COPY PER SUBTREE, because markup.parse
 			// keeps ONE FLAT ns map for the whole document
-			// (markup/markup.go:949 — every xmlns: attribute at any
+			// (markup.parse's `a.Name.Space == "xmlns"` arm — every
+			// xmlns: attribute at any
 			// depth, no scoping, last wins). A per-subtree copy would
 			// fix the nesting case and leave the sibling one, where the
 			// loader's table conflicts just as hard.
@@ -1054,12 +1056,17 @@ func reconcileNamespacesInto(n *node, doc, own map[string]string) error {
 // agreement with node.markup, not for correctness, and saying otherwise
 // credited a guard with catching something it never could. Corrected in
 // review of #501.
+//
 // PREFIXED DECLARATIONS ONLY, because that is what the decision reads.
-// This recorded the plain "xmlns" too and reconcileNamespacesInto skips
-// k == "xmlns" above the doc[k] lookup, so the entry was unreachable —
-// two functions disagreeing about what counts as a declaration, which is
-// how the default-namespace bug the skip above records got in. Raised in
-// review of #501.
+// This recorded the plain "xmlns" too, and reconcileNamespacesInto
+// SKIPPED k == "xmlns" above the doc[k] lookup at the time, so the entry
+// was unreachable — two functions disagreeing about what counts as a
+// declaration, which is how the default-namespace bug that skip records
+// got in. PAST TENSE, because that skip is gone: the predicate there is
+// `!isNamespaceAttr(k)` now, and isNamespaceAttr's own doc carries why.
+// Written in the present it made two comments in one file disagree about
+// what the code does, which is the class this branch spends its rounds
+// deleting. Raised in review of #501, both halves.
 func collectNamespaces(n *node, into map[string]string) {
 	for _, k := range sortedKeys(n.Attrs) {
 		if isNamespaceAttr(k) {

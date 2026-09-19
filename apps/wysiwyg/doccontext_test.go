@@ -22,7 +22,8 @@ import (
 // #462. Found by review of #459, whose <Frozen AllowError="{{.Err}}"> is
 // the first PLAIN ATTRIBUTE to need a Dispatcher; the class is older —
 // `{{ns:Fn}}` has needed one since handlers landed
-// (markup/handlers.go:193), which is what the tests here use, so they
+// (markup.Context.handlerCommand's nil-Dispatcher arm), which is what
+// the tests here use, so they
 // pin the property on main rather than waiting for that PR.
 
 // TestEveryContextTheEditorBuildsWithGetsTheDispatcher is the general
