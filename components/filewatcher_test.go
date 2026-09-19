@@ -525,14 +525,10 @@ func TestDrainBudgetScalesWithTheCallersInterval(t *testing.T) {
 // arithmetic is drainBudget and TestDrainBudgetScalesWithTheCallersInterval
 // says what it does.
 //
-// THE DISCRIMINATING MUTATION REMOVES ONLY THE FIRST WAIT in
-// TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay — the baseline
-// never advances past the edit made while disabled, the second wait gives
-// the re-enabled watcher a cycle to deliver it, and the test fails with
-// CI's own message. Replacing BOTH waits with a single Drain passes
-// instead: with no cycles the watcher never scans the edit, so there is
-// nothing to replay and every assertion holds VACUOUSLY. An all-pass
-// matrix is the mutation's fault, not the guard's.
+// MUTATE BY REMOVING THE FIRST WAIT, not both: dropping both leaves the
+// watcher no cycle to scan the edit in, so every assertion holds
+// vacuously and the matrix is all-pass for the mutation's reasons rather
+// than the guard's.
 func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64, every time.Duration) int64 {
 	t.Helper()
 	base := c.n.Load()
@@ -559,9 +555,7 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 			// has not run yet. The drain below takes the whole queue,
 			// and every post counted before the Load was enqueued
 			// before it — so by the time `got` is RETURNED all of them
-			// have run. The sentence here used to say "when the check
-			// passed", which points at the first drain and one line off
-			// from the statement carrying the argument.
+			// have run.
 			// Re-loading after the drain counts posts the still-ticking
 			// poll goroutine enqueued DURING it, which is the same
 			// one-post overclaim as printing the constant — the thing
@@ -587,9 +581,17 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 // fixture, so the posting here happens from INSIDE a drained closure,
 // where the ordering is forced rather than likely.
 //
-// `>` rather than `!=`, because under-reporting is sound and this
-// fixture does under-report: the message says how many posts are KNOWN
-// to have run, and only over-reporting misleads.
+// `!=`, NOT `>`, and this is the one place where that is right. The
+// general argument for tolerating under-reporting — the message says
+// how many posts are KNOWN to have run — is why every other assertion
+// on this value is one-sided. Here the fixture was built so the
+// ordering is forced rather than likely, which makes the honest value
+// deterministically 1: the exact number is knowable, so `>` costs
+// coverage instead of buying robustness. Measured in review of #511:
+// with `>`, mutating drainUntilPosts to `return 0` leaves this file
+// green at -count=3; with `!=` it reports "drainUntilPosts reported 0
+// posts and only 1 closures posted after its baseline ran". Run at
+// -count=200 with `!=`: green, no flake.
 func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	d := gooey.NewDispatcher()
 	c := &countingPost{post: d.Post}
@@ -614,7 +616,7 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	// Rebasing is the same discrimination with one fewer post: honest
 	// got=1 against 1 passes, dishonest got=2 against 1 fails.
 	ranAfterBase := ran - 1
-	if got > int64(ranAfterBase) {
+	if got != int64(ranAfterBase) {
 		t.Errorf("drainUntilPosts reported %d posts and only %d closures posted "+
 			"after its baseline ran; a t.Fatalf quoting that number would claim "+
 			"scans the watcher has not made, which is the overclaim the return "+
