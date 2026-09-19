@@ -1035,14 +1035,51 @@ var inputCorrectionRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)membership-and-rank`),
 }
 
-var epitaphRes = []*regexp.Regexp{
+// historyEpitaphRes is the plane-NEUTRAL half: a sentence marked as
+// history, in words that say nothing about which rule is being retired.
+// Every plane can use it.
+var historyEpitaphRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)used to (say|state|be)|is what this said|is what this used to`),
 	regexp.MustCompile(`(?i)superseded|no longer|stopped being|was never|not any more|retired`),
-	regexp.MustCompile(`(?i)by convention|convention,? not|incidental|heuristic|arbitrary`),
-	regexp.MustCompile(`(?i)do not go looking|does not decide|decides nothing|position is free`),
 }
 
-var inputQualifierRes = append(append([]*regexp.Regexp{}, inputCorrectionRes...), epitaphRes...)
+// epitaphRes is historyEpitaphRes PLUS the Z-ORDER PLANE'S OWN
+// corrections, and it belongs to that plane alone.
+//
+// The two added patterns are what people write when they retire
+// "declare it last": an overlay host's position is `incidental` now,
+// the marker `decides nothing`, the layer's `position is free`. On
+// zOrderRule they are epitaphs in the strict sense. On the other two
+// planes they say nothing at all — whether declaration order is
+// incidental has no bearing on whether Hidden renders content or on
+// whether the hit walk is lifted.
+//
+// SHARED WHOLE THEY WERE MASKS. qualifiedIn clears a hit when ANY entry
+// matches a ±2-line window, so a sentence about declaration order two
+// lines away exempted a false sentence on a different plane. Reproduced
+// in review of #458 round 16 with a four-paragraph fixture in which the
+// input and visibility guards both stayed green on exactly the two
+// sentences they exist to catch; removing these two patterns made both
+// fire. TestAnOverlayPositionEpitaphDoesNotExemptTheOtherPlanes is that
+// fixture, kept.
+//
+// THE ARGUMENT WAS ALREADY IN THIS FILE, one plane over: costEpitaphRes
+// was narrowed further still in an earlier round, and its doc states
+// the general rule. It was measured for costRule and not carried to its
+// siblings — which is the failure this whole branch is about, and the
+// one components/overlayclaims_test.go records in its own words.
+//
+// WHY THE SPLIT IS HERE AND NOT AT costEpitaphRes' NARROWER LINE: the
+// `no longer` family is a live marker on the input plane, not a mask.
+// docs/specs/2026-09-05-overlay-ranks.md:145 marks its retired hit-walk
+// paragraph with exactly "no longer true", and narrowing input to the
+// cost plane's pair reddened it — measured, not argued.
+var epitaphRes = append(append([]*regexp.Regexp{}, historyEpitaphRes...),
+	regexp.MustCompile(`(?i)by convention|convention,? not|incidental|heuristic|arbitrary`),
+	regexp.MustCompile(`(?i)do not go looking|does not decide|decides nothing|position is free`),
+)
+
+var inputQualifierRes = append(append([]*regexp.Regexp{}, inputCorrectionRes...), historyEpitaphRes...)
 
 // THE HIT-TEST EXEMPTION IS GONE, and its removal is part of #465
 // rather than a tidy-up.
@@ -1221,6 +1258,83 @@ func TestTheDocGuardsFireOnAFixtureTree(t *testing.T) {
 			if got := len(found) > 0; got != tc.caught {
 				t.Errorf("the input scan reported=%v, want %v, for:\n%s\n%s", got,
 					tc.caught, tc.body, strings.Join(found, "\n"))
+			}
+		})
+	}
+}
+
+// TestAnOverlayPositionEpitaphDoesNotExemptTheOtherPlanes is the
+// counterfactual for the epitaph split, and it is a fixture through the
+// real scan rather than a qualifiedIn call, because the defect was in
+// the WINDOW: the masking sentence and the false one are on different
+// lines, which a per-line check cannot express.
+//
+// The two bodies below are the reproduction from review of #458 round
+// 16 and its repair. Before the split both `caught` rows were green —
+// an overlay-position epitaph two lines away exempted a retired
+// hit-walk sentence and a retired Hidden sentence, on planes where
+// "the position is incidental" is not a statement about anything.
+//
+// THE want:false ROWS ARE WHAT STOP THE NARROWING GOING TOO FAR, and
+// they are not symmetry for its own sake: narrowing these two planes to
+// the cost plane's pair — which is what the round suggested — reddened
+// docs/specs/2026-09-05-overlay-ranks.md, whose retired hit-walk
+// paragraph is marked with exactly "no longer true". A guard that makes
+// a correct epitaph unwritable sends its reader to delete the history
+// instead of the claim.
+func TestAnOverlayPositionEpitaphDoesNotExemptTheOtherPlanes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		plane  rulePlane
+		caught bool
+	}{
+		{
+			name: "an overlay-position epitaph does not exempt a retired hit-walk sentence",
+			body: guardPad +
+				"An overlay host's declaration order is incidental now.\n\n" +
+				"Hit-testing takes later siblings before earlier ones, so the last\n" +
+				"sibling declared wins the press.\n",
+			plane:  inputRule,
+			caught: true,
+		},
+		{
+			name:   "and a plane-neutral marker still does",
+			body:   guardPad + "Hit-testing takes later siblings before earlier\nones is what this used to say.\n",
+			plane:  inputRule,
+			caught: false,
+		},
+		{
+			name: "an overlay-position epitaph does not exempt a retired Hidden sentence",
+			body: guardPad +
+				"Hidden occupies space and paints nothing.\n\n" +
+				"The position of the layer is incidental.\n",
+			plane:  visibilityRule,
+			caught: true,
+		},
+		{
+			name:   "and a plane-neutral marker still does",
+			body:   guardPad + "Hidden occupies space and paints nothing, which is no longer true.\n",
+			plane:  visibilityRule,
+			caught: false,
+		},
+	} {
+		t.Run(tc.plane.plane+": "+tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "fixture.md"),
+				[]byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			files := docFilesIn(t, dir)
+			if len(files) != 1 {
+				t.Fatalf("the fixture walk found %d files, want 1 — this arm is "+
+					"about what the scan REPORTS, so it has to be reading the "+
+					"fixture", len(files))
+			}
+			found := scanFilesForRetiredRule(t, files, tc.plane)
+			if got := len(found) > 0; got != tc.caught {
+				t.Errorf("the %s scan reported=%v, want %v, for:\n%s\n%s",
+					tc.plane.plane, got, tc.caught, tc.body, strings.Join(found, "\n"))
 			}
 		})
 	}
@@ -2386,12 +2500,10 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 		"// Hit-testing still walks plain document order, which #465 tracks.",
 		"// Hit-testing still walks plain document order — no longer true.",
 		"// Hit-testing still walks plain document order is what this used to say.",
-		"// Hit-testing still walks plain document order, so position is free.",
 		"// Hit-testing still walks plain document order, and overlayOf is not asked.",
 		"// Hit-testing is layer-aware now, and still walks plain document order.",
 		"// Hit-testing still walks plain document order; the click agrees anyway.",
 		"// Hit-testing still walks plain document order, membership-and-rank aside.",
-		"// Hit-testing still walks plain document order by convention, not by rule.",
 	}
 	// THE RESIDUE OF A CORRECTION is its own family and its own arm,
 	// because it is scanned with a stricter qualifier set —
@@ -3152,7 +3264,7 @@ func statesTheRetiredHiddenWording(line string) bool {
 // reaches the loop.
 var hiddenPrefilterWords = []string{"hidden"}
 
-var hiddenQualifierRes = epitaphRes
+var hiddenQualifierRes = historyEpitaphRes
 
 var supersededOfHidden = regexp.MustCompile(`(?i)visibility|hidden|#508`)
 
@@ -3174,7 +3286,7 @@ var visibilityRule = rulePlane{
 		"Say \"renders no content\" and say the node is not " +
 		"hit-tested, the way layout.go, docs/architecture.md and " +
 		"docs/markup-reference.md do; or mark the sentence as " +
-		"history with one of the markers in epitaphRes.",
+		"history with one of the markers in historyEpitaphRes.",
 }
 
 // TestTheRetiredHiddenGuardCanActuallyFire is the honesty arm the two
@@ -3234,8 +3346,6 @@ func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
 	eachQualifierClearsASampleAlone(t, "hiddenQualifierRes", statesTheRetiredHiddenWording, hiddenQualifierRes, []string{
 		"Hidden occupies space, does not paint, which is no longer true.",
 		"Hidden occupies space, does not paint is what this used to say.",
-		"Hidden occupies space, does not paint, so position is free.",
-		"Hidden occupies space, does not paint, by convention rather than by rule.",
 	})
 }
 
@@ -3606,6 +3716,14 @@ var costPrefilterWords = []string{"motion", "pointer"}
 // epitaph. `stopped being`, `was never`, `not any more` and the
 // convention/position families go for the same reason `no longer` does:
 // they are sentences people write about behaviour, not markers.
+// IT IS NARROWER THAN historyEpitaphRes, WHICH IS NOW THE OTHER TWO
+// PLANES' SET, and the difference is one pattern: the `no longer`
+// family. It is a mask here, for the reason measured above, and a live
+// marker on the input plane, where overlay-ranks.md:145 uses exactly
+// "no longer true" to retire its hit-walk paragraph. So this stays a
+// separate literal rather than becoming a slice of that one; what
+// review of #458 round 16 carried to the siblings was the ARGUMENT,
+// which cost them the two overlay-position patterns.
 var costEpitaphRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)used to (say|state|be)|is what this said|is what this used to`),
 	regexp.MustCompile(`(?i)superseded|retired`),

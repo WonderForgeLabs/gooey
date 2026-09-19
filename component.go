@@ -580,11 +580,12 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // renderTree walked document order and never consulted Overlay, so #430
 // reproduced here verbatim long after Composer was fixed — on the path
 // that cmd/pixels, cmd/typeahead --dump and the test helpers across
-// components/, markup/ and the root all use. A fixture asserted through it would have looked green while
-// encoding the bug. Both paths now order through the one overlayOf rule
-// (#438) and through the one appendByRank bucket pass, and
-// TestBothPaintPathsAgree compares them rather than pinning each to a
-// string, so they cannot drift together either.
+// components/, markup/ and the root all use. A fixture asserted through
+// it would have looked green while encoding the bug. Both paths now
+// order through the one overlayOf rule (#438) and through the one
+// appendByRank bucket pass, and TestBothPaintPathsAgree compares them
+// rather than pinning each to a string, so they cannot drift together
+// either.
 //
 // Z-ORDER, THOUGH, AND NOT THE PICTURE — the claim above is scoped on
 // purpose, because two things this path does NOT do are easy to assume
