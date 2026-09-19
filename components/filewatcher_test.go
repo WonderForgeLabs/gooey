@@ -432,18 +432,18 @@ func (c *countingPost) Post(f func()) {
 // direction and the suite would stay green either way — silently
 // flaky in one direction and silently slow in the other.
 //
-// IT CLAMPS ZERO THE WAY FileWatcher.Start CLAMPS IT, and that mirroring
-// is the point rather than defensive tidiness. Start resolves the
-// interval before it ticks — `if every <= 0 { every = DefaultWatchInterval }`
-// — so a watcher declared without an Interval polls at 300ms, which is
-// how the component is documented to be used. A caller passing
-// w.Interval for such a watcher was handing this a zero, taking the
-// 50ms floor, and at n=40 budgeting 4s against 40 x 300ms = 12s of
-// unavoidable ticking: a guaranteed red, reported as "the poll
-// goroutine is not running" while the goroutine ran exactly as
-// configured. That is verbatim the failure the `every` parameter was
-// added to prevent, left open in the one case a caller reaches by
-// writing nothing. Raised in review of #511.
+// IT CLAMPS ZERO THE WAY FileWatcher.Start CLAMPS IT — `if every <= 0
+// { every = DefaultWatchInterval }` — because a watcher declaring no
+// Interval polls at that default, and without the clamp its w.Interval
+// arrives here as zero and takes the 50ms floor. The budget is then
+// computed against a rate an order of magnitude faster than the one the
+// goroutine ticks at: a guaranteed red reported as "the poll goroutine
+// is not running" while it runs exactly as configured.
+//
+// THE MIRRORING ITSELF IS NOT PINNED. Both sides name
+// DefaultWatchInterval rather than a figure, so a retune moves them
+// together, but a change to Start's RULE would leave this agreeing with
+// the old one silently.
 //
 // THE FLOOR DOES NOT SCALE because it is about a scheduler granting the
 // goroutine no slot at all, which no interval changes.
@@ -461,16 +461,14 @@ func drainBudget(n int64, every time.Duration) time.Duration {
 // TestDrainBudgetScalesWithTheCallersInterval pins both halves of the
 // budget, because both were unexercised by anything that runs.
 //
-// Every drainUntilPosts caller passes time.Millisecond, which is under
-// the floor — so `if every > per` never fired in the committed suite and
-// the scaling added for it was dead code the next person inherits. The
-// zero row is the one finding #511 opened on: it is not reachable from
-// any caller in this file TODAY, and it is the row a caller reaches by
-// writing `Interval:` nowhere and passing `w.Interval` here.
+// The watcher callers pass w.Interval, so which row they take is the
+// watcher's own declaration: an Interval under the 50ms floor takes the
+// floor, one above it scales, and a watcher declaring no Interval takes
+// the zero row through Start's own default. All three are live paths.
 //
 // Written as a table rather than as a converted caller because what is
 // under test is arithmetic, and a converted caller would pay two seconds
-// of real waiting to assert it indirectly. Raised in review of #511.
+// of real waiting to assert it indirectly.
 func TestDrainBudgetScalesWithTheCallersInterval(t *testing.T) {
 	for _, c := range []struct {
 		why   string
@@ -519,10 +517,13 @@ func TestDrainBudgetScalesWithTheCallersInterval(t *testing.T) {
 // survives a retune and a quoted pair does not.
 //
 // AND `every` IS THE CALLER'S Interval, because what sets the post rate
-// is FileWatcher.Interval and this helper cannot see it. The arithmetic
-// is drainBudget and TestDrainBudgetScalesWithTheCallersInterval says
-// what it does — a table, where this paragraph was ten lines arguing
-// from an evaluated worst case that no caller in the file reached.
+// is FileWatcher.Interval and this helper cannot see it. Every watcher
+// caller passes `w.Interval` rather than restating it, which is what
+// makes that self-maintaining: a literal beside a watcher is a second
+// copy of the post rate, and moving the Interval without moving the
+// literal budgets against a rate the goroutine is not ticking at. The
+// arithmetic is drainBudget and TestDrainBudgetScalesWithTheCallersInterval
+// says what it does.
 //
 // THE DISCRIMINATING MUTATION REMOVES ONLY THE FIRST WAIT in
 // TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay — the baseline
@@ -600,7 +601,11 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	}
 	c.Post(func() { ran++; c.Post(second) })
 
-	got := drainUntilPosts(t, d, c, 1, time.Millisecond)
+	// ZERO, BECAUSE THERE IS NO WATCHER HERE and so no post rate to
+	// restate. Zero is the truthful value and drainBudget clamps it to
+	// DefaultWatchInterval; these closures are already enqueued, so the
+	// budget is never approached.
+	got := drainUntilPosts(t, d, c, 1, 0)
 	// MINUS THE ONE CLOSURE POSTED BEFORE THE BASELINE. drainUntilPosts
 	// samples `base` on entry, after the first c.Post, so that post is
 	// not in `got` — and comparing `got` against every closure that ran
@@ -827,7 +832,7 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// next: by the third move of the counter, a scan that began after the
 	// write has finished, and the baseline it advanced is what makes the
 	// change dropped rather than merely late.
-	drainUntilPosts(t, d, c, 3, time.Millisecond)
+	drainUntilPosts(t, d, c, 3, w.Interval)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
 	}
@@ -840,7 +845,7 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// Re-enabling resumes with nothing torn down, and does NOT replay
 	// the edit that happened while it was off.
 	enabled.Set(true)
-	drainUntilPosts(t, d, c, 3, time.Millisecond)
+	drainUntilPosts(t, d, c, 3, w.Interval)
 	if hits != 0 {
 		t.Fatalf("re-enabling replayed %d change(s) made while disabled", hits)
 	}
@@ -939,7 +944,7 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// measure ~51ms here (50.8–51.3 over five runs), so the 40ms drainFor
 	// could not buy the forty polls its message named even with nothing
 	// else running.
-	posts := drainUntilPosts(t, d, c, 40, time.Millisecond)
+	posts := drainUntilPosts(t, d, c, 40, w.Interval)
 	if hits != 0 {
 		// POSTS, NOT POLLS, and the returned count rather than the
 		// constant: what 40 posts bound is stated above, and `got` can
