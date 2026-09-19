@@ -409,17 +409,24 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 	}
 }
 
-// TestThePartitionTablesShareOneKeySet is what lets partitionWords hold
-// one cache for both tables.
+// TestThePartitionTablesShareOneKeySet is a claim ABOUT the two tables,
+// and no longer a precondition anything rests on.
 //
 // The two partitions are separate declarations that describe the same
-// context struct from two seams, so they are expected to hold the same
-// field names and to disagree only about which of them cross. A field
-// added to one alone is the silent case: partitionWords is built from
-// boundaryPartition, so a name added only to rowPartition gets no
-// pattern, partitionRunSide's bare-name half never looks for it, and a
-// row-seam page can enumerate it with nothing red. The guard is cheap
-// and the failure it replaces is invisible.
+// Context struct from two seams, so they are expected to hold the same
+// field names and to disagree only about which of them cross. A key set
+// that splits is a partition that has silently stopped being one — that
+// is the whole of what this guard says, and it is worth saying because
+// the two tables are edited independently.
+//
+// It used to be load-bearing, and this header said so: partitionWords
+// was built from boundaryPartition alone, so a name added only to
+// rowPartition got no pattern and partitionRunSide's bare-name half
+// reached a nil *regexp.Regexp. partitionWords now takes the UNION, so
+// the cache serves both tables whatever this guard says. The sentence
+// describing the coupling outlived the coupling for exactly one commit,
+// which is the defect class this branch exists to fix. Raised in review
+// of #543.
 func TestThePartitionTablesShareOneKeySet(t *testing.T) {
 	for name := range boundaryPartition {
 		if _, ok := rowPartition[name]; !ok {
@@ -430,10 +437,10 @@ func TestThePartitionTablesShareOneKeySet(t *testing.T) {
 	}
 	for name := range rowPartition {
 		if _, ok := boundaryPartition[name]; !ok {
-			t.Errorf("rowPartition has %q and boundaryPartition does not, so "+
-				"partitionWords — built from boundaryPartition — holds no "+
-				"pattern for it and partitionRunSide cannot see it spelled "+
-				"bare on a row-seam page", name)
+			t.Errorf("rowPartition has %q and boundaryPartition does not; the "+
+				"two describe one Context struct from two seams, so a name in "+
+				"one is a name in both, and a key set that splits is a "+
+				"partition that has stopped being one", name)
 		}
 	}
 }
@@ -780,10 +787,14 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // it was handed, so an exported field added to rowPartition alone
 // yields a nil *regexp.Regexp and FindAllStringIndex nil-derefs. The
 // guard written for exactly that condition cannot report it: Go runs
-// tests in declaration order, TestTheBoundaryGuardsPickTheirTable (:288)
-// passes rowPartition down this path, and the key-set guard is declared
-// at :423 — so the panic aborts the binary first and its carefully
-// written message never prints. Measured in review of #490 by adding
+// tests in declaration order, TestTheBoundaryGuardsPickTheirTable
+// passes rowPartition down this path, and it is declared EARLIER in
+// this file than TestThePartitionTablesShareOneKeySet — so the panic
+// aborts the binary first and the key-set guard's carefully written
+// message never prints. Order is the load-bearing fact and the two
+// names carry it; the line numbers this comment first pinned were
+// accurate and unchecked, since TestEveryCitedTestNameResolves resolves
+// names and has no view of numbers. Measured in review of #490 by adding
 // one key to rowPartition: a nil-pointer stack trace in a test about
 // table dispatch, with nothing naming the real fault.
 //

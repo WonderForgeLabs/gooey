@@ -114,9 +114,11 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// the reply depend on what a caller left on the page's Context.
 	// Raised in review of #459.
 	pagePending := ctx.arms.pending
-	// AND THE DOCUMENT'S FS, captured here for the same reason as ns,
-	// res and pagePending above — read inside the factory it is nil for
-	// every row that matters.
+	// AND THE DOCUMENT'S FS, captured here for the same reason as every
+	// other local above — read inside the factory it is nil for every
+	// row that matters. (This sentence named three of them and dropped
+	// two, and a later comment counted from it and inherited the
+	// undercount. Raised in review of #543.)
 	//
 	// Load installs ctx.fsys and RESTORES IT IN A DEFER, so the only
 	// factory call that sees it is ItemsView.Validate's
@@ -135,8 +137,12 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// exactly the same reason: it asserted only that Load succeeded, and
 	// the <Image> it exercised was built by the probe row.
 	docFS := ctx.fsys
-	// AND THE DEPTH BOUND, under the same rule as its four neighbours
-	// above rather than as an exception to it. It is read correctly
+	// AND THE DEPTH BOUND, under the same build-time-capture rule as
+	// every local above it rather than as an exception to it. (Stated
+	// as the rule and not as a count: the sentence here said "its four
+	// neighbours above" and there were six, an undercount inherited
+	// from docFS's own comment, which names three and drops two.
+	// Raised in review of #543.) It is read correctly
 	// today — nothing assigns into an existing Context's rowDepth, and
 	// control() writes only to the child it is about to build — but
 	// that is a property of code in another file, not of this seam, and
