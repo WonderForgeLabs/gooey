@@ -1242,6 +1242,66 @@ func alienDecls(decls []*node) []*node {
 	return out
 }
 
+// declElemName is how one declaration is SPELLED in a message: its own
+// xmlns binding if it carries one, otherwise the envelope's, otherwise
+// bare.
+//
+// PER ELEMENT, because a document may bind more than one prefix to
+// markup.XNamespace and XML scoping puts the binding wherever the author
+// wrote it. alienDeclMsg has asked per element since review of #522;
+// browser.go's root-count refusal read decls[0] and printed that
+// spelling with len(decls), so a file holding one <p:Property> and one
+// <q:Property> was told it held "2 <p:Property> declarations". This is
+// that question asked once, in one place, so the two messages cannot
+// drift again.
+//
+// NOT declBinding'S FALLBACK, which is a SAVE-path answer: its
+// bound=false means "the envelope needs a binding added at write time",
+// not "this element is written unprefixed". Spelling an element from it
+// names one the file does not contain — and a bare <Property> is what
+// bareDeclMsg in this same editor defines as the missing-namespace
+// typo, so it is not a neutral guess. Raised in review of #522.
+func declElemName(d *node, envelope map[string]string) string {
+	p, ok := declBinding(envelope)
+	return declSpelling(d, p, ok, "")
+}
+
+// declSpelling is the question itself, taking the envelope's answer
+// already resolved because its two callers arrive with it in different
+// shapes: declElemName has the envelope's attribute map, alienDeclMsg
+// has the prefix and a bool it was handed.
+//
+// IT EXISTS BECAUSE THE CLAIM ABOVE WAS NOT TRUE. declElemName's doc
+// said the spelling was "asked once, in one place, so the two messages
+// cannot drift again" while alienDeclMsg still carried its own
+// per-element loop and never called it — an invariant asserted in prose
+// and not provided by the code, which is the shape this branch keeps
+// removing (see declAttrs' doc). Now it is one function and the
+// sentence holds.
+//
+// `unbound` IS A PARAMETER RATHER THAN A CONSTANT, and that is the
+// deliberate difference the unification had to preserve rather than
+// flatten. With no binding anywhere, the browser's refusal wants the
+// bare <Property> — bareDeclMsg defines that spelling as the
+// missing-namespace typo, so naming a prefix the file does not contain
+// would be a guess. The alien refusal wants <x:Foo>, because it has to
+// match markup's own <x:%s> message, which
+// TestAnEnvelopeInTheXNamespaceGetsTheAlienRefusal pins. Both answer
+// the same question; they differ only in what to say when nothing
+// answers it. Raised in review of #522.
+func declSpelling(d *node, envPrefix string, envBound bool, unbound string) string {
+	if p, ok := declBinding(d.Attrs); ok {
+		return "<" + p + ":" + d.Elem + ">"
+	}
+	if envBound {
+		return "<" + envPrefix + ":" + d.Elem + ">"
+	}
+	if unbound != "" {
+		return "<" + unbound + ":" + d.Elem + ">"
+	}
+	return "<" + d.Elem + ">"
+}
+
 // alienDeclMsg is markup's own answer for those elements, said by the
 // editor for the reason bareDeclMsg gives: the author is looking here.
 //
@@ -1281,46 +1341,13 @@ func alienDecls(decls []*node) []*node {
 // namespace offers, not about what this element is called, and the
 // spelling an author would write a Property under is the document's
 // binding rather than the alien element's.
-// declElemName is how one declaration is SPELLED in a message: its own
-// xmlns binding if it carries one, otherwise the envelope's, otherwise
-// bare.
-//
-// PER ELEMENT, because a document may bind more than one prefix to
-// markup.XNamespace and XML scoping puts the binding wherever the author
-// wrote it. alienDeclMsg has asked per element since review of #522;
-// browser.go's root-count refusal read decls[0] and printed that
-// spelling with len(decls), so a file holding one <p:Property> and one
-// <q:Property> was told it held "2 <p:Property> declarations". This is
-// that question asked once, in one place, so the two messages cannot
-// drift again.
-//
-// NOT declBinding'S FALLBACK, which is a SAVE-path answer: its
-// bound=false means "the envelope needs a binding added at write time",
-// not "this element is written unprefixed". Spelling an element from it
-// names one the file does not contain — and a bare <Property> is what
-// bareDeclMsg in this same editor defines as the missing-namespace
-// typo, so it is not a neutral guess. Raised in review of #522.
-func declElemName(d *node, envelope map[string]string) string {
-	if p, ok := declBinding(d.Attrs); ok {
-		return "<" + p + ":" + d.Elem + ">"
-	}
-	if p, ok := declBinding(envelope); ok {
-		return "<" + p + ":" + d.Elem + ">"
-	}
-	return "<" + d.Elem + ">"
-}
-
 func alienDeclMsg(alien []*node, prefix string, bound bool) string {
 	if !bound {
 		prefix = "x"
 	}
 	elems := make([]string, len(alien))
 	for i, d := range alien {
-		p := prefix
-		if own, ok := declBinding(d.Attrs); ok {
-			p = own
-		}
-		elems[i] = "<" + p + ":" + d.Elem + ">"
+		elems[i] = declSpelling(d, prefix, true, "")
 	}
 	verb := "is an unknown language element"
 	if len(elems) > 1 {

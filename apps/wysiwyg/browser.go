@@ -452,9 +452,28 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// and one inside a <Gooey> by splitDecls' bare arm — which is what
 	// made this the odd path out rather than a gap in the idea. Raised in
 	// review of #522.
+	// IT DESCRIBES RATHER THAN PRESCRIBES, which is what separates this
+	// arm from bareDeclMsg and is why it no longer calls it.
+	// bareDeclMsg is markup's sentence for a declaration found AMONG AN
+	// ENVELOPE'S CHILDREN, where a <Gooey> root exists to carry the
+	// xmlns:x its remedy names. Here there is none: an author who
+	// followed it in order — write <x:Property>, add xmlns:x to the
+	// <Gooey> root element — had no <Gooey> root to add it to, and on
+	// the next open landed on the prefixed arm fifty lines up. That is
+	// the same sending-them-at-a-wall-we-know-about this branch split
+	// the alien case out to stop, a third time. The prefixed arm above
+	// already describes where a declaration belongs instead of
+	// prescribing an edit; this one now matches it, and keeps
+	// bareDeclMsg's DIAGNOSIS — that <Property> is the spelling written
+	// without its namespace — which is the half that was always true
+	// here. Raised in review of #522.
 	if n.Elem == "Property" {
-		ed.status.Set("✗ " + rel + ": " + bareDeclMsg(1) + ". A file whose " +
-			"whole content is one has no document to show")
+		ed.status.Set("✗ " + rel + ": <Property> is a dependency property " +
+			"declaration written without its namespace; the spelling is " +
+			"<x:Property>, under xmlns:x=\"" + markup.XNamespace + "\". A " +
+			"declaration belongs among the children of a <Gooey> root, where " +
+			"it defines that control's public surface; a file whose whole " +
+			"content is one has no document to show")
 		return
 	}
 	var env map[string]string

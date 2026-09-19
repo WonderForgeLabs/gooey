@@ -950,9 +950,18 @@ func TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved(t *testing.T)
 			// assertion below is the one that matters here: the status
 			// was already a refusal and the rewrite happened anyway.
 			// Raised in review of #522.
+			//
+			// IT DESCRIBES WHERE A DECLARATION BELONGS rather than
+			// prescribing an edit, and this arm asserted the
+			// prescription until round 17. bareDeclMsg's remedy is
+			// "add xmlns:x to the <Gooey> root element", which this
+			// file does not have — so an author following it in order
+			// arrived at the prefixed arm's refusal instead. The
+			// spelling is still named, because that is the diagnosis
+			// and it was always true here.
 			name: "an unprefixed declaration as the whole file",
 			doc:  `<Property Name="T" Type="string"/>` + "\n",
-			want: "write it as <x:Property>",
+			want: "the spelling is <x:Property>",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
