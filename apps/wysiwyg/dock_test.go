@@ -75,10 +75,24 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 //
 // IT MISSES IN THE OTHER DIRECTION TOO: docs_test.go binds
 // `b := f.Cells` and then walks `b.At(x, y).Rune` over the whole plane,
-// so the one remaining hand-rolled .Rune walk in this package is
-// invisible to the command offered for finding them — the receiver is
-// an alias rather than the `Cells` selector. A grep keys on a spelling;
-// what #516 is scoped by is what the code DOES.
+// so a hand-rolled .Rune walk in this package is invisible to the
+// command offered for finding them — the receiver is an alias rather
+// than the `Cells` selector. A grep keys on a spelling; what #516 is
+// scoped by is what the code DOES.
+//
+// AND WHAT THAT ONE DOES IS WHY IT MUST NOT BE CONVERTED. It is a
+// control-character probe (docs_test.go, the loop under docsSel):
+//
+//	r := b.At(x, y).Rune
+//	if r == render.Continuation { continue }
+//	if (r < 0x20 && r != 0) || r == 0x7f { ... }
+//
+// Cell.Text() can express neither test — it answers "" for a
+// Continuation and a string for everything else, so the sentinel
+// comparison and the < 0x20 range check both disappear, and with them
+// the guard. Naming it as the walk the grep misses reads as pending
+// #516 work; it is the one site in this package whose .Rune is
+// LOAD-BEARING. Raised in review of #502.
 //
 // THE ALTERNATION HAS TO BE A GROUP, which is why the pattern is an
 // ERE and not either shorter spelling. `Cells\.At\(` misses

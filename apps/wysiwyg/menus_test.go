@@ -591,8 +591,26 @@ func fatalFrom(t *testing.T, fn func(fataler)) (msg string) {
 //
 // THE LABEL WITHIN FOUR COLUMNS OF THE ROW is `total < 4`, and it is the
 // one branch reachable from the REAL menus rather than only
-// synthetically: it fires if the dropdown ever loses its two-column
-// indent. It is a Fatal raised from TestTheCheckBoxIsDrawn's FIRST
+// synthetically: the live rows sit EXACTLY ON THE BOUNDARY, so any
+// one-column narrowing of the box column fires it. Measured, every
+// interior row of the View dropdown:
+//
+//	"[x] Design                    "
+//	"[ ] Code               ctrl+\ "
+//	"[x] Built in           ctrl+b "
+//	"    Next Pane  ctrl+alt+right "
+//
+// — shown verbatim, not %q-escaped. Prefix "[x] " or four spaces,
+// total == 4 in every case. There is no
+// indent in front of the box: the clip is d.X+1 through d.W-2, so an
+// interior row STARTS with the box. This said the guard "fires if the
+// dropdown ever loses its two-column indent", which sends whoever hits
+// the Fatal looking for a regression in something that was never there.
+// Sitting on the boundary is the stronger argument for pinning the
+// message anyway, which is what the rest of this paragraph is about.
+// Raised in review of #502.
+//
+// It is a Fatal raised from TestTheCheckBoxIsDrawn's FIRST
 // assertion, so in that regression the $EDITOR and "Next Pane" arms
 // below it never run and the failure reports one row of a three-row
 // story — which is why the message is worth pinning rather than left to
@@ -765,7 +783,7 @@ func TestTheFourCellsInFrontAreNotTheFourRunes(t *testing.T) {
 	box, row := boxBefore(t, rows, "Wrap")
 	// THE COUNTEREXAMPLE IS READ, NOT SPELLED, for the reason dock_test's
 	// rowText message is: a literal about the same fixture is a second
-	// answer free to disagree with it, and this one was written twice.
+	// answer free to disagree with it.
 	// The moment the prefix changes shape the message asserts a wrong
 	// "four RUNES back from the label" with nothing red.
 	r := []rune(prefix)
