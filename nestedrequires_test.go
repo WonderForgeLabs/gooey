@@ -314,7 +314,11 @@ const pseudoVersionRoutes = "Get a real pseudo-version with `GOWORK=off go list 
 	"origin/main` (TZ=UTC is load-bearing, and the form is exact " +
 	"only while the module is untagged). " +
 	"Keep any `replace` line, which is what makes local development " +
-	"use the checkout."
+	"use the checkout, and then run `go work vendor` — the own-module " +
+	"stanzas in vendor/modules.txt now carry the pseudo-version, so " +
+	"editing a pin without re-vendoring makes every Go command in the " +
+	"workspace refuse with `inconsistent vendoring`, including the one " +
+	"that would re-run this test."
 
 func shapeMsg(shape requireShape, r ownRequire) string {
 	dir := r.dir
@@ -1148,6 +1152,15 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 		{"v0.0.0-20260913132232-e5cdb56ecec", true},
 		{"v0.0.0-20260913132232-e5cdb56ececd", false},
 		{"v1.2.3-abcdef123456", false},
+		// AND THE OTHER DISCRIMINATING PAIR, adjacent for the same
+		// reason the hex arms are. Both have TWO dashes and a
+		// twelve-hex tail and they answer oppositely, so the dash count
+		// that used to decide this cannot separate them: the first is a
+		// stamp clipped to 13 digits, the second a prerelease
+		// identifier that happens to contain a hyphen. Raised in review
+		// of #497.
+		{"v0.0.0-2026091313223-e5cdb56ececd", true},
+		{"v1.2.3-rc-abcdef123456", false},
 		{"v0.1.0", false},
 		// The sentinels have their own reporter and their own remedy,
 		// and both carry a well-formed tail, so neither lands here.
@@ -1259,18 +1272,28 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 	// object — so it is a fixture or it is a hand-run clone in a review
 	// comment, which is not a check. Raised in review of #497.
 	for _, tc := range []struct {
-		name     string
-		pins     int
-		absent   []string
-		wantFail bool
-		want     string // a phrase the message must carry, "" for no message
+		name       string
+		pins       int
+		absentRevs int
+		where      []string
+		wantFail   bool
+		want       string // a phrase the message must carry, "" for no message
 	}{
-		{"everything present", 1, nil, false, ""},
-		{"the only pin absent", 1, []string{"a"}, true, "NOTHING was checked here"},
-		{"every pin absent", 3, []string{"a", "b", "c"}, true, "NOTHING was checked here"},
-		{"some absent", 3, []string{"a"}, false, "1 of the 3 pinned revisions"},
+		{"everything present", 1, 0, nil, false, ""},
+		{"the only pin absent", 1, 1, []string{"a"}, true, "NOTHING was checked here"},
+		{"every pin absent", 3, 3, []string{"a", "b", "c"}, true, "NOTHING was checked here"},
+		{"some absent", 3, 1, []string{"a"}, false, "1 of the 3 pinned revisions"},
+		// THE DISCRIMINATING ROW, and the only one whose two numbers
+		// disagree: two revisions, the absent one carrying the 35
+		// requires a `sed` across this tree would produce. Counting the
+		// require list against the revision count calls this "NOTHING
+		// was checked here" and reds, over a run in which existence and
+		// stamp ran for the revision that WAS present. Raised in review
+		// of #497.
+		{"one absent revision, many requires", 2, 1,
+			[]string{"a", "b", "c", "d", "e"}, false, "1 of the 2 pinned revisions"},
 	} {
-		fail, msg := pinCoverage(tc.pins, tc.absent)
+		fail, msg := pinCoverage(tc.pins, tc.absentRevs, tc.where)
 		if fail != tc.wantFail {
 			t.Errorf("%s: pinCoverage fails=%v, want %v — the difference between "+
 				"a run that verified nothing and one that verified most of it is "+
@@ -1360,7 +1383,22 @@ func TestTheSkewCheckComparesCommitsAndNamesTheNewest(t *testing.T) {
 			"keeping one of them makes a tree-wide typo a queue of runs rather "+
 			"than one report", got)
 	}
-	if got := spellings["0.0.0-20260913132232-e5cdb56ececd"]; got != "" {
+	// AND THE SAME FOR THE SPELLING, which is the population the STAMP
+	// error prints. The two arms look alike and are not: `at` is keyed by
+	// revision and answers the existence question, `spellings` is keyed by
+	// the whole version string and answers the stamp one — and the
+	// `sed`-across-the-tree scenario both of them cite is a stamp defect,
+	// where the revision stays valid and the existence path never fires.
+	// The two requires below share one version string, so this arm is
+	// zero-width against a map that keeps the first. Raised in review of
+	// #497.
+	if got := spellings["v0.0.0-20260913132232-e5cdb56ececd"]; len(got) != 2 {
+		t.Errorf("the spelling's population is %v — two requires carry that "+
+			"exact version string and the stamp error prints this slice, so "+
+			"keeping one of them names one module of however many a tree-wide "+
+			"rewrite touched", got)
+	}
+	if got := spellings["0.0.0-20260913132232-e5cdb56ececd"]; len(got) != 0 {
 		t.Errorf("the v-less spelling is in the spellings population as %q. It "+
 			"shares a revision with the pin beside it, so it would be reported "+
 			"as a SECOND SPELLING of that commit — advice to unify two lines "+
@@ -1465,11 +1503,64 @@ func hasRevisionTail(v string) bool {
 // prerelease tag out: v1.2.3-abcdef123456 has one dash and a hex tail,
 // and the arm at TestEveryRequireShapeReachesItsOwnArm pins that it
 // stays a tag. Raised in review of #497.
+// stampSlot reports that v's penultimate dash-part is where a stamp
+// would go and is ROUGHLY stamp-shaped: 13 to 15 characters, the same
+// slot stampOf reads exactly.
+//
+// A DASH COUNT IS NOT THIS TEST, and that is what it replaced. The
+// comment said two dashes keeps a legitimate prerelease tag out because
+// `v1.2.3-abcdef123456` has one — true of that input and pinned by the
+// table, and false in general: a semver prerelease identifier may
+// contain a hyphen, so `v1.2.3-rc-abcdef123456` has two dashes and a
+// twelve-hex tail. It was classified malformed, and the reader of a
+// perfectly servable tag was told it "carries a pseudo-version's
+// 14-digit stamp" — which it does not — and pointed at
+// `-c core.abbrev=12`. The silent half is worse: pinsOf drops it, so it
+// leaves the skew and existence populations with nothing said.
+//
+// The slot is what discriminates, because it is the thing a failed
+// pseudo-version has and a tag does not. `rc` is two characters and
+// `20260913132232` is fourteen; a stamp clipped or padded by one is
+// still in the window, which is the population this is for. Raised in
+// review of #497.
+//
+// THE RESIDUE, stated rather than bounded: a prerelease identifier of
+// 13 to 15 characters sitting immediately before a twelve-hex one —
+// `v1.2.3-releasecandi-abcdef123456` — is still read as a failed
+// pseudo-version. That is narrower than the dash rule by the whole
+// class of short hyphenated identifiers, and unlike the dash rule it
+// does not widen with every extra hyphen in the tag.
+func stampSlot(v string) bool {
+	parts := strings.Split(v, "-")
+	if len(parts) < 2 {
+		return false
+	}
+	slot := parts[len(parts)-2]
+	// AFTER THE LAST DOT, exactly as stampOf reads it: a tagged module's
+	// pseudo-version spells the slot `v1.2.4-0.20260913132232`, so the
+	// stamp is the part after the dot and the whole string is not.
+	if i := strings.LastIndex(slot, "."); i >= 0 {
+		slot = slot[i+1:]
+	}
+	// EMPTY IS THE DEGENERATE CASE and it is malformed outright, not a
+	// near-miss stamp. `v0.0.0--e5cdb56ececd` is the fixture:
+	// semver forbids an empty prerelease identifier, so nothing
+	// legitimate lands here, and a length WINDOW alone would read it as
+	// a tag. The dash count this replaced caught it by accident —
+	// three dashes clears any `>= 2` — which is why the window has to
+	// say so on purpose. Found by TestEveryRequireShapeReachesItsOwnArm
+	// while making this change, not by review.
+	if slot == "" {
+		return true
+	}
+	return len(slot) >= 13 && len(slot) <= 15
+}
+
 func malformedPseudo(v string) bool {
 	if _, ok := revisionOf(v); ok {
 		return false
 	}
-	return stampOf(v) != "" || (hasRevisionTail(v) && strings.Count(v, "-") >= 2)
+	return stampOf(v) != "" || (hasRevisionTail(v) && stampSlot(v))
 }
 
 // pinPopulations splits the tree's own-module requires into the two
@@ -1480,8 +1571,8 @@ func malformedPseudo(v string) bool {
 // require is excluded, and on a healthy tree there is nothing to exclude
 // — so a fixture handed straight to it is the only way an arm can see
 // that a sentinel and a plain tag stay out. Raised in review of #497.
-func pinPopulations(reqs []ownRequire) (at map[string][]string, spellings map[string]string) {
-	at, spellings = map[string][]string{}, map[string]string{}
+func pinPopulations(reqs []ownRequire) (at map[string][]string, spellings map[string][]string) {
+	at, spellings = map[string][]string{}, map[string][]string{}
 	for _, r := range reqs {
 		// classifyRequire, NOT A SECOND COPY OF THE DISPATCH. This read
 		// `unservableSentinel` and then `revisionOf` by hand, which is a
@@ -1537,9 +1628,18 @@ func pinPopulations(reqs []ownRequire) (at map[string][]string, spellings map[st
 		// revision. The git commands below still run once per revision.
 		// Raised in review of #497.
 		at[rev] = append(at[rev], where)
-		if _, seen := spellings[r.version]; !seen {
-			spellings[r.version] = where
-		}
+		// EVERY REQUIRE AT THAT SPELLING TOO, for the reason above and
+		// against a scenario that is MORE common, not less. The round
+		// that fixed `at` named the `sed`-across-the-tree case, and
+		// that case is a STAMP defect rather than an existence one: a
+		// hand-built or rewritten pseudo-version leaves the revision
+		// valid, so `cat-file` succeeds and the existence path never
+		// fires — the stamp check is the only one that sees it.
+		// Measured on this tree: 36 requires, and while this kept one
+		// location per version string, 1 spelling. So a tree-wide bad
+		// stamp named one module of 36, and the reader fixed it,
+		// re-ran, and was handed the next. Raised in review of #497.
+		spellings[r.version] = append(spellings[r.version], where)
 	}
 	return at, spellings
 }
@@ -1625,7 +1725,11 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 
 	// Revisions whose object is genuinely not here. Reported once at the
 	// end rather than per pin, and only where shallowness explains it.
+	// THE REQUIRE LINES TO PRINT AND HOW MANY REVISIONS THEY CAME FROM
+	// are counted apart, because pinCoverage's arms are about revisions
+	// and its message is about requires — see its doc.
 	var absent []string
+	absentRevs := 0
 	present := map[string]bool{}
 	// SORTED, like skewFrom's report and for the same reason: a report
 	// that reorders itself run to run is hard to read, and a reader
@@ -1635,6 +1739,7 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 		if _, err := git("cat-file", "-e", rev+"^{commit}"); err != nil {
 			if shallow == "true" {
 				absent = append(absent, at[rev]...)
+				absentRevs++
 				continue
 			}
 			t.Errorf("%d require(s) pin commit %s, which is not a commit in this "+
@@ -1662,7 +1767,7 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 	// the version string, and two modules can name one commit with two
 	// different ones.
 	for _, version := range sortedKeys(spellings) {
-		where := spellings[version]
+		where := strings.Join(spellings[version], "\n\t")
 		// THE ok IS READ, for the reason the newestRev arm gives about
 		// dropping it: correct today only because pinPopulations
 		// filtered first, and a silent "" would key present[] at the
@@ -1694,18 +1799,21 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 		}
 		want := strings.TrimSpace(string(stamp))
 		if !stampNames(version, want) {
-			t.Errorf("%s names commit %s with a stamp that is not that commit's "+
-				"committer date in UTC (%s). `go mod edit -require` writes "+
-				"literally what it is handed, so a hand-built pseudo-version "+
-				"can carry the wrong 14 digits and be refused by `go get` while "+
-				"passing every shape check here — including the skew check, "+
-				"which buckets by commit and cannot see two stamps of one",
-				where, rev, want)
+			t.Errorf("%d require(s) name commit %s with a stamp that is not that "+
+				"commit's committer date in UTC (%s). `go mod edit -require` "+
+				"writes literally what it is handed, so a hand-built "+
+				"pseudo-version can carry the wrong 14 digits and be refused by "+
+				"`go get` while passing every shape check here — including the "+
+				"skew check, which buckets by commit and cannot see two stamps "+
+				"of one. All of them are named here rather than one at a time, "+
+				"because a `sed` across the tree is how these get rewritten and "+
+				"this is the check that sees it:\n\t%s",
+				len(spellings[version]), rev, want, where)
 		}
 	}
 
 	sort.Strings(absent)
-	nothingRan, msg := pinCoverage(len(at), absent)
+	nothingRan, msg := pinCoverage(len(at), absentRevs, absent)
 	if msg != "" {
 		if nothingRan {
 			t.Error(msg)
@@ -1781,7 +1889,25 @@ func TestEveryOwnModulePinNamesACommitThisRepositoryPublished(t *testing.T) {
 // shallow, which is the some-absent arm. CLAUDE.md's Verify section now
 // carries the requirement too, because it lived only inside this string
 // and a ci.yml comment. Raised in review of #497.
-func pinCoverage(pins int, absent []string) (fail bool, msg string) {
+// TWO COUNTS AND A LIST, because they are three different things and
+// two of them were one. `pins` and `absentRevs` are REVISIONS; `where`
+// is the require lines to print, and a single revision usually carries
+// many of them — 36 at one revision on this tree. Comparing the length
+// of the require list against a revision count mixed units in the one
+// place the distinction decides red-versus-note: a two-revision tree in
+// a shallow clone missing the older revision (35 requires) reported
+// "NOTHING was checked here" as a t.Error over a run in which existence
+// and stamp both ran for the revision that was present. It also made
+// the some-absent arm unreachable for any realistic tree, since it
+// needed the absent revisions to hold fewer requires IN TOTAL than
+// there are distinct revisions.
+//
+// The table could not see it: every row passed both in matching units,
+// which is the failure comparedNothing's own doc records — a fixture
+// that restates the condition in its own words instead of exercising
+// it. The row with one absent revision and several requires is what
+// discriminates. Raised in review of #497.
+func pinCoverage(pins, absentRevs int, where []string) (fail bool, msg string) {
 	// THE CI REMEDY IS NO LONGER A KNOB TO SET, and this said it was:
 	// after the matrix-depth change `fetch-depth: 0` appears in ci.yml
 	// only inside comments — the checkout step reads
@@ -1799,20 +1925,20 @@ func pinCoverage(pins int, absent []string) (fail bool, msg string) {
 		"the leg carrying the root module — so this failing there means that " +
 		"derivation broke, not that a depth wants editing"
 	switch {
-	case len(absent) == 0:
+	case absentRevs == 0:
 		return false, ""
-	case len(absent) >= pins:
+	case absentRevs >= pins:
 		return true, fmt.Sprintf("NOTHING was checked here: this is a shallow "+
 			"clone and not one of the %d pinned revisions is an object in it, "+
 			"so no existence or stamp check ran at all: %s. %s",
-			pins, strings.Join(absent, "; "), remedy)
+			pins, strings.Join(where, "; "), remedy)
 	default:
 		// SAID, NOT PASSED OVER, and named one by one: a reader has to
 		// be able to tell "checked and clean" from "not looked at".
 		return false, fmt.Sprintf("this is a SHALLOW clone and %d of the %d "+
 			"pinned revisions are not objects here, so their existence and "+
 			"stamp were NOT checked: %s. %s; existence and stamp ran for the "+
-			"rest", len(absent), pins, strings.Join(absent, "; "), remedy)
+			"rest", absentRevs, pins, strings.Join(where, "; "), remedy)
 	}
 }
 
