@@ -232,18 +232,38 @@ superseded does not:
    Removing the width parameters in item 5 left `components`' `dump`,
    `menuRows` and `screen` as byte-identical eight-line loops, each under
    its own comment explaining continuation markers and where the window
-   comes from — and ONE more lives outside it, `apps/scene`'s
-   `containsRow`, still building its row from `At(x, y).Rune`, which is
-   the defect `RowText` exists to remove and the one the sweep's grep
-   cannot see. This said TWO, counting `apps/wysiwyg`'s `onScreen`, and
-   that was wrong on inspection: `onScreen` already reads through
-   `RowText` and is a row SEARCH returning a bool rather than a dump.
-   The other whole-plane walk in that file is not a readback at all —
-   it inspects every cell for a control character and must keep seeing
-   `render.Continuation`, so converting it would destroy what it checks.
-   A count of copies is the kind of claim this document keeps having to
-   correct; the discriminating question is whether a loop is BUILDING A
-   STRING FROM `Rune`, not whether it walks the plane. `BufferText` sits beside
+   comes from — and the same loop is written out in **many** more files
+   outside it. How many is deliberately not recorded, and the reason is
+   this item's own history: it said TWO, then ONE, and both were wrong.
+   ONE named `apps/scene`'s `containsRow` as the only copy outside
+   `components/`, and the command below answered with an order of
+   magnitude more, spread across `cmd/`, `handlers/`, `markup/` and
+   `apps/`. `containsRow` is not even in that answer: it is a row SEARCH
+   returning a bool rather than a dump, which makes it the least
+   representative member of the set it was offered as the whole of.
+   Derive it instead — the output is the claim, and no number from it
+   belongs in this paragraph:
+
+   ```sh
+   # a row-major walk BUILDING A STRING FROM Rune, one line per row
+   grep -rln --include='*_test.go' --exclude-dir=vendor 'At([^)]*)\.Rune' . |
+     xargs grep -ln 'WriteRune\|WriteString' | xargs grep -ln "'\\\\n'\|\"\\\\n\""
+   ```
+
+   Two of what that finds are byte-identical to the helpers collapsed
+   here AND take the extent as written-down ints, which is item 5's
+   decay mode in the same declaration: `markup/usercontrol_test.go`'s
+   `renderToString(t, w, cols, rows)` and `handlers/exec/exec_test.go`'s
+   `frameString(f, cols, rows)`.
+
+   The earlier correction stands on its own terms and is kept: `apps/wysiwyg`'s
+   `onScreen` already reads through `RowText`, and the other whole-plane
+   walk in that file is not a readback at all — it inspects every cell
+   for a control character and must keep seeing `render.Continuation`,
+   so converting it would destroy what it checks. A count of copies is
+   the kind of claim this document keeps having to correct; the
+   discriminating question is whether a loop is BUILDING A STRING FROM
+   `Rune`, not whether it walks the plane. `BufferText` sits beside
    `RowText`, and the remaining directories of
    [#516](https://github.com/WonderForgeLabs/gooey/issues/516) have a name
    to call rather than a loop to copy. Its trailing newline is on every

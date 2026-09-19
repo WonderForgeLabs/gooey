@@ -524,9 +524,17 @@ that needed one wrote the loop out instead.
 **Never hand-roll any of the three** — and read that as the target
 state, not as a description of the tree. It is not true today:
 [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the open
-sweep, `apps/scene`'s `containsRow` still builds a row from
+sweep, MANY readers across the tree still build a row or a screen from
 `At(x, y).Rune` and so cannot hold a wide glyph at all, and nothing in
-the root suite reddens when a new one appears. That is the same silent
+the root suite reddens when a new one appears. Named by PROPERTY rather
+than by module and symbol, for two reasons: a single example read as
+*the* live exception where the real population is an order of magnitude
+larger, and a name like `apps/scene`'s `containsRow` is one nothing
+checks — `TestCLAUDEMDNamesNoDeletedModule` reads only its own
+`moduleNamespaces` list, which predates the `apps/` move
+([#316](https://github.com/WonderForgeLabs/gooey/issues/316)), and no
+guard resolves a symbol at all. The derivation is in item 7 of
+`docs/specs/2026-08-27-display-width.md`. That is the same silent
 shape this paragraph opens by describing, which is why the rule is
 written with its exception rather than as an absolute: an unqualified
 "never" here would be a hand-maintained claim of exactly the kind the

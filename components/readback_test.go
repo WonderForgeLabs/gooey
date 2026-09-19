@@ -98,6 +98,31 @@ func row(b *render.Buffer, y int) string {
 // render.BufferText.
 func frameText(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 
+// frameRows is frameText split into rows, WITHOUT the phantom last one.
+//
+// render.BufferText terminates EVERY row including the last — a stated
+// contract with its own pin (TestBufferTextIsEveryRowNewlineTerminated),
+// there so that a dump missing its final row is a different string
+// rather than a prefix of a longer one. Split on "\n" and that property
+// hands back one more element than the frame has rows, the last of them
+// empty.
+//
+// Nothing is wrong with the empty element on its own: a non-empty needle
+// cannot match it, and row indices are unaffected. What it costs is
+// len(): a caller reaching for len(rows) as the frame HEIGHT is off by
+// one, over a row that the padding contract makes indistinguishable from
+// a real blank one. Every failure dump also ends in a blank line.
+//
+// It is here rather than at the three call sites that had the split
+// written out because this file exists for exactly that — one of each
+// reader, in one file — and because the remaining directories of #516
+// will reach for this shape rather than re-derive the TrimSuffix.
+//
+// [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
+func frameRows(f *gooey.Frame) []string {
+	return strings.Split(strings.TrimSuffix(frameText(f), "\n"), "\n")
+}
+
 // screen is the composition as a terminal would show it.
 //
 // A COMPOSER RATHER THAN A FRAME, which is the only reason it is not
@@ -161,4 +186,29 @@ func onlyMatch(t *testing.T, rows []string, needle, ifNone string) rowMatch {
 		"iteration order would hide whichever it did not pick:\n%s",
 		needle, at, strings.Join(rows, "\n"))
 	return rowMatch{}
+}
+
+// TestFrameRowsIsTheFrameHeight is the pin for the off-by-one frameRows
+// exists to remove, and it is written as an A/B against the spelling it
+// replaced because the defect is invisible any other way.
+//
+// The phantom element breaks nothing a matcher does — a non-empty needle
+// cannot match "", and indices are unaffected — so no existing assertion
+// moves when it is there. What it breaks is len(), and only a test that
+// asks for len() can see it. Both halves are measured here so the
+// paragraph on frameRows is a statement about this package rather than
+// about render.BufferText's contract in the abstract.
+func TestFrameRowsIsTheFrameHeight(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(6, 4)}
+	if got, want := len(frameRows(f)), f.Cells.H; got != want {
+		t.Errorf("frameRows returned %d rows for a %d-row frame, want %d — a "+
+			"caller reading len() as the frame height is off by the phantom "+
+			"element BufferText's trailing newline leaves", got, want, want)
+	}
+	if got, want := len(strings.Split(frameText(f), "\n")), f.Cells.H+1; got != want {
+		t.Fatalf("splitting frameText gave %d elements for a %d-row frame, want "+
+			"%d — if this is no longer height+1 then BufferText stopped "+
+			"terminating the last row and frameRows' TrimSuffix is now wrong",
+			got, f.Cells.H, want)
+	}
 }
