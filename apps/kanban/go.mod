@@ -10,9 +10,9 @@ module github.com/WonderForgeLabs/gooey/apps/kanban
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61
-	github.com/WonderForgeLabs/gooey/grpc v0.0.0
-	github.com/WonderForgeLabs/gooey/mcp v0.0.0
+	github.com/WonderForgeLabs/gooey v0.0.0-20260913132232-e5cdb56ececd
+	github.com/WonderForgeLabs/gooey/grpc v0.0.0-20260913132232-e5cdb56ececd
+	github.com/WonderForgeLabs/gooey/mcp v0.0.0-20260913132232-e5cdb56ececd
 )
 
 require (
@@ -24,7 +24,7 @@ require (
 )
 
 require (
-	github.com/WonderForgeLabs/gooey/imagefmt/svg v0.0.0
+	github.com/WonderForgeLabs/gooey/imagefmt/svg v0.0.0-20260913132232-e5cdb56ececd
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.7.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
