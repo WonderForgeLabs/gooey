@@ -664,7 +664,14 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 	// which one is ASSERTED by the uncaptured arm below rather than
 	// stated here, so this fixture teaches no ordering rule of its own.
 	// Raised in review of #458.
-	top := &stripe{ch: 'T'}
+	// TOP IS A dragSink TOO, only so the IMPLICIT-capture arm has an
+	// observable. A press with no capture live makes the HIT the captor,
+	// so on that arm the captor is `top` — and "the captor was still
+	// routed the event" needs a counter on whichever component holds the
+	// capture. This changes nothing about the fixture's point: `sink` is
+	// still the captor that is not the hit, which is what the held arms
+	// need. Raised in review of #458.
+	top := &dragSink{stripe: stripe{ch: 'T'}}
 	box := &countingBox{kids: []Component{sink, top}}
 	c := NewComposer(box, 12, 3)
 	t.Cleanup(c.Close)
@@ -717,6 +724,49 @@ func TestADragDoesNotWalkTheTreeOnEveryMove(t *testing.T) {
 			"the tree, so the captor it re-takes from the hit is whatever the " +
 			"previous press left there — the pointer moved and the capture did not")
 	}
+	// AND THE MOVE UNDER THAT SAME IMPLICIT CAPTURE, which is the
+	// ordinary press-drag and the row this table did not have. Every
+	// other arm here runs after CaptureMouse, so all of them measure a
+	// HELD capture — and the condition being pinned is
+	// `m.captor == nil`, not `!m.held`. The state no arm entered was
+	// `captor != nil && !held`, which is what a press-drag IS:
+	// apps/wysiwyg/components/preview/preview.go says so in as many
+	// words ("THE PRESS ALREADY CAPTURED THIS PANE … No CaptureMouse
+	// call is needed"), and scrollbar thumbs and text selection are the
+	// same shape.
+	//
+	// Measured: rewriting BOTH halves of the condition to the held form
+	// — DispatchMouse's `m.captor == nil` to `!m.held` and MouseTarget's
+	// `m.captor != nil` to `m.held` — left the root, components and
+	// control suites entirely green, while restoring a whole-tree walk
+	// per cell crossed on the commonest drag in the framework. That is
+	// the cost this test exists to forbid, and it was unpinned on the
+	// only capture kind most users ever produce. Raised in review of
+	// #458.
+	before = box.walks
+	topMoves := top.moves
+	m.DispatchMouse(move)
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a move under an IMPLICIT capture walked the tree %d times for "+
+			"a hit nothing reads. This is the ordinary press-drag — no "+
+			"CaptureMouse call anywhere — so a condition written on m.held "+
+			"rather than on m.captor pays a whole-tree walk per cell crossed "+
+			"for every one of them", n)
+	}
+	if top.moves == topMoves {
+		t.Error("the implicit captor was not routed the move, so skipping the " +
+			"walk changed the dispatch rather than only its cost")
+	}
+	// The wheel is the same default arm and the same pair, one Kind
+	// over; asserted here too because the condition is read once per
+	// Kind and a fix aimed at moves can miss it.
+	before = box.walks
+	m.DispatchMouse(wheel)
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a wheel under an IMPLICIT capture walked the tree %d times "+
+			"for a hit nothing reads", n)
+	}
+
 	m.DispatchMouse(input.MouseEvent{Kind: input.MouseRelease, X: 0, Y: 0})
 
 	if !m.CaptureMouse(sink) {
@@ -819,6 +869,42 @@ func TestADragIsNotWalkedForByAQueryEither(t *testing.T) {
 			"fixture, so the captured arm below would pass over nothing",
 			box.walks-before)
 	}
+
+	// THE IMPLICIT CAPTURE FIRST, because every arm below runs after
+	// CaptureMouse and so measures a HELD one — while the condition
+	// being pinned is `m.captor != nil`. The state no arm entered was
+	// `captor != nil && !held`, which is the ordinary press-drag: a
+	// press with nothing captured makes the hit the captor and sets no
+	// hold. Measured, rewriting both halves of the pair to the held
+	// form — this query's `m.captor != nil` to `m.held` and
+	// DispatchMouse's `m.captor == nil` to `!m.held` — left the root,
+	// components and control suites green while restoring a whole-tree
+	// walk per cell crossed for every press-drag, once per guest in
+	// Service.mayPoint.
+	//
+	// THE WALK IS THE WHOLE CLAIM ON THIS ARM, and saying so is the
+	// point: under an implicit capture the captor IS the hit, so
+	// "targets the captor" and "targets the hit" are the same answer
+	// here and only the count discriminates. The held arms below are
+	// where the routing half is asserted. Raised in review of #458.
+	m.DispatchMouse(input.MouseEvent{Kind: input.MousePress, X: 0, Y: 0})
+	if m.captor == nil || m.held {
+		t.Fatalf("a press with nothing captured left captor=%v held=%v, want an "+
+			"IMPLICIT capture — the arm below is then not the press-drag it "+
+			"is written for", m.captor != nil, m.held)
+	}
+	before = box.walks
+	if got := m.MouseTarget(move); got != Component(top) {
+		t.Errorf("a move under an IMPLICIT capture targets %#v, want the captor "+
+			"the press took, which is the top stripe", got)
+	}
+	if n := box.walks - before; n != 0 {
+		t.Errorf("a move under an IMPLICIT capture walked the tree %d times for "+
+			"a hit nothing reads. This is the ordinary press-drag — no "+
+			"CaptureMouse call anywhere — so a condition written on m.held "+
+			"rather than on m.captor pays this per cell crossed, per guest", n)
+	}
+	m.DispatchMouse(input.MouseEvent{Kind: input.MouseRelease, X: 0, Y: 0})
 
 	if !m.CaptureMouse(sink) {
 		t.Fatal("the captor refused the capture, so the arm below is not a drag")

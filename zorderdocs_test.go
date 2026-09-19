@@ -3513,8 +3513,17 @@ var costEpitaphRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)superseded|retired`),
 }
 
+// costQualifierRes clears a cost sentence that scopes itself. There is
+// no `(?i)uncaptured` entry and that is deliberate: `captured` is an
+// unanchored substring match, so it matches UNCAPTURED too and the
+// separate entry changed no outcome, including on the row written for
+// it. A dead entry in a negative assertion is indistinguishable from a
+// working one until the day it was supposed to fire — the same class
+// the retiredRule loop already errors on, which the qualifier lists had
+// no equivalent of, which is how it got in. The loop in
+// TestTheRetiredCostGuardCanActuallyFire is that equivalent now. Raised
+// in review of #458.
 var costQualifierRes = append([]*regexp.Regexp{
-	regexp.MustCompile(`(?i)uncaptured`),
 	regexp.MustCompile(`(?i)captured`),
 	regexp.MustCompile(`(?i)\bdrags?\b`),
 }, costEpitaphRes...)
@@ -3552,6 +3561,7 @@ var costRule = rulePlane{
 // patterns and are cleared by a qualifier. A row that passes by not
 // matching would hide a pattern that had stopped working.
 func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
+	var samples []string
 	for _, tc := range []struct {
 		name string
 		line string
@@ -3587,6 +3597,21 @@ func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
 			"HitTest runs on every motion report except during a drag, which pays nothing.",
 			false,
 		},
+		// THE TWO EPITAPH QUALIFIERS NEED A ROW EACH, because the loop
+		// below asks every qualifier for a sample no other one clears —
+		// and until these two rows existed, costEpitaphRes was carried
+		// by the list it was appended to and nothing here could tell a
+		// live entry from a dead one.
+		{
+			"an epitaph in the past tense clears it",
+			"HitTest runs on every motion report, which is what this used to say.",
+			false,
+		},
+		{
+			"and so does naming the claim as superseded",
+			"HitTest runs on every motion report — superseded by the capture skip.",
+			false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := statesTheRetiredCostClaim(tc.line); !got && tc.want {
@@ -3612,5 +3637,62 @@ func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
 				}
 			}
 		})
+		samples = append(samples, tc.line)
+	}
+
+	// THE PREFILTER CONTRACT, checked rather than asserted in prose.
+	//
+	// costPrefilterWords gates every line before any cost pattern is
+	// asked about it, and this plane stated the relationship in a
+	// comment ("covers both shapes the patterns match") where its two
+	// older siblings have it checked. The shared per-line gate's own
+	// safety argument in retiredRuleProblems cites "the prefilter
+	// contract in TestTheRetiredRuleGuardCanActuallyFire (and its
+	// input-plane twin)" — a general claim resting on two of the four
+	// planes that pass through it. A fifth cost pattern needing a word
+	// outside {motion, pointer} — "runs per cell crossed", say — would
+	// be skipped for essentially the whole tree with the negative
+	// assertion still passing: a guard switched off by adding to it.
+	// Raised in review of #458.
+	for _, line := range samples {
+		if !containsAny(prefilterText(line), costPrefilterWords) {
+			t.Errorf("the cost prefilter would skip this LINE, and a file "+
+				"containing nothing else from costPrefilterWords, so the "+
+				"pattern that catches it can never run:\n\t%s\n"+
+				"Either add a word to costPrefilterWords or keep the pattern "+
+				"inside it.", line)
+		}
+	}
+
+	// EVERY QUALIFIER NEEDS A SAMPLE NO OTHER ONE CLEARS, which is the
+	// loop the qualifier lists did not have. `(?i)uncaptured` lived here
+	// until review of #458 and changed no outcome, because `(?i)captured`
+	// is an unanchored substring match and matches UNCAPTURED as well —
+	// deleting it reddened nothing, including the row written for it.
+	// This is the qualifier-side twin of the retiredRule loop that
+	// already errors on a pattern no sample reaches.
+	for _, re := range costQualifierRes {
+		alone := false
+		for _, line := range samples {
+			if !re.MatchString(line) {
+				continue
+			}
+			others := 0
+			for _, other := range costQualifierRes {
+				if other != re && other.MatchString(line) {
+					others++
+				}
+			}
+			if others == 0 {
+				alone = true
+				break
+			}
+		}
+		if !alone {
+			t.Errorf("costQualifierRes entry %v clears no sample that another "+
+				"entry does not also clear: it is either dead or subsumed, and "+
+				"deleting it would redden nothing. Add the sentence it exists "+
+				"to exempt.", re)
+		}
 	}
 }

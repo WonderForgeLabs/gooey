@@ -21,8 +21,16 @@ import (
 // every row, so that is the whole screen.
 //
 // A DRAG PAYS NONE OF IT, which is the scope the unqualified sentence
-// here got wrong: under a held capture DispatchMouse walks for no move
-// at all, so dragging on the wysiwyg canvas past a live tip costs zero.
+// here got wrong: under ANY capture DispatchMouse walks for no move at
+// all, so dragging on the wysiwyg canvas past a live tip costs zero.
+// The condition is m.captor == nil, not !m.held — and "under a held
+// capture", which is what this said until review of #458, is a claim
+// NARROWER than the code in a file whose subject is cost claims
+// drifting from the code. Its own example falls outside it: the canvas
+// drag named in the same sentence takes an IMPLICIT capture from the
+// press (apps/wysiwyg/components/preview/preview.go — "THE PRESS
+// ALREADY CAPTURED THIS PANE … No CaptureMouse call is needed"), which
+// is the commonest drag in the framework and the one "held" excludes.
 // The reads that remain are the uncaptured move, the unheld press and
 // the release — the last two not motion events.
 //

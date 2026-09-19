@@ -34,19 +34,23 @@ type Visibility uint8
 // Visible, Hidden and Collapsed are the three ways a component can
 // occupy the tree: painted and hittable, present but neither, or absent
 // entirely. The per-value comments below are the contract.
-//
-// Hidden's wording travels, so changing it is not a local edit:
-// docs/architecture.md restates it, and apps/wysiwyg's dock.go quotes
-// THAT file by name and in quotation marks. The prose this replaced said
-// dock.go quotes this declaration; it does not — it cites
-// docs/architecture.md, which is the sentence to keep in step.
-//
-// Hidden's reasoning belongs to Hidden and is on it. It sat here, above
-// `const (`, where go doc renders a paragraph as the documentation of
-// all three values — so `go doc gooey.Visible` answered with an essay
-// about Hidden. Same class as #483. Raised in review of #458.
 const (
 	Visible Visibility = iota
+	// Hidden's wording travels, so changing it is not a local edit:
+	// docs/architecture.md restates it, and apps/wysiwyg's dock.go
+	// quotes THAT file by name and in quotation marks. The prose this
+	// replaced said dock.go quotes this declaration; it does not — it
+	// cites docs/architecture.md, which is the sentence to keep in
+	// step.
+	//
+	// BOTH THIS PARAGRAPH AND THE ONE BELOW SAT ABOVE `const (`, where
+	// go doc renders a paragraph as the documentation of all three
+	// values — so `go doc gooey.Visible` answered with an essay about
+	// Hidden. Round 9 moved the contract sentence down and left the
+	// maintenance prose about it up there, rendering in exactly the
+	// place it says it no longer does; round 11 moved the rest. Same
+	// class as #483. Raised in review of #458, twice.
+	//
 	// Hidden renders no content and is NOT HIT-TESTED, rather than
 	// "does not paint", which is what this said and is wrong in both
 	// halves. A hidden LEAF
