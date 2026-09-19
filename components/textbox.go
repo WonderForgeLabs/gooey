@@ -510,12 +510,6 @@ const clusterSlack = 64
 // of #521.
 func regionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
 
-// eachClusterFrom walks the clusters of runes[from:to], calling fn with
-// each cluster's start index, rune count and COLUMN width.
-//
-// It re-synchronises: segmentation starts clusterSlack runes before
-// `from` when there is room, and the fragment that produces is skipped.
-// fn returning false stops the walk.
 // spanForCols is an index `to` such that runes[start:to] holds at least
 // cols columns, or len(runes) if the value has no more to give.
 //
@@ -544,7 +538,54 @@ func spanForCols(runes []rune, start, cols int) int {
 	if start >= len(runes) {
 		return len(runes)
 	}
+	// THE DOUBLING IS CAPPED, AND THE CAP IS A FUNCTION OF THE FIELD
+	// rather than of the value. Every cluster contributes at least one
+	// column (the max(w, 1) below), and a cluster longer than
+	// clusterSlack is already outside what this file promises to
+	// segment correctly — eachClusterFrom's own doc says it degrades
+	// there — so cols clusters of clusterSlack runes is the widest span
+	// any answer needs.
+	//
+	// WITHOUT IT ONE CLUSTER CAN BE THE WHOLE VALUE, and then `got`
+	// stays at 1 however far the span reaches, so the loop doubles to
+	// len(runes) and re-segments a larger prefix every round. Measured
+	// on "a" + U+0301 x n in a 20-column field, per repaint, with
+	// windowFloor's floor in place so this cap is the only variable —
+	// AND WITH THE CARET AT RUNE 0, which is the caret position that can
+	// see it at all:
+	//
+	//	n        capped    uncapped    ASCII
+	//	 1,000   0.47ms    0.49ms      0.06ms
+	//	10,000   0.71ms    3.0ms       0.06ms
+	//	50,000   0.66ms    15.2ms      0.07ms
+	//
+	// WITH THE CARET AT THE END the same removal is invisible — 0.79ms
+	// against 0.76ms at 50,000 — because the window is at the tail, so
+	// `start` is within clusterSlack of len(runes) and the first round
+	// returns whatever the cap says. That asymmetry is the whole reason
+	// this bound and windowFloor's are separate: this one bounds the
+	// walk RIGHTWARD from the window, that one the expansion LEFTWARD to
+	// find it, and a fixture sitting at one end exercises one of them.
+	// TestARepaintDoesNotWalkAZeroWidthRun runs both carets for that
+	// reason and says so.
+	//
+	// THE CAP IS TWO STATEMENTS, and a mutation that removes only the
+	// `min` below does not disable it: the doubling starts at
+	// cols+clusterSlack and maxSpan is (cols+1)*clusterSlack, so for a
+	// field whose width makes the second a power-of-two multiple of the
+	// first — 20 columns gives 84 and 1344, exactly 16x — the sequence
+	// lands on maxSpan anyway and the equality exit at the bottom still
+	// fires. Neuter `maxSpan` itself to test this.
+	//
+	// The comment at the doubling's other end claimed the work stays
+	// "proportional to the runes the window ENDS UP SHOWING rather than
+	// to the value"; that was true of every vocabulary but this one, and
+	// the cap is what makes it true of this one too. On the UI goroutine
+	// inside a paint node, and reachable by paste. Raised in review of
+	// #521.
+	maxSpan := (cols + 1) * clusterSlack
 	for span := cols + clusterSlack; ; span *= 2 {
+		span = min(span, maxSpan)
 		to := start + span
 		if to >= len(runes) {
 			return len(runes)
@@ -558,9 +599,22 @@ func spanForCols(runes []rune, start, cols int) int {
 		if got > cols && end+clusterSlack <= to {
 			return to
 		}
+		if span == maxSpan {
+			// A cluster this file does not promise to segment is open
+			// here. Returning the cap hands Render a window boundary
+			// inside it — the same degradation clusterStartAt takes,
+			// and bounded the same way.
+			return to
+		}
 	}
 }
 
+// eachClusterFrom walks the clusters of runes[from:to], calling fn with
+// each cluster's start index, rune count and COLUMN width.
+//
+// It re-synchronises: segmentation starts clusterSlack runes before
+// `from` when there is room, and the fragment that produces is skipped.
+// fn returning false stops the walk.
 func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 	if from < 0 {
 		from = 0
@@ -635,19 +689,6 @@ func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 	})
 }
 
-// clusterStartAt is the index the cluster containing i begins at.
-//
-// BOUNDED ON BOTH SIDES, and the right-hand bound is the half that was
-// missing. eachClusterFrom copies runes[lo:to] into a string, so passing
-// len(runes) here made a question about ONE cluster cost a copy of the
-// whole tail: MEASURED at 1.19 ms and 57 KB per call over a
-// 100,000-rune value, on the paint path inside a prop.NewComputed and
-// again per column walked on a drag. That is the same O(len) shape this
-// branch took out of scrollFor, relocated into the helper that replaced
-// it. clusterSlack is already the lookback, and it is the lookahead for
-// the same reason and with the same residual: a cluster longer than it
-// is reported short, which its own doc records. Raised in review of
-// #521.
 // clusterEndAt is the first cluster boundary strictly after i — the
 // right arrow's destination, and clusterStartAt's mirror.
 func clusterEndAt(runes []rune, i int) int {
@@ -669,6 +710,19 @@ func clusterEndAt(runes []rune, i int) int {
 	return end
 }
 
+// clusterStartAt is the index the cluster containing i begins at.
+//
+// BOUNDED ON BOTH SIDES, and the right-hand bound is the half that was
+// missing. eachClusterFrom copies runes[lo:to] into a string, so passing
+// len(runes) here made a question about ONE cluster cost a copy of the
+// whole tail: MEASURED at 1.19 ms and 57 KB per call over a
+// 100,000-rune value, on the paint path inside a prop.NewComputed and
+// again per column walked on a drag. That is the same O(len) shape this
+// branch took out of scrollFor, relocated into the helper that replaced
+// it. clusterSlack is already the lookback, and it is the lookahead for
+// the same reason and with the same residual: a cluster longer than it
+// is reported short, which its own doc records. Raised in review of
+// #521.
 func clusterStartAt(runes []rune, i int) int {
 	if i <= 0 || i >= len(runes) {
 		return i
@@ -760,10 +814,33 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 	// sum of 1, and a four-person family is 2 against a rune sum of 8.
 	// The cluster pass below is what makes the answer true, and it
 	// expands leftwards until it can prove it has gone far enough.
+	// FLOORED AT ONE COLUMN PER RUNE, the same floor Render, indexAt and
+	// collect below already apply — and here it is what BOUNDS the walk
+	// rather than what makes it accurate. render.RuneWidth answers 0 for
+	// a combining mark, so an unfloored `w+rw > avail` never grows w
+	// through a zero-width run and the loop runs to index 0, handing
+	// collect a span of the whole value to copy into a string. Measured
+	// on "a" + U+0301 x n in a 20-column field, per repaint:
+	//
+	//	n        zero-width run    ASCII of the same rune count
+	//	 1,000   0.54ms            0.06ms
+	//	10,000   5.4ms             0.07ms
+	//	50,000   29.8ms            0.06ms
+	//
+	// Linear in the value, on the UI goroutine inside a paint node, and
+	// reachable by paste — oneLine strips control characters and not
+	// combining marks. With the floor the walk stops after at most
+	// `avail` runes.
+	//
+	// LANDING FURTHER RIGHT IS SAFE, which is why a floor is the right
+	// correction and not a lie about the width: this is a CANDIDATE, and
+	// the cluster pass below expands leftwards until it can prove it has
+	// gone far enough. Flooring can only make the guess narrower.
+	// Raised in review of #521.
 	i := end
 	w := reserve
 	for i > 0 {
-		rw := render.RuneWidth(runes[i-1])
+		rw := max(render.RuneWidth(runes[i-1]), 1)
 		if w+rw > avail {
 			break
 		}
@@ -826,10 +903,40 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 	// step gives every one of them the same answer. It is the bound
 	// against a single cluster thousands of runes long, where a fixed
 	// step would re-walk the span once per 64 runes.
-	for back := clusterSlack; total <= avail && i > 0; back *= 2 {
+	//
+	// AND DOUBLING IS NOT ENOUGH ON ITS OWN, which the paragraph above
+	// did not say and this is the correction. The exit condition is
+	// `total > avail`, and a span that is ONE UNFINISHED CLUSTER
+	// contributes one column however far left it reaches — so on a
+	// value that is a single cluster the loop expands to rune 0,
+	// re-collecting a larger span each round, and each collect copies
+	// its span into a string. Profiled at 50,000 runes: 330ms of a
+	// 380ms sample inside this loop's eachClusterFrom, 90ms of it
+	// slicerunetostring.
+	//
+	// So the expansion has a FLOOR, and it is a function of the field
+	// exactly like spanForCols' cap: a window shows at most `avail`
+	// clusters and a cluster longer than clusterSlack is already
+	// outside what this file promises to segment, so nothing correct
+	// lies further left than that product. Measured per repaint on
+	// "a" + U+0301 x n in a 20-column field:
+	//
+	//	n        before    after     ASCII of the same rune count
+	//	 1,000   0.54ms    0.82ms    0.06ms
+	//	10,000   5.4ms     0.78ms    0.06ms
+	//	50,000   29.8ms    0.75ms    0.07ms
+	//
+	// FLAT, not fast: ~0.75ms whatever the length, against ~0.06ms for
+	// ASCII. The residual is the value's []rune conversion, which is
+	// O(len) for any vocabulary and is not this function's to remove —
+	// what these two bounds buy is that the figure stops growing.
+	//
+	// Raised in review of #521.
+	floor := max(end-(avail+1)*clusterSlack, 0)
+	for back := clusterSlack; total <= avail && i > floor; back *= 2 {
 		i -= back
-		if i < 0 {
-			i = 0
+		if i < floor {
+			i = floor
 		}
 		collect(i)
 	}
@@ -889,9 +996,13 @@ func (t *TextBox) HandleKey(ev input.KeyEvent) bool {
 // the right way round, because reaching the split position by accident
 // is what a user does and reaching it on purpose is not.
 //
-// Home and End are already boundaries; word motion goes through
-// wordLeft/wordRight, which move between runs of non-word runes and
-// cannot stop inside one. Raised in review of #521.
+// Home and End are already boundaries. Word motion goes through
+// wordLeft/wordRight, and this said they "move between runs of non-word
+// runes and cannot stop inside one" — which is false for a base letter
+// followed by a combining mark, because class() sorts an Mn into
+// classPunct and the run boundary lands mid-cluster. They snap through
+// snapOut now, and so does selectWord; the claim here is a consequence
+// of that rather than of the class walk. Raised in review of #521.
 func (t *TextBox) moveKey(ev input.KeyEvent) bool {
 	// Anything carrying a modifier the box does not use — alt+left, say —
 	// is somebody else's gesture and must keep bubbling.
@@ -1338,8 +1449,17 @@ func (t *TextBox) selectWord() {
 	for hi < len(runes) && class(runes[hi]) == c {
 		hi++
 	}
-	t.setAnchor(lo)
-	t.setCaret(hi)
+	// BOTH EDGES ON CLUSTER BOUNDARIES, for the reason snapOut records —
+	// and here it buys a second thing the arrow path does not need.
+	// Render's overlap arm reverses the WHOLE cluster for a selection
+	// covering half of it, which is the right answer for the paint side
+	// and makes the mismatch invisible: the screen said the accent was
+	// selected while the range that would replace it did not include
+	// it. Measured on "a" + U+0301 + "b", double-click at caret 0 —
+	// selection [0,1), reversed "á", typing Z gave "Źb". Raised in
+	// review of #521.
+	t.setAnchor(snapOut(runes, lo, false))
+	t.setCaret(snapOut(runes, hi, true))
 }
 
 // selectLine selects the whole value.
@@ -1391,8 +1511,44 @@ func class(r rune) runeClass {
 	return classPunct
 }
 
+// snapOut moves i off the inside of a grapheme cluster, outward in the
+// direction it was travelling — left for a leftward walk, right for a
+// rightward one. A position already on a boundary is returned unchanged.
+//
+// IT IS THE CLASS TABLE THAT MAKES THIS NECESSARY, and the reason is
+// narrow enough to be worth writing down: class() sorts a combining
+// mark into classPunct, because unicode.IsSpace, IsLetter and IsDigit
+// are all false for an Mn. So the class boundary the word walks stop at
+// falls BETWEEN a base letter and its accent, which is the middle of
+// one cluster. Measured:
+//
+//	"ab" + U+0301   wordLeft(3)  = 2   cluster "b́" is [1,3)
+//	"a" + U+0301 + "b"
+//	                wordRight(0) = 1   cluster "á" is [0,2)
+//
+// and from there every destructive outcome moveKey's doc enumerates for
+// the arrow key is reachable through ctrl+arrow instead: typing moves
+// the accent onto the typed rune, backspace deletes the base and
+// reattaches the orphan mark to its neighbour.
+//
+// NOT IN setCaret, which would cover these and selectWord at one choke
+// point and is the wrong place: setText sets caret+len(ins), where a
+// pasted rune that joins the PRECEDING cluster would be pulled
+// backwards by a snap. Quantising at the three producers leaves the
+// edit path alone. Raised in review of #521.
+func snapOut(runes []rune, i int, rightward bool) int {
+	if clusterStartAt(runes, i) == i {
+		return i
+	}
+	if rightward {
+		return clusterEndAt(runes, i)
+	}
+	return clusterStartAt(runes, i)
+}
+
 // wordLeft is the start of the word at or before i: skip whatever
-// separates, then skip the run it lands in.
+// separates, then skip the run it lands in. The answer is a cluster
+// boundary — see snapOut.
 func wordLeft(runes []rune, i int) int {
 	i = clamp(i, 0, len(runes))
 	for i > 0 && class(runes[i-1]) == classSpace {
@@ -1405,10 +1561,11 @@ func wordLeft(runes []rune, i int) int {
 	for i > 0 && class(runes[i-1]) == c {
 		i--
 	}
-	return i
+	return snapOut(runes, i, false)
 }
 
-// wordRight is the end of the word at or after i.
+// wordRight is the end of the word at or after i. The answer is a
+// cluster boundary — see snapOut.
 func wordRight(runes []rune, i int) int {
 	i = clamp(i, 0, len(runes))
 	for i < len(runes) && class(runes[i]) == classSpace {
@@ -1421,5 +1578,5 @@ func wordRight(runes []rune, i int) int {
 	for i < len(runes) && class(runes[i]) == c {
 		i++
 	}
-	return i
+	return snapOut(runes, i, true)
 }

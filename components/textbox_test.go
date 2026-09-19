@@ -1649,3 +1649,135 @@ func TestAnArrowKeyStepsByClusterNotByRune(t *testing.T) {
 			at0, at1)
 	}
 }
+
+// TestWordMotionAndDoubleClickLandOnClusterBoundaries is the other three
+// producers of a caret position, and the arrow key was only the first.
+//
+// class() sorts a combining mark into classPunct — unicode.IsSpace,
+// IsLetter and IsDigit are all false for an Mn — so the run boundary the
+// word walk stops at falls BETWEEN a base letter and its accent. Every
+// destructive outcome moveKey's doc enumerates for the arrow was still
+// reachable through ctrl+arrow, and selectWord added one the arrow path
+// does not have: Render's overlap arm reverses the WHOLE cluster for a
+// selection covering half of it, so the highlight and the range that
+// replaces it disagreed on screen.
+//
+// THE ASSERTIONS ARE ON BOUNDARIES, not on particular indices, because
+// which word a class walk picks is not this test's subject and would
+// pin the class table by accident. A position p is a boundary when
+// clusterStartAt(p) == p. Raised in review of #521.
+func TestWordMotionAndDoubleClickLandOnClusterBoundaries(t *testing.T) {
+	onBoundary := func(runes []rune, p int) bool {
+		return p == len(runes) || clusterStartAt(runes, p) == p
+	}
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"an accent on the second letter", "ab́"},
+		{"an accent on the first", "áb"},
+		{"two accented letters", "áb́"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runes := []rune(tc.value)
+			for i := 0; i <= len(runes); i++ {
+				if got := wordLeft(runes, i); !onBoundary(runes, got) {
+					t.Errorf("wordLeft(%d) = %d, which is inside the cluster "+
+						"starting at %d — a caret there lets typing move the "+
+						"accent onto the typed rune and backspace delete the "+
+						"base", i, got, clusterStartAt(runes, got))
+				}
+				if got := wordRight(runes, i); !onBoundary(runes, got) {
+					t.Errorf("wordRight(%d) = %d, which is inside the cluster "+
+						"starting at %d", i, got, clusterStartAt(runes, got))
+				}
+			}
+
+			// DOUBLE-CLICK, through the component, because selectWord
+			// reads the caret and writes both edges.
+			for i := 0; i < len(runes); i++ {
+				tb, _ := textBox(t, tc.value)
+				tb.setCaret(i)
+				tb.selectWord()
+				lo, hi := tb.anchor.Get(), tb.Caret()
+				if !onBoundary(runes, lo) || !onBoundary(runes, hi) {
+					t.Errorf("a double-click at %d selected [%d,%d), and one edge "+
+						"is inside a cluster — Render reverses the whole cluster, "+
+						"so the highlight covers what the replacement would not",
+						i, lo, hi)
+				}
+			}
+		})
+	}
+}
+
+// TestARepaintDoesNotWalkAZeroWidthRun is the ratio test one vocabulary
+// over, and it is the vocabulary that had nothing pinning it.
+//
+// render.RuneWidth is 0 for a combining mark, so a value that is ONE
+// long cluster defeated both of the branch's window bounds at once:
+// windowFloor's candidate walk never grew its column total and ran to
+// index 0, and its left expansion never overflowed `avail` so it
+// expanded to rune 0 too, re-collecting — and re-copying into a string —
+// a larger span every round. spanForCols doubled to len(runes) for the
+// same reason. Measured before the bounds, per repaint in a 20-column
+// field: 0.54ms at 1,000 runes, 5.4ms at 10,000, 29.8ms at 50,000,
+// against a flat 0.06ms for ASCII of the same rune count. On the UI
+// goroutine inside a paint node, and reachable by paste — oneLine
+// strips control characters and not combining marks.
+//
+// A RATIO, NOT A FIGURE, for the reason the ASCII sibling gives: a
+// wall-clock threshold is a property of the machine. Raised in review
+// of #521.
+//
+// TWO CARETS, BECAUSE THE TWO BOUNDS GUARD OPPOSITE DIRECTIONS and one
+// fixture cannot see both. With the caret at the END the window is
+// already at the tail, so spanForCols starts within clusterSlack of
+// len(runes) and returns on its first round however it is capped: that
+// arm sees only windowFloor's leftward expansion. With the caret at the
+// START the expansion has nowhere to go and the whole cost is the
+// rightward render walk, which is spanForCols'. Measured with the other
+// bound left in place, per repaint at 50,000 runes: removing
+// windowFloor's floor takes the caret-at-end arm to 0.68s, and removing
+// spanForCols' cap takes the caret-at-start arm to 15.2ms against
+// 0.66ms — while leaving the caret-at-end arm at 0.76ms, unchanged.
+// Delete either bound with only the other arm present and nothing goes
+// red.
+func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
+	cost := func(n, caret int) time.Duration {
+		v := prop.NewSource("a" + strings.Repeat("́", n))
+		st := prop.NewSource(render.Style{})
+		tb := &TextBox{Text: v, Style: st}
+		tb.SetFocused(true)
+		tb.setCaret(caret)
+		c := gooey.NewComposer(tb, 20, 1)
+		c.Frame()
+		const frames = 40
+		start := time.Now()
+		for i := range frames {
+			st.Set(render.Style{Bold: i%2 == 0})
+			c.Frame()
+		}
+		return time.Since(start) / frames
+	}
+	for _, tc := range []struct {
+		name  string
+		caret func(n int) int
+		bound string
+	}{
+		{"caret at the end", func(n int) int { return n }, "windowFloor's left expansion"},
+		{"caret at the start", func(int) int { return 0 }, "spanForCols' doubling"},
+	} {
+		short := cost(1000, tc.caret(1000))
+		long := cost(50000, tc.caret(50000))
+		if long > 4*short {
+			t.Errorf("with the %s, a repaint costs %v over a 50,000-rune "+
+				"zero-width run against %v over a 1,000-rune one — %.1fx for "+
+				"fifty times the value, want under 4x. A window bound that sums "+
+				"rune WIDTHS does not terminate on a run of zero-width runes, so "+
+				"the walk is O(len(value)) on the paint path, per keystroke, on "+
+				"the UI goroutine; this arm is the one %s bounds",
+				tc.name, long, short, float64(long)/float64(short), tc.bound)
+		}
+	}
+}
