@@ -426,9 +426,6 @@ func TestANonPositiveWidthIsTheEmptyStringNotBlanks(t *testing.T) {
 // Three functions, three answers, one input: asserted together so the
 // asymmetry is chosen rather than noticed later.
 func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
-	b := NewBuffer(4, 1)
-	b.SetString(0, 0, "ab", Style{})
-
 	if got, want := SpanText(nil, 0, 0, 3), "   "; got != want {
 		t.Errorf("a span of a nil buffer = %q, want %q — the out-of-range "+
 			"contract is blanks, and a nil buffer is the most out of range a "+
@@ -441,6 +438,28 @@ func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
 	if got := TerminalColumns(nil, 0); len(got) != 0 {
 		t.Errorf("TerminalColumns of a nil buffer = %v, want empty", got)
 	}
+}
+
+// TestAnOutOfRangeRowOfALiveBufferIsPaddedNotEmpty is the other half of
+// the disagreement above, split out because it is not about an absent
+// buffer and was failing under a name that says it is.
+//
+// A nil buffer is empty and an out-of-range row of a REAL one is padded;
+// those are different answers to "there is nothing here", so both are
+// chosen rather than one being read off the delegation. This PR split
+// TestANonPositiveWidthIsTheEmptyStringNotBlanks out of the padding test
+// for exactly this reason and wrote the reason down — most of the ways
+// it can go red are about NOT padding, and the first line CI prints is
+// the test's name. These two arms were left behind by that split.
+//
+// The RowText arm is the one that carries weight: it is the pin for the
+// padding contract that makes components' absence assertions honest, and
+// under the old name a failure sent the reader to nil handling. Raised
+// in review of #520.
+func TestAnOutOfRangeRowOfALiveBufferIsPaddedNotEmpty(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
 	// The same question about a row rather than a buffer, because that is
 	// where SpanText and TerminalColumns visibly disagree on live input.
 	if got := TerminalColumns(b, 9); len(got) != 0 {
