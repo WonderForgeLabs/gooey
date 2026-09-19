@@ -771,16 +771,33 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // ONE CACHE FOR BOTH TABLES, and that is a measurement rather than an
 // oversight. Everything else that reads a partition had to be
 // parameterised when partitionFor landed, because it reads the
-// `inherit` bit and the two tables disagree. This reads only the KEYS,
-// and the two hold the same nineteen —
-// TestThePartitionTablesShareOneKeySet is what keeps that true, since
-// a key added to one table alone would leave this cache missing a
-// pattern for it and the bare-name half of the guard silently blind to
-// that field. Raised in review of #490.
+// `inherit` bit and the two tables disagree. This reads only the KEYS.
+//
+// BUILT FROM THE UNION, NOT FROM ONE TABLE, and the difference is which
+// thing goes red. It read boundaryPartition alone and leant on
+// TestThePartitionTablesShareOneKeySet to keep the two key sets equal —
+// but partitionRunSide indexes this map with names from WHICHEVER table
+// it was handed, so an exported field added to rowPartition alone
+// yields a nil *regexp.Regexp and FindAllStringIndex nil-derefs. The
+// guard written for exactly that condition cannot report it: Go runs
+// tests in declaration order, TestTheBoundaryGuardsPickTheirTable (:288)
+// passes rowPartition down this path, and the key-set guard is declared
+// at :423 — so the panic aborts the binary first and its carefully
+// written message never prints. Measured in review of #490 by adding
+// one key to rowPartition: a nil-pointer stack trace in a test about
+// table dispatch, with nothing naming the real fault.
+//
+// Taking the union removes the dependency rather than documenting it.
+// The key-set test stays, and is now a claim ABOUT the tables rather
+// than a precondition this cache rests on.
 var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
 	out := map[string]*regexp.Regexp{}
-	for name := range boundaryPartition {
-		out[name] = regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
+	for _, part := range []partition{boundaryPartition, rowPartition} {
+		for name := range part {
+			if _, seen := out[name]; !seen {
+				out[name] = regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
+			}
+		}
 	}
 	return out
 })
