@@ -479,8 +479,20 @@ layout exists and wedges the heap rather than the stack — so capping
 here alone would have turned the original crash into a hang. Compose and
 Focus detect the repeat by identity (they already key a map by
 component); Measure, Arrange, HitTest, Focusable and Render count depth.
-A control that includes itself is caught earlier still, as a load error
-naming the loop. Nothing panics: read the report with
+A control that includes itself is usually caught earlier still, as a load
+error naming the loop — but not through a row seam.
+`<ItemsView.ItemTemplate>` RESETS the cycle ancestry
+(`markup/itemsview.go`), because a tree-view template instantiating its
+own control is the legitimate shape and identity cannot tell it from the
+one that never terminates. What bounds that seam is
+`markup.MaxTemplateDepth` (64), counted per row rather than recognised,
+exactly as this paragraph's own two walks count depth; a self-supplying
+source is a load error naming the TEMPLATE, 64 levels down, rather than
+one naming the loop. The two numbers are deliberately different
+quantities — 512 bounds a visual tree walked every frame, 64 bounds
+nested document loads — and `MaxTemplateDepth`'s doc comment says why
+reusing one for the other would make a change to either look safe for
+both. Nothing panics: read the report with
 `Composer.LayoutFault()`, `App.LayoutFault()`, or `Frame.LayoutFault()`
 on the one-shot path. The record is
 [`docs/specs/2026-08-23-layout-cycle-bounds.md`](specs/2026-08-23-layout-cycle-bounds.md),
@@ -1271,10 +1283,25 @@ story:
 
 ### The binding DSL and lvalue semantics
 
-`Context` is the binding environment: `Values` (what `{{.Name}}` roots
-resolve against), `Styles`, `Components` (custom builders), `Handlers`
-(code-behind commands), `Named` (components collected by `Name="..."`, read
-back via the generic `markup.Find[T]`), and `Includes` (see below).
+`Context` is the binding environment. `Values` is what `{{.Name}}` roots
+resolve against; `Named` collects components by `Name="..."`, read back
+via the generic `markup.Find[T]`; `Includes` is below. The whole field
+set, and which half of it crosses a control boundary, is
+`markup.boundaryPartition` (`markup/boundaryfields_test.go`) — a row per
+field with its reason, checked against `Context` in both directions. This
+paragraph named six of them and called that the environment, which is
+[#314](https://github.com/WonderForgeLabs/gooey/issues/314) in the file
+the fix for #314 edited 110 lines further down: the six it left out —
+`Elements`, `Rules`, `Declared`, `Dispatcher`, `Dir`, `Variant` — are six
+the partition accounts for and this sentence did not. Two of them,
+`Rules` and `Dir`, are the ones that report named; `Declared` and
+`Dispatcher` already crossed correctly before the fix, and #314 argues
+explicitly that `Variant` does not break. (An earlier draft of this
+sentence said all six "are the six that report was about", which is a
+hand-written claim about an issue's scope — the same shape as the list
+it replaced, and wrong in four places. Corrected in review of
+[#490](https://github.com/WonderForgeLabs/gooey/pull/490).) A list is not
+the shape of this answer.
 
 `bindText` turns mixed content like `count: {{.Count}}` into a
 `prop.NewComputed[string]` that concatenates literal parts and property
@@ -1386,9 +1413,17 @@ element attributes, resolved in the *parent* context via
 a `*prop.Property[T]` handle — that setup wires into its own context or
 components. This is XAML's DataContext-plus-dependency-property hand-off,
 done with explicit handles instead of an ambient inherited value.
-`Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent
-when the child leaves them nil; `Named` is scoped per instance, like
-`x:Name` inside a template.
+Everything a page *registers* inherits from the parent context when the
+child leaves it unset; what does not cross is `Values` — values arrive only
+through the declared surface — and `Named`, which is scoped per instance
+like `x:Name` inside a template. This sentence used to name four fields and
+the real set was ten, which is
+[#314](https://github.com/WonderForgeLabs/gooey/issues/314); the
+partition is `markup.boundaryPartition`
+(`markup/boundaryfields_test.go`), a row per field with its reason,
+checked against `Context` in both directions.
+"Unset" rather than "nil" because two of those fields are strings the
+loader tests with `== ""`.
 
 ### Include: markup-only controls
 
