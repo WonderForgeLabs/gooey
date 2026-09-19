@@ -402,8 +402,18 @@ func ArrangeChild(w Component, slot Rect) {
 	w.Arrange(final)
 }
 
-// paintable reports whether w should render (Visible) — Hidden and
-// Collapsed elements keep their state but produce no cells.
+// paintable reports whether w's Render runs (Visible only). It is not a
+// claim that a non-Visible node leaves the cell plane alone. This
+// sentence used to say that "Hidden and Collapsed elements keep their
+// state but produce no cells" — no longer true, and review of #458
+// round 14 read it against the composer: a hidden LEAF has its bounds
+// pre-cleared before any
+// paintable test (composer.go), so it writes blanks over a sibling
+// beneath it (#508), and a hidden CONTAINER's bounds are filled
+// deliberately. Collapsed is the one that truly contributes nothing,
+// because its bounds are zero. See Hidden's own contract in the
+// Visibility const block; this function is what hitTest reads so the two
+// planes ask the visibility question the same way.
 func paintable(w Component) bool {
 	l := LayoutOf(w)
 	return l == nil || l.Visibility == Visible

@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -341,6 +342,17 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 			adornments = append(adornments, recv)
 		}
 	}
+	// SORTED BEFORE ANY REPORT, because map iteration order is random
+	// and every message below quotes this slice. Two write-ups in this
+	// PR already quote the same probe run as
+	// [markerPopup reviewProbeBadge tipPopup DragGhost] and as
+	// [reviewProbeWrap tipPopup markerPopup DragGhost] — evidence that
+	// cannot be diffed against a re-run is evidence nobody can check.
+	// The sibling scan states the rule at scanFilesForRetiredRule
+	// (zorderdocs_test.go): a test whose output reshuffles between runs
+	// is one nobody can diff. Raised in review of #458.
+	sort.Strings(adornments)
+
 	// NON-VACUITY, and it is the arm that matters: this walk answering
 	// "no adornments" would pass the loop below over nothing, which is
 	// exactly the silence the grep already had. Three ship today.

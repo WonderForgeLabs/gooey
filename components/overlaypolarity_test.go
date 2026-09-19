@@ -232,42 +232,22 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	}
 
 	var examined, freed int
-	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		// Dot-directories pruned at EVERY depth, not just the top:
-		// .claude/worktrees holds whole other checkouts of this repo,
-		// and reading another agent's tree would make this guard report
-		// on prose that is not ours. Same reason CLAUDE.md's verify loop
-		// prunes with -name '.?*' rather than -not -path './.*'.
-		if d.IsDir() {
-			if n := d.Name(); n == "vendor" || n == "node_modules" ||
-				(strings.HasPrefix(n, ".") && n != "..") {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		// The corpus is what a READER IS TOLD: prose, shipped markup,
-		// and doc comments on the code itself. _test.go is out, and not
-		// for tidiness — THIS FILE quotes both defective sentences, once
-		// in the comment above and once as the fixture that proves the
-		// matcher fires, so a corpus including tests flags the guard
-		// itself and there is no wording that escapes it. A test that
-		// quotes a wrong sentence in order to catch it is not making the
-		// claim. The cost is real and stated: a wrong claim in a test
-		// comment goes unguarded.
-		if strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		switch filepath.Ext(path) {
-		case ".md", ".gooey", ".go":
-		default:
-			return nil
-		}
+	// ONE CORPUS, NOT A THIRD WALK. This built its own walk with the
+	// dot-prune, the vendor prune and a floor — and without the tracked
+	// filter its two siblings were given, so one untracked scratch file
+	// at the repo root made it fail naming a path that is not in the
+	// repository. A reviewer reproduced it with
+	// `printf ... > scratch-polarity-probe.md`. overlayProseFiles is the
+	// same corpus by construction (same extensions, same _test.go
+	// exclusion, same prunes) and carries the tracked map and the skip
+	// when git cannot answer, so calling it closes this for good rather
+	// than copying the filter a third time — which is what the sibling's
+	// own comment, "a lesson learned in one place does not protect its
+	// sibling", predicted would happen. Raised in review of #458.
+	for _, path := range overlayProseFiles(t, "..") {
 		body, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return rerr
+			t.Fatalf("reading %s: %v", path, rerr)
 		}
 		// docs/specs/ is exempt here too, and for the same reason the
 		// positional arm gives: a dated record describes the hosts of
@@ -328,10 +308,6 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				"marker is what changed, this sentence and the type go together.",
 				path, s)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking the tree: %v", err)
 	}
 
 	// NON-VACUITY, and it is a floor with a number in it because the

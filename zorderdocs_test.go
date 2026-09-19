@@ -1970,7 +1970,7 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 				"it noise rather than a check:\n\t%s", line)
 		}
 	}
-	eachQualifierClearsASampleAlone(t, "qualifierRes", qualifierRes, samples)
+	eachQualifierClearsASampleAlone(t, "qualifierRes", statesTheRetiredRule, qualifierRes, samples)
 }
 
 // TestEveryStatementOfTheHitContractNamesTheAncestorClause is the prose
@@ -2483,7 +2483,7 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 				"rather than a check:\n\t%s", line)
 		}
 	}
-	eachQualifierClearsASampleAlone(t, "inputQualifierRes", inputQualifierRes, samples)
+	eachQualifierClearsASampleAlone(t, "inputQualifierRes", statesTheRetiredInputRule, inputQualifierRes, samples)
 }
 
 // TestThePaintCorrectionDoesNotExemptTheInputClaim is the finding that
@@ -3120,9 +3120,22 @@ var retiredHiddenWording = []*regexp.Regexp{
 	// paints nothing can only see the first" is about the FIXTURE, and
 	// was the pattern's one false positive over the tree. Measured, not
 	// guessed: the first draft reported it.
-	regexp.MustCompile(`(?i)hidden[^.;:|—]{0,120}?(does ?n[o']t paint|paints? nothing|never paints)`),
-	regexp.MustCompile(`(?i)(does ?n[o']t paint|paints? nothing|never paints)[^.;:|—]{0,60}?hidden`),
+	regexp.MustCompile(`(?i)hidden[^.;:|—]{0,120}?(does ?n[o']t paint|paints? nothing|never paints|produces? no cells|paints? no cells|renders? no cells)`),
+	regexp.MustCompile(`(?i)(does ?n[o']t paint|paints? nothing|never paints|produces? no cells|paints? no cells|renders? no cells)[^.;:|—]{0,60}?hidden`),
 }
+
+// THE CELL SPELLING IS THE SAME CLAIM, and it was outside the pattern
+// until review of #458 round 14 found layout.go's own paintable saying
+// "Hidden and Collapsed elements keep their state but produce no cells"
+// — the function hitTest reads, one file from the const block this plane
+// was written for. "Produce no cells" is "does not paint" in other
+// words, and #508 measured it false in both directions.
+//
+// `owns no cells` is deliberately NOT in the list: that is the Decorator
+// contract (component.go, components/adorn.go, and a dozen test
+// comments), a different and true claim about a component that paints
+// nothing of its own, and none of those sentences names Hidden. Only the
+// verbs that assert what a HIDDEN node does to the plane are here.
 
 func statesTheRetiredHiddenWording(line string) bool {
 	return matchesAny(line, retiredHiddenWording)
@@ -3189,6 +3202,14 @@ func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
 				`which the framework defines as "occupies space, does not paint".`, true},
 		{"reversed", "paints nothing, which is what Hidden means", true},
 		{"the current wording", "Hidden occupies space and renders no content", false},
+		// THE CELL SPELLING, which is what paintable's own doc carried
+		// (layout.go) — the function hitTest reads. It is the same
+		// claim in other words, so the pattern covers it; the row below
+		// is the one that keeps the Decorator contract out.
+		{"paintable's wording", "Hidden and Collapsed elements keep their state " +
+			"but produce no cells", true},
+		{"a Decorator, for which owning no cells is true and has nothing to do with Hidden",
+			"Decorator is implemented by components whose Render owns no cells of its own", false},
 		{"Collapsed, for which it is true",
 			"Hidden keeps its space. Collapsed paints nothing at all.", false},
 	} {
@@ -3206,7 +3227,7 @@ func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
 	// eachQualifierClearsASampleAlone for why all four planes have this
 	// now and only the cost plane had it before. Raised in review of
 	// #458 round 13.
-	eachQualifierClearsASampleAlone(t, "hiddenQualifierRes", hiddenQualifierRes, []string{
+	eachQualifierClearsASampleAlone(t, "hiddenQualifierRes", statesTheRetiredHiddenWording, hiddenQualifierRes, []string{
 		"Hidden occupies space, does not paint, which is no longer true.",
 		"Hidden occupies space, does not paint is what this used to say.",
 		"Hidden occupies space, does not paint, so position is free.",
@@ -3737,7 +3758,7 @@ func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
 		}
 	}
 
-	eachQualifierClearsASampleAlone(t, "costQualifierRes", costQualifierRes, samples)
+	eachQualifierClearsASampleAlone(t, "costQualifierRes", statesTheRetiredCostClaim, costQualifierRes, samples)
 }
 
 // eachQualifierClearsASampleAlone is EVERY QUALIFIER NEEDS A SAMPLE NO
@@ -3763,8 +3784,25 @@ func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
 // which this file has now been on both sides of. This is the
 // qualifier-side twin of the retiredRule loop that already errors on a
 // pattern no sample reaches.
-func eachQualifierClearsASampleAlone(t *testing.T, name string, list []*regexp.Regexp, samples []string) {
+func eachQualifierClearsASampleAlone(t *testing.T, name string, states func(string) bool, list []*regexp.Regexp, samples []string) {
 	t.Helper()
+	// EVERY SAMPLE MUST STATE THE RETIRED RULE, and this check is
+	// inside the helper rather than beside three of the four call
+	// sites. A sample that does not state it is exempted by the plane's
+	// BLINDNESS rather than by its qualifier, which is the cost arm's
+	// own words for the defect — and the visibility plane had exactly
+	// that: deleting the first half of one of its four samples left the
+	// arm green. The z-order and input arms got the states half from
+	// their own `kept` loops and the cost arm from its want:false rows;
+	// putting it here is what makes this helper's "requires it of all
+	// four" true of both halves. Raised in review of #458 round 14.
+	for _, line := range samples {
+		if !states(line) {
+			t.Errorf("%s sample does not state the retired rule, so whatever "+
+				"clears it is exempting a sentence the guard would never have "+
+				"flagged:\n\t%s", name, line)
+		}
+	}
 	for _, re := range list {
 		alone := false
 		for _, line := range samples {
