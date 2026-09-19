@@ -354,7 +354,14 @@ func unresolved(cites []citation, funcs map[string]map[string]bool) []fault {
 	return out
 }
 
-func sortedKeys(m map[string]bool) []string {
+// sortedKeys is a map's keys in order, so a report built by ranging one
+// does not reorder itself run to run.
+//
+// GENERIC IN THE VALUE because two files want it: this one keys sets of
+// names, and nestedrequires_test.go keys pins by revision and by version
+// string. A second copy differing only in the value type is the kind of
+// near-duplicate somebody later fixes in one place.
+func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
