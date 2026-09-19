@@ -1044,6 +1044,31 @@ func widthVocabulary() []string {
 	}
 }
 
+// longClusterVocabulary is widthVocabulary's entries plus one whose
+// CLUSTERS are longer than clusterSlack — a different hole from "a
+// string longer than clusterSlack", which widthVocabulary's flag entry
+// already covers.
+//
+// Every widthVocabulary cluster is a handful of runes, so windowFloor's
+// and spanForCols' reach — (cols+1)*clusterSlack until review of #521
+// round 8 — was always ample and no grid could reach the branch where
+// it is not. Four clusters of 101 runes, one column each: at avail 2
+// the leftmost fitting boundary is 202 runes left of `end` and that old
+// arithmetic reached only 192, so this entry fails against it and
+// passes against spanReach's.
+//
+// SEPARATE FROM widthVocabulary, AND THAT IS A COST DECISION rather
+// than a taxonomy one. TestTheScrollWindowAlwaysOpensOnAClusterBoundary
+// runs avail x cur x caret over every entry, so it is QUADRATIC in the
+// string's length — adding 404 runes there took the package's suite
+// from 5 seconds to over 150. The property that grid owns is covered
+// for this vocabulary by
+// TestTheWindowOpensOnTheStartOfALongCluster, which asks the one
+// question rather than 3 million.
+func longClusterVocabulary() []string {
+	return append(widthVocabulary(), strings.Repeat("a"+strings.Repeat("\u0301", 100), 4))
+}
+
 // clusterCols is what the SCREEN costs for a span: every cluster's
 // width, each floored at one column.
 //
@@ -1086,8 +1111,136 @@ func clusterCols(runes []rune) int {
 // without snapping to its cluster's start, and an expansion that never
 // looked left of a candidate that had already overshot. All three are
 // invisible to a fixture chosen for any one of them.
+// TestAClickAnswersTheClusterItsColumnPaints is the paint/click
+// agreement, asserted column by column against this file's own oracle
+// rather than against either walk.
+//
+// Render and indexAt segment from the SAME boundary — `t.scroll`, which
+// TestTheScrollWindowAlwaysOpensOnAClusterBoundary pins — so they can
+// only disagree about a column if one of them stops walking before the
+// other. That is what a span bound sized by the CLICKED COLUMN does:
+// `off < avail` for every click inside the field, so indexAt's reach
+// was by construction narrower than the one Render painted from, and at
+// the cap the two answered different clusters for the same column.
+// Measured on ("a" + U+0301 x 100) x 40 in a 20-column field at scroll
+// 0, before the fix:
+//
+//	column 13 painted the cluster at rune 1313, indexAt said 808
+//	column 10 painted the cluster at rune 1010, indexAt said 606
+//	column  5 painted the cluster at rune  505, indexAt said 303
+//
+// Reached through the cap rather than through a mid-cluster t.scroll,
+// so no grid over scrollFor could see it. Raised in review of #521.
+//
+// THE ORACLE IS clusterBoundaries + clusterCols, which segment the
+// whole value from rune 0 and know nothing about either bound. Deriving
+// the expected column map from spanForCols would pin the walk against
+// itself.
+func TestAClickAnswersTheClusterItsColumnPaints(t *testing.T) {
+	const cols = 20
+	v := strings.Repeat("a"+strings.Repeat("\u0301", 100), 40)
+	runes := []rune(v)
+
+	tb := &TextBox{Text: prop.NewSource(v)}
+	tb.SetFocused(true)
+	tb.setCaret(0)
+	f := gooey.Compose(tb, term.Caps{Cols: cols, Rows: 1}, nil)
+	b := tb.Bounds()
+
+	// Which cluster owns each column, counted from the window.
+	bs := clusterBoundaries(runes, len(runes))
+	owner := map[int]int{}
+	col := 0
+	for k := 0; k+1 < len(bs) && col < cols; k++ {
+		if bs[k] < tb.scroll {
+			continue
+		}
+		for range clusterCols(runes[bs[k]:bs[k+1]]) {
+			if col < cols {
+				owner[col] = bs[k]
+			}
+			col++
+		}
+	}
+	if len(owner) < cols {
+		t.Fatalf("the oracle filled only %d of %d columns from scroll %d — the "+
+			"fixture is not wide enough to ask the question", len(owner), cols, tb.scroll)
+	}
+	for c := 0; c < cols; c++ {
+		if got := tb.indexAt(b.X + c); got != owner[c] {
+			t.Errorf("a click on column %d answered rune %d, but that column "+
+				"paints the cluster starting at rune %d. Render and indexAt "+
+				"walk from the same window, so this is one of them stopping "+
+				"short of the other: the click lands on a character that is "+
+				"not under the pointer. Row: %q",
+				c, got, owner[c], render.RowText(f.Cells, 0))
+		}
+	}
+}
+
+// TestTheWindowOpensOnTheStartOfALongCluster is
+// TestTheScrollWindowAlwaysOpensOnAClusterBoundary's property over the
+// one vocabulary that grid cannot afford — see longClusterVocabulary for
+// why it is not simply an entry there.
+//
+// It found a real one. eachClusterFrom DROPS its own first cluster
+// whenever it re-synchronised, so clusterStartAt's single fixed-lookback
+// pass reported nothing at all for an index more than clusterSlack runes
+// into a cluster, and answered the untouched index — an arithmetic
+// number wearing a boundary's name. Measured on six clusters of 101
+// runes: clusterStartAt(65) was 65 and the window opened there, inside
+// the glyph, which is the paint/click disagreement the grid's own doc
+// calls the thing the cluster-boundary design exists to prevent.
+// clusterEndAt(65) was 66 against a cluster ending at 101, one function
+// over and the same fixed span. Both retry now, bounded by spanReach.
+//
+// THE CARETS ARE THE INTERESTING ONES, not a sweep: rune 0 is the
+// cluster's own start, 65 is past the lookback inside the first
+// cluster, 150 is past it inside the second, and len is the end.
+func TestTheWindowOpensOnTheStartOfALongCluster(t *testing.T) {
+	const marks = 100
+	v := strings.Repeat("a"+strings.Repeat("\u0301", marks), 4)
+	runes := []rune(v)
+	boundary := map[int]bool{}
+	for _, b := range clusterBoundaries(runes, len(runes)) {
+		boundary[b] = true
+	}
+	for _, caret := range []int{0, 65, 150, len(runes)} {
+		for avail := 1; avail <= 4; avail++ {
+			for _, cur := range []int{0, 65, len(runes)} {
+				got := scrollFor(runes, cur, caret, avail)
+				if !boundary[got] {
+					t.Errorf("avail=%d cur=%d caret=%d: the window opens at rune %d, "+
+						"which is inside a cluster — Render would paint a glyph the "+
+						"value does not contain, and indexAt would answer a click on "+
+						"column 0 with a different rune", avail, cur, caret, got)
+				}
+				if cs := clusterStartAt(runes, caret); cs < got {
+					t.Errorf("avail=%d cur=%d caret=%d: the window opens at rune %d, "+
+						"right of the caret's own cluster at %d — the user is typing "+
+						"at a position off the left of the field",
+						avail, cur, caret, got, cs)
+				}
+			}
+		}
+	}
+	// AND THE TWO PRIMITIVES DIRECTLY, because the window above can be
+	// right for a reason that is not theirs.
+	if got := clusterStartAt(runes, 65); got != 0 {
+		t.Errorf("clusterStartAt(65) = %d, want 0 — 65 is %d runes into a "+
+			"%d-rune cluster, which is more than clusterSlack, so a single "+
+			"fixed lookback re-synchronises inside it and reports nothing",
+			got, 65, marks+1)
+	}
+	if got := clusterEndAt(runes, 65); got != marks+1 {
+		t.Errorf("clusterEndAt(65) = %d, want %d — a cluster longer than "+
+			"clusterSlack does not fit the span this used to walk, so it "+
+			"answered the arithmetic i+1", got, marks+1)
+	}
+}
+
 func TestTheWindowFloorIsTheLeftmostFittingClusterBoundary(t *testing.T) {
-	for vi, v := range widthVocabulary() {
+	for vi, v := range longClusterVocabulary() {
 		runes := []rune(v)
 		for end := 0; end <= len(runes); end++ {
 			bs := clusterBoundaries(runes, end)
