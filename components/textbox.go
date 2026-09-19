@@ -300,7 +300,6 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// arm needs the distinction — see it for why.
 	painted := t.scroll
 	eachClusterFrom(runes, t.scroll, spanForCols(runes, t.scroll, avail), func(i, n, w int) bool {
-		cluster := string(runes[i : i+n])
 		// A ZERO-WIDTH CLUSTER TAKES A COLUMN, which is what SetString
 		// does with the same string and what this loop refused to do
 		// until #521's review. Such a cluster is a mark with nothing in
@@ -349,9 +348,18 @@ func (t *TextBox) Render(f *gooey.Frame) {
 			// value. Found in the review of #521.
 			st.Reverse = true
 		}
-		c := render.Cell{Rune: []rune(cluster)[0], Style: st}
+		// runes[i], NOT []rune(string(runes[i:i+n]))[0]. The round trip
+		// allocated a string and then a rune slice for every painted
+		// cell to recover a rune this loop already has, and the
+		// single-rune clusters — every ASCII field in the repo — paid
+		// for a Cluster string they then did not use. The two spellings
+		// answer the same rune: []rune of a Go string normalises an
+		// invalid encoding to U+FFFD, and `runes` came from exactly
+		// that conversion in value(), so there is nothing left here for
+		// the round trip to normalise. Raised in review of #521.
+		c := render.Cell{Rune: runes[i], Style: st}
 		if n > 1 {
-			c.Cluster = cluster
+			c.Cluster = string(runes[i : i+n])
 		}
 		f.Cells.SetCell(x, b.Y, c)
 		x += cols
@@ -941,11 +949,61 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 		collect(i)
 	}
 	// The loop below is what lands the answer: it leaves i at a cluster
-	// START every time it runs, and the expansion above guarantees it
-	// runs unless the span already reaches rune 0.
+	// START every time it runs.
 	for k := 0; k < len(segs) && total > avail; k++ {
 		total -= segs[k].w
 		i = segs[k].at + segs[k].n
+	}
+	// AND IF THE EXPANSION STOPPED AT THE FLOOR, i IS AN ARITHMETIC
+	// INDEX, NOT A BOUNDARY.
+	// The paragraph above used to end "the expansion above guarantees it
+	// runs unless the span already reaches rune 0", and the floor added
+	// in the same commit falsified that: the expansion also stops at
+	// `i == floor`, and it stops there WITHOUT overflowing whenever the
+	// span is one unfinished cluster, because such a span contributes
+	// one column however far left it reaches. total <= avail, the drop
+	// loop does not run, and the raw product `end-(avail+1)*clusterSlack`
+	// is returned mid-cluster.
+	//
+	// Render then opens eachClusterFrom inside that cluster and reports
+	// only the skipped fragment, which is zero-width. Measured, focused,
+	// caret at the end, 20 columns, on "a" + U+0301 x n:
+	//
+	//	n        scroll   row
+	//	   100   0        "á́́…"   (the value)
+	//	 1,000   0        "á́́…"   (the value)
+	//	 5,000   3656     "█"     <- the field paints NOTHING but the caret
+	//	50,000   48656    "█"
+	//
+	// THERE IS NO BOUNDARY TO SNAP TO, which is why the answer is 0 and
+	// not a snap. clusterStartAt and clusterEndAt are both bounded by
+	// clusterSlack on purpose, and a cluster this long is already past
+	// what this file promises to segment — so neither can find its real
+	// edges, and both would hand back another arithmetic index wearing a
+	// boundary's name.
+	//
+	// Opening at 0 is the honest degradation and is what the same value
+	// does at every length the floor does not reach: the glyph is
+	// painted from its start, the caret is where a caret past a
+	// single-cluster value can be. It costs nothing unbounded, because
+	// Render's own walk from 0 is capped by spanForCols. Raised in
+	// review of #521, on the floor added the round before.
+	//
+	// `i == floor` IS THE WHOLE TEST, and the two narrower ones tried
+	// first are both wrong. "The drop loop did not run" also covers the
+	// case where NOTHING fits — reserve 2 in a 1-column window, where
+	// the collect finds no cluster it can keep and `end` is the right
+	// answer — and returning 0 there moved the window to the start of
+	// the value on every too-narrow field
+	// (TestTheWindowFloorIsTheLeftmostFittingClusterBoundary catches it
+	// at value 0, end=1). Adding `floor > 0` to this one is redundant
+	// rather than wrong: at floor 0 the index IS 0, so both arms agree,
+	// and a conjunct that cannot change an answer is a conjunct no
+	// mutation can be caught removing. The drop loop leaves i at
+	// `segs[k].at + segs[k].n`, which is strictly right of the span it
+	// collected from, so it can never land on the floor itself.
+	if i == floor {
+		return 0
 	}
 	return i
 }
@@ -1398,8 +1456,46 @@ func (t *TextBox) indexAt(x int) int {
 	// than guessing once: the same shape windowFloor uses for the same
 	// reason. The loop ends when the walk has passed the column asked
 	// for or the span has reached the end of the value.
+	//
+	// AND THE DOUBLING IS CAPPED, for spanForCols' reason and by its
+	// arithmetic. Every cluster below contributes at least one column
+	// (the max(w, 1)), so reaching column off+1 takes at most off+1
+	// clusters, and a cluster longer than clusterSlack is already
+	// outside what eachClusterFrom promises to segment — so
+	// (off+1)*clusterSlack runes is the widest span any answer needs.
+	// Without the cap ONE cluster can be the whole value: `col` stays
+	// at 1 however far the span reaches, so the loop doubles to
+	// len(runes) and re-segments a larger prefix each round. Measured
+	// on "a" + U+0301 x n, one click five columns into a 20-column
+	// field, per call:
+	//
+	//	n         capped    uncapped    ASCII
+	//	  1,000   11.4µs    190µs       9.8µs
+	//	 10,000   11.0µs    1.90ms      15.7µs
+	//	 50,000   11.2µs    8.05ms      8.4µs
+	//	200,000   11.3µs    32.6ms      8.3µs
+	//
+	// This is the FOURTH walk of this shape on this path and the last
+	// one left uncapped; spanForCols:586 and windowFloor:935 are the
+	// other two bounds, and clusterStartAt's lookback the third. It
+	// runs once per MOUSE MOTION REPORT while a drag is live, on the UI
+	// goroutine, so 32.6ms here is a third of a second of input latency
+	// over ten reports.
+	//
+	// THE CAP IS TWO STATEMENTS, spanForCols' warning word for word and
+	// for the same arithmetic: the doubling starts at off+clusterSlack
+	// and maxSpan is (off+1)*clusterSlack, so at column 20 that is 84
+	// and 1344 — exactly 16x — and the sequence lands on maxSpan anyway.
+	// Removing only the `min` below leaves the equality exit firing and
+	// is green. Neuter `maxSpan` itself to test this; measured,
+	// `maxSpan := len(runes) + 1` takes TestADragDoesNotWalkAZeroWidthRun
+	// red and removing the `min` alone does not.
+	// Raised in review of #521.
 	col, last := 0, start
+	capped := false
+	maxSpan := (off + 1) * clusterSlack
 	for span := off + clusterSlack; ; span *= 2 {
+		span = min(span, maxSpan)
 		to := start + span
 		if to >= len(runes) {
 			to = len(runes)
@@ -1422,11 +1518,23 @@ func (t *TextBox) indexAt(x int) int {
 		if col > off || to == len(runes) {
 			break
 		}
+		if span == maxSpan {
+			// A cluster this file does not promise to segment is open
+			// at `last`, and the column asked for is somewhere inside
+			// it. `last` is where it starts, which is the same
+			// degradation spanForCols takes at its own cap — NOT the
+			// end of the value, which is what the exit below would
+			// otherwise make of `col <= off`.
+			capped = true
+			break
+		}
 	}
 	// PAST THE END OF THE TEXT, which is a click in the empty part of the
 	// field and puts the caret at the end. Distinguished from "stopped on
-	// a cluster" by col: the walk only runs out with col <= off.
-	if col <= off {
+	// a cluster" by col: the walk only runs out with col <= off — and
+	// from "stopped at the cap" by `capped`, because that walk did not
+	// run out of value, only out of span.
+	if col <= off && !capped {
 		return len(runes)
 	}
 	return clamp(last, 0, len(runes))
@@ -1537,13 +1645,14 @@ func class(r rune) runeClass {
 // backwards by a snap. Quantising at the three producers leaves the
 // edit path alone. Raised in review of #521.
 func snapOut(runes []rune, i int, rightward bool) int {
-	if clusterStartAt(runes, i) == i {
-		return i
+	// HOISTED, because clusterStartAt is not free: it re-segments a
+	// clusterSlack-rune lookback, and the leftward arm called it twice
+	// for one answer. Raised in review of #521.
+	at := clusterStartAt(runes, i)
+	if at == i || !rightward {
+		return at
 	}
-	if rightward {
-		return clusterEndAt(runes, i)
-	}
-	return clusterStartAt(runes, i)
+	return clusterEndAt(runes, i)
 }
 
 // wordLeft is the start of the word at or before i: skip whatever
