@@ -727,7 +727,10 @@ func (a *App) reload() {
 // black rectangle, which is the worst failure a graphics stack can have.
 //
 // term.Screen.Detect already refuses to return a zero cell size for the
-// same reason (term/term.go:291). Every host that pins a protocol by hand
+// same reason — its own `caps.CellW == 0` substitution, which is one of
+// the rule's TWO sites. Named, not numbered, like every other surface
+// carrying this rule; why, and what a line number cost here, is in
+// docs/specs/2026-08-10-mcp-server.md. Every host that pins a protocol by hand
 // had to reproduce that rule — cmd/pixels, cmd/toolkit and cmd/colors
 // each carried their own "a forced protocol still needs a cell size"
 // 10×20 — which is the framework asking for the rule to live here instead.

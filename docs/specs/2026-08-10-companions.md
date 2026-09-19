@@ -143,11 +143,44 @@ from the other side, and the detection argument for the dead decoder
 gives no cover against it.
 
 What closes it is not a tripwire but an invariant, because a tripwire
-needs someone to trip it: when `idle` is true, `Decode` always consumes a
-byte or produces an event, so the drain loop cannot be told to wait for a
-byte that is not coming. `CompanionLeaked()` and `DecoderLeaked` have
-watchdogs precisely because their failures are observable; this one is
-not, so it is designed out instead of watched for.
+needs someone to trip it: under `idle`, `Decode` answers "incomplete"
+only where a byte *could* still resolve it — which is not the same as
+one arriving. For the split-marker half that is a bound, so the drain
+loop cannot be told to wait for a byte that is not coming. For the
+open-paste half it is not: that member waits indefinitely by design, and
+the two paragraphs below say so. `docs/architecture.md` was narrowed
+this way in the same commit and this copy of the sentence was not;
+corrected in review of #445. `CompanionLeaked()` and
+`DecoderLeaked` have watchdogs precisely because their failures are
+observable; this one is not, so it is designed out instead of watched
+for.
+
+**That used to read "always consumes a byte or produces an event", and
+the absolute was doing the work of the argument** — a reader taking it
+at face value concludes `drain` cannot return early, which is exactly
+how the departure from it went unnoticed. The list has two entries, both
+bracketed pastes: an OPEN paste, which waits indefinitely by design
+because delivering its prefix truncates it silently; and a SPLIT MARKER,
+which is bounded by `input.DecodeFinal` and `term.PasteMarkerGrace`
+because those bytes are also three keys a person can type
+([#440](https://github.com/WonderForgeLabs/gooey/issues/440)).
+
+**The argument above survives for ONE of those two, and the first
+attempt at this paragraph replaced an absolute with an absolute pointing
+the other way** — "neither exception can strand the loop indefinitely on
+input a user typed", four lines after saying an open paste waits
+indefinitely by design. `input/paste.go`'s `decodePaste` doc, corrected
+in the same PR, is the authority against the "typed" escape hatch too:
+a user typing Esc and then `[`, `2`, `0`, `0`, `~` writes exactly those
+bytes, and a terminal that sends an opening bracket and never closes it
+wedges the decoder with nobody typing at all. So: the split-marker half
+is designed out, by `DecodeFinal` and `PasteMarkerGrace`; the open-paste
+half is a deliberate and UNWATCHED wedge, whose justification is the
+truncation trade rather than a bound. "Designed out rather than watched
+for" holds for one member of the list and not for the other, and that is
+the whole of what the list supports. Reconciled in review of
+[PR #445](https://github.com/WonderForgeLabs/gooey/pull/445), and the
+absolute that replaced the absolute was caught one round later.
 
 **A dead companion outranks a dead decoder, which outranks a signal.**
 `exitErr` returns the first non-nil of `compErr`, `termErr`, `exitSig`,
