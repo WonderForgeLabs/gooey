@@ -142,16 +142,16 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// as the rule and not as a count: the sentence here said "its four
 	// neighbours above" and there were six, an undercount inherited
 	// from docFS's own comment, which named three and dropped two —
-	// and which now states the rule too. Raised in review of #543.) It is read correctly
-	// today — nothing assigns into an existing Context's rowDepth, and
-	// control() writes only to the child it is about to build — but
-	// that is a property of code in another file, not of this seam, and
-	// this package does mutate a parent Context in place elsewhere
-	// (usercontrol.go, `parent.Declared`). The value being read late is
-	// the one standing between a self-supplying item source and `fatal
-	// error: stack overflow`, which takes the process down without
-	// running Screen.Restore and leaves the terminal in raw mode. A
-	// local costs nothing. Raised in review of #490.
+	// and which now states the rule too. Raised in review of #543.) It
+	// is read correctly today — nothing assigns into an existing
+	// Context's rowDepth, and control() writes only to the child it is
+	// about to build — but that is a property of code in another file,
+	// not of this seam, and this package does mutate a parent Context
+	// in place elsewhere (usercontrol.go, `parent.Declared`). The value
+	// being read late is the one standing between a self-supplying item
+	// source and `fatal error: stack overflow`, which takes the process
+	// down without running Screen.Restore and leaves the terminal in
+	// raw mode. A local costs nothing. Raised in review of #490.
 	rowDepth := ctx.rowDepth
 	factory := func(values map[string]any) (gooey.Component, error) {
 		// THE ROW SEAM IS COUNTED, not judged by identity. See

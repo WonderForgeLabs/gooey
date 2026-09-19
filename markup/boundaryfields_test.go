@@ -9,6 +9,7 @@ import (
 	gopng "image/png"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -124,34 +125,6 @@ var boundaryPartition = map[string]struct {
 // is the same document, so the default is "inherits" and every `false`
 // owes a reason. The control partition's defaults run the other way for
 // the fields that make a control a contract.
-// partitionTables is EVERY partition table, declared beside them and
-// read by everything that has to cover all of them — partitionWords'
-// union and TestThePartitionTablesShareOneKeySet today.
-//
-// It exists because the union was a two-element literal in
-// referencedoc_test.go, which moved the coupling rather than removing
-// it: a third table declared here and left out of that literal
-// reintroduces the nil *regexp.Regexp partitionRunSide dereferences,
-// with the same symptom (a panic in whichever test is declared first)
-// and nothing red to name it. That is the enumerated-list shape
-// CLAUDE.md refuses, at a two-element sample. Adding a table is now one
-// edit, at the declaration site. Raised in review of #543.
-//
-// Each table carries its NAME because every consumer either iterates
-// them all or has to say which one is at fault, and a map has no name
-// to print.
-type namedPartition struct {
-	name string
-	part partition
-}
-
-func partitionTables() []namedPartition {
-	return []namedPartition{
-		{"boundaryPartition", boundaryPartition},
-		{"rowPartition", rowPartition},
-	}
-}
-
 var rowPartition = map[string]struct {
 	inherit bool
 	why     string
@@ -199,6 +172,175 @@ var rowPartition = map[string]struct {
 		"retires a row, so sharing the page registry pinned one entry and one " +
 		"dead row subtree per row ever shown. The reasoning is on " +
 		"Context.Declared in markup.go and the gap is tracked as #512"},
+}
+
+// TestEveryPartitionTableIsRegistered derives the set of partition
+// tables from the package source and compares it against
+// partitionTables, so a table declared and not registered is RED rather
+// than a nil *regexp.Regexp waiting in partitionWords.
+//
+// The check partitionTables' own doc asks for. Relocating the
+// enumeration beside the tables made adding one a single edit at the
+// declaration site — better than a literal in another file, and still a
+// convention: a `var controlPartition = map[string]struct{inherit bool;
+// why string}{…}` declared here and left out of the literal gets no
+// pattern, partitionRunSide dereferences nil on it, and the panic
+// aborts the binary before any guard prints. Raised in review of #543.
+//
+// BY SHAPE, NOT BY NAME SUFFIX. The thing that makes a map one of these
+// tables is its TYPE — the same anonymous struct the `partition` alias
+// names — so that is what the walk matches. A suffix rule would miss a
+// table named something else and would claim one that merely ends in
+// "Partition".
+//
+// go/ast rather than reflection, for the reason contextFields gives:
+// CLAUDE.md's first invariant is that core carries none, and the
+// declaration is right there in the source.
+func TestEveryPartitionTableIsRegistered(t *testing.T) {
+	declared := partitionTableNames(t)
+	if len(declared) < 2 {
+		t.Fatalf("the source walk found %v, and this package declares at least "+
+			"boundaryPartition and rowPartition — the walk is broken, and the "+
+			"comparison below would pass over nothing", declared)
+	}
+	registered := map[string]bool{}
+	for _, tb := range partitionTables() {
+		registered[tb.name] = true
+	}
+	for _, name := range declared {
+		if !registered[name] {
+			t.Errorf("%s is declared in this package and not returned by "+
+				"partitionTables, so partitionWords builds no pattern for its "+
+				"keys and partitionRunSide nil-dereferences on the first one "+
+				"it is handed — a panic in whichever test runs first, naming "+
+				"nothing. Add it to partitionTables", name)
+		}
+	}
+	// AND NOTHING REGISTERED HAS GONE AWAY, which is the direction a
+	// deletion breaks: partitionTables would name a variable that no
+	// longer compiles, so this arm can only fire while it does.
+	for name := range registered {
+		if !slices.Contains(declared, name) {
+			t.Errorf("partitionTables names %s, which the source walk does not "+
+				"find — the matcher below it has stopped recognising a table "+
+				"it is meant to cover", name)
+		}
+	}
+}
+
+// partitionTableNames is every package-level map in this package whose
+// value type is the partition struct, by name.
+func partitionTableNames(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatalf("globbing this package: %v", err)
+	}
+	var out []string
+	for _, f := range files {
+		file, err := parser.ParseFile(gotoken.NewFileSet(), f, nil, 0)
+		if err != nil {
+			t.Fatalf("%s does not parse: %v", f, err)
+		}
+		for _, d := range file.Decls {
+			g, ok := d.(*ast.GenDecl)
+			if !ok || g.Tok != gotoken.VAR {
+				continue
+			}
+			for _, sp := range g.Specs {
+				vs, ok := sp.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, n := range vs.Names {
+					if isPartitionLiteral(typeOfSpec(vs, i)) {
+						out = append(out, n.Name)
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// typeOfSpec is the type expression for the i'th name in a var spec:
+// the declared type when there is one, otherwise the initializer's own
+// composite-literal type.
+func typeOfSpec(vs *ast.ValueSpec, i int) ast.Expr {
+	if vs.Type != nil {
+		return vs.Type
+	}
+	if i < len(vs.Values) {
+		if cl, ok := vs.Values[i].(*ast.CompositeLit); ok {
+			return cl.Type
+		}
+	}
+	return nil
+}
+
+// isPartitionLiteral reports whether e is map[string]struct{inherit
+// bool; why string} — spelled out or through the partition alias.
+func isPartitionLiteral(e ast.Expr) bool {
+	if id, ok := e.(*ast.Ident); ok && id.Name == "partition" {
+		return true
+	}
+	m, ok := e.(*ast.MapType)
+	if !ok {
+		return false
+	}
+	if id, ok := m.Key.(*ast.Ident); !ok || id.Name != "string" {
+		return false
+	}
+	st, ok := m.Value.(*ast.StructType)
+	if !ok || st.Fields == nil || len(st.Fields.List) != 2 {
+		return false
+	}
+	want := []struct{ name, typ string }{{"inherit", "bool"}, {"why", "string"}}
+	for i, fl := range st.Fields.List {
+		if len(fl.Names) != 1 || fl.Names[0].Name != want[i].name {
+			return false
+		}
+		id, ok := fl.Type.(*ast.Ident)
+		if !ok || id.Name != want[i].typ {
+			return false
+		}
+	}
+	return true
+}
+
+// namedPartition is a partition table with its NAME, because every
+// consumer of the set either iterates them all or has to say which one
+// is at fault, and a map has no name to print.
+type namedPartition struct {
+	name string
+	part partition
+}
+
+// partitionTables is EVERY partition table, declared beside them and
+// read by everything that has to cover all of them — partitionWords'
+// union and TestThePartitionTablesShareOneKeySet today.
+//
+// It exists because the union was a two-element literal in
+// referencedoc_test.go, which moved the coupling rather than removing
+// it: a third table declared here and left out of that literal
+// reintroduces the nil *regexp.Regexp partitionRunSide dereferences,
+// with the same symptom (a panic in whichever test is declared first)
+// and nothing red to name it. That is the enumerated-list shape
+// CLAUDE.md refuses, at a two-element sample.
+//
+// IT IS STILL A LITERAL, and that is a convention rather than a check —
+// so TestEveryPartitionTableIsRegistered derives the set from the
+// package source, the way TestTheControlBoundaryPartitionsEveryContextField
+// derives Context's fields, and goes red when a table is declared here
+// and left out of this function. Raised in review of #543, twice: the
+// first round relocated the enumeration and the doc above said why
+// relocating is not enough.
+func partitionTables() []namedPartition {
+	return []namedPartition{
+		{"boundaryPartition", boundaryPartition},
+		{"rowPartition", rowPartition},
+	}
 }
 
 // TestTheControlBoundaryPartitionsEveryContextField is the derived half:

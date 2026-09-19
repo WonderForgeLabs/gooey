@@ -435,9 +435,15 @@ func TestThePartitionTablesShareOneKeySet(t *testing.T) {
 	// side; deriving them is also what keeps one message from carrying
 	// more of the reason than the other.
 	tables := partitionTables()
-	for _, a := range tables {
-		for _, b := range tables {
-			if a.name == b.name {
+	for i, a := range tables {
+		for j, b := range tables {
+			// BY INDEX, because the skip means "not itself" and
+			// nothing else. Keyed by NAME, a copy-paste that
+			// duplicated a name in partitionTables — the realistic
+			// slip, since the name is hand-written beside the map —
+			// would make this skip that table against its namesake
+			// too. Raised in review of #543.
+			if i == j {
 				continue
 			}
 			for name := range a.part {
@@ -783,6 +789,7 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // TestNoPageEnumeratesTheBoundaryPartition 0.46s -> 0.21s and
 // TestEveryPageThatAnswersWhatCrossesCitesThePartition 0.10s -> 0.05s,
 // against a 4.5s markup suite. Raised in review of #490.
+//
 // ONE CACHE FOR BOTH TABLES, and that is a measurement rather than an
 // oversight. Everything else that reads a partition had to be
 // parameterised when partitionFor landed, because it reads the
@@ -795,7 +802,7 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // it was handed, so an exported field added to rowPartition alone
 // yields a nil *regexp.Regexp and FindAllStringIndex nil-derefs. The
 // guard written for exactly that condition cannot report it: Go runs
-// tests in declaration order, TestTheBoundaryGuardsPickTheirTable
+// tests in declaration order, `TestTheBoundaryGuardsPickTheirTable`
 // passes rowPartition down this path, and it is declared EARLIER in
 // this file than `TestThePartitionTablesShareOneKeySet` — so the panic
 // aborts the binary first and the key-set guard's carefully written
@@ -805,7 +812,10 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // only reason they are checked at all: `TestEveryCitedTestNameResolves`
 // reads Go comments through a backtick-anchored pattern, so the bare
 // spelling this comment first used bought nothing and claimed
-// otherwise. Measured in review of #543 by renaming the test. Measured in review of #490 by adding
+// otherwise, and one of the two names stayed bare through the round
+// that said so. Measured in review of #543 by renaming the test.
+//
+// Measured in review of #490 by adding
 // one key to rowPartition: a nil-pointer stack trace in a test about
 // table dispatch, with nothing naming the real fault.
 //
