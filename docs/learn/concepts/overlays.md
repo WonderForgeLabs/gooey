@@ -135,6 +135,19 @@ derived from, so an overlay takes the press from wherever it is
 declared, and a rank decides between two overlapping overlays exactly as
 it decides which one paints on top.
 
+**Within its ancestors' bounds**, which is the one place the two planes
+still diverge
+([#482](https://github.com/WonderForgeLabs/gooey/issues/482)). The walk
+returns before descending whenever the point is outside a component's
+`Bounds()`, so a surface arranged outside an ancestor's rect — what
+`MenuBar.Arrange` does with its dropdown — paints above everything and
+is never reached by the press, whatever its rank.
+`gooey.TestAnOverlayOutsideItsParentPaintsAndIsNotHit` pins that
+direction, and it is why `Popup` and `MenuBar` hold pointer capture
+while open rather than relying on the lift: capture routes the press
+before the walk runs. A custom overlay that hangs its surface outside
+the owner needs the same.
+
 This section was headed *"What the lift does NOT move"* and said
 `Overlay` moved paint and not input — that hit-testing "still walks
 plain document order, last sibling first". True from #437 until #465,
@@ -251,9 +264,18 @@ caveat that stood here on #456's branch — "from wherever it is declared"
 being true of the cells and not of the pointer — was true for as long as
 the hit walk read document order alone. It no longer does: it asks
 `overlayOf` and the same ranks paint asks, so two overlapping overlays
-cannot answer the two questions differently.
+that the walk REACHES cannot answer the two questions differently.
 `gooey.TestARankOrdersHitTestingAsWellAsPaint` is what holds that down,
-and it fails by name if the walk ever goes back.
+and it fails by name if the walk ever goes back — its fixture is two
+sibling overlays inside one root's bounds, which is the in-bounds case.
+The out-of-bounds case is pinned the other way, by
+`gooey.TestAnOverlayOutsideItsParentPaintsAndIsNotHit`: the bounds prune
+above ([#482](https://github.com/WonderForgeLabs/gooey/issues/482))
+happens before rank is consulted, so a surface hung outside an
+ancestor's rect still paints without taking the click. That limit was
+stated on this page a hundred lines down as a `Popup`/`MenuBar`
+convention rather than as a bound on the rule above it, which is the
+shape review of #458 caught.
 
 ## An overlay pinned to the pointer, not the tree
 

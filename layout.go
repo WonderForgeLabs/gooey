@@ -47,10 +47,9 @@ const (
 	// "does not paint", which is what this said and is wrong in both
 	// halves. A hidden LEAF still pre-clears its own bounds, so it
 	// erases a visible sibling it overlaps (#508); and since #465
-	// FocusManager.HitTest skips a
-	// hidden NODE, so a press over a hidden button lands on whatever
-	// is beneath it. Only the node — a Visible child of a Hidden
-	// parent is still hittable.
+	// FocusManager.HitTest skips a hidden NODE, so a press over a
+	// hidden button lands on whatever is beneath it. Only the node —
+	// a Visible child of a Hidden parent is still hittable.
 	Hidden
 	// Collapsed occupies nothing and the subtree is skipped entirely.
 	Collapsed
@@ -407,11 +406,10 @@ func ArrangeChild(w Component, slot Rect) {
 // sentence used to say that "Hidden and Collapsed elements keep their
 // state but produce no cells" — no longer true, and review of #458
 // round 14 read it against the composer: a hidden LEAF has its bounds
-// pre-cleared before any
-// paintable test (composer.go), so it writes blanks over a sibling
-// beneath it (#508), and a hidden CONTAINER's bounds are filled
-// deliberately. Collapsed is the one that truly contributes nothing,
-// because its bounds are zero. See Hidden's own contract in the
+// pre-cleared before any paintable test (composer.go), so it writes
+// blanks over a sibling beneath it (#508), and a hidden CONTAINER's
+// bounds are filled deliberately. Collapsed is the one that truly
+// contributes nothing, because its bounds are zero. See Hidden's own contract in the
 // Visibility const block; this function is what hitTest reads so the two
 // planes ask the visibility question the same way.
 func paintable(w Component) bool {

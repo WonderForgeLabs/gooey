@@ -3112,6 +3112,23 @@ func TestNamingTheHitWalkNoLongerExemptsALine(t *testing.T) {
 //
 // Raised in review of #458.
 var retiredHiddenWording = []*regexp.Regexp{
+	// THE CELL SPELLING IS THE SAME CLAIM, and it was outside these
+	// patterns until review of #458 round 14 found layout.go's own
+	// paintable saying "Hidden and Collapsed elements keep their state
+	// but produce no cells" — the function hitTest reads, one file from
+	// the const block this plane was written for. "Produce no cells" is
+	// "does not paint" in other words, and #508 measured it false in
+	// both directions.
+	//
+	// `owns no cells` is deliberately NOT in the alternation: that is
+	// the Decorator contract (component.go, components/adorn.go, and a
+	// dozen test comments), a different and true claim about a
+	// component that paints nothing of its own, and none of those
+	// sentences names Hidden. Only the verbs that assert what a HIDDEN
+	// node does to the plane are here. (This rationale sat after the
+	// literal's closing brace for one round, documenting neither it nor
+	// the function below — the same drift this file is about.)
+	//
 	// Hidden, then the retired predicate, within one CLAUSE. The span
 	// stops at a sentence boundary so "…Hidden. Collapsed paints
 	// nothing" — which is TRUE of Collapsed, whose bounds are zero — is
@@ -3123,19 +3140,6 @@ var retiredHiddenWording = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)hidden[^.;:|—]{0,120}?(does ?n[o']t paint|paints? nothing|never paints|produces? no cells|paints? no cells|renders? no cells)`),
 	regexp.MustCompile(`(?i)(does ?n[o']t paint|paints? nothing|never paints|produces? no cells|paints? no cells|renders? no cells)[^.;:|—]{0,60}?hidden`),
 }
-
-// THE CELL SPELLING IS THE SAME CLAIM, and it was outside the pattern
-// until review of #458 round 14 found layout.go's own paintable saying
-// "Hidden and Collapsed elements keep their state but produce no cells"
-// — the function hitTest reads, one file from the const block this plane
-// was written for. "Produce no cells" is "does not paint" in other
-// words, and #508 measured it false in both directions.
-//
-// `owns no cells` is deliberately NOT in the list: that is the Decorator
-// contract (component.go, components/adorn.go, and a dozen test
-// comments), a different and true claim about a component that paints
-// nothing of its own, and none of those sentences names Hidden. Only the
-// verbs that assert what a HIDDEN node does to the plane are here.
 
 func statesTheRetiredHiddenWording(line string) bool {
 	return matchesAny(line, retiredHiddenWording)

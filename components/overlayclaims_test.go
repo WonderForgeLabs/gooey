@@ -155,6 +155,12 @@ func TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading %s: %v", f, err)
 		}
+		// COMMENT LINES ONLY, FOR THIS GUARD. A rule about what prose
+		// teaches has nothing to say about an identifier, and a line of
+		// code that happens to put a host name within sixty columns of
+		// the word "lifted" is a false report on correct code — which
+		// is how a guard gets deleted. This is the filter
+		// overlayProseFiles' doc used to claim as its own.
 		goSrc := strings.HasSuffix(f, ".go")
 		for i, line := range strings.Split(string(body), "\n") {
 			if goSrc && !strings.HasPrefix(strings.TrimSpace(line), "//") {
@@ -304,12 +310,21 @@ func nearSpan(line string, at []int) string {
 // source — components/menu.go's Z-ORDER block is exactly where such a
 // claim lands, and the corpus used to stop one directory short of it.
 //
-// Go files are scanned for their COMMENT lines only. A rule about what
-// prose teaches has nothing to say about an identifier, and a line of
-// code that happens to put a host name within sixty columns of the word
-// "lifted" is a false report on correct code — which is how a guard gets
-// deleted. _test.go is excluded because the fixtures BELOW state the
-// retired claim on purpose.
+// THIS SELECTS FILES AND READS NONE OF THEM, which is the line the doc
+// here used to blur: it said "Go files are scanned for their COMMENT
+// lines only", and that filter lives in ONE caller
+// (TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs, below, which skips
+// any line not starting with `//`). The second caller —
+// TestNoDocSaysASelfMarkedHostStaysInDocumentOrder in
+// overlaypolarity_test.go — reads whole blocks through
+// proseBlocks/proseUnits and has always included Go code lines, so the
+// claim was false of half the callers the moment the corpus became
+// shared. Each caller decides how to read a Go file; the argument for
+// the comment-only filter travels with the caller that applies it.
+// Raised in review of #458.
+//
+// _test.go is excluded here, in the corpus itself, because the fixtures
+// BELOW state the retired claim on purpose.
 //
 // Dot-directories are pruned at EVERY depth, not filtered at the top:
 // .claude/worktrees holds whole checkouts of this repo on a developer
