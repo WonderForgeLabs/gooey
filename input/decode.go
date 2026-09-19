@@ -144,16 +144,21 @@ type deadline uint8
 // at the top of a documented block leaves behind, and nothing reading
 // the file afterwards can tell the two apart.
 //
-// NOT because a guard here would catch it. This cited
-// gooey.TestNoDocCommentNamesTheDeclarationBelowIt, and both halves of
-// that were wrong: the test is markup.TestNoDocCommentNamesTheDeclarationBelowIt
-// (markup/doccomment_test.go), and it walks its own directory with
-// goparser.ParseDir(fset, ".", …), so input/ is outside it entirely. A
-// citation that names a guard which cannot see the file it is written in
-// is the "claim true of less than it says" class this branch's tip
-// commit is about, one file over. panel.go words it correctly —
-// "scoped to markup/ today" — and that is the form to copy. Raised in
-// review of #445.
+// AND A GUARD HERE DOES CATCH IT NOW.
+// gooey.TestNoDocCommentNamesTheDeclarationBelowIt walks the whole tree
+// with filepath.WalkDir("."), so this file is inside it.
+//
+// What stood here said the opposite, in four clauses that were each
+// true when written and are now each false: that the guard was
+// markup.TestNoDocCommentNamesTheDeclarationBelowIt, that it lived in
+// markup/doccomment_test.go, that it used goparser.ParseDir and so
+// could not see input/, and that panel.go's "scoped to markup/ today"
+// was the wording to copy. #483 moved the guard to the root and
+// deleted that file, and corrected panel.go's line in the same change.
+// The paragraph's own subject was a citation naming a guard that cannot
+// see the file it is written in — which is what it then became, and
+// nothing reddened: TestEveryCitedTestNameResolves reads CLAUDE.md and
+// docs/, not Go comments. Raised in review of #503.
 //
 // ABOVE THE `const (`, NOT INSIDE IT. Written between the paren and the
 // first entry, godoc attaches it to deadlineLive — a paragraph about

@@ -2312,9 +2312,9 @@ func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
 }
 
 // buildVendoredByPackage indexes the EXPORTED declarations of vendored
-// (the map vendoredByPackage hands its callers).
-// packages whose short name collides with one of ours, which is the only
-// way a citation of `pkg.Name` can be read two ways.
+// packages whose short name collides with one of ours — the map
+// vendoredByPackage hands its callers — which is the only way a citation
+// of `pkg.Name` can be read two ways.
 //
 // THE COLLISION IS REAL AND ALREADY HERE. Three of this repo's package
 // names are also the last segment of a vendored import path — grpc
