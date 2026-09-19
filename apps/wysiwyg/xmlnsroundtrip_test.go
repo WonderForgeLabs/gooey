@@ -1228,12 +1228,40 @@ func TestAPrefixedElementIsRefusedLikeAPrefixedAttribute(t *testing.T) {
 		{"no namespace at all", `<Gooey><Canvas Name="R"/></Gooey>`, ""},
 		{"a child REDECLARING the default", `<Gooey xmlns="urn:u"><Canvas xmlns="urn:v" Name="R"/></Gooey>`, ""},
 		{"a prefix bound to the default's own URI", `<Gooey xmlns="urn:u" xmlns:g="urn:u"><g:Canvas Name="R"/></Gooey>`, ""},
+
+		// THE EXEMPTION, and the reason this branch has one. The
+		// refusal's premise is that the model cannot hold the namespace,
+		// so the element is renamed on write. node.Space holds
+		// markup.XNamespace and the envelope re-derives the prefix from
+		// the document's own xmlns, so a declaration makes the round
+		// trip under the author's prefix — which is the whole of #517.
+		// Under the envelope's binding and under the element's own,
+		// because those are the two placements declPrefix exists for.
+		{"an x-namespaced declaration, bound on the envelope",
+			`<Gooey xmlns:x="` + markup.XNamespace + `"><x:Property Name="T" Type="string"/></Gooey>`, ""},
+		{"an x-namespaced declaration binding its own prefix",
+			`<Gooey><p:Property xmlns:p="` + markup.XNamespace + `" Name="T" Type="string"/></Gooey>`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n, err := nodeOf(tc.doc)
 			if tc.refuse == "" {
 				if err != nil {
 					t.Fatalf("nodeOf refused a document with no prefixed element: %v\n%s", err, tc.doc)
+				}
+				// AND THE EXEMPT ONE IS ACTUALLY CARRIED, not merely
+				// tolerated: an accept that dropped the namespace would
+				// pass the arm above while leaving exactly the rename
+				// the refusal exists to prevent.
+				for _, k := range n.Kids {
+					if k.Elem != "Property" {
+						continue
+					}
+					if k.Space != markup.XNamespace {
+						t.Errorf("the declaration was accepted with Space %q; "+
+							"the exemption is that the model HOLDS this "+
+							"namespace, and a node without it is written back "+
+							"out as a plain <Property>", k.Space)
+					}
 				}
 				return
 			}
@@ -1657,9 +1685,38 @@ func TestOnlyOneFunctionWritesADocumentEnvelope(t *testing.T) {
 				// document needs exactly one root element", which is
 				// prose about an envelope and not one. lit.Value keeps
 				// the quote, so [1:] drops either kind of it.
+				//
+				// AND "IT" IS THE WHOLE MESSAGE, NOT A LINE OF ONE.
+				// Go concatenation makes one string out of several
+				// BasicLits, so a prose message wrapped across lines
+				// can put "<Gooey>" at the start of a CONTINUATION —
+				// and testing each literal on its own then reports the
+				// function as writing an envelope. unwrapGooey's
+				// declaration refusal does exactly that ("… declares %d
+				// property %s on its " + "<Gooey>, and a paste lands
+				// inside a document …"), and the guard flagged it the
+				// moment #501 and #522 met in a merge: a false positive
+				// whose only remedy would have been to reflow a
+				// sentence, which the next gofmt could undo. Every
+				// literal reachable to the RIGHT of a `+` is a
+				// continuation, so only the leftmost one answers.
+				cont := map[*ast.BasicLit]bool{}
+				ast.Inspect(d, func(n ast.Node) bool {
+					be, ok := n.(*ast.BinaryExpr)
+					if !ok || be.Op != token.ADD {
+						return true
+					}
+					ast.Inspect(be.Y, func(m ast.Node) bool {
+						if l, isLit := m.(*ast.BasicLit); isLit && l.Kind == token.STRING {
+							cont[l] = true
+						}
+						return true
+					})
+					return true
+				})
 				ast.Inspect(d, func(n ast.Node) bool {
 					if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING &&
-						strings.HasPrefix(lit.Value[1:], "<Gooey") {
+						!cont[lit] && strings.HasPrefix(lit.Value[1:], "<Gooey") {
 						seen[owner] = true
 					}
 					return true
@@ -2071,10 +2128,33 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 	}
 	kids = slices.DeleteFunc(kids, func(fn string) bool { return fn == "restore" })
 
-	if len(kids) == 0 || len(envAttrs) == 0 {
-		t.Fatalf("the walk found envAttrs assigned in %v and ed.root.Kids in %v; "+
-			"an empty side means the matcher stopped matching and every assertion "+
-			"below would pass vacuously", envAttrs, kids)
+	// ENVDECLS IS THE THIRD, and it was leaning on this test without
+	// being in it. Its own comment cites this guard as the reason it is
+	// "assigned at the one site that assigns those" — but the two
+	// matchers above never looked at it, so a future site replacing the
+	// document and the envelope attrs while leaving envDecls behind
+	// would carry the PREVIOUS file's property declarations onto the new
+	// one, rebuild would write them into the CODE tab, and save would
+	// write them to somebody else's file, with nothing red. That is the
+	// same "prose invariant repeated, not measured" shape this test was
+	// written against, one field over. Raised in review of #522.
+	//
+	// ON THE EDITOR, like the two above. It read a bare
+	// `selects(e, "envDecls")` when it was written, which counted any
+	// assignment whose final field is envDecls whatever it belongs to —
+	// harmless while the editor is the only holder, and the same
+	// false-positive shape onEd exists to remove. The base derivation
+	// makes that free now, and a base the walk cannot identify is
+	// reported rather than dropped.
+	envDecls := assignedIn(t, "envDecls", func(e ast.Expr, eds map[string]bool) bool {
+		_, ok := onEd(e, "envDecls", eds)
+		return ok
+	})
+
+	if len(kids) == 0 || len(envAttrs) == 0 || len(envDecls) == 0 {
+		t.Fatalf("the walk found envAttrs assigned in %v, ed.root.Kids in %v and "+
+			"envDecls in %v; an empty side means the matcher stopped matching and "+
+			"every assertion below would pass vacuously", envAttrs, kids, envDecls)
 	}
 	if strings.Join(envAttrs, ",") != strings.Join(kids, ",") {
 		t.Errorf("ed.envAttrs is assigned in %v and the document in %v. These must "+
@@ -2082,6 +2162,13 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 			"so a site that replaces one and not the other leaves the editor "+
 			"describing a file it is no longer showing — which is the defect three "+
 			"comments in this package warn about and nothing measured", envAttrs, kids)
+	}
+	if strings.Join(envDecls, ",") != strings.Join(kids, ",") {
+		t.Errorf("ed.envDecls is assigned in %v and ed.root.Kids in %v. These must "+
+			"be the same set for the same reason, and the cost of their parting is "+
+			"worse than the envelope attrs': a declaration left over from the last "+
+			"file becomes part of the next one's public surface, written back on "+
+			"the first save", envDecls, kids)
 	}
 }
 
@@ -2183,6 +2270,118 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 	if got := ed.envAttrs["xmlns:x"]; got != markup.XNamespace {
 		t.Errorf("the envelope's own declaration became %q after a refused "+
 			"paste, want %q", got, markup.XNamespace)
+	}
+}
+
+// TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold is the sibling above
+// one scope out: the saved envelope binds prefixes ed.envAttrs has
+// never held, and a paste may not re-point those either.
+//
+// TWO SHAPES, AND THEY REACH THE FILE BY DIFFERENT ROUTES — which is
+// the point, because the editor's answer must not depend on the route:
+//
+//   - carried: one declaration holds its own xmlns:p, declPrefix reports
+//     the document binds the namespace already, and declAttrs re-emits
+//     that binding on the declaration element in the saved file;
+//   - minted: the declarations disagree about how they bind it (one
+//     prefixed, one as its own default xmlns), so declPrefix reports
+//     bound == false and withDeclBinding puts a fresh xmlns:p on
+//     <Gooey> that no opened byte ever contained.
+//
+// Both were ACCEPTED before #522's reconcileNamespaces widening, with
+// the byte-identical paste into the envelope-bound document refused by
+// the test above. The fixtures are the discriminator rather than the
+// assertion text: each was run against the narrow scope set and each
+// wrote the rebinding to disk.
+//
+// The refusal MESSAGE is not asserted here beyond its ✗ — the sibling
+// above owns that text, and repeating it would make a reworded message
+// three failures instead of one.
+func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
+	const other = "urn:gooey:test:522:not-x"
+	decl := func(prefixed bool, name, def string) string {
+		if prefixed {
+			return `  <p:Property xmlns:p="` + markup.XNamespace +
+				`" Name="` + name + `" Type="string" Default="` + def + `"/>`
+		}
+		return `  <Property xmlns="` + markup.XNamespace +
+			`" Name="` + name + `" Type="string" Default="` + def + `"/>`
+	}
+	for _, tc := range []struct {
+		name, why string
+		decls     []string
+	}{
+		{
+			name: "carried",
+			why: "the declaration carries its own xmlns:p and declAttrs " +
+				"re-emits it, so the saved file binds p: from a place " +
+				"ed.envAttrs never sees",
+			decls: []string{decl(true, "A", "a")},
+		},
+		{
+			name: "minted",
+			why: "the two declarations bind the namespace differently, so " +
+				"declPrefix reports it unbound and withDeclBinding mints " +
+				"xmlns:p onto <Gooey> — a binding no opened byte held",
+			decls: []string{decl(true, "A", "a"), decl(false, "B", "b")},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workspaceFixture(t)
+			doc := "<Gooey>\n" + strings.Join(tc.decls, "\n") + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="Existing" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n" +
+				`</Gooey>` + "\n"
+			if err := os.WriteFile(filepath.Join(root, "decl.gooey"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			ed, _ := buildPage(t)
+			ed.setDispatcher(gooey.NewDispatcher())
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("decl.gooey")
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+				t.Fatalf("opening the fixture reports %q, want a build", got)
+			}
+			// THE PREMISE, and it is the half that makes this test
+			// different from its sibling: the binding must NOT be in
+			// either scope the narrow reconcileNamespaces collected, or
+			// the arm passes for the sibling's reason.
+			if got, ok := ed.envAttrs["xmlns:p"]; ok {
+				t.Fatalf("ed.envAttrs already binds p to %q, so this arm is "+
+					"measuring the envelope scope the sibling test owns", got)
+			}
+			if _, onRoot := ed.doc().Attrs["xmlns:p"]; onRoot {
+				t.Fatal("the binding came down onto the content root, so this " +
+					"arm is measuring the ordinary document scope")
+			}
+			if len(ed.envDecls) != len(tc.decls) {
+				t.Fatalf("ed.envDecls holds %d declarations, want %d — the "+
+					"fixture did not reach the scope this arm is about",
+					len(ed.envDecls), len(tc.decls))
+			}
+			// And the saved envelope must actually bind it, or there is
+			// nothing for the paste to conflict with.
+			if head := envelopeHead(ed.envAttrs, ed.envDecls); !strings.Contains(
+				head, `xmlns:p="`+markup.XNamespace+`"`) {
+				t.Fatalf("the saved envelope binds p: nowhere:\n%s", head)
+			}
+
+			ed.pasteMarkup(`<Gooey>` + "\n" +
+				`  <Text Name="Pasted" xmlns:p="` + other + `">hi</Text>` + "\n" +
+				`</Gooey>` + "\n")
+
+			if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+				t.Errorf("pasting a fragment that binds p to a DIFFERENT uri "+
+					"reports %q, want a refusal: %s, and markup.parse's one "+
+					"flat last-wins table then hands every p: element in the "+
+					"saved file to the pasted uri", got, tc.why)
+			}
+			if src := ed.source.Get(); strings.Contains(src, other) {
+				t.Errorf("the refused declaration is in the document anyway:\n%s", src)
+			}
+		})
 	}
 }
 
@@ -2539,9 +2738,9 @@ func TestAPastedEnvelopesXDeclarationIsDropped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fixture does not parse: %v", err)
 	}
-	root, ok := unwrapGooey(n)
+	root, ok, why := unwrapGooey(n)
 	if !ok {
-		t.Fatalf("a <Gooey> over one root did not unwrap")
+		t.Fatalf("a <Gooey> over one root did not unwrap: %s", why)
 	}
 	if got, ok := root.Attrs["xmlns:t"]; !ok || got != "urn:t" {
 		t.Errorf("the envelope's xmlns:t did not reach the content root (got %q, "+

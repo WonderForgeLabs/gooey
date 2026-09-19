@@ -83,7 +83,7 @@ func (n *node) deepCopy() *node {
 	if n == nil {
 		return nil
 	}
-	c := &node{Elem: n.Elem, Body: n.Body}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
@@ -713,9 +713,12 @@ func (ed *editor) pasteMarkup(src string) {
 	// file does not, and refusing the second would be refusing the
 	// common case.
 	n, err := nodeOf(src)
+	var envelopeWhy string
 	if err == nil {
-		if inner, ok := unwrapGooey(n); ok {
+		if inner, ok, why := unwrapGooey(n); ok {
 			n = inner
+		} else {
+			envelopeWhy = why
 		}
 	}
 	if err != nil {
@@ -727,7 +730,69 @@ func (ed *editor) pasteMarkup(src string) {
 		ed.status.Set("✗ pasted text is not markup: " + err.Error())
 		return
 	}
+	// AND A REFUSED ENVELOPE SAYS WHY. unwrapGooey decides the refusal
+	// and now carries the sentence with it, rather than this caller
+	// re-deriving one arm of it. Raised in review of #522.
+	if envelopeWhy != "" {
+		ed.status.Set("✗ not pasted: " + envelopeWhy)
+		return
+	}
+	// A DECLARATION PASTED ON ITS OWN NEVER REACHED unwrapGooey. It
+	// returns immediately when n.Elem != "Gooey", so <x:Property/> with
+	// no envelope is not an envelope refusal: it fell through to
+	// insertSubtree, planAdd found no spec for "Property", node.markup
+	// wrote it with no prefix, and the rebuild answered "markup: unknown
+	// element <Property>" — verbatim the string splitDecls' own doc
+	// calls out as the one the author must not be shown. The document
+	// survives (the revert-on-failed-rebuild guard above holds), so this
+	// was a message defect rather than a data one.
+	//
+	// THIS BRANCH IS WHAT MADE IT DETECTABLE: n.Space now survives
+	// deepCopy, so the namespace is still here to test. Raised in review
+	// of #522.
+	if why := bareDeclWhy(n); why != "" {
+		ed.status.Set("✗ not pasted: " + why)
+		return
+	}
 	ed.insertSubtree(n, "pasted markup:")
+}
+
+// bareDeclWhy is the refusal for a declaration pasted WITHOUT an
+// envelope, and "" for anything else. It is the same three-arm question
+// splitDecls asks of an envelope's children, asked of a lone node.
+func bareDeclWhy(n *node) string {
+	switch {
+	case n.Space == markup.XNamespace && n.Elem != "Property":
+		// THE PASTED NODE'S OWN BINDING, not the literal "x". Since
+		// #472 a pasted node carries its xmlns:* declarations as
+		// ordinary attributes, so <d:Foo xmlns:d="…x"/> is reported as
+		// <d:Foo> rather than as an element the clipboard does not
+		// hold. Raised in review of #522.
+		prefix, bound := declBinding(n.Attrs)
+		return alienDeclMsg([]*node{n}, prefix, bound)
+	case n.Space == markup.XNamespace:
+		// THE SAME BINDING THE ARM ABOVE READS. This one kept the
+		// literal "x" when its sibling was moved onto declBinding, and
+		// the test arm beside it could not see the difference: its
+		// fixture binds x:, so the hardcoded string and the read one
+		// print alike. A p:-bound declaration was reported as
+		// <x:Property> — a prefix the clipboard does not hold, and one
+		// that is actively wrong when the open document binds x: to
+		// something else. Unbound falls back to markup's own literal,
+		// which is what the "unprefixed" case below tells the author to
+		// write. Raised in review of #522.
+		prefix, bound := declBinding(n.Attrs)
+		if !bound {
+			prefix = "x"
+		}
+		return "<" + prefix + ":Property> is a dependency property declaration, not an " +
+			"element: it belongs on a document's <Gooey> root, where it " +
+			"defines that control's public surface, and a paste inserts one " +
+			"element into the selection. Open the file it came from instead."
+	case n.Elem == "Property":
+		return bareDeclMsg(1)
+	}
+	return ""
 }
 
 // unwrapGooey strips a <Gooey> envelope with exactly one element in it.
@@ -735,6 +800,15 @@ func (ed *editor) pasteMarkup(src string) {
 // More than one and it is refused rather than guessed at: a whole page
 // pasted into a selected <Text> has no single answer for where its
 // elements go, and picking the first would drop the rest silently.
+//
+// THAT INCLUDES A DOCUMENT WITH <x:Property> DECLARATIONS, and the
+// asymmetry with openWorkspaceFile is deliberate rather than missed.
+// Opening one partitions the declarations off onto the envelope (#517),
+// because the file HAS an envelope to keep them on. A paste lands in a
+// document that already has its own, and a declaration silently merged
+// into it would change the target control's public surface without the
+// user asking; dropping it instead would lose it. Refusing the unwrap
+// says so, and leaves the pasted text where the user can see it.
 //
 // It takes and returns a NODE rather than re-serializing the child and
 // re-parsing it. Not because the round trip would corrupt a body — it
@@ -759,6 +833,17 @@ func (ed *editor) pasteMarkup(src string) {
 // paste of this editor's own output therefore arrives with the
 // declaration already on the child and nothing to carry — the carry is
 // for the documents the editor did not write. Raised in review of #501.
+//
+// IT RETURNS THE REASON IT REFUSED, and the reason is the whole point
+// of the paragraph above: the envelope falls through to insertSubtree,
+// which reports "markup: unknown element <Gooey>" to somebody who has
+// just copied a valid file. The first repair explained only the
+// declaration arm, from pasteMarkup, which left the case this comment is
+// actually written about — a whole page pasted into a selected <Text> —
+// reporting the unknown-element string verbatim. Deciding the refusal
+// and explaining it in two places is what let them diverge; they are one
+// place now. An empty reason means this is not an envelope at all, which
+// is not a refusal. Raised in review of #522.
 //
 // `xmlns:x` IS DROPPED HERE, DELIBERATELY, and this is the one place
 // that is true. carryDeclarations skips markup.XNamespace because moving
@@ -789,12 +874,59 @@ func (ed *editor) pasteMarkup(src string) {
 // being free in the same commit, with nothing here to notice.
 // TestAPastedEnvelopesXDeclarationIsDropped pins the behaviour so the
 // change has to be deliberate. Raised in review of #501.
-func unwrapGooey(n *node) (*node, bool) {
-	if n.Elem != "Gooey" || len(n.Kids) != 1 || len(n.Slots) != 0 {
-		return nil, false
+func unwrapGooey(n *node) (inner *node, ok bool, why string) {
+	if n.Elem != "Gooey" {
+		return nil, false, ""
 	}
-	carryDeclarations(n, n.Kids[0])
-	return n.Kids[0], true
+	decls, kids, bare := splitDecls(n)
+	// Hoisted rather than called in the guard and again in the body:
+	// two walks are two places that have to keep agreeing about what an
+	// alien is, and openWorkspaceFile already reads it once. Raised in
+	// review of #522.
+	alien := alienDecls(decls)
+	switch {
+	case len(bare) > 0:
+		// Before the declaration arm, because a document whose
+		// declarations are misnamespaced has a fault of its own and
+		// the paste refusal would otherwise describe the document
+		// wrongly — it has no declarations markup can see. Raised in
+		// review of #522.
+		return nil, false, bareDeclMsg(len(bare))
+	case len(alien) > 0:
+		// BEFORE THE DECLARATION ARM, because these are not
+		// declarations: markup refuses <x:Foo> outright. Calling them
+		// declarations here would send the author to read about merging
+		// a public surface for an element that has none.
+		prefix, bound := declBinding(n.Attrs)
+		return nil, false, alienDeclMsg(alien, prefix, bound)
+	case len(decls) > 0:
+		noun := "declarations"
+		if len(decls) == 1 {
+			noun = "declaration"
+		}
+		return nil, false, fmt.Sprintf("this document declares %d property %s on its "+
+			"<Gooey>, and a paste lands inside a document that already has an "+
+			"envelope of its own — merging them would change this control's "+
+			"public surface. Open the file instead, or paste just the element "+
+			"you want.", len(decls), noun)
+	case len(n.Slots) != 0:
+		return nil, false, "this <Gooey> carries property-element content of its " +
+			"own, which belongs to the document it came from rather than to any " +
+			"element in this one. Paste just the element you want."
+	case len(kids) != 1:
+		return nil, false, fmt.Sprintf("this is a whole document with %d root "+
+			"elements, and a paste inserts ONE element into the selection. "+
+			"Open the file instead, or copy just the element you want.", len(kids))
+	}
+	// kids[0], NOT n.Kids[0]. The two are equal only because the arms
+	// above returned on every child splitDecls filed elsewhere, which
+	// makes this line's correctness a property of the arm ORDERING —
+	// and the ordering is exactly what the comments above it argue
+	// about. Add or reorder an arm and carryDeclarations silently starts
+	// carrying the envelope's binding onto a declaration and returning a
+	// declaration as the pasted element. Raised in review of #522.
+	carryDeclarations(n, kids[0])
+	return kids[0], true, ""
 }
 
 // reconcileNamespaces settles a pasted subtree's namespace declarations
@@ -839,8 +971,10 @@ func unwrapGooey(n *node) (*node, bool) {
 // belongs written down. Raised in review of #501.
 //
 // AND ed.envAttrs, WHICH IS A THIRD SCOPE AND NOT A SECOND. The
-// paragraph above enumerated two and there are three, which is the
-// shape a future reader trusts: ed.root is excluded because it is NOT
+// paragraph above enumerated two and there are four — three when this
+// was written, and the fourth below is what a growing envelope did to
+// the count, which is the reason a reader should not take the number
+// from prose here either: ed.root is excluded because it is NOT
 // in the save, and ed.envAttrs is included for the mirror-image reason
 // — it is what the saved <Gooey> carries and it is not reachable from
 // ed.doc(). Open a document whose envelope keeps xmlns:x (an element
@@ -853,17 +987,40 @@ func unwrapGooey(n *node) (*node, bool) {
 // are siblings of the content root — but the enumeration was one scope
 // short, not the reach. Raised in review of #501.
 //
+// AND A FOURTH, WHICH IS ed.envDecls AND THE BINDING MINTED BESIDE IT.
+// The third-scope paragraph above was written when the saved envelope
+// was gooeyOpen(ed.envAttrs) and nothing else. It is now
+// envelopeHead(ed.envAttrs, ed.envDecls) (main.go), which writes two
+// bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
+// re-emitted by declAttrs, and a freshly minted xmlns:<prefix> on
+// <Gooey> whenever declPrefix reports the document binds the namespace
+// nowhere the save will still carry. Both land in the file and both
+// enter markup.parse's one flat document-wide table, so both are
+// rebindable by a paste, and neither was compared.
+//
+// Measured on this branch before the fix, through openWorkspaceFile and
+// pasteMarkup: a file whose <Gooey> binds nothing and whose
+// <p:Property> carries its own xmlns:p accepted a paste binding p: to a
+// different URI and wrote it to disk, while the byte-identical paste
+// into a document holding that binding on the envelope was refused.
+// The editor's answer turned on which of two places the binding had
+// reached the file from, which is not a distinction the author can see.
+// Raised in review of #522.
+//
+// envelopeNamespaces rather than a second reading of ed.envDecls here:
+// what matters is what the SAVE writes, minting and declAttrs' drops
+// included, and that decision lives in one function beside the writer.
+// A mirror of it in this file is how the enumeration went one scope
+// short twice.
+//
 // SEEDED FIRST, then overwritten by the document's own. The envelope is
-// the outermost element, so if a prefix is declared in both, the
-// document's declaration is the later one and markup.parse's
-// last-wins is what this has to agree with.
+// the outermost element and its declaration children sit between it and
+// the content root, so if a prefix is declared in both, the document's
+// declaration is the later one and markup.parse's last-wins is what
+// this has to agree with.
 func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
-	for k, v := range ed.envAttrs {
-		if isNamespaceAttr(k) {
-			doc[k] = v
-		}
-	}
+	envelopeNamespaces(ed.envAttrs, ed.envDecls, doc)
 	collectNamespaces(ed.doc(), doc)
 	return reconcileNamespacesInto(n, doc, map[string]string{})
 }

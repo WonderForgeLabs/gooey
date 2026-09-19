@@ -1695,6 +1695,8 @@ Each declaration resolves one of three ways:
 - **Attribute literal** (`Title="requests"`) — coerced by `Type` and wrapped as a fresh source.
 - **Attribute absent** — a fresh **per-instance** source carrying the declared `Default`: markup-defined, typed, bindable local state. Two instances of the control do not share it. Absent plus `Required` is a load error.
 
+There is a fourth case, and it is not an instantiation site: a tool holding the control **file itself** has no parent to take a handle from and no attribute to coerce, so `Declaration.AbsentValue` gives it the absent-optional answer for every declaration — including a `Required` one, which previews as the type's zero rather than as an error nobody can act on. That is what the designer seeds a control's own names with, so `{{.Title}}` renders in the editor instead of failing the build. The three above stay the whole of what a *page* sees.
+
 ### Strict mode
 
 Declaring anything at all makes the control strict: an attribute the control did not declare is a load error, because the declarations are now its public surface. Layout attributes, `Name` and `Tooltip` are the *element's*, never the control's, so they are always allowed.
