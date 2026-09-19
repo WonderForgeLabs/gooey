@@ -60,7 +60,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(frameText(f), "\n")
+	rows := frameRows(f)
 	// EVERY MATCH, not the last one — matchRows' own doc carries the
 	// reason. frameText just widened from a fixed 14 rows to the whole
 	// frame, which is more rows for a second match to hide in.
@@ -209,7 +209,7 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// its top. Anything bounds-relative agrees with it only while a
 	// MenuBar sits at y=0, which is the kind of accidental agreement a
 	// moved fixture breaks silently.
-	rows := strings.Split(frameText(f), "\n")
+	rows := frameRows(f)
 	// ZERO IS THIS TEST'S SUBJECT: the underline overwriting the check
 	// box leaves no intact row at all, so an absent match is the
 	// regression rather than a broken fixture.
@@ -267,7 +267,7 @@ func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(frameText(f), "\n")
+	rows := frameRows(f)
 	// "NO ROW MATCHED" AND "THE ROW IS WRONG" ARE DIFFERENT FAULTS, and
 	// the ifNone here is what keeps them apart. Without it a missing row
 	// reaches the comparison below as `the wide label's row reads ""`,

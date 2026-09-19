@@ -206,8 +206,7 @@ func RowText(b *Buffer, y int) string {
 // a terminal would show it.
 //
 // It exists because a whole-BUFFER read is as common as a whole-ROW one
-// and had no name, so every caller wrote the loop
-// ([#516](https://github.com/WonderForgeLabs/gooey/issues/516)); the
+// and had no name, so every caller wrote the loop ([#516]); the
 // account is in docs/specs/2026-08-27-display-width.md rather than here,
 // because this comment is what a consumer reads on pkg.go.dev and that
 // is a place for the contract.
@@ -218,6 +217,8 @@ func RowText(b *Buffer, y int) string {
 // a prefix.
 //
 // A nil buffer is the empty string, for RowText's reason.
+//
+// [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
 func BufferText(b *Buffer) string {
 	if b == nil {
 		return ""

@@ -456,7 +456,7 @@ func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
 	// cannot fail. A nil buffer is empty and an out-of-range row of a
 	// REAL one is padded; those are different answers to "there is
 	// nothing here", so both are chosen here rather than one of them
-	// being read off the delegation. Raised in review of #520.
+	// being read off the delegation.
 	if got, want := RowText(b, 9), "    "; got != want {
 		t.Errorf("RowText on row 9 of a one-row buffer = %q, want %q — blanks of "+
 			"the buffer's width, not empty. A reader that drifted off the surface "+
