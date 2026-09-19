@@ -90,11 +90,77 @@ builder cannot correctly write for itself**:
 
 Deliberately excluded, with reasons:
 
-- **`optBool` / `optDuration` / `optionList`** stay unexported. They are
-  literal parsers, not binding resolution; `strconv` is already public
-  and the dialect has no opinion a caller could get wrong. `#rrggbb` is
-  the exception precisely because the dialect *does* have an opinion
-  there and no standard parser matches it.
+- **`litBool` / `litInt` / `optDuration` / `optionList`** stay unexported,
+  because four more exported parsers is a surface decision worth taking
+  deliberately rather than as a side effect of a bug fix. The cost of not
+  taking it is real and is written down below: a third-party builder gets
+  raw text, so every third-party int and bool is its own grammar and no
+  sweep in `markup/` can see one.
+
+  This bullet has been amended twice and the LEAD SENTENCE is what both
+  amendments were about, so it now carries the current reason rather than
+  a superseded one with a pointer. It said "*because a third-party builder
+  receives its attributes already parsed*" for a review round after the
+  note below it had established that they are not — and a reader who stops
+  at the bullet, which is what a bullet is for, took away the false half.
+  That is the same failure as a stale subject line over a supersede note,
+  one line up.
+
+  **Amended 2026-09-09 ([#460](https://github.com/WonderForgeLabs/gooey/issues/460)).**
+  This bullet was headed `optBool` / `optDuration` / `optionList` and argued:
+  "*They are literal parsers, not binding resolution; `strconv` is already
+  public and the dialect has no opinion a caller could get wrong.*" **`optBool`
+  no longer exists** — both call sites read `litBool`, the strict literal
+  reader — and the argument went with it. The dialect *does* have an opinion a
+  caller could get wrong: `"1"` is a bool in Go and is not one here, and
+  `" 3 "` is an int here and is not one to a bare `strconv.Atoi`. `litBool`
+  and `litInt` are the dialect's grammar, not `strconv`'s, which is the same
+  argument `#rrggbb` won. **The conclusion still holds** — but it now rests on
+  the export surface being small rather than on the parsers being
+  uninteresting, and a future `markup.Lit*` request should be answered on that
+  ground. The heading was left naming a deleted function for one review round
+  after the note below it said so; a supersede note under a stale subject line
+  is still a stale subject line, which is the whole failure mode this spec
+  directory keeps re-learning.
+
+  **Amended again 2026-09-09, in review of
+  [#470](https://github.com/WonderForgeLabs/gooey/pull/470): the premise
+  is false, and the counterexample is in this repo.** The bullet's whole
+  argument is "*a third-party builder receives its attributes already
+  parsed*". A builder registered through `Context.Elements` receives
+  `markup.Element`, whose `Attrs` is a `map[string]string` of raw text —
+  nothing has been parsed for it, and the four exported `Bound*` helpers
+  answer the binding question only. So the dialect's literal grammar is
+  reachable by built-ins and unreachable by everyone else, which is the
+  opposite of the "one spelling of each rule" property the section above
+  is written to defend.
+
+  `apps/introdeck` is the in-tree demonstration, and it is not
+  hypothetical: `<Terminal Cols>` and `<Terminal Rows>` go through its
+  own `attrInt` (`terminal.go:665`), which accepts a leading zero and a
+  leading `+`; `<Terminal Loop>` is read as `case "", "false":`, so an
+  empty value means false — verbatim the silent drop `litBool` exists to
+  refuse and #460 was filed for. It is a third-party element by
+  construction, living in the same tree as the rule it cannot reach.
+
+  **The conclusion still holds, and the reason has moved again.** It is
+  no longer "they receive parsed attributes" — they do not — but that
+  exporting four more parsers is a surface decision worth taking
+  deliberately rather than as a side effect of a bug fix, and the cost
+  of *not* taking it is now written down: every third-party int and bool
+  is its own grammar, and no sweep in `markup/` can see one. The
+  answer, if it is taken, is `markup.LitInt` / `markup.LitBool` beside
+  the `Bound*` four, with `apps/introdeck` as the first caller.
+
+  Tracked as [#485](https://github.com/WonderForgeLabs/gooey/issues/485),
+  and the citation is the point rather than a courtesy: CLAUDE.md's rule
+  for a known-and-unfixed defect is that the record be **derived or
+  expiring** — an issue whose open-or-closed state the next reader
+  *checks* — so that a paragraph excusing a live bug cannot outlive the
+  bug. This was the one place in the branch where a defect was written
+  down without one. If #485 is closed, this paragraph is describing
+  something that no longer exists and should go with it. Raised in
+  review of #470.
 - **An `Opt`/optional variant of `Bound[T]`.** The built-ins that want
   one write `if raw, ok := e.Attrs[attr]; ok && strings.TrimSpace(raw) != ""`
   first (`buildTabs`); a third party can write the same three tokens.

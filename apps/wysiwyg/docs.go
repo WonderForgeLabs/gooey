@@ -364,3 +364,39 @@ func expandControls(s string) string {
 // isPaneControl is the set expandControls rewrites: C0 and DEL, less the
 // newline the pane's own line splitting depends on.
 func isPaneControl(r rune) bool { return (r < 0x20 && r != '\n') || r == 0x7f }
+
+// setDocsTree is THE ONLY PLACE production code writes the docs tree,
+// and that is the point of it (issue #442, from the review of #426).
+//
+// docsRoot, docList and docsSkipped are three source properties that
+// describe ONE thing, and nothing derived the latter two from the first.
+// Promoting them to properties made a refresh expressible without making
+// it safe: `docsRoot.Set(newTree)` on its own leaves docList holding
+// paths from the OLD tree, which docsBody then resolves against the new
+// root — a pane listing pages that every one of them renders as
+// "cannot read …". The comment that shipped with #426 diagnosed the
+// coupling ("that every refresh happens to write all three today is a
+// coupling nobody had written down") and left it a convention. This is
+// the remedy: one writer, so the invariant is enforceable by inspection
+// rather than by everyone remembering it.
+//
+// THE THREE Set CALLS ARE NOT ATOMIC, and what makes that safe is not
+// their order — no order leaves the graph consistent halfway — but that
+// nothing evaluates between them. The graph is lazy: a Set marks
+// dependents dirty and computes nothing, and the frame that re-evaluates
+// docsBody runs on the UI goroutine in App.Run's loop, which this call
+// is not re-entrant with. Both pages are read from the NEW tree before
+// the first Set, so the only window is between the writes, and nothing
+// looks through it.
+//
+// TestTheDocsTreeHasOneWriter derives the rule from the source rather
+// than trusting this paragraph. The tests that write a single property
+// directly are deliberate: proving each field's read is OBSERVABLE means
+// writing exactly the inconsistent state this function exists to
+// prevent, so they are exempted by name there.
+func (ed *editor) setDocsTree(fsys fs.FS) {
+	pages, skipped := docsPages(fsys)
+	ed.docsRoot.Set(fsys)
+	ed.docList.Set(pages)
+	ed.docsSkipped.Set(skipped)
+}

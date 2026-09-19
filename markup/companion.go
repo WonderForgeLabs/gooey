@@ -99,7 +99,12 @@ func buildCompanion(e Element, ctx *Context) (gooey.Component, error) {
 	// security switch of the same kind as GOOEY_MARKUP_COMPANIONS:
 	// CleanEnv="1" silently meaning "inherit" would hand a child named by
 	// the document every API key and token in the launching shell.
-	clean, err := optBool(e, "CleanEnv")
+	//
+	// STRICT since review of #470: this read optBool, which accepted "1",
+	// "T" and "TRUE" through strconv.ParseBool. On a security switch the
+	// laxer grammar is the worse one — five spellings of "yes" is five
+	// chances for a near-miss to read as the safe answer.
+	clean, err := litBool(e, "CleanEnv")
 	if err != nil {
 		return nil, err
 	}

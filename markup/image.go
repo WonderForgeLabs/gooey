@@ -3,7 +3,6 @@ package markup
 import (
 	"fmt"
 	"image"
-	"strconv"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -61,19 +60,40 @@ func buildImage(e Element, ctx *Context) (gooey.Component, error) {
 // cellCount reads a required size-in-cells attribute: a positive int
 // literal, or a binding to the viewmodel's own int handle.
 func cellCount(e Element, ctx *Context, attr string) (*prop.Property[int], error) {
-	raw := strings.TrimSpace(e.Attrs[attr])
-	if raw == "" {
+	// ABSENT IS THE ELEMENT'S OWN ANSWER; EMPTY IS THE GRAMMAR'S. This
+	// tested the TRIMMED value for "", which collapses the two — so
+	// <Image Cols=""/> was told it "needs Cols", about a value the
+	// author had just typed.
+	//
+	// <Timer Interval> was changed for this exact shape one Kind across,
+	// and it left cellCount as the only literal int in the vocabulary
+	// that could not reach emptyLiteralWhy. Present-and-empty now falls
+	// through to litIntGrammar like every other one. Raised in review of
+	// #470.
+	raw, ok := e.Attrs[attr]
+	if !ok {
 		return nil, fmt.Errorf("markup: <%s> needs %s — a cell count or a binding", e.Name, attr)
 	}
+	raw = strings.TrimSpace(raw)
 	if bindRe.MatchString(raw) {
 		return Bound[int](e, ctx, attr)
 	}
-	n, err := strconv.Atoi(raw)
+	// THE SHARED INT GRAMMAR, not a second one. This was
+	// `strconv.Atoi(raw)`, which accepted `Cols="007"` and `Cols="+7"`
+	// and reported an unreadable value with strconv's own wording —
+	// three answers <VStack Gap> gives differently, in the vocabulary
+	// whose whole point is that it gives one. litIntGrammar owns
+	// readable / non-negative / one-spelling; the zero refusal below is
+	// the only rule that is this attribute's own.
+	n, err := litIntGrammar(e, attr, e.Attrs[attr])
 	if err != nil {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: %w", e.Name, attr, raw, err)
+		return nil, err
 	}
-	if n <= 0 {
-		return nil, fmt.Errorf("markup: <%s %s=%q>: must be positive", e.Name, attr, raw)
+	if n == 0 {
+		return nil, fmt.Errorf("markup: <%s %s=%q>: a cell count of zero places "+
+			"nothing — %s is the picture's size on screen, and an image nought "+
+			"cells wide is not a smaller picture, it is an absent one",
+			e.Name, attr, raw, attr)
 	}
 	return components.Cells(n), nil
 }

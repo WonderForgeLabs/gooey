@@ -38,13 +38,13 @@ func fakeDocs() fstest.MapFS {
 func docsPage(t *testing.T, fsys fs.FS) (*editor, *gooey.Composer) {
 	t.Helper()
 	ed := newEditor(editorFS())
-	ed.docsRoot.Set(fsys)
-	// Set rather than replace the property: the computeds read
-	// ed.docList.Get(), so writing through it is what a real refresh
-	// would do, and it invalidates them the way a refresh would.
-	pages, skipped := docsPages(fsys)
-	ed.docList.Set(pages)
-	ed.docsSkipped.Set(skipped)
+	// THROUGH setDocsTree, which is what a real refresh does (#442).
+	// This helper used to write the three properties itself, in the
+	// order the production code happened to use — so every test built on
+	// it agreed with production by coincidence rather than by
+	// construction, and a helper that reproduces the code under test is
+	// the shape that stops being able to see a defect in it.
+	ed.setDocsTree(fsys)
 	src, err := os.ReadFile("wysiwyg.gooey")
 	if err != nil {
 		t.Fatal(err)

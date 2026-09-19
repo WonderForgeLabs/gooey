@@ -365,20 +365,34 @@ jobs:
           # never interpolated into a command.
           SUMMARY_MARKER='<!-- pr-review-summary -->'
 
-          # --slurp is load-bearing: with --paginate alone the filter is applied
+          # Slurping is load-bearing: with --paginate alone the filter is applied
           # once PER PAGE, so `last` yields one body per page rather than one
           # overall.
           #
-          # It must pipe to REAL jq, never gh's --jq. `gh api --slurp --jq` is
-          # rejected outright by gh:
+          # The slurp is done by REAL jq (`jq -s`), not by `gh api --slurp`.
+          # Two separate reasons, both observed in production:
           #
-          #   the `--slurp` option is not supported with `--jq` or `--template`
+          # 1. `gh api --slurp --jq` is rejected outright by gh —
+          #      the `--slurp` option is not supported with `--jq` or `--template`
+          #    so that pairing fails on EVERY run, not intermittently. This step
+          #    shipped with that combination and consequently never read a single
+          #    comment — it took the fail-open branch below 100% of the time, and
+          #    silently, because the cause went to /dev/null. Observed on #2991
+          #    (07:45:52Z) and mistaken for a transient API blip.
           #
-          # so the two together fail on EVERY run, not intermittently. This step
-          # shipped with that combination and consequently never read a single
-          # comment — it took the fail-open branch below 100% of the time, and
-          # silently, because the cause went to /dev/null. It was observed on
-          # #2991 (07:45:52Z) and mistaken for a transient API blip.
+          # 2. `gh api --slurp` needs gh >= 2.53. Runners older than that fail
+          #    with `unknown flag: --slurp`, which lands in the same fail-open
+          #    branch — the review outcome is left untouched, merge-gate then
+          #    fails closed, and the PR reads as review-rejected when the review
+          #    actually succeeded. Observed on #3222 (2026-09-05). Different root
+          #    cause from #3333/#3336 (an OIDC token failure), but the same
+          #    end-user symptom, which is why it triages the same way: a red
+          #    required check with nothing in the diff to fix.
+          #
+          # `jq -s` removes that version dependency: `gh api --paginate` emits one
+          # JSON array per page, and `jq -s` gathers them into the identical
+          # array-of-arrays `--slurp` produced, so the `.[][]` filter below is
+          # unchanged. Verified equivalent across a two-page fixture.
           #
           # Two consequences worth knowing: `enforce_review_summary` could never
           # have worked (this branch exits before ENFORCE is consulted), and the
@@ -387,8 +401,8 @@ jobs:
           # on enforcement was unobtainable from the workflow itself.
           comments_file="$(mktemp)"
           read_err="$(mktemp)"
-          if ! gh api --paginate --slurp "repos/${REPO}/issues/${PR_NUMBER}/comments" 2>"$read_err" \
-                 | jq '[.[][] | select(.user.login == "claude[bot]") | .body // ""]' \
+          if ! gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" 2>"$read_err" \
+                 | jq -s '[.[][] | select(.user.login == "claude[bot]") | .body // ""]' \
                  > "$comments_file" 2>>"$read_err"; then
             # Report the cause. Swallowing it is what let a permanently broken
             # command read as an intermittent one for as long as it did.
@@ -880,9 +894,26 @@ jobs:
           # below is authoritative).
           STICKY_MARKER="<!-- merge-gate-sticky -->"
 
+          # Slurping is load-bearing here for the same reason as in the review-read
+          # above: with --paginate alone the filter runs once PER PAGE, so `last`
+          # yields one id per page rather than one overall. Both failure modes are
+          # two stickies on different pages newline-join into `id`, making the
+          # PATCH URL malformed, so the gate comment is never updated. See #3316.
+          #
+          # #3316 also predicted an empty result whenever the sticky sits on an
+          # earlier page, POSTing a duplicate. That one does NOT reproduce:
+          # `// empty` makes a non-matching page emit nothing at all, so the id
+          # from the matching page still survives. Only the multi-sticky case is
+          # real; the fix is the same either way.
+          #
+          # `jq -s`, not `gh api --slurp`: the flag needs gh >= 2.53, and gh
+          # rejects `--slurp` with `--jq` outright in every version. #3316 asked
+          # for `--slurp` here specifically; that spelling would have hit both.
+          # Slurping makes each page its own array, hence `.[][]` over `.[]`.
           sticky_id() {
-            gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
-              --jq "[.[] | select(.body | startswith(\"$STICKY_MARKER\"))] | last | .id // empty" 2>/dev/null || true
+            gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" 2>/dev/null \
+              | jq -s -r "[.[][] | select(.body | startswith(\"$STICKY_MARKER\"))] | last | .id // empty" 2>/dev/null \
+              || true
           }
 
           # Upsert the sticky failure comment, then exit non-zero. $1 is the markdown body.

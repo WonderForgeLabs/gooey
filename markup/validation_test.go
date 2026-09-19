@@ -376,9 +376,14 @@ func TestValidateAnnotationLoadErrors(t *testing.T) {
 		name, page, want string
 	}{
 		{
+			// The house bool grammar since review of #470 — this said
+			// "want a bool", parseRuleBool's own words, when the rule
+			// went through strconv.ParseBool. Asserting on the SHARED
+			// message is the point: it is what says <Validate> reads a
+			// bool the same way <ProgressBar Thresholds> does.
 			"non-bool annotation rule",
 			`<Gooey><TextBox Text="{{.F}}"><Validate EmailAddress="yes"/></TextBox></Gooey>`,
-			"want a bool",
+			`takes "true" or "false"`,
 		},
 		{
 			"non-numeric MinValue",
@@ -441,7 +446,7 @@ func TestValidateLoadErrors(t *testing.T) {
 		{
 			"bad Required literal",
 			`<Gooey><TextBox Text="{{.Name}}"><Validate Required="yep"/></TextBox></Gooey>`,
-			"want a bool",
+			`takes "true" or "false"`,
 		},
 		{
 			"host without a text source",

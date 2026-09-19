@@ -85,6 +85,27 @@ func requiredAttr(e Element, name string) (string, error) {
 // buildTabs had already arrived at on its own, hand-rolling this
 // TrimSpace for Selected while the eight other optional handles kept
 // the bare key check.
+//
+// AND THAT IS THE OPPOSITE OF WHAT litInt AND litBool DO, deliberately.
+// <ProgressBar Indeterminate=""/> loads and <ProgressBar Thresholds=""/>
+// is a load error, on the same element, and a reader who finds that by
+// accident is entitled to think one of them is a bug. Neither is. The
+// two halves answer different questions:
+//
+//   - THIS half is about a HANDLE. Absent and empty both mean "there is
+//     no property to bind", which is a state the component supports —
+//     it has a default. Refusing empty here would refuse an author who
+//     cleared an attribute they had typed, and reporting "attribute
+//     Error is required" about <TextBox Error=""/> is the bug that
+//     produced this function.
+//   - litInt and litBool are about a VALUE. There is no such thing as
+//     an empty whole number, so an empty one is a typo — and the whole
+//     of #460 is that a typo in a literal used to mean 0 or false
+//     silently. "Absent" already has a spelling: omit the attribute.
+//
+// optDuration follows the LITERAL half, not this one, since review of
+// #470 — Interval="" used to fall back to the component's default,
+// which is the same silent fallback litInt refuses.
 func suppliedAttr(e Element, name string) bool {
 	return strings.TrimSpace(e.Attrs[name]) != ""
 }

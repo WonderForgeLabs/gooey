@@ -275,9 +275,27 @@ deployment-wide without touching the app.
 | `Log` | Output destination, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. Absent means `os.DevNull`. |
 | `KillDelay` | `time.ParseDuration`; the SIGTERM→SIGKILL grace. Default 5s (`gooey.CompanionKillDelay`). |
 | `StopTimeout` | `time.ParseDuration`; how long teardown waits for the child after cancelling. Default 10s. |
-| `CleanEnv` | `"true"` starts the child from an **empty** environment. Default is inherit-and-override. |
+| `CleanEnv` | `"true"` starts the child from an **empty** environment. Default is inherit-and-override. **Only `"true"` or `"false"`, written literally** — see the note below. |
 | `Error` | Optional binding to a `*prop.Property[string]`. Set to a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden; cleared to `""` on a successful start. |
 | `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
+
+**Superseded 2026-09-09 ([#460](https://github.com/WonderForgeLabs/gooey/issues/460)):
+`CleanEnv` used to read through `strconv.ParseBool`,** so `"1"`, `"t"`, `"T"`,
+`"TRUE"` and `"On"`-adjacent spellings all loaded. It reads the house literal
+bool now, and anything but `"true"` or `"false"` — an empty value included — is
+a load error. On a security switch the laxer grammar was the worse one: five
+spellings of "yes" are five chances for a near-miss to read as the safe answer,
+and the answer this one guards is whether a child named by the document
+inherits every API key in the launching shell.
+
+The **environment switch** two sections up is deliberately NOT part of that
+change. `GOOEY_MARKUP_COMPANIONS` is read with `strconv.ParseBool` and fails
+closed on anything it cannot read as true (`markup/companionsAllowed`), which
+is the right shape for a variable set by a shell rather than written in a
+document — there is no load-time error to report to an author, and the two
+surfaces have different failure modes. Review of
+[PR #470](https://github.com/WonderForgeLabs/gooey/pull/470) read the two as
+one; they are not, and the ParseBool sentence up there is still accurate.
 
 Unknown attributes are a **load error**, following `<x:Property>` rather
 than the visual elements (where a stray attribute is ignored). A

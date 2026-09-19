@@ -18,6 +18,14 @@ clients/python/dist/
 clients/python/*.egg-info/
 recordings/
 .claude/worktrees/
+# TestTheProductionReaderCountsRealLines writes a fixture Go package into
+# the module root — deliberately, because the citation guard only sees
+# paths its rePath class matches and an absolute Windows temp path is not
+# one. t.Cleanup removes it, and t.Cleanup does NOT run when the binary
+# dies on another test's panic or a -timeout kill; without this line an
+# interrupted run leaves a real `package p` that `./...` compiles and
+# `git status` reports. Raised in review of #475.
+citelines*/
 # Built executables. `go build ./...` writes one file per main package into
 # the CURRENT directory, so a main package's binary lands at the root of ITS
 # OWN module — not at the repo root. Every entry below is therefore

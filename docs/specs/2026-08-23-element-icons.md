@@ -105,9 +105,7 @@ Because the tint is read there and nowhere else, flipping the theme
 dirties exactly the icon handles and through them exactly the `<Image>`
 in each realized palette row. Pinned by a count, not by a screen
 assertion — "the icon is the new colour" is just as true when the whole
-tree repainted:
-
-    TestThemeFlipRepaintsOnlyTheToolboxIcons
+tree repainted: `wysiwyg.TestThemeFlipRepaintsOnlyTheToolboxIcons`.
 
 If a later change moves that number, the change IS that.
 

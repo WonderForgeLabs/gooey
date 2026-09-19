@@ -866,7 +866,7 @@ did not), and **written and different**. An attribute with no declared
    ones — without it an optional attribute could be set and never
    cleared, which would make a cycling editor a one-way door.
 
-   `TestEveryCycledValueProducesMarkupThatBuilds` walks every value of
+   `TestEveryOfferedValueProducesMarkupThatBuilds` walks every value of
    every finite-valued row (58 today) and requires the document to build
    at each step. That is the pin that matters: the editor supplies these
    values, so one the loader rejects is the editor handing the user a

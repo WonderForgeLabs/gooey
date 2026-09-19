@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -312,23 +310,23 @@ func TestShippedIconsAreDistinctAssets(t *testing.T) {
 		return name
 	}
 
-	entries, err := os.ReadDir(toolbox.Dir)
-	if err != nil {
-		t.Fatalf("the icon directory does not read: %v", err)
-	}
-
+	// THROUGH digestDir, which is the same walk this test used to carry
+	// its own copy of — same directory, same .svg filter, same sha256.
+	//
+	// Sharing it is not only shorter. The browser/window alias allowed
+	// above is recorded in VERIFIED.sha256 as one digest against two
+	// names, so reading the digests from the same function makes the two
+	// claims agree BY CONSTRUCTION rather than by two hand-written
+	// assertions that could drift. Raised in review of #487. (The
+	// 31-hex-character digest in the paragraph above is upstream's own
+	// published id and is neither of these hashes; it is quoted as a
+	// provenance pointer, not as something to compare against.)
+	// digestDir keys by FILENAME; the alias map and this test's messages
+	// are in icon names, which is what a catalog entry carries.
+	onDisk := digestDir(t, toolbox.Dir)
 	byDigest := map[string][]string{}
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".svg" {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(toolbox.Dir, e.Name()))
-		if err != nil {
-			t.Errorf("%s does not read: %v", e.Name(), err)
-			continue
-		}
-		name := strings.TrimSuffix(e.Name(), ".svg")
-		d := fmt.Sprintf("%x", sha256.Sum256(b))
+	for file, d := range onDisk {
+		name := strings.TrimSuffix(file, ".svg")
 		byDigest[d] = append(byDigest[d], name)
 	}
 	if len(byDigest) == 0 {
@@ -369,5 +367,71 @@ func TestEveryDeclaredIconHasAnAsset(t *testing.T) {
 	}
 	if declared == 0 {
 		t.Fatal("no builtin element declares an icon; this test cannot see a regression")
+	}
+}
+
+// TestEveryDeclaredIconResolvesNotJustThePaletteS is the existence half
+// of the icon claim, and the palette is the wrong set to take it from.
+//
+// markup pins the icon NAMES: TestEveryBuiltinElementDeclaresAnIcon and
+// TestDeclaredIconNamesAreBareNames range over the registry, so every
+// declared element has a name and it is a bare one. Nothing pinned that
+// the ASSET resolves for an element the palette drops. loadPalette
+// preloads ed.palette's icons, TestPaletteRowsCarryTheDeclaredIcon
+// ranges over ed.palette, and ed.icons.For is read at exactly one site —
+// the palette projection. A Nested or NonVisual element is excluded from
+// all three by construction, so a typo in the next one's icon would be
+// caught by nothing.
+//
+// Both of #454's new icons happen to reuse names already in the tree, so
+// they resolve today; that is luck, not a check. The set is DERIVED from
+// ed.specs — the whole catalog — for the same reason Nested itself is
+// derived rather than listed. Raised in review of #454.
+//
+// It is a test rather than a widening of loadPalette's preload on
+// purpose: a Nested element's icon is never painted, so rasterizing it
+// in every tint at startup would be work for nobody. The load-time gate
+// argument in loadPalette is about what the toolbox SHOWS.
+func TestEveryDeclaredIconResolvesNotJustThePaletteS(t *testing.T) {
+	ed, _, _ := shellTallEnoughToStraddleAnIconlessRow(t)
+
+	if len(ed.specs) == 0 {
+		t.Fatal("ed.specs is empty; this test would pass over nothing")
+	}
+
+	// NON-VACUITY, and the specific thing it has to prove is that the
+	// catalog really does hold entries the palette does not — otherwise
+	// this is TestPaletteRowsCarryTheDeclaredIcon with more steps and
+	// would stay green if Nested entries stopped being excluded.
+	inPalette := make(map[string]bool, len(ed.palette))
+	for _, e := range ed.palette {
+		inPalette[e.Name] = true
+	}
+	var offPalette, names []string
+	for name, e := range ed.specs {
+		if e.Icon == "" {
+			continue
+		}
+		names = append(names, e.Icon)
+		if !inPalette[name] {
+			offPalette = append(offPalette, name+" ("+e.Icon+")")
+		}
+	}
+	if len(offPalette) == 0 {
+		t.Fatal("every element with an icon is in the palette, so this test " +
+			"cannot see the gap it exists for: either the palette stopped " +
+			"excluding anything, or Nested/NonVisual elements lost their icons")
+	}
+	sort.Strings(offPalette)
+	t.Logf("%d element(s) with an icon are off the palette: %s",
+		len(offPalette), strings.Join(offPalette, ", "))
+
+	// Preload is the production gate — it rasterizes in every tint and
+	// reports a missing or malformed asset by FILE — so this asks it the
+	// same question about a wider set rather than reimplementing it.
+	if err := ed.icons.Preload(names, iconOnDark, iconOnLight); err != nil {
+		t.Errorf("an icon a catalog entry declares does not resolve: %v\n"+
+			"off-palette entries, which loadPalette never preloads: %s",
+			err, strings.Join(offPalette, ", "))
 	}
 }

@@ -135,6 +135,13 @@ func (ed *editor) duplicateSelected() bool {
 	// The count, not the vocabulary, is what fails — so the build is the
 	// only thing that can decide it. Issue #403.
 	prev := ed.sel
+	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
+	// claiming the same alt gesture is unreachable by keyboard, and so is
+	// a second <MenuItem> in a <Menu> claiming the same letter — the
+	// guard covers BOTH levels since round 11, and these three comments
+	// still named only the first. unshadowMnemonic is the one place all
+	// three insertion routes share.
+	unshadowMnemonic(p, c)
 	insertAt(p, i+1, c)
 	ed.sel = c
 	ed.rebuild()
@@ -142,6 +149,10 @@ func (ed *editor) duplicateSelected() bool {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		unlink(p, c)
 		ed.sel = prev
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		ed.status.Set("✗ <" + prev.Elem + "> cannot be duplicated inside <" + p.Elem +
 			">: " + refused)

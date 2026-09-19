@@ -61,17 +61,28 @@ func (ed *editor) gridNode() *node {
 
 // trackAttr is the name of the attribute holding one axis's track list,
 // asked for BY ROLE. Empty when the element declares none.
+//
+// ed.specs, NOT ed.palette, and it is the same correction target(),
+// specOrBare, grantOf and bodySpec each took. This is asked of a node
+// ALREADY IN THE DOCUMENT (tracks, and the guide's own gridNode), so the
+// question is what the element DECLARES; the palette is the filtered list
+// of what may be PLACED from the toolbox, and loadPalette drops every
+// Nested and NonVisual element from it. An element the palette omits
+// would report no track attribute and the cell guides would silently
+// stop being drawn over it. Latent — Grid is the only element declaring
+// tracks and it is not Nested — and corrected anyway, for the reason the
+// fifth site in a row is corrected: the class is the bug. A map lookup
+// is also cheaper than the scan it replaces. Found in review of #454.
 func (ed *editor) trackAttr(elem string, axis preview.Axis) string {
 	role := markup.RoleRowTracks
 	if axis == preview.AxisCol {
 		role = markup.RoleColTracks
 	}
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return markup.AttrByRole(e, role)
-		}
+	e, ok := ed.specOf(elem)
+	if !ok {
+		return ""
 	}
-	return ""
+	return markup.AttrByRole(e, role)
 }
 
 // tracks is one axis's specs as written, with the implicit single star

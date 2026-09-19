@@ -122,6 +122,28 @@ func validateRuleNames(ctx *Context) string {
 	return strings.Join(append(names, reg...), ", ")
 }
 
+// unboundedWhy names what a non-finite bound actually does, which is
+// three different things and not one.
+//
+// It exists because the refusal's first version said all four cases
+// "can never fire". That is true of NaN and exactly backwards for
+// MinValue="+Inf" and MaxValue="-Inf", which fire on every value there
+// is — an author told the opposite of what their document does goes
+// looking in the wrong place. Raised in review of #470.
+func unboundedWhy(name string, f float64) string {
+	switch {
+	case math.IsNaN(f):
+		return "a rule that never fires, because every comparison against NaN is false"
+	case (name == "MinValue") == math.IsInf(f, -1):
+		// -Inf as a MINIMUM, +Inf as a MAXIMUM: the default, written out.
+		return "the bound you already had — it is the default this attribute " +
+			"carries when it is absent, so it declares nothing"
+	default:
+		return "a rule nothing can satisfy — it fires on every value there is, " +
+			"so the field can never become valid"
+	}
+}
+
 // buildValidate parses the rule attributes. The host is not known yet —
 // children build before their parent — so the result carries parsed
 // rules until the host's builder calls wireValidate. Rule order is
@@ -136,7 +158,14 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		builtin[n] = true
 	}
 	for name, raw := range e.Attrs {
-		if builtin[name] {
+		// Name is UNIVERSAL, not a rule. Context.vocabulary permits it on
+		// every element unconditionally (attrcheck.go), so the loader
+		// said yes and this loop said "unknown rule (have Required,
+		// MinLen, …)" — one vocabulary answering two ways about the same
+		// attribute, which is what #460 is about. Found by the sweep
+		// harness in review of #470, when every probe started naming
+		// itself and <Validate> was the only element that refused.
+		if name == "Name" || builtin[name] {
 			continue
 		}
 		if _, ok := ctx.Rules[name]; ok {
@@ -158,21 +187,89 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 			v.rules = append(v.rules, validate.Required(msg))
 		}
 	}
+	// MinLen/MaxLen through the HOUSE INT READER, for the reason
+	// parseRuleBool now goes through the house bool one. These were a
+	// bare strconv.Atoi on the UNTRIMMED value: MinLen=" 3 " was a load
+	// error while Gap=" 3 " was fine, MinLen="-3" loaded and meant a
+	// negative minimum, and MinLen="+3" loaded — three ways for the same
+	// declared KindInt/BindsLiteral attribute to disagree with every
+	// other one. Found while fixing the leading-+ finding in review of
+	// #470, which is the same defect one element over.
 	var err error
-	if raw, ok := e.Attrs["MinLen"]; ok {
-		if minLen, err = strconv.Atoi(raw); err != nil {
-			return nil, fmt.Errorf("markup: <Validate MinLen=%q>: want an int", raw)
+	for _, b := range []struct {
+		name string
+		into *int
+	}{{"MinLen", &minLen}, {"MaxLen", &maxLen}} {
+		raw, ok := e.Attrs[b.name]
+		if !ok {
+			continue
+		}
+		if *b.into, err = litInt(e, b.name); err != nil {
+			return nil, err
+		}
+		// ZERO IS NOT A LENGTH BOUND, and writing one installed nothing
+		// at all. validate.Len reads 0 as "no bound in this direction",
+		// which is what makes either half optional — so <Validate
+		// MaxLen="0"/> parsed, passed every check, and produced a rule
+		// list with no length rule in it. The author asked for "must be
+		// empty" and got no validation whatsoever, with no error
+		// anywhere.
+		//
+		// MinLen="0" is the same shape from the other side: it is the
+		// default spelled out, so it also declares nothing. Accepted-
+		// but-ignored markup is the failure mode this package refuses,
+		// and a bound that cannot be expressed has to say so rather
+		// than be dropped. Raised in review of #470.
+		if *b.into == 0 {
+			return nil, fmt.Errorf("markup: <Validate %s=%q>: a length bound has to "+
+				"be positive — validate.Len reads 0 as \"no bound in this "+
+				"direction\", which is how the other half of the pair is made "+
+				"optional, so this installs no rule at all", b.name, raw)
 		}
 	}
-	if raw, ok := e.Attrs["MaxLen"]; ok {
-		if maxLen, err = strconv.Atoi(raw); err != nil {
-			return nil, fmt.Errorf("markup: <Validate MaxLen=%q>: want an int", raw)
-		}
+	// AN INVERTED PAIR IS A RULE NOTHING CAN SATISFY, and this block had
+	// the zero refusal above and not this one while the NUMERIC block
+	// thirty lines down had exactly this one.
+	//
+	// validate.Len tests `n < min || (max > 0 && n > max)`, so
+	// MinLen="5" MaxLen="3" rejects every non-empty value there is and
+	// the field can never become valid. That is verbatim the third
+	// outcome unboundedWhy was written to name, and the commit that
+	// added the zero refusal added it to this very loop and stopped.
+	// Same class, same element, same block, opposite answer for lengths
+	// and numbers. Raised in review of #470.
+	//
+	// Both bounds have to be POSITIVE for the comparison to mean
+	// anything: a missing bound is 0, and 0 is how validate.Len spells
+	// "no bound in this direction", so `minLen > maxLen` alone would
+	// fire on a lone MinLen. The zero refusal above means a bound that
+	// is present is never 0, so this reads as "both present".
+	if minLen > 0 && maxLen > 0 && minLen > maxLen {
+		return nil, fmt.Errorf("markup: <Validate MinLen=%q MaxLen=%q>: the range "+
+			"is empty — validate.Len rejects anything shorter than the minimum or "+
+			"longer than the maximum, so with the minimum above the maximum every "+
+			"non-empty value fails and the field can never become valid",
+			e.Attrs["MinLen"], e.Attrs["MaxLen"])
 	}
 	if minLen > 0 || maxLen > 0 {
 		v.rules = append(v.rules, validate.Len(minLen, maxLen, msg))
 	}
 	if raw, ok := e.Attrs["Pattern"]; ok {
+		// THE EMPTY EXPRESSION COMPILES, and it matches at every
+		// position of every string — so <Validate Pattern=""/> is a rule
+		// that can never fire, installed and running. It is the same
+		// class as a NaN bound below and refused for the same reason:
+		// nothing downstream can tell it from a pattern the field
+		// happens to satisfy.
+		//
+		// raw == "", not TrimSpace(raw) == "". A Pattern of one space is
+		// an ordinary expression that matches a space, and trimming
+		// would refuse it. Raised in review of #470.
+		if raw == "" {
+			return nil, fmt.Errorf("markup: <Validate Pattern=\"\">: the empty " +
+				"expression matches every string, so this installs a rule that can " +
+				"never fire — write the expression, or drop the attribute")
+		}
 		// Checked here so a bad expression is a LOAD error naming the
 		// element, not a construction panic from validate.Pattern.
 		if _, err := regexp.Compile(raw); err != nil {
@@ -206,10 +303,50 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		if !ok {
 			continue
 		}
+		// EMPTY IS NOT UNREADABLE, and this reader gave both the same
+		// sentence — the distinction litIntGrammar spent a commit
+		// drawing, stopping one element short of the <Validate> bounds.
+		// A single ParseFloat cannot tell them apart, so the split has
+		// to be here. Raised in review of #470.
+		if strings.TrimSpace(raw) == "" {
+			return nil, fmt.Errorf("markup: <Validate %s=%q>: %s",
+				b.name, raw, emptyLiteralWhy)
+		}
 		f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 		if err != nil {
 			return nil, fmt.Errorf("markup: <Validate %s=%q>: want a number", b.name, raw)
 		}
+		// NaN AND Inf PARSE, and neither is a rule. The refusal is one
+		// sentence; the CONSEQUENCE is not, and the first version of
+		// this message got it backwards for half its own cases by
+		// saying every one of them "can never fire".
+		//
+		// NaN never fires: every comparison against it is false, so the
+		// field validates whatever is typed and the marker never
+		// appears. An infinity fires in whichever direction it points —
+		// MinValue="-Inf" and MaxValue="+Inf" are the defaults spelled
+		// out, declaring nothing, while MinValue="+Inf" and
+		// MaxValue="-Inf" fire on EVERYTHING, so the field can never be
+		// valid. Three outcomes, none of them a bound, and the message
+		// now names the one the author actually wrote.
+		//
+		// The empty-range check below cannot see the NaN case for the
+		// same reason the rule cannot — NaN > NaN is false — so it has
+		// to be refused here. Raised in review of #470, twice.
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, fmt.Errorf("markup: <Validate %s=%q>: a bound has to be a "+
+				"finite number, and %s is %s. Nothing downstream would refuse it: "+
+				"the empty-range check beside this one compares the two bounds, and "+
+				"a comparison against NaN is false whichever way it is written",
+				b.name, raw, strings.TrimSpace(raw), unboundedWhy(b.name, f))
+		}
+		// THE CANONICAL-SPELLING RULE THAT GOVERNS INTS IS DELIBERATELY
+		// NOT APPLIED HERE, and the asymmetry is a decision rather than
+		// an omission. A whole number has exactly one honest spelling,
+		// so "007" is a second way to write 7 and nothing else. A float
+		// has several: "1.50" says something about precision and "1e6"
+		// something about scale, and refusing them would refuse an
+		// author writing the bound the way the domain writes it.
 		*b.into = f
 		haveNum = true
 	}
@@ -281,14 +418,36 @@ func wireValidate(v *Validate, host string, src *prop.Property[string], textPath
 	return field, nil
 }
 
-// parseRuleBool reads a rule's on/off literal, naming the element in the
-// error the way every other markup literal does.
+// parseRuleBool reads a rule's on/off literal through THE HOUSE BOOL
+// GRAMMAR — "true" or "false", nothing else.
+//
+// It read strconv.ParseBool until review of #470, which is the same
+// defect optBool had one file over and the same argument litBool makes:
+// a bool the document can spell five ways is a bool that reads
+// differently in two files. <Validate Required> is a declared
+// KindBool/BindsLiteral component attribute like any other, so
+// <Validate Required="1"> loading while <ProgressBar Thresholds="1">
+// was a load error is one vocabulary answering two ways.
+//
+// It was not merely inconsistent, it was UNGUARDED. The sweep arm
+// written to catch exactly this counted <Validate> probes as verified
+// while every one of them was failing on "<HStack> does not support
+// <Validate>" — the attachment needs an input host, and the harness gave
+// it a stack. Seven attributes' worth of false credit, in the arm whose
+// job was the strictness. The harness hosts a <Validate> in a <TextBox>
+// now and the arm reports what it could not reach, which is how this
+// became reproducible.
+//
+// Delegates to litBool rather than restating the switch: the value of
+// one grammar is that there is one implementation of it. The element is
+// always <Validate>, so the synthetic Element is exact, not a stand-in.
+//
+// The readers that are NOT component attributes are still ParseBool and
+// are deliberately untouched here — property.go's kindOf("bool"),
+// resources.go, companion.go's environment variable, and this file's own
+// declared Default. Whether they should agree is #473.
 func parseRuleBool(name, raw string) (bool, error) {
-	b, err := strconv.ParseBool(strings.TrimSpace(raw))
-	if err != nil {
-		return false, fmt.Errorf("markup: <Validate %s=%q>: want a bool", name, raw)
-	}
-	return b, nil
+	return litBool(Element{Name: "Validate", Attrs: map[string]string{name: raw}}, name)
 }
 
 // comparePath resolves Compare="{{.Password}}" or the terser
@@ -313,6 +472,166 @@ func comparePath(raw string, ctx *Context) (*prop.Property[string], error) {
 		return nil, fmt.Errorf("markup: <Validate Compare=%q> is %T; need *prop.Property[string]", raw, val)
 	}
 	return other, nil
+}
+
+// allPaths is every `.Path` an attribute names, in any position, read
+// with THE PACKAGE'S OWN SCANNER.
+//
+// bindRe matches a whole-body binding and nothing else, so a path that
+// appears as an ARGUMENT is invisible to it: `Allow="{{v:Echo .X}}"`
+// carries .X into a value provider, and bindRe sees no binding at all.
+// The alias guard using bindRe therefore missed exactly that spelling,
+// and the priming publish went on destroying the author's Allow source
+// during Build — the harm the guard was added to stop, reachable by
+// writing the same alias a different way.
+//
+// THE REGEXP THAT REPLACED bindRe WAS ALSO WRONG, in both directions,
+// and scan.go had already written down why: "a backtick literal may
+// legally contain a brace … has to find the LAST `}}`, not the first."
+// A `\{\{[^}]*\}\}` scan stops at the first `}`, so
+//
+//	Allow="{{v:Echo `}}` .X}}"   MISSED the alias — built clean, and the
+//	                             priming publish erased the Allow source
+//	Allow="{{v:Echo `.X`}}"      FALSELY refused — a path spelled inside
+//	                             a backtick literal is not a path
+//
+// Both measured against this package's echoProvider in review of #459.
+// The fix is not a better regexp: it is to stop having a second grammar.
+// scanBindings splits correctly (closingBraces skips backtick literals)
+// and hands back typed segments, so a path is a segPath and a call's
+// arguments are already lexed into tokens. There is nothing left for a
+// pattern to get wrong, and no second pass to reason about — the lexer
+// yields every argument by construction, where a regexp with one capture
+// group yielded one match per expression and missed `{{v:Pick .A .X}}`.
+//
+// `| into .Target` is included DEFENSIVELY, for a future caller, and the
+// distinction matters because the comment used to claim otherwise. It
+// read "deliberately INCLUDED: a call whose result is written into the
+// sink aliases it just as surely as one that reads it" — true as a
+// statement about aliasing, and not a spelling any caller can reach: a
+// value expression carrying `| into` is already a load error
+// (markup/values.go), raised by the BoundText call that runs before the
+// AllowError block, so the guard never sees one. Measured:
+//
+//	Allow="{{v:Echo `Focus` | into .B}}" AllowError="{{.B}}"
+//	-> markup: {{v:Echo … | into .B}}: a value expression delivers its
+//	   result by BEING the binding — drop the `| into` stage
+//
+// TestAllPathsReadsTheCallsIntoTarget calls allPaths directly, so it
+// passes without ever exercising the path through a guard, which is why
+// the claim read as pinned. Same class as this commit's own headline
+// fix. Corrected in review of #459.
+//
+// An unparseable attribute yields NO paths rather than an error. Every
+// caller has already had its attribute parsed by the builder, and a
+// guard is not the place a syntax error should first be reported.
+func allPaths(attr string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	segs, err := scanBindings(attr)
+	if err != nil {
+		return nil
+	}
+	for _, seg := range segs {
+		switch seg.kind {
+		case segPath:
+			add(seg.text)
+		case segCall:
+			if seg.call == nil {
+				continue
+			}
+			for _, t := range seg.call.Args {
+				if t.kind == tokPath {
+					add(t.text)
+				}
+			}
+			// NO TrimPrefix: tokPath.text already excludes the dot
+			// (markup/expr.go), so trimming one was a no-op reading as
+			// a normalization somebody would have to verify. Removed in
+			// review of #459.
+			add(seg.call.Into)
+		}
+	}
+	return out
+}
+
+// aliasesSink reports whether ANY path in attr resolves to the same
+// *prop.Property[string] as sink, and names the path that does.
+//
+// EVERY path, not the first: bindingPath below takes only
+// FindStringSubmatch, so `Allow="{{.A}} {{.X}}"` reads as "A" and an
+// alias in the second position went unseen. And by HANDLE, not by text:
+// two Values entries may name one property, which the text compare
+// cannot see and which the dup-sink guard in elements.go already refuses
+// for its own question.
+//
+// EVERY POSITION, not only a whole-body binding — see allPaths, which
+// runs scanBindings over the attribute. That is what closes the
+// value-call spelling round five measured.
+//
+// NOT pathRe, which this cited until review of #459. pathRe is
+// `^\.([A-Za-z0-9_.]+)$` (scan.go) — anchored at both ends, so it is
+// precisely the WHOLE-BODY matcher, the thing this paragraph says is not
+// enough. A citation naming the opposite of its own claim sends the next
+// reader to check the wrong function and find it correct.
+//
+// An unresolvable path is not an alias. Reporting one here would turn a
+// typo into the wrong load error; the binder that runs after this
+// reports it as what it is.
+//
+// Raised in review of #459.
+func aliasesSink(ctx *Context, attr string, sink *prop.Property[string]) (string, bool) {
+	if attr == "" || sink == nil {
+		return "", false
+	}
+	for _, path := range allPaths(attr) {
+		v, err := resolve(ctx.Values, path)
+		if err != nil {
+			continue
+		}
+		if p, ok := v.(*prop.Property[string]); ok && p == sink {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+// allowSources is every string property an Allow attribute READS, keyed
+// by handle and mapped to the path that named it.
+//
+// aliasesSink answers "is this element's own Allow the same handle as
+// this element's own sink"; this answers "which handles does this
+// element's Allow read", so the same collision can be judged ACROSS
+// elements at the end of the build. Both walk allPaths, because both
+// questions are about every path an attribute reads rather than about
+// the first one.
+//
+// Raised in review of #459: the per-element guard leaves
+// `<Frozen Allow="{{.A}}" AllowError="{{.B}}">` beside
+// `<Frozen Allow="{{.B}}" …>` building clean, and the first element's
+// priming publish erases the second's allow set during Build.
+func allowSources(ctx *Context, attr string) map[*prop.Property[string]]string {
+	out := map[*prop.Property[string]]string{}
+	if attr == "" {
+		return out
+	}
+	for _, path := range allPaths(attr) {
+		v, err := resolve(ctx.Values, path)
+		if err != nil {
+			continue
+		}
+		if p, ok := v.(*prop.Property[string]); ok {
+			out[p] = path
+		}
+	}
+	return out
 }
 
 // bindingPath is the bare path of a single {{.Path}} binding attribute,

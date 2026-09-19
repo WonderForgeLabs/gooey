@@ -350,3 +350,40 @@ func TestOnlyBodyElementsAreSeededWithOne(t *testing.T) {
 		}
 	}
 }
+
+// TestBodySpecAnswersForAnElementThePaletteExcludes is the palette-vs-
+// catalog distinction, on the fourth and last reader of that class.
+//
+// bodySpec scanned ed.palette, which is the catalog minus what may not be
+// PLACED on its own; it asks what may be SET, and it is asked of
+// target.Elem — which since alt+enter can be a Nested element the palette
+// does not contain. A nested element declaring a Body would lose its body
+// row from the inspector with no error at all.
+//
+// THE SPEC IS INSTALLED BY HAND, and that is the point rather than a
+// shortcut. The defect is latent: <Text> is the only element in the
+// shipped catalog declaring a Body and it is neither Nested nor
+// NonVisual, so every fixture drawn from the real vocabulary agrees under
+// both implementations and proves nothing. Raised in review of #454.
+func TestBodySpecAnswersForAnElementThePaletteExcludes(t *testing.T) {
+	ed, _ := buildPage(t)
+	const elem = "NestedWithBody"
+	ed.specs[elem] = markup.ElementSpec{
+		Name:   elem,
+		Nested: true,
+		Body:   &markup.BodySpec{Kind: markup.KindText, Doc: "content"},
+	}
+	// Deliberately NOT appended to ed.palette. That absence IS what
+	// Nested means (loadPalette skips them), so adding it here would
+	// erase the case.
+
+	if ed.bodySpec(elem) == nil {
+		t.Error("bodySpec answers nil for a Nested element that declares a Body, so " +
+			"selecting one with alt+enter drops its body row from the inspector " +
+			"with no error — the palette is the catalog minus what may not be " +
+			"PLACED, and this asks what may be SET")
+	}
+	if !ed.takesBody(elem) {
+		t.Error("takesBody disagrees with the catalog for the same element")
+	}
+}

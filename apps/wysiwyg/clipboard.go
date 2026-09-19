@@ -176,13 +176,38 @@ func (ed *editor) cutSelected() {
 		return
 	}
 	src := n.markup("")
-	ed.clip = clipboard{node: n.deepCopy(), markup: src}
-	msg := "cut " + describeNode(n) + ed.sayCopiedOut(src)
+	// NEITHER CLIPBOARD IS WRITTEN UNLESS THE DELETE STANDS. deletable()
+	// above answers the refusals deleteSelected can see BEFORE trying, but
+	// not the one only the loader can: removing a child can make its
+	// parent illegal (`<Tab Header=… needs exactly one content child,
+	// got 0`), and that is discovered by building. A cut that copied
+	// anyway would leave the node on the page and on the clipboard, so the
+	// next paste duplicates it under a colliding Name. Reported in review
+	// of #454.
+	//
+	// BOTH, and the first version of this fix withheld only one. The
+	// message was built above the guard, and sayCopiedOut is not a
+	// formatter — it calls copyToSystem, which writes the OSC 52. So a
+	// refused cut left the node on the page and its markup on the SYSTEM
+	// clipboard, which is a live route back into the document through the
+	// terminal's own paste key (bindClipboardTo → pasteMarkup →
+	// insertSubtree). It also overwrote the user's clipboard while the
+	// status line read "✗ … cannot be deleted", against sayCopiedOut's own
+	// "never silent in either direction". Reported in review of #454,
+	// twice. The fix is ordering: nothing above this line touches a
+	// clipboard.
+	//
 	// deleteSelected rebuilds, and rebuild sets the build status — so the
 	// message goes on AFTER it or it is overwritten in the same frame by
 	// "✓ builds". Learned the hard way: the cut worked and said nothing.
-	ed.deleteSelected()
-	ed.status.Set(msg)
+	if !ed.deleteSelected() {
+		// deleteSelected has already put its own refusal in the status
+		// bar, and it names the loader's reason. Saying anything here
+		// would replace a specific message with a vaguer one.
+		return
+	}
+	ed.clip = clipboard{node: n.deepCopy(), markup: src}
+	ed.status.Set("cut " + describeNode(n) + ed.sayCopiedOut(src))
 }
 
 // deletable mirrors deleteSelected's own refusal. It is a separate
@@ -233,6 +258,13 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// pressable. That is the exact failure addplan.go exists to close for
 	// the palette; paste reaches the same container by the other gesture.
 	plan := ed.planAdd(n.Elem)
+	// NOTHING CAN HOLD IT. planAdd returns a zero plan for a Nested
+	// element with no legal parent on the page, and appending into a nil
+	// node would panic where every other refusal here sets the status.
+	if plan.into == nil {
+		ed.status.Set("✗ <" + n.Elem + "> has no legal parent on this page")
+		return
+	}
 	into := plan.into
 	renamed := ed.renameInto(n)
 	if err := ed.rebindInto(n, renamed); err != nil {
@@ -270,6 +302,14 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		w.Kids = []*node{n}
 		add = w
 	}
+	// The accelerator, beside the name. A second <Menu> in a <MenuBar>
+	// claiming the same alt gesture is unreachable by keyboard, and so is
+	// a second <MenuItem> in a <Menu> claiming the same letter — the
+	// guard covers BOTH levels since round 11, and these three comments
+	// still named only the first. unshadowMnemonic is the one place all
+	// three insertion routes share.
+	unshadowMnemonic(into, add)
+	prevSel := ed.sel
 	into.Kids = append(into.Kids, add)
 	ed.sel = n
 	// Mutate, then rebuild — the mutation seam every other edit in this
@@ -278,6 +318,26 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 	// undo is derived at the choke point, which is why a future mutator
 	// cannot forget it.
 	ed.rebuild()
+	// REVERT ON A FAILED REBUILD, the same guard promoteSelected and
+	// demoteSelected carry (move.go). This path did not have it, so a
+	// paste the vocabulary refuses reported success and left docRoot nil
+	// — click-to-select dead for the WHOLE document while the last good
+	// tree stayed on screen looking pressable (#403). The gates above
+	// make that unreachable through canHold; this is the backstop for
+	// every other way a pasted subtree can fail to build.
+	if ed.remote == nil && ed.docRoot == nil {
+		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
+		into.Kids = into.Kids[:len(into.Kids)-1]
+		ed.sel = prevSel
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
+		ed.rebuild()
+		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + into.Elem +
+			">: " + refused)
+		return
+	}
 	ed.status.Set(verb + " " + describeNode(n) + ed.sayRenamed(renamed))
 }
 
@@ -415,7 +475,7 @@ func (ed *editor) rebindInto(n *node, renamed map[string]string) error {
 		// the reverse map is what connects it back to its old keys.
 		for old, next := range renamed {
 			if k.Attrs["Name"] == next {
-				specOf[old] = ed.specFor(k.Elem)
+				specOf[old] = ed.specOrBare(k.Elem)
 			}
 		}
 	})
@@ -485,11 +545,29 @@ func seedValue(spec markup.ElementSpec, attr string) (any, error) {
 	return nil, nil
 }
 
-func (ed *editor) specFor(elem string) markup.ElementSpec {
-	for _, e := range ed.palette {
-		if e.Name == elem {
-			return e
-		}
+// specOrBare is specOf with a bare fallback instead of an ok — the
+// binding path wants a spec it can range over, and "no attributes" is a
+// usable answer where "not found" is not.
+//
+// IT ASKS ed.specs, NOT ed.palette. The palette is what may be INSERTED;
+// the catalog is what EXISTS. A paste rebinds attributes on nodes
+// already in the document, so the palette's exclusions are the wrong
+// filter here.
+//
+// Latent today — Name is refused on <Menu>/<MenuItem>, and <Tab>
+// declares no attributes, so the fallback and the real spec are
+// indistinguishable — and silent in the worst direction once #461 makes
+// the <Tab> half live: rebindInto has already rewritten the attribute,
+// so a nil handle skips the ed.ctx.Values registration and the paste
+// lands a binding nothing registers.
+//
+// The name is half the fix: specFor and specOf were one character apart
+// and answered different questions from different sources. The
+// palette-vs-catalog history is in
+// docs/specs/2026-09-05-pseudo-elements.md.
+func (ed *editor) specOrBare(elem string) markup.ElementSpec {
+	if e, ok := ed.specOf(elem); ok {
+		return e
 	}
 	return markup.ElementSpec{Name: elem}
 }

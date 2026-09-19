@@ -144,6 +144,10 @@ func (ed *editor) promoteSelected() bool {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		unlink(g, n)
 		insertAt(p, at, n)
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		ed.status.Set("✗ <" + n.Elem + "> cannot be promoted out of <" + p.Elem +
 			">: " + refused)
@@ -201,6 +205,10 @@ func (ed *editor) demoteSelected() bool {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		host.Kids = host.Kids[:len(host.Kids)-1]
 		insertAt(p, at, n)
+		// BEFORE the rebuild: the refused mutation must not stay on the
+		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
+		// revert exists to prevent (#454 review).
+		ed.abortHistory()
 		ed.rebuild()
 		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + host.Elem +
 			">: " + refused)
