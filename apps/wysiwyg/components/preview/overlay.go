@@ -511,6 +511,16 @@ type mark struct {
 	// because nothing this component draws is wider than two columns and
 	// the alternative allocates once per glyph per frame on the paint
 	// path; cols says how many of it are live.
+	//
+	// TWO IS THE CELL PLANE'S OWN CEILING, not this component's taste in
+	// glyphs. render.Cell.Width answers 1 or 2 and nothing else, and
+	// Buffer.SetCell lays at most one render.Continuation beside a lead
+	// — so a mark can never span a third column whatever it is handed.
+	// An earlier version of this comment argued the cap from what the
+	// track specs happen to contain, which is a fact about this file's
+	// fixtures and would stop being true the day a guide drew something
+	// else. It is the plane that makes the array safe. Raised in review
+	// of #524.
 	prev [2]render.Cell
 	cols int
 }
@@ -581,10 +591,32 @@ func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
 // Buffer.SetCell is allowed to write something else: it answers with a
 // SPACE where a wide cluster's second column would fall outside the
 // clip. Recording the intended rune there would leave restoreMarks
-// refusing to lift its own mark. That divergence is not observable
-// today — the cell it happens in was blank and the space it leaves
-// reads back the same — so this is the cheaper of two correct spellings
-// rather than a fix for a measured defect.
+// refusing to lift its own mark.
+//
+// THE COLUMN COUNT COMES OFF THAT SAME READBACK, and taking it from the
+// caller's `w` instead was a real defect rather than a spelling
+// preference. At a clip edge the two disagree: SetCell downgrades the
+// wide cluster to a space, so the cell is ONE column while `w` still
+// says two. Measured on a 10-wide buffer clipped to W=3, drawing 世 at
+// x=2 — At(2,0).Width()==1, and the mark claimed cols=2. Cell.Width is
+// the same answer SetCell just reached, so the readback settles it.
+//
+// WHAT AN OVER-CLAIMING MARK COSTS turns on an asymmetry between the
+// two buffer calls, and it is worth stating exactly because the obvious
+// reading overstates it. render.Buffer.At is BUFFER-scoped
+// (render/cell.go, bounded on W and H); render.Buffer.SetCell is
+// CLIP-scoped (render/cell.go, bounded on the clip rect). So prev[1]
+// snapshots a column this component could not have written and does not
+// own — the read reaches where the write cannot — while restoreMarks'
+// write back to it is DROPPED for as long as the clip still excludes
+// it. That is not a guarantee, because the clip is not a constant: it
+// is the component's bounds, re-taken every frame by Composer.build,
+// and Unclip widens back out at the end of each. An overlay whose
+// bounds grow — the pane widens, the grid extent changes — finds that
+// column inside its clip on a later frame, and the stale blank lands on
+// whatever the document subtree composed there this time. Recording
+// what was actually written removes the question rather than relying on
+// a clip staying put.
 //
 // ONE MARK FOR THE PAIR AND BOTH ITS CELLS IN IT. The lift is still one
 // decision — the guard reads the lead, and healSeam means a foreign
@@ -623,8 +655,9 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 		cell.Cluster = cluster
 	}
 	f.Cells.SetCell(x, y, cell)
+	got := f.Cells.At(x, y)
 	o.marks = append(o.marks, mark{
-		x: x, y: y, wrote: f.Cells.At(x, y).Rune, prev: prev, cols: cols,
+		x: x, y: y, wrote: got.Rune, prev: prev, cols: max(got.Width(), 1),
 	})
 }
 

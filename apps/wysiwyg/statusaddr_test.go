@@ -287,11 +287,22 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 //     answers correctly;
 //   - docs_test.go's control-character sweep, which skips
 //     render.Continuation by name;
-//   - two reads in components/preview/overlay_test.go that are about
-//     the rune plane itself — one asserts render.Continuation BY NAME,
-//     and one snapshots a row's runes because Cell.Text() merges an
-//     unwritten cell with a space and the assertion is that a pair
-//     became two blanks.
+//   - ONE read in components/preview/overlay_test.go, which asserts
+//     render.Continuation BY NAME — the rune plane is the subject, so
+//     .Rune is the right question.
+//
+// THE COMMAND IS THE AUTHORITY ON THAT LAST COUNT and the sentence it
+// replaced was not: this said "two reads in overlay_test.go" while the
+// grep above returns one. The second read it had in mind is real and
+// sits in the same file — the row snapshot that collects `c.Rune` off
+// an already-captured render.Cell, because Cell.Text() merges an
+// unwritten cell with a space and the assertion there is that a wide
+// pair became two blanks. It is a FIELD READ ON A VALUE, not a
+// `.At(...).Rune` call, so it is outside this grep's reach and outside
+// the set these bullets partition. Counting it here is the same defect
+// as the paragraph above it confesses to, one round later: a number in
+// prose sampled beside a command rather than from it. Raised in review
+// of #524.
 //
 // AGAINST A LITERAL is load-bearing in the first of those, and it is
 // what dockcollapse_test.go:747 was not: it captured a cell and compared
