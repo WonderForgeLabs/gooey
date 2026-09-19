@@ -558,6 +558,109 @@ func TestADragDoesNotWalkTheWholeValue(t *testing.T) {
 	}
 }
 
+// TestADragDoesNotWalkAZeroWidthRun is TestADragDoesNotWalkTheWholeValue
+// over the vocabulary that defeats its bound, and it is the FOURTH walk
+// of this shape on this path — windowFloor's expansion, spanForCols'
+// doubling and clusterStartAt's lookback are the other three, and this
+// one had no cap until #521's review.
+//
+// indexAt's forward walk doubles its span until the walk has passed the
+// column asked for. Every cluster contributes at least one column, so
+// over any ordinary vocabulary that happens within a few rounds — but a
+// value that is ONE cluster reports one column however far the span
+// reaches, so the doubling ran to len(runes) and re-segmented a larger
+// prefix each round. Measured per call, one click five columns into a
+// 20-column field:
+//
+//	n         capped    uncapped    ASCII
+//	  1,000   11.4µs    190µs       9.8µs
+//	 10,000   11.0µs    1.90ms      15.7µs
+//	 50,000   11.2µs    8.05ms      8.4µs
+//	200,000   11.3µs    32.6ms      8.3µs
+//
+// Once per MOUSE MOTION REPORT while a drag is live, on the UI
+// goroutine: ten reports of a drag over a 200,000-rune value is a third
+// of a second of input latency, and the run is reachable by paste.
+//
+// A RATIO, NOT A FIGURE, for the reason the ASCII sibling gives: a
+// wall-clock threshold is a property of the machine.
+//
+// THE ANSWER AND THE COST MOVE TOGETHER HERE, and that is deliberate
+// rather than one assertion wearing two hats. Both lengths below are
+// past the cap — (off+1)*clusterSlack is 1344 runes at column 20 — so
+// the walk stops inside a cluster it cannot finish and answers with
+// that cluster's start, where the uncapped walk reached the end of the
+// value and answered len(runes). Removing the cap therefore changes
+// BOTH observables, so both are asserted with Errorf and both report:
+// the cost claim is not a proxy for the answer, and neither hides the
+// other's failure. Below the cap the answer is unchanged, which
+// TestAClickPastAShortZeroWidthRunLandsAtTheEnd is for.
+// Raised in review of #521.
+func TestADragDoesNotWalkAZeroWidthRun(t *testing.T) {
+	drag := func(n int) (time.Duration, int) {
+		v := prop.NewSource("a" + strings.Repeat("\u0301", n))
+		tb := &TextBox{Text: v}
+		tb.SetFocused(true)
+		tb.setCaret(0)
+		gooey.Compose(tb, term.Caps{Cols: 40, Rows: 1}, nil)
+		tb.HandleMouse(input.MouseEvent{Kind: input.MousePress, X: 0, Y: 0, Button: input.ButtonLeft})
+		const moves = 100
+		start := time.Now()
+		for range moves {
+			tb.HandleMouseMove(input.MouseEvent{X: 20, Y: 0, Button: input.ButtonLeft})
+		}
+		return time.Since(start) / moves, tb.Caret()
+	}
+	short, shortCaret := drag(5000)
+	long, longCaret := drag(200000)
+
+	for _, tc := range []struct {
+		n, got int
+	}{{5000, shortCaret}, {200000, longCaret}} {
+		if tc.got != 0 {
+			t.Errorf("a drag to column 20 over a %d-rune value that is one "+
+				"cluster put the caret at %d, want 0 — the cluster's own "+
+				"start, which is the furthest left boundary this file can "+
+				"prove anything about. len(runes) is the answer the "+
+				"UNCAPPED walk gave, and it reached it by segmenting the "+
+				"whole value", tc.n, tc.got)
+		}
+	}
+	if long > 4*short {
+		t.Errorf("a motion event over a 200,000-rune zero-width run costs %v "+
+			"against %v over a 5,000-rune one — %.1fx for forty times the "+
+			"value, want under 4x. indexAt's forward walk doubles its span "+
+			"until the walk passes the column asked for, and a value that is "+
+			"one cluster never gets there, so the span runs to len(runes): "+
+			"O(len(value)) per motion report, on the UI goroutine",
+			long, short, float64(long)/float64(short))
+	}
+}
+
+// TestAClickPastAShortZeroWidthRunLandsAtTheEnd is the other side of
+// that cap: BELOW it the walk still reaches the end of the value, and
+// the answer to a click past the last painted column is still the end.
+//
+// The cap is (off+1)*clusterSlack runes, so at column 20 it bites at
+// 1344 — a value shorter than that is answered exactly, however many of
+// its runes are zero-width. Without this the cap could be tightened to
+// nothing and only the cost arm above would notice.
+func TestAClickPastAShortZeroWidthRunLandsAtTheEnd(t *testing.T) {
+	const n = 1000
+	v := "a" + strings.Repeat("\u0301", n)
+	runes := []rune(v)
+	tb := &TextBox{Text: prop.NewSource(v)}
+	tb.SetFocused(true)
+	tb.setCaret(0)
+	gooey.Compose(tb, term.Caps{Cols: 40, Rows: 1}, nil)
+	if got := tb.indexAt(20); got != len(runes) {
+		t.Errorf("a click at column 20 of a field painting %d runes in one "+
+			"column answered %d, want %d — the value ends at column 1, so "+
+			"this is a click in the empty part of the field and the caret "+
+			"belongs at the end", len(runes), got, len(runes))
+	}
+}
+
 // TestDraggingPastTheLeftEdgeKeepsSelecting is the gesture
 // HandleMouseMove's doc comment promises — "dragging past the field's
 // edge keeps working" — and an intermediate version of #519 removed it.
@@ -1744,7 +1847,7 @@ func TestWordMotionAndDoubleClickLandOnClusterBoundaries(t *testing.T) {
 // Delete either bound with only the other arm present and nothing goes
 // red.
 func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
-	cost := func(n, caret int) time.Duration {
+	cost := func(n, caret int) (time.Duration, *gooey.Frame) {
 		v := prop.NewSource("a" + strings.Repeat("́", n))
 		st := prop.NewSource(render.Style{})
 		tb := &TextBox{Text: v, Style: st}
@@ -1753,12 +1856,53 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 		c := gooey.NewComposer(tb, 20, 1)
 		c.Frame()
 		const frames = 40
+		var f *gooey.Frame
 		start := time.Now()
 		for i := range frames {
 			st.Set(render.Style{Bold: i%2 == 0})
-			c.Frame()
+			f, _ = c.Frame()
 		}
-		return time.Since(start) / frames
+		return time.Since(start) / frames, f
+	}
+	// A FRAME THAT PAINTS NOTHING IS CHEAP, which is how this test was
+	// green over the injury one level up. windowFloor returned a raw
+	// arithmetic index mid-cluster, Render opened eachClusterFrom inside
+	// that cluster and reported only the skipped fragment — zero-width —
+	// and the field painted the caret block and 19 spaces. That costs
+	// nothing and the ratio held: measured, the caret-at-end arm ran at
+	// 0.75ms against 0.82ms with the value entirely absent from both
+	// frames. So the arm asserts it has a frame worth timing FIRST, on
+	// BOTH n, and a cost claim over a blank field is not a cost claim.
+	// The rule is TestARepaintDoesNotWalkTheWholeValue's already; this
+	// is the same rule over the vocabulary that can violate it.
+	// Raised in review of #521.
+	measure := func(t *testing.T, n, caret int) time.Duration {
+		t.Helper()
+		d, f := cost(n, caret)
+		row := render.RowText(f.Cells, 0)
+		if !strings.HasPrefix(row, "a") {
+			t.Fatalf("over a %d-rune zero-width run the field painted %q, which "+
+				"does not begin with the value's own first rune — the window "+
+				"opened inside the cluster and Render reported the skipped "+
+				"fragment. There is nothing here to make a cost claim about: "+
+				"a field that paints no value is cheap whatever the walk does",
+				n, row)
+		}
+		// THE CARET HAS TWO SHAPES AND THIS ARM SEES BOTH OF THEM.
+		// Render reverses the cluster the caret is ON, and paints an
+		// accent block PAST the last painted cluster — so the
+		// caret-at-start arm produces a reversed cell and the
+		// caret-at-end arm a '█', and an assertion written for either
+		// one alone is vacuous on the other rather than red. Both
+		// spellings mean the same thing here, which is the only claim
+		// this makes: the caret is somewhere on the row.
+		if reversedText(t, f) == "" && !strings.ContainsRune(row, '\u2588') {
+			t.Fatalf("over a %d-rune zero-width run with the caret at %d the "+
+				"frame has neither a reversed cell nor a caret block, so the "+
+				"user is typing into a focused field whose caret is nowhere "+
+				"on screen. Row: %q", n, caret, row)
+		}
+		return d
 	}
 	for _, tc := range []struct {
 		name  string
@@ -1768,8 +1912,8 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 		{"caret at the end", func(n int) int { return n }, "windowFloor's left expansion"},
 		{"caret at the start", func(int) int { return 0 }, "spanForCols' doubling"},
 	} {
-		short := cost(1000, tc.caret(1000))
-		long := cost(50000, tc.caret(50000))
+		short := measure(t, 1000, tc.caret(1000))
+		long := measure(t, 50000, tc.caret(50000))
 		if long > 4*short {
 			t.Errorf("with the %s, a repaint costs %v over a 50,000-rune "+
 				"zero-width run against %v over a 1,000-rune one — %.1fx for "+
