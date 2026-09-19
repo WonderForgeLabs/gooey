@@ -62,8 +62,20 @@ right rather than a detail of the ordering:
 **The walk runs forward and cannot return early.** The old walk ran in
 reverse and stopped at the first hit, because in document order the last
 hit is the top one. A ranked walk has no such prefix property: an
-unvisited node can out-rank everything in hand. So the walk visits the
-whole tree and keeps a running best.
+unvisited node can out-rank everything in hand. So the walk runs to the
+end of what it visits and keeps a running best.
+
+It does NOT visit the whole tree, and that is the sentence this
+replaced. Bounds still prune at every node — only subtrees whose bounds
+contain the point are descended into — so the cost is bounded by the
+containing subtrees, not by the sibling count. Every other statement of
+this in the tree is careful about it (`mouse.go`'s `HitTest` godoc,
+`docs/architecture.md`, `CLAUDE.md`, `docs/learn/concepts/input-routing.md`),
+and this is the file a reader comes to for *why the cost changed* — so
+overstating it by the whole prune is the same class of error, in the
+other direction, as the "one extra rectangle test per remaining
+sibling" understatement `mouse.go` records fixing. Corrected in review
+of #458.
 
 **Losing the early return removed the only bound on total work.** A
 branching cycle used to cost one branch; now it costs the walk. `hitTest`
@@ -113,11 +125,19 @@ under "What is deliberately NOT changed" with the word "still" — which
 would send someone bisecting a drag-hover regression past the very
 branch that introduced it. On the base, `DispatchMouse` called
 `HitTest` unconditionally and capture decided only where the event
-went; the walk ran and both its results were discarded. Three kinds now run no
-walk at all, in dispatch and in `FocusManager.MouseTarget` alike: a
-captured **move**, a captured **wheel**, and a **press arriving while
-the capture is held**. Only an unheld press and a release still
-hit-test. The `MouseTarget` half is the load-bearing one, because
+went; the walk ran and both its results were discarded. Three kinds now
+run no walk at all in dispatch: a captured **move**, a captured
+**wheel**, and a **press arriving while the capture is held**. Only an
+unheld press and a release still hit-test there.
+
+`FocusManager.MouseTarget` skips a FOURTH — the captured **release** —
+and "in dispatch and in `FocusManager.MouseTarget` alike" is what this
+said. The two conditions are deliberately different, and `mouse.go`
+says so in as many words: a captured release reads the hit on the
+dispatch side, where `m.within(captor, hit)` decides whether a click is
+synthesized, and reads nothing in the query, which synthesizes nothing.
+Sizing `Service.mayPoint` from the old sentence budgets a walk per
+captured release that never happens. Corrected in review of #458. The `MouseTarget` half is the load-bearing one, because
 `control/input.go`'s `Service.mayPoint` asks it per pointer event for
 every guest — so a reader sizing that cost from this paragraph has to
 see all three, and this paragraph named the move alone for two rounds

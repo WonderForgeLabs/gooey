@@ -174,11 +174,35 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 								// An embedded interface: the same
 								// promotion question one level in, and
 								// the fixed point below resolves it.
-								// gooey.Component is the case here, and
-								// qualifiedEmbed answers for it.
+								//
+								// THE SAME THREE STEPS THE STRUCT ARM
+								// TAKES — name it, else state it as
+								// residue, else report. This asked
+								// receiverName and silently continued
+								// on "", while claiming in a comment
+								// that qualifiedEmbed answered for
+								// gooey.Component; qualifiedEmbed was
+								// never called on this path. Nothing
+								// was lost by it today — a qualified
+								// embed is correctly skipped either
+								// way — but the two arms READ
+								// symmetric while only one of them
+								// reported, which is the shape the
+								// round-8 finding was about. Raised in
+								// review of #458.
 								if e := receiverName(fld.Type); e != "" {
 									embeds[ts.Name.Name] = append(embeds[ts.Name.Name], e)
+									continue
 								}
+								if qualifiedEmbed(fld.Type) {
+									continue // stated residue, as above
+								}
+								t.Errorf("%s: interface %s embeds a type this scan "+
+									"cannot name, so the methods it promotes are "+
+									"invisible to the transparency check below and "+
+									"an adornment reached that way goes unchecked. "+
+									"Teach receiverName the shape, or qualifiedEmbed "+
+									"if it names another package", f, ts.Name.Name)
 								continue
 							}
 							if methods[ts.Name.Name] == nil {

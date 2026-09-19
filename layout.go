@@ -31,19 +31,33 @@ const (
 
 type Visibility uint8
 
-// Hidden renders no content and is NOT HIT-TESTED, rather than "does not
-// paint", which is what this said and is wrong in both halves. A hidden
-// LEAF still pre-clears its own bounds, so it erases a visible sibling it
-// overlaps (#508); and since #465 FocusManager.HitTest skips a hidden
-// NODE, so a press over a hidden button lands on whatever is beneath it.
-// Only the node — a Visible child of a Hidden parent is still hittable.
-// This is the declaration every other site quotes, and apps/wysiwyg's
-// dock.go quoted it verbatim and in quotation marks. Raised in review of
-// #458.
+// Visible, Hidden and Collapsed are the three ways a component can
+// occupy the tree: painted and hittable, present but neither, or absent
+// entirely. The per-value comments below are the contract.
+//
+// Hidden's wording travels, so changing it is not a local edit:
+// docs/architecture.md restates it, and apps/wysiwyg's dock.go quotes
+// THAT file by name and in quotation marks. The prose this replaced said
+// dock.go quotes this declaration; it does not — it cites
+// docs/architecture.md, which is the sentence to keep in step.
+//
+// Hidden's reasoning belongs to Hidden and is on it. It sat here, above
+// `const (`, where go doc renders a paragraph as the documentation of
+// all three values — so `go doc gooey.Visible` answered with an essay
+// about Hidden. Same class as #483. Raised in review of #458.
 const (
-	Visible   Visibility = iota
-	Hidden               // occupies space, renders no content, not hit-tested
-	Collapsed            // occupies nothing, subtree skipped entirely
+	Visible Visibility = iota
+	// Hidden renders no content and is NOT HIT-TESTED, rather than
+	// "does not paint", which is what this said and is wrong in both
+	// halves. A hidden LEAF
+	// still pre-clears its own bounds, so it erases a visible sibling
+	// it overlaps (#508); and since #465 FocusManager.HitTest skips a
+	// hidden NODE, so a press over a hidden button lands on whatever
+	// is beneath it. Only the node — a Visible child of a Hidden
+	// parent is still hittable.
+	Hidden
+	// Collapsed occupies nothing and the subtree is skipped entirely.
+	Collapsed
 )
 
 // Layout is the per-element layout state — the XAML FrameworkElement

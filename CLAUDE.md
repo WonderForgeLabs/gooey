@@ -303,7 +303,7 @@ change repaints exactly the components that read it.
 `ArrangeChild`.** The interface is `Container { ChildComponents() []Component }`
 (`component.go:39`) — the framework walks children, never the container.
 Parents never call `child.Measure`/`child.Arrange`; `MeasureChild`
-(`layout.go:292`) and `ArrangeChild` (`layout.go:349`) apply the
+(`layout.go:306`) and `ArrangeChild` (`layout.go:363`) apply the
 margin/size/align/visibility sandwich, and skipping them silently drops all
 four. A component calling `Base.Arrange(b)` on *itself* is fine and common.
 A cycle no longer kills the process, and the fix is bigger than the issue
@@ -436,7 +436,7 @@ the click to the button. Under the retired "declare it last" rule the two
 planes agreed, which is why the divergence arrived with the ranks — the
 freedom is what made it reachable.
 
-`FocusManager.HitTest` (`mouse.go:168`) now returns the component that
+`FocusManager.HitTest` (`mouse.go:178`) now returns the component that
 PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
 BOUNDS — contain the cell, comparing candidates on exactly what
 `appendByRank` orders by, and it gets there by asking `overlayOf` — the
@@ -473,8 +473,13 @@ can out-rank a later one, so every subtree whose bounds contain the
 point is visited. It still prunes on bounds at every node, and still
 allocates nothing **of its own** — but it allocates whatever
 `ChildComponents` does, and `ToastHost` and `AdornmentLayer` each build
-a fresh slice per call, so a live toast costs one allocation per motion
-event ([#513](https://github.com/WonderForgeLabs/gooey/issues/513)).
+a fresh slice per call, so a live toast costs one allocation per
+**uncaptured** motion event
+([#513](https://github.com/WonderForgeLabs/gooey/issues/513)). That
+qualifier is the correction: while the pointer is captured the walk
+does not run for a move at all, so a drag past a live toast allocates
+nothing, and the sentence without it is false of exactly the path the
+capture skip was added for.
 `Popup` never depended on any of it: it holds pointer capture while
 open, which routes presses before the walk runs — that is Popup's
 mechanism, not the marker's.
@@ -517,7 +522,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:915`).
-`DispatchMouse` (`mouse.go:571`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:581`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

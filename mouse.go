@@ -110,12 +110,22 @@ type PointerFollower interface{ FollowsPointer() bool }
 // components, and HitTestTransparent components are not hit.
 //
 // The walk allocates nothing OF ITS OWN, which is the constraint the
-// design was built under — it runs on every motion event, and ?1003h
-// sends one per cell crossed. It still allocates whatever
+// design was built under — UNCAPTURED motion runs it, and ?1003h sends
+// one report per cell crossed. It still allocates whatever
 // ChildComponents allocates, and two shipped hosts build a fresh slice
 // per call, so a live toast or adornment costs one allocation per
-// motion event for as long as it is up
+// motion event that reaches this function
 // (https://github.com/WonderForgeLabs/gooey/issues/513).
+//
+// A DRAG REACHES IT ON NO MOTION EVENT AT ALL, which is the scoping
+// this sentence lacked: while the pointer is captured, DispatchMouse
+// calls HitTest only for an unheld press and a release, so a captured
+// move runs no walk and allocates nothing. It said "it runs on every
+// motion event" and "costs one allocation per motion event for as long
+// as it is up" — false during a drag, which is the case the capture
+// skip was added for, and this godoc is the only statement of that cost
+// a downstream reader sees. docs/architecture.md retires the same
+// wording in this change. Raised in review of #458.
 //
 // THE ANCESTOR CLAUSE IS THE ONE PLACE THE TWO PLANES STILL DIVERGE, and
 // it is stated rather than fixed. This walk prunes on bounds at every
@@ -740,19 +750,31 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 //
 // UI-goroutine only, like every other query on this type.
 func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
-	// THE SAME SKIP DISPATCH TAKES, in this function's own terms. While
-	// the pointer is captured, target() answers with the captor whatever
-	// the hit is, so the only kind whose ANSWER here depends on the walk
-	// is the press that discards an implicit capture — the arm below.
-	// Every other kind returns the captor, and the walk's result is
-	// discarded exactly as it is on the dispatch side.
+	// A WIDER SKIP THAN DISPATCH TAKES, in this function's own terms.
+	// While the pointer is captured, target() answers with the captor
+	// whatever the hit is, so the only kind whose ANSWER here depends on
+	// the walk is the press that discards an implicit capture — the arm
+	// below. Every other kind returns the captor without reading a hit.
 	//
-	// The condition is deliberately NOT spelled the way dispatch's is. A
-	// captured RELEASE reads the hit there — m.within(captor, hit) decides
-	// whether a click is synthesized — and reads nothing here, because a
-	// query synthesizes nothing. One condition shared between the two
-	// would make this function model a dispatch behaviour it does not
-	// have. Raised in review of #458.
+	// THE TWO CONDITIONS DO NOT SKIP THE SAME SET, and "the same skip …
+	// discarded exactly as it is on the dispatch side" is what this said
+	// — refuted by the paragraph that already stood three lines under
+	// it. Read them side by side rather than from a sentence:
+	//
+	//	DispatchMouse walks when  m.captor == nil || (press && !m.held) || Kind == MouseRelease
+	//	this returns early when   m.captor != nil && !(press && !m.held)
+	//
+	// Under a held capture that is THREE kinds walking nowhere on the
+	// dispatch side — a move, a wheel, and a press arriving while the
+	// capture is held — against FOUR here, the fourth being the release.
+	//
+	// The condition is deliberately NOT spelled the way dispatch's is,
+	// and the release is the whole of the difference. A captured RELEASE
+	// reads the hit there — m.within(captor, hit) decides whether a
+	// click is synthesized — and reads nothing here, because a query
+	// synthesizes nothing. One condition shared between the two would
+	// make this function model a dispatch behaviour it does not have.
+	// Raised in review of #458.
 	//
 	// Mirroring it is what keeps this function the thing its own doc
 	// above calls it: "the query that models where an event would
@@ -763,9 +785,17 @@ func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
 	// path #465 made dearest, on the one caller furthest from the
 	// change. TestADragIsNotWalkedForByAQueryEither pins it.
 	//
-	// It is also what makes docs/learn/concepts/input-routing.md's rule —
-	// only an unheld press and a release hit-test at all — a statement
-	// about the framework rather than about one function.
+	// WHAT IT IS NOT is what makes docs/learn/concepts/input-routing.md's
+	// rule — while the pointer is captured, only an unheld press and a
+	// release hit-test at all — a statement about the framework rather
+	// than about one function. That rule is DISPATCH's, and the page
+	// states it as one: it is a clause of the hover bullet, and hover is
+	// something only dispatch moves. This function is strictly stricter,
+	// because the release it also skips is the one kind whose skip a
+	// query can afford. A reader who takes the rule as framework-wide
+	// budgets a walk per captured release in Service.mayPoint that never
+	// happens, and a second caller needing the release hit reads the
+	// page and gets the captor. Raised in review of #458.
 	//
 	// THE QUOTATION THAT WAS HERE NAMED ONE EVENT KIND, and the commit
 	// that broadened the rule rewrote that bullet without rewriting this
