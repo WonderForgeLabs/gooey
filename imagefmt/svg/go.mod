@@ -15,7 +15,7 @@ module github.com/WonderForgeLabs/gooey/imagefmt/svg
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61
+	github.com/WonderForgeLabs/gooey v0.0.0-20260913132232-e5cdb56ececd
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 )

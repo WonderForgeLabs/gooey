@@ -9,10 +9,11 @@ import (
 )
 
 // A UserControl's markup names styles from the PAGE's table, and it
-// reaches them by inheritance: usercontrol.go:114 copies the parent's map
-// into the child only when the child's is NIL. The unregistered-name check
-// runs after that (the child is built at :137), so inheritance is intact —
-// but it is intact by ORDERING, not by construction, and nothing said so.
+// reaches them by inheritance: control() copies the parent's map into the
+// child only when the child's is NIL. The unregistered-name check runs
+// after that, in the doc.build later in the same builder, so inheritance
+// is intact — but it is intact by ORDERING, not by construction, and
+// nothing said so.
 //
 // Reported as a hazard by a reader of that fix, correctly: three of
 // cmd/reader's UserControl setups return a context with no Styles field

@@ -257,13 +257,28 @@ jobs:
           # so every discovered module lands in exactly one leg by
           # construction; the check below is what proves that rather than
           # asserting it.
+          # DEPTH IS DERIVED FROM WHAT A LEG CARRIES, not from its name.
+          # The requirement is that the leg running the ROOT module gets
+          # full history, and the checkout step below spelled it as
+          # matrix.mode == test — a coupling remembered across two places
+          # in one file, which is the shape
+          # TestCIWorkflowRaceTierMatchesCLAUDEMD and its siblings exist
+          # to remove. The case above proposes its own inversion (race by
+          # default, exemption explicit); under that the root module
+          # lands in the race leg at depth 1, the root suite reds with
+          # NOTHING was checked here, and the remedy it prints points at
+          # a fetch-depth: 0 already in this file on the wrong leg. The
+          # depth field below carries the fact instead, and
+          # TestTheLegThatRunsTheRootModuleGetsFullHistory pins it.
+          # Raised in review of #497.
           matrix=$(jq -Rnc '
             [inputs | split("\t") | {module: .[0], mode: .[1]}]
             | group_by(.mode)
             | map({
                 mode:    .[0].mode,
                 count:   length,
-                modules: (map(.module) | join(" "))
+                modules: (map(.module) | join(" ")),
+                depth:   (if (map(.module) | index(".")) then 0 else 1 end)
               })
             | sort_by(.mode)
           ' < "$tmp/modules-tiered")
@@ -346,9 +361,78 @@ jobs:
       # Repacking the legs must not drop it: without the objects the tracked
       # binaries arrive as pointer text, and a test that reads one fails with
       # a decode error rather than anything that names LFS.
+      #
+      # FULL HISTORY ON THE LEG THAT CARRIES THE ROOT MODULE, whichever
+      # tier that turns out to be, and that is a MATRIX EXPRESSION rather
+      # than a plain value because it has to be. This job has one
+      # `steps:` block and three legs — discovery packs one per tier,
+      # `vet`, `test` and `race` — so an unconditional fetch-depth pays
+      # the full-history fetch three times per push, on the shared
+      # non-autoscaling pool this file spends four paragraphs justifying
+      # pod counts for, and two of those three legs never run the suite
+      # that wants it.
+      #
+      # THE TIER NAME IS NOT THE RULE, which is what this heading said
+      # until #497's review: it read "on the `test` leg ONLY" and "the
+      # root module tiers to `test`". Both are true today and both stop
+      # being true under the race-by-default inversion the `case` above
+      # proposes for itself — after which the derived depth is still
+      # right and a reader meeting this paragraph first is sent to a leg
+      # that no longer holds the root module. The property is the leg's
+      # CONTENTS, and the jq below derives it from them.
+      #
+      # The root module's suite is the one that asks git about COMMITS.
+      # TestEveryOwnModulePinNamesACommitThisRepositoryPublished checks that
+      # every own-module `require` names a commit this repository actually
+      # published — the check that catches a pseudo-version hand-edited or
+      # `sed`-rewritten to a revision no proxy can serve. actions/checkout's
+      # default is depth 1, which on a pull request fetches the merge commit
+      # and NONE of its parents, so every pinned revision is absent and the
+      # check has nothing to look at. It fails rather than logging that, so
+      # this line is what makes it run rather than what keeps it quiet.
+      #
+      # AND IT BUYS THE REFSPEC, WHICH IS THE HALF NOT WRITTEN DOWN ABOVE.
+      # actions/checkout uses `+refs/heads/*:refs/remotes/origin/*` (plus
+      # tags) ONLY when fetch-depth <= 0; otherwise it fetches the single
+      # `+<commit>:refs/remotes/pull/N/merge`. That refspec is the only
+      # reason `refs/remotes/origin/main` exists on the runner at all —
+      # and the same test treats a NON-shallow clone with no origin/main
+      # as a t.Error, not a skip, because a checkout that can see every
+      # commit and not the branch they are on is a misconfigured remote.
+      # So this one line does two jobs. Anyone trimming the cost the
+      # paragraph below invites scrutiny of — `--shallow-since`,
+      # `--deepen`, a targeted `git fetch origin main` — satisfies the
+      # reason written above and reds the leg on this one, with a message
+      # about a remote nobody touched. Raised in review of #497.
+      #
+      # WHICH LEG GETS IT IS DERIVED IN discover, not decided here. The
+      # matrix carries a `depth` per leg, computed from whether that
+      # leg's module list contains `.`, so this line reads the fact
+      # rather than restating it. It was
+      # `${{ matrix.mode == 'test' && '0' || '1' }}` — keyed on the tier
+      # NAME while the requirement is about the root module — and the
+      # bridge between the two was the paragraph above. That also
+      # disposes of a hazard this paragraph used to spend itself on: in
+      # a GitHub expression `0` is FALSY, so dropping the quotes from
+      # that ternary made it evaluate to 1 on every leg and reverted the
+      # fix silently. There is no ternary now.
+      # TestTheLegThatRunsTheRootModuleGetsFullHistory is what keeps the
+      # derivation honest. Raised in review of #497.
+      #
+      # Affordable on the one leg, against the LFS objects this same step
+      # already pulls. NO FIGURE HERE, for the reason CLAUDE.md's Verify
+      # section gives about counts in prose: this said "216 commits and a
+      # 56 MiB pack", and with `refs/heads/*` the fetch tracks the number
+      # of open branches and tags in the repository rather than the length
+      # of main, so the sample was taken once and describes something that
+      # moves for reasons unrelated to this file. `git count-objects -vH`
+      # after a full clone is the measurement. The other three checkout
+      # steps in this file stay at the default — none of them asks git
+      # anything about history. Raised in review of #497.
       - uses: actions/checkout@v4
         with:
           lfs: true
+          fetch-depth: ${{ matrix.depth }}
 
       # NO actions/setup-go. It installs the go.mod version and puts it on
       # PATH, which looks right and is not: the runner image ships its own
