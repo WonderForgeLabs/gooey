@@ -288,6 +288,44 @@ func TestAFullyClippedWriteLeavesNoMark(t *testing.T) {
 	}
 }
 
+// TestAForeignRepaintOfTheSameRuneKeepsItsCell is the OWNERSHIP half of
+// restoreMarks, and the whole suite was green without it.
+//
+// The overlay draws box-drawing corners where a child Border's corner
+// falls and ASCII in the gutters, so "the document repainted this cell
+// with the same rune" is the ordinary case rather than a coincidence.
+// Keyed on the rune alone, the mark was lifted and the overlay wrote
+// its snapshot over content the document had just painted — on a node
+// that is now clean, so nothing brought it back.
+//
+// ASSERTED ON Style, NOT ON Rune, for the reason
+// TestAFullyClippedWriteLeavesNoMark already gives: the rune is
+// identical in both the passing and the failing world, so a rune
+// assertion agrees with the bug. Raised in review of #524.
+func TestAForeignRepaintOfTheSameRuneKeepsItsCell(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	o := &Overlay{}
+	o.setCluster(f, 0, 0, "┌", 1, render.Style{Fg: render.RGB(190, 180, 90)})
+	if len(o.marks) != 1 {
+		t.Fatalf("setCluster took %d marks for a write into a blank cell, "+
+			"want 1 — this test is about LIFTING one", len(o.marks))
+	}
+
+	// The next frame: the document's own Border painted its corner
+	// there, same glyph, its own style. The overlay paints after the
+	// tree, so this is the state restoreMarks sees.
+	owner := render.Style{Bg: render.RGB(4, 5, 6)}
+	f.Cells.SetCell(0, 0, render.Cell{Rune: '┌', Style: owner})
+	o.restoreMarks(f)
+	if got := f.Cells.At(0, 0).Style; got != owner {
+		t.Errorf("restoring put %+v into column 0, where the document had "+
+			"just painted %+v with the same rune. A rune match is not "+
+			"ownership: the overlay's snapshot is of a blank cell that "+
+			"stopped existing a frame ago, and the node that painted "+
+			"over it is clean, so it does not come back", got, owner)
+	}
+}
+
 // TestSetClusterAllocatesNothing is the paint-path pin: the guide writes
 // one of these per cell it draws, every frame it paints.
 //

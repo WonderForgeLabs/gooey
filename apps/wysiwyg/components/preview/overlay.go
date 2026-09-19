@@ -523,8 +523,20 @@ func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style, 
 //
 // Restoring first makes each frame's guide independent of the last.
 type mark struct {
-	x, y  int
-	wrote rune
+	x, y int
+	// THE WHOLE CELL, not its rune. Ownership is the question this
+	// field answers, and a rune cannot answer it: the overlay draws
+	// box-drawing corners exactly where a child Border's corner falls
+	// and ASCII in the gutters, so the document repainting that cell
+	// with the SAME rune in its own style is the ordinary case rather
+	// than a coincidence. On a rune match the mark was lifted and the
+	// stale snapshot written over content the document had just
+	// painted — and that node is clean, so it never came back. The
+	// cluster half is the same hole: `wrote` kept only the lead, so an
+	// `e` under a written `é` passed too. render.Cell is comparable,
+	// which setCluster already relies on at `got == prev[0]`. Raised
+	// in review of #524.
+	wrote render.Cell
 	// EVERY COLUMN THE CLUSTER COVERS, not just the lead. A fixed array
 	// because nothing this component draws is wider than two columns and
 	// the alternative allocates once per glyph per frame on the paint
@@ -545,15 +557,15 @@ type mark struct {
 
 // restoreMarks puts back what the last frame's guide covered up.
 //
-// A mark is only lifted if the cell STILL HOLDS THE GLYPH THE OVERLAY
-// PUT THERE. Anything else means the document repainted that cell in the
+// A mark is only lifted if the cell STILL HOLDS THE CELL THE OVERLAY
+// PUT THERE — rune, cluster and style. Anything else means the document repainted that cell in the
 // meantime and now owns it — the overlay paints after the tree, so by
 // the time this runs that repaint has already happened — and writing the
 // saved content back would be restoring a stale copy over live content.
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
-		if f.Cells.At(m.x, m.y).Rune != m.wrote {
+		if f.Cells.At(m.x, m.y) != m.wrote {
 			continue
 		}
 		// THE LEAD FIRST, THEN THE REST, and the order is the whole of
@@ -681,8 +693,7 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 	// never wrote and does not own, and a later frame with a wider clip
 	// restores that snapshot over live content. blank() does not close
 	// it — a leaf pre-clear writes a STYLED SPACE, whose rune is blank,
-	// so the mark is taken and restoreMarks' `Rune != m.wrote` guard
-	// passes. Measured in review of #524: the overlay reverted a
+	// so the mark is taken and restoreMarks' guard passes. Measured in review of #524: the overlay reverted a
 	// neighbour's background on a cell it never touched.
 	//
 	// The comparison is exact rather than conservative because Cell is
@@ -704,7 +715,7 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 		// forms, VS16, a combining pair, tab and NUL — the bound
 		// belongs on the value the array is indexed by anyway. Raised
 		// in review of #524.
-		x: x, y: y, wrote: got.Rune, prev: prev, cols: min(max(got.Width(), 1), cols),
+		x: x, y: y, wrote: got, prev: prev, cols: min(max(got.Width(), 1), cols),
 	})
 }
 
