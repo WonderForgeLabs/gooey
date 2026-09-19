@@ -1088,7 +1088,13 @@ and no longer the required position (#437 lifted overlays, #439 ranked
 them). Transparency is about the component's own surface, not its
 subtree, so the toasts and adornments inside stay hittable — which is
 exactly why their own position still matters for clicks. The walk
-allocates nothing, because it runs on every motion report.
+allocates nothing **of its own**, because it runs on every motion
+report — but it is not allocation-free, and the difference is the whole
+of [#513](https://github.com/WonderForgeLabs/gooey/issues/513). It calls
+`ChildComponents` on every container it descends into, and `ToastHost`
+and `AdornmentLayer` each build a fresh slice per call. Both span the
+page, so bounds never prune them: the unqualified sentence was false
+exactly while a toast is up or a tip is showing.
 
 `DispatchMouse` runs three framework behaviors before the app sees
 anything:

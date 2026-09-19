@@ -409,7 +409,7 @@ to carry the nearest ancestor's background down
 ordering rule is not sharing a picture; if you add a paint path, the
 pre-clear is the half that will be forgotten.
 
-**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:132`;
+**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:142`;
 the reverse child walk is `mouse.go:158`) knows about neither layer nor
 rank, so the two planes can now disagree: a ranked host declared FIRST
 paints above a button and leaves the click to the button. Under the
@@ -469,7 +469,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:915`).
-`DispatchMouse` (`mouse.go:224`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:234`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,
