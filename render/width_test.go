@@ -448,4 +448,19 @@ func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
 			"the two functions answer an out-of-range row differently and that is "+
 			"the point", got)
 	}
+	// AND RowText ON THE SAME ROW, which was only INHERITED from
+	// SpanText and is the answer the converted sites actually meet:
+	// components/menuicon_test.go reads RowText(f.Cells, r.Y+1) off a
+	// bounds rect, so a dropdown that stopped painting hands it a row of
+	// blanks rather than an error — and an absence assertion over blanks
+	// cannot fail. A nil buffer is empty and an out-of-range row of a
+	// REAL one is padded; those are different answers to "there is
+	// nothing here", so both are chosen here rather than one of them
+	// being read off the delegation. Raised in review of #520.
+	if got, want := RowText(b, 9), "    "; got != want {
+		t.Errorf("RowText on row 9 of a one-row buffer = %q, want %q — blanks of "+
+			"the buffer's width, not empty. A reader that drifted off the surface "+
+			"pads, which is exactly why an absence assertion over one cannot "+
+			"fail", got, want)
+	}
 }

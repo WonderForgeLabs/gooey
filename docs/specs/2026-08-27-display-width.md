@@ -232,10 +232,18 @@ superseded does not:
    Removing the width parameters in item 5 left `components`' `dump`,
    `menuRows` and `screen` as byte-identical eight-line loops, each under
    its own comment explaining continuation markers and where the window
-   comes from — and two more of the same loop live outside that package,
-   one of them (`apps/scene`'s `containsRow`) still building its row from
-   `At(x, y).Rune`, which is the defect `RowText` exists to remove and
-   the one the sweep's grep cannot see. `BufferText` sits beside
+   comes from — and ONE more lives outside it, `apps/scene`'s
+   `containsRow`, still building its row from `At(x, y).Rune`, which is
+   the defect `RowText` exists to remove and the one the sweep's grep
+   cannot see. This said TWO, counting `apps/wysiwyg`'s `onScreen`, and
+   that was wrong on inspection: `onScreen` already reads through
+   `RowText` and is a row SEARCH returning a bool rather than a dump.
+   The other whole-plane walk in that file is not a readback at all —
+   it inspects every cell for a control character and must keep seeing
+   `render.Continuation`, so converting it would destroy what it checks.
+   A count of copies is the kind of claim this document keeps having to
+   correct; the discriminating question is whether a loop is BUILDING A
+   STRING FROM `Rune`, not whether it walks the plane. `BufferText` sits beside
    `RowText`, and the remaining directories of
    [#516](https://github.com/WonderForgeLabs/gooey/issues/516) have a name
    to call rather than a loop to copy. Its trailing newline is on every

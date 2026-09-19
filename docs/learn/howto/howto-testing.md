@@ -23,10 +23,13 @@ import (
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
-// lineAt reads w cells from (x, y) as a string — the assertion
-// primitive. x before y, the order Buffer.At and SpanText both take.
-func lineAt(f *gooey.Frame, x, y, w int) string {
-	return strings.TrimRight(render.SpanText(f.Cells, x, y, w), " ")
+// lineAt reads row y as a string — the assertion primitive. RowText and
+// not SpanText, because the claims below are about a whole ROW: a span
+// with a literal width is a second fixture dimension nothing declares,
+// and when the assertion is later negated ("the row does NOT contain
+// X") the blanks past the window make it pass for free.
+func lineAt(f *gooey.Frame, y int) string {
+	return strings.TrimRight(render.RowText(f.Cells, y), " ")
 }
 
 func TestRendersAndDamages(t *testing.T) {
@@ -40,7 +43,7 @@ func TestRendersAndDamages(t *testing.T) {
 
 	comp := gooey.NewComposer(tree, 40, 4)
 	f, painted := comp.Frame()
-	if got := lineAt(f, 0, 0, 20); got != "hello, world" {
+	if got := lineAt(f, 0); got != "hello, world" {
 		t.Fatalf("row 0 = %q", got)
 	}
 	if painted != 3 { // the stack and both texts
@@ -49,7 +52,7 @@ func TestRendersAndDamages(t *testing.T) {
 
 	name.Set("gooey")
 	f, painted = comp.Frame()
-	if got := lineAt(f, 0, 0, 20); got != "hello, gooey" {
+	if got := lineAt(f, 0); got != "hello, gooey" {
 		t.Fatalf("after Set, row 0 = %q", got)
 	}
 	if painted != 1 { // only the bound Text
@@ -74,9 +77,12 @@ asserting this way:
   packages' row helpers had that bug at once, which is what
   [#358](https://github.com/WonderForgeLabs/gooey/issues/358) found and
   [#516](https://github.com/WonderForgeLabs/gooey/issues/516) is
-  finishing. `lineAt` above is a thin wrapper over `SpanText` rather than
-  a loop for that reason, and it takes **x before y**, the order
-  `Buffer.At` and `SpanText` both use.
+  finishing. `lineAt` above is a thin wrapper over one of the three
+  rather than a loop for that reason. It wraps `RowText`, because what
+  it asserts is a whole row — reach for `SpanText` only when the claim
+  really is about a REGION, and then the width is a decision worth a
+  sentence rather than a literal. `SpanText` takes **x before y**, the
+  order `Buffer.At` uses.
 - **Damage counts** — the `painted` return. Treat these as contract
   tests: if a one-property change starts repainting the page, that is a
   regression, not an implementation detail.

@@ -205,14 +205,12 @@ func RowText(b *Buffer, y int) string {
 // BufferText is every row of b, newline-terminated — the whole screen as
 // a terminal would show it.
 //
-// IT EXISTS BECAUSE THE SAME EIGHT LINES KEPT BEING WRITTEN. Three test
-// files in `components` alone held byte-identical copies of this loop
-// after #516 removed their width parameters, each under its own comment
-// explaining the same two things, and two more live outside that package
-// — apps/wysiwyg's onScreen and apps/scene's containsRow, the second of
-// them still building a row with `At(x, y).Rune` and so unable to hold a
-// wide glyph at all. A whole-BUFFER read is as common as a whole-ROW
-// read and had no name, so every caller invented one.
+// It exists because a whole-BUFFER read is as common as a whole-ROW one
+// and had no name, so every caller wrote the loop
+// ([#516](https://github.com/WonderForgeLabs/gooey/issues/516)); the
+// account is in docs/specs/2026-08-27-display-width.md rather than here,
+// because this comment is what a consumer reads on pkg.go.dev and that
+// is a place for the contract.
 //
 // The trailing newline is on EVERY row including the last, so a
 // three-row buffer and the first three rows of a four-row one do not
