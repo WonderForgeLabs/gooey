@@ -164,11 +164,9 @@ func TestTheRealFailureReasonSurvivesTheReservedWidth(t *testing.T) {
 	}
 	f, _ := c.Frame()
 	nb := ed.addrs.notice.Bounds()
-	var painted strings.Builder
-	for x := nb.X; x < nb.X+nb.W; x++ {
-		painted.WriteRune(f.Cells.At(x, nb.Y).Rune)
-	}
-	if got := strings.TrimRight(painted.String(), " "); got != msg {
+	// The notice is painted into a reserved span wider than the message,
+	// so the blanks after it are the reservation, not the notice.
+	if got := strings.TrimRight(rowText(f, nb.Y, nb.X, nb.W), " "); got != msg {
 		t.Errorf("the notice painted %q for the message %q — the reserved %d cells do "+
 			"not hold the failure this app actually produces, so the ellipsis lands "+
 			"where the reason starts", got, msg, copyNoticeWidth)
