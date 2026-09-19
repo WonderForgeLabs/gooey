@@ -288,8 +288,8 @@ superseded does not:
    one consumer, every other consumer retells it in its own comments and
    the copies drift apart — six of them in `menucheck_test.go` went on
    naming `menuRows` after it was deleted. `components/readback_test.go`
-   holds them all now (`rowText`, `row`, `frameText`, `screen`, and the
-   `rowMatch`/`matchRows`/`onlyMatch` row search), with the
+   now holds one of each — the readers it declares ARE the inventory, so
+   that adding one does not falsify a list written elsewhere — with the
    continuation-marker reasoning stated once at the top, so the next
    directory of the sweep copies a file rather than a loop.
 

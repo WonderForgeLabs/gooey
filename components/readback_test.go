@@ -20,8 +20,9 @@ import (
 // through render.SpanText, render.RowText or render.BufferText, which do
 // not write it.
 //
-// THE WINDOW COMES FROM WHAT WAS PAINTED — for frameText and screen,
-// which is the pair this paragraph is about. Each took its extent as
+// THE WINDOW COMES FROM WHAT WAS PAINTED — for every reader below whose
+// extent is the FRAME's rather than a caller's, which is what this
+// paragraph is about. Each took its extent as
 // parameters, written down beside a composer that had already said the
 // same numbers — and a read wider than the buffer is phantom blanks
 // rather than an error (render.SpanText's own doc says so), so widening
@@ -47,11 +48,16 @@ import (
 // many test files, and each lived in the first file that happened to
 // want it — under a doc block about dropdowns, or about a colour picker,
 // or about the Composer — so the explanation was retold in each
-// consumer's comments and the copies went stale independently. FOUR
-// readers, distinguished by what they read rather than by who asked: a
-// region of a row, a whole row of a buffer, a whole frame, a whole
-// composition. Plus the one row search every positional assertion in
-// this package needs.
+// consumer's comments and the copies went stale independently. The
+// readers below are distinguished by what they read rather than by who
+// asked — a region of a row, a whole row of a buffer, a whole frame as
+// text, a whole frame as rows, a whole composition — plus the one row
+// search every positional assertion in this package needs.
+//
+// NO COUNT HERE, and that is the point rather than terseness: the
+// sentence said FOUR and listed four, and the first reader added after
+// it made both wrong at once with nothing to go red. The declarations
+// are the inventory.
 //
 // `row` was the last one out, and it was the one with the most call
 // sites — which is the shape to distrust: the helper everyone uses is
@@ -120,7 +126,17 @@ func frameText(f *gooey.Frame) string { return render.BufferText(f.Cells) }
 //
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
 func frameRows(f *gooey.Frame) []string {
-	return strings.Split(strings.TrimSuffix(frameText(f), "\n"), "\n")
+	// ZERO ROWS IS NIL, NOT ONE EMPTY ROW, and without this line the
+	// helper returned the very off-by-one its doc above says it removes:
+	// frameText is "" for a frame of no rows — and for one whose Cells
+	// is nil, by render.BufferText's stated contract — TrimSuffix leaves
+	// "", and strings.Split("", "\n") is ONE element. len(rows) then
+	// answers 1 for a height of 0.
+	text := frameText(f)
+	if text == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 }
 
 // screen is the composition as a terminal would show it.
@@ -199,16 +215,40 @@ func onlyMatch(t *testing.T, rows []string, needle, ifNone string) rowMatch {
 // paragraph on frameRows is a statement about this package rather than
 // about render.BufferText's contract in the abstract.
 func TestFrameRowsIsTheFrameHeight(t *testing.T) {
-	f := &gooey.Frame{Cells: render.NewBuffer(6, 4)}
-	if got, want := len(frameRows(f)), f.Cells.H; got != want {
-		t.Errorf("frameRows returned %d rows for a %d-row frame, want %d — a "+
-			"caller reading len() as the frame height is off by the phantom "+
-			"element BufferText's trailing newline leaves", got, want, want)
+	// A TABLE OF HEIGHTS, because one fixture pins the contract at the
+	// one height where it was never in doubt. The claim is len(rows) ==
+	// H for every H, and it was false at H == 0 — where TrimSuffix has
+	// nothing to trim and Split answers one element for no rows — while
+	// a single 6x4 fixture reported green. Zero is the row that needed
+	// the guard; one is the row where the trailing newline is the whole
+	// of the string; four is the ordinary case.
+	for _, h := range []int{0, 1, 4} {
+		f := &gooey.Frame{Cells: render.NewBuffer(6, h)}
+		if got := len(frameRows(f)); got != h {
+			t.Errorf("frameRows returned %d rows for a %d-row frame, want %d — a "+
+				"caller reading len() as the frame height is off by the phantom "+
+				"element BufferText's trailing newline leaves", got, h, h)
+		}
+		if h == 0 {
+			// THE A/B BELOW DOES NOT APPLY AT ZERO. frameText is "" for
+			// a frame of no rows, so Split gives one element and h+1 is
+			// also one — the two agree for the wrong reason, and
+			// asserting it would pin the bug rather than the contract.
+			continue
+		}
+		if got, want := len(strings.Split(frameText(f), "\n")), h+1; got != want {
+			t.Fatalf("splitting frameText gave %d elements for a %d-row frame, want "+
+				"%d — if this is no longer height+1 then BufferText stopped "+
+				"terminating the last row and frameRows' TrimSuffix is now wrong",
+				got, h, want)
+		}
 	}
-	if got, want := len(strings.Split(frameText(f), "\n")), f.Cells.H+1; got != want {
-		t.Fatalf("splitting frameText gave %d elements for a %d-row frame, want "+
-			"%d — if this is no longer height+1 then BufferText stopped "+
-			"terminating the last row and frameRows' TrimSuffix is now wrong",
-			got, f.Cells.H, want)
+	// A NIL Cells IS THE SAME ROW OF THE TABLE reached another way:
+	// render.BufferText answers nil with "" by its stated contract, so
+	// this is the H == 0 case without a buffer to declare it.
+	if got := len(frameRows(&gooey.Frame{})); got != 0 {
+		t.Errorf("frameRows returned %d rows for a frame with no Cells, want 0 — "+
+			"BufferText answers a nil buffer with the empty string, which is "+
+			"the same shape as a zero-row frame", got)
 	}
 }
