@@ -147,6 +147,27 @@ type Context struct {
 	// declared properties without reflection: the declarations are the
 	// only property schema a markup-built component has.
 	//
+	// PAGE-WIDE STOPS AT AN ITEM-TEMPLATE ROW, and that is a narrowing
+	// of the sentence above rather than an oversight. A row context is
+	// built per realization and never unregisters, and nothing sweeps
+	// retired rows — so sharing this map with rows meant a scrolling list
+	// over a declaring template added one permanent entry, and kept one
+	// dead row subtree reachable, per row ever shown. markup/itemsview.go
+	// therefore leaves it unset and control() gives each row its own.
+	//
+	// The cost is real and belongs here rather than only in a test table:
+	// a control instantiated inside an <ItemsView.ItemTemplate> is not in
+	// the page registry, so control/snapshot.go finds no declared surface
+	// for it and the MCP tree snapshot reports none. Page-wide visibility
+	// of a row's declared surface is a goal worth having; it cannot be
+	// bought with unbounded retention, and what it needs first is a
+	// retirement seam, which is issue #512. This is the one full
+	// statement of that gap: the two other sites that used to restate it
+	// (markup/itemsview.go's Declared bullet and the rowPartition row in
+	// markup/boundaryfields_test.go) now point here and cite the issue,
+	// so closing it retires the note rather than leaving three copies to
+	// find. Raised in review of #490.
+	//
 	// Created on demand at the first control instantiation; nil until
 	// then. Rebuilding a page should reset it the way Named is reset —
 	// Page.Build and Watch do — or stale instances accumulate.
@@ -160,8 +181,28 @@ type Context struct {
 	// required by documents that use handler namespaces
 	// ({{net:Get …}}) and unused by everything else.
 	Dispatcher *gooey.Dispatcher
-	// Dir is the OS directory this document's HOST-SIDE paths resolve
-	// against: a <Companion>'s working directory and its log file. Set it
+	// Dir is the OS directory the PAGE's HOST-SIDE paths resolve
+	// against: a <Companion>'s working directory and its log file.
+	//
+	// A control INHERITS IT WHEN IT LEAVES IT EMPTY, which is the same
+	// rule every other inheriting field follows. A setup returning a
+	// Context with its own Dir keeps that one. This said "the page's, at
+	// every depth", which reads as unconditional and is the one thing it
+	// is not; corrected in review of #490, which is also where the
+	// preceding "this document's" was corrected for leaving WHICH
+	// document ambiguous exactly where the answer stops being obvious.
+	//
+	// EMPTY, NOT NIL. The condition the loader tests is `child.Dir == ""`
+	// (usercontrol.go) and Dir is a string — it is never nil. Three doc
+	// sites and a guard said "nil" in chorus, and the guard REQUIRED the
+	// word, so an author correcting the wording to the accurate one
+	// turned a test red for being right. Raised in review of #490.
+	//
+	// fsys is replaced while Dir is inherited, so for
+	// UserControl(otherFS, …) the two deliberately disagree: markup
+	// comes from the control's FS, host-side paths stay anchored to the
+	// app's directory. Inheriting is what this branch changed it to,
+	// from the process working directory it fell back to before. Set it
 	// to the same directory the page's fs.FS was rooted at —
 	//
 	//	app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))
@@ -235,8 +276,56 @@ type Context struct {
 	// Ancestry, not history, is what makes sibling reuse legal: two
 	// <Card/> elements side by side each extend their own copy, so
 	// neither sees the other.
+	//
+	// A ROW SEAM RESETS IT, and rowDepth below is what replaces it
+	// there. See MaxTemplateDepth.
 	controls []string
+	// rowDepth is how many <ItemsView.ItemTemplate> seams the build
+	// currently being performed has crossed. It is what bounds a
+	// recursive template, because `controls` cannot: see
+	// MaxTemplateDepth.
+	rowDepth int
 }
+
+// MaxTemplateDepth is how many <ItemsView.ItemTemplate> seams one load
+// may descend through before the loader refuses.
+//
+// A ROW IS A LEGITIMATE RE-ENTRY, which is what distinguishes this from
+// the control cycle check (usercontrol.go). `<Card/>` inside card.gooey
+// never terminates: the ancestry alone proves it, because nothing about
+// the data can stop it. A template that instantiates its own control is
+// the tree-view shape — node.gooey showing a label and an <ItemsView>
+// over the node's children, each child rendered by <Node/> — and it
+// terminates for every source that is not self-supplying, because
+// ItemsView.Validate realizes a probe row only for a NON-EMPTY
+// collection. Identity cannot tell the two apart; it refuses both.
+//
+// It refused both for one round of #490, which is how this constant
+// came to exist: inheriting the ancestry across the row seam fixed a
+// self-supplying source that overflowed the stack at load, and turned
+// a finite two-level tree into
+//
+//	markup: <ItemsView.ItemTemplate>: markup: control node.gooey
+//	includes itself: node.gooey → node.gooey
+//
+// with the message's final clause — "instantiating it never
+// terminates" — false at this seam. Raised in review of #490.
+//
+// SO THE ROW SEAM COUNTS INSTEAD, the way MeasureChild and ArrangeChild
+// bound ChildComponents against gooey.MaxLayoutDepth rather than trying
+// to recognise a cycle. A self-supplying source still fails at LOAD,
+// with a message naming the template, rather than killing the process
+// with `fatal error: stack overflow` — which skips Screen.Restore and
+// leaves the terminal in raw mode.
+//
+// 64 because each level is a whole control instantiation whose probe
+// row descends one more: a data-driven tree this deep along its first
+// item is a data fault, and the deepest this repo has ever loaded is 2.
+// It is not gooey.MaxLayoutDepth (512) because these are different
+// quantities — that one bounds a visual tree walked per frame, this one
+// bounds nested document loads — and reusing the number would make a
+// change to either look safe for both.
+const MaxTemplateDepth = 64
 
 // document is one parsed markup file: its namespace table, the
 // dependency properties its root declares, and the single visual child

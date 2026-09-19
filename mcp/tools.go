@@ -51,12 +51,24 @@ type Tool struct {
 	Run func(a args) (any, error)
 }
 
-// v1Tools is the tool inventory. Read: tree_snapshot, screen_text,
-// list_values, list_styles. Act: invoke_command, set_value, send_keys,
-// send_mouse, focus. Grow and shrink the viewmodel: register_properties
-// (#89), unregister_properties.
-// Mutate structure: swap_markup (optionally registering first),
-// patch_markup. Check: validate_markup.
+// v1Tools is the tool inventory. Read: `tree_snapshot`, `screen_size`,
+// `screen_text`, `list_values`, `list_styles`. Act: `invoke_command`,
+// `set_value`, `send_keys`, `send_mouse`, `focus`. Grow and shrink the
+// viewmodel: `register_properties` (#89), `unregister_properties`.
+// Mutate structure: `swap_markup` (optionally registering first),
+// `patch_markup`. Check: `validate_markup`.
+//
+// The names are in backticks because TestTheToolInventoryCommentNamesEveryTool
+// reads this paragraph. It is one of a family of guards over the places
+// this repo writes the tool list down in prose — tutorials, specs, the
+// gRPC contract table, the server instructions string, the agent
+// workflow blobs — and the one none of those could reach, because this
+// list sits in a Go comment directly above the slice it describes, which
+// is the copy a maintainer reads first. HOW MANY SUCH INVENTORIES THERE
+// ARE is deliberately not written: a count in prose is a sample taken
+// once, assertNamesEveryTool one file over deleted its denominator for
+// that reason, and this is the comment whose own guard exists because
+// hand-maintained prose goes stale silently. Raised in review of #504.
 //
 // Every body is a thin adapter (issue #112): parse the MCP arguments,
 // call the shared control.Service, render the result exactly as this
@@ -78,6 +90,21 @@ func (s *Server) v1Tools() []*Tool {
 			}),
 			OutputSchema: treeSnapshotSchema(),
 			Run:          s.treeSnapshot,
+		},
+		{
+			Name: "screen_size",
+			Description: "The size of the visible surface in cells, its absolute origin on the " +
+				"screen, and the terminal's cell metrics in pixels. A session scoped to an island " +
+				"is told the island's size, because the island is its whole screen — but send_mouse " +
+				"takes ABSOLUTE screen cells, so add x/y to a position read off screen_text, which is " +
+				"homed at (0,0). Bounds from tree_snapshot are already absolute — converting those " +
+				"twice is the same error one source over. That fixes the coordinate space, not the " +
+				"outcome. x/y are 0 for an unscoped session and ALSO for one scoped to an island " +
+				"arranged at the screen origin, so they do not tell the two apart; which surface " +
+				"this is, the contract answers and the numbers do not. " +
+				"Cell metrics: " + cellProbeRule,
+			OutputSchema: screenSizeSchema(),
+			Run:          s.screenSize,
 		},
 		{
 			Name: "screen_text",
@@ -154,12 +181,13 @@ func (s *Server) v1Tools() []*Tool {
 			Run: s.sendKeys,
 		},
 		{
-			Name:        "send_mouse",
-			Description: "Inject a pointer event at a cell coordinate. Hit-testing, hover and focus-follows-click all happen as they would from a real terminal.",
+			Name: "send_mouse",
+			Description: "Inject a pointer event at a cell coordinate. Hit-testing, hover and focus-follows-click all happen as they would from a real terminal. " +
+				"Coordinates are ABSOLUTE screen cells; a scoped session converts a position read off screen_text by adding screen_size's x and y.",
 			Schema: object(map[string]any{
 				"kind":   enum_("What the pointer did.", "click", "press", "release", "move", "wheelup", "wheeldown"),
-				"x":      prop_("integer", "Column, 0-based."),
-				"y":      prop_("integer", "Row, 0-based."),
+				"x":      prop_("integer", "Column"+fmt.Sprintf(pointerFrameRule, "x")),
+				"y":      prop_("integer", "Row"+fmt.Sprintf(pointerFrameRule, "y")),
 				"button": enum_("Which button; default left.", "left", "middle", "right", "none"),
 			}, "kind", "x", "y"),
 			Run: s.sendMouse,
@@ -266,6 +294,22 @@ func (s *Server) treeSnapshot(a args) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"tree": renderNode(n)}, nil
+}
+
+// screenSize is the adapter for control.Service.ScreenSize. The Go struct
+// is not sent directly because the wire names are camelCase — the
+// convention this surface already uses in `goType` and
+// `childrenElided`, checked against schemas.go rather than assumed.
+func (s *Server) screenSize(args) (any, error) {
+	sz, err := s.svc.ScreenSize()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"cols": sz.Cols, "rows": sz.Rows,
+		"x": sz.X, "y": sz.Y,
+		"cellWidth": sz.CellW, "cellHeight": sz.CellH,
+	}, nil
 }
 
 func (s *Server) screenText(a args) (any, error) {

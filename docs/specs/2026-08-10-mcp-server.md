@@ -35,6 +35,33 @@ Read:
   Container/Attacher: type names, Name= identities, bounds, layout,
   visibility, focus/hover flags. Type-switch serialization; no
   reflection.
+- `screen_size` — the visible surface in cells (`cols`, `rows`), its
+  absolute origin (`x`, `y`), plus the terminal's cell metrics in pixels
+  ([#204](https://github.com/WonderForgeLabs/gooey/issues/204)). A scoped
+  session is told its island's size, the same fiction `screen_text`
+  maintains by cropping — and the origin is what keeps that fiction
+  actionable, because `send_mouse` takes ABSOLUTE screen cells and refuses
+  anything outside the island. The size alone would hand a guest
+  coordinates its own pointer call rejects.
+
+  Two limits stated rather than implied. The cell metrics are `0` only
+  where the host is CERTAINLY unmeasured, and the converse does not hold
+  — `0` means nobody probed, non-zero means *usable*, not *measured*.
+  Two sites substitute `term.DefaultCellW/H` behind a client's back:
+  `term.Screen.Detect` does it on `caps.CellW == 0` with no plane test
+  at all, so even a cell-plane app run with the probe in a terminal that
+  ignores `CSI 16 t` reports 10x20; and `App.caps` does it for a
+  pixel-plane host with a pinned encoder that never probed. A client
+  must branch on the zero rather than divide by the number, and must not
+  read a non-zero as evidence the terminal was measured — sizing a
+  picture against an invented 10x20 is the habit this tool exists to
+  replace. `mcp.cellProbeRule` is the one spelling of that sentence the
+  clients receive, and it states both directions; this bullet used to
+  state only "never probed ⇒ 0", which is the direction that is false. And **#204 is closed on the MCP
+  surface only** — `control.Service.ScreenSize` is where both transports
+  could call it, but `grpc/controlserver.go` has a `ScreenText` RPC and no
+  size verb, so a gRPC client still infers the screen. Adding it is a
+  proto change and its own decision.
 - `screen_text` — the current cell buffer as plain text (+ an option
   for styled/SGR form): the "screenshot".
 - `list_values` — the markup Context's value names and kinds
@@ -404,3 +431,83 @@ batch both roll back atomically and the names re-register cleanly;
 standalone register then a plain later swap binds; duplicate/bad-type/
 bad-value wordings; structured round-trip; tools/list surface) plus the
 e2e pty test growing the live app's viewmodel over the wire.
+
+## `screen_size`: five claims measurement retired
+
+`control.Service.ScreenSize`'s godoc carried the account of each of these
+inline. It grew to 113 lines of `go doc` output, most of it narrative about
+what the comment used to say — and `go doc` is the API reference a package
+consumer reads, not a place to look for why a sentence was retired. The
+contract stayed there; the history is here.
+
+Each entry is a claim that was written down, believed, and then falsified by
+running something. They are recorded rather than deleted because four of the
+five are the *plausible* reading — a reader who re-derives them from the same
+starting point will write them again.
+
+- **"The root-bounds inference equals the terminal only while the root happens
+  to fill it — give the root a margin, a fixed `Width` or a non-stretch
+  alignment."** Issue #204 said this and so did an earlier draft of the tool's
+  justification. It is false. `Composer.Frame` arranges the root with
+  `Arrange(Rect{0, 0, c.cols, c.rows})` and `Base.Arrange` stores what it is
+  handed, so the root reports the screen whatever it declares; margin, size and
+  alignment are applied by `MeasureChild`/`ArrangeChild`, the sandwich the root
+  — being nobody's child — never passes through. Measured with a root declaring
+  `Margin`, `Width`, `Height`, `HAlign` and `VAlign` together: it reported the
+  full terminal. `mcp.TestTheRootAlwaysFillsTheScreen` pins it, so the
+  *replacement* claim fails rather than rots if the root ever starts honouring
+  its own size. The reason the tool survives is the contract — the result IS
+  this session's visible surface whatever its scope — not a disagreement about
+  numbers.
+
+- **"x/y supply the knowledge that the root you read was the island rather than
+  the screen."** A claim about the payload the payload does not support. There
+  are six fields and no scope flag, and `(0,0)` is what an unscoped session
+  reports *and* what a session scoped to an island arranged at the origin
+  reports — `mcpIslandMarkup` is exactly that fixture, which is why
+  `islandOffOriginMarkup` had to be added before the origin could be tested at
+  all.
+
+- **"A scoped session told the terminal's size gets silence rather than an
+  error."** The same comment said thirteen lines down that `mayPoint` refuses
+  anything landing outside the island, and a reader who took the first would
+  conclude out-of-island clicks fail open. `mayPoint` (`control/input.go`)
+  denies both arms — outside the terminal because nothing would receive it, and
+  inside the terminal but outside the island because the target is not in
+  `islandSet`. Silence *is* what an **unscoped** session gets, since `mayPoint`
+  returns nil with no grant and the event dispatches to nothing; the sentence
+  was true of the session the paragraph was not about.
+
+- **"An ordinary cell-plane app reports 0/0 for the cell metrics."** True only
+  while the probe is off. There are **two** substitution sites and this named
+  the second: `term.Screen.Detect` substitutes `DefaultCellW/H` on
+  `caps.CellW == 0` alone, with no plane test at all, so a probed cell-plane app
+  in a terminal that ignores `CSI 16 t` reports 10x20; `App.caps`' backfill
+  (`c.CellW <= 0 && a.pixelPlane(c)`) can only fire where the first did not.
+  The surviving rule runs the other way and is the one the clients receive in
+  `mcp.cellProbeRule`: **0 means certainly unmeasured; non-zero means usable,
+  not measured.**
+
+- **`SendMouse` is the MCP tool name, not the Go method.** The Go method is
+  `control.Service.SendPointer`. The type's method doc had it right while the
+  struct field doc — the half `go doc control.ScreenSize` prints, and the half a
+  Go caller meets first — did not. The same paragraph also named `SendKeys` as
+  an API the origin must be converted for; `SendKeys` takes no coordinates.
+
+The general shape, which is why this section exists rather than a line in a
+changelog: **four of the five were corrections to a justification, not to
+behaviour.** The tool did the right thing throughout. What kept being wrong was
+the sentence explaining why — and a wrong justification is what gets a correct
+mechanism removed by the next person simplifying it.
+
+A sixth correction belongs with them without being one of them, because it is
+the same failure one layer down and not a claim anybody believed. `App.caps`'
+doc cited `term/term.go:291` for `term.Screen.Detect`'s `caps.CellW == 0`
+substitution — the first of the two sites the fourth entry above is about. By
+the time #504 read it, line 291 had become the middle of `DecoderDone`'s doc
+comment, so a reader checking the cell-metrics rule landed on the decoder
+tripwire with nothing to tell them they were in the wrong place. A line number
+in prose rots silently and nothing can see it go: the three other surfaces
+carrying this rule (`mcp.cellProbeRule`, `control.ScreenSize`'s doc,
+`docs/learn/08-remote-control.md`) all cite by name, and `App.caps` now does
+too.

@@ -1114,8 +1114,8 @@ func TestNoSweepProbeDependsOnAnInstalledBinary(t *testing.T) {
 // Binds: Click="x" needs a registered handler, Allow="x" is not one of
 // the categories. Those are harness limits. The one failure that means
 // "the declaration is wrong" is Bound[T]'s — `%q is not a binding
-// expression` (usercontrol.go:372) — which fires exactly when the loader
-// demanded a handle where the catalog promised a literal.
+// expression`, from Context.BindingValue — which fires exactly when the
+// loader demanded a handle where the catalog promised a literal.
 //
 // NO PRE-FILTER. An earlier version built each element with the
 // attribute OMITTED first and skipped it when that failed, to exclude
@@ -1222,6 +1222,116 @@ func TestEveryNarrowedLiteralIsReached(t *testing.T) {
 		t.Errorf("no narrowed row was reached through sweepTargets, so the "+
 			"counterfactual above ran on nothing (%d rows declared)",
 			len(narrowerThanItsKind))
+	}
+}
+
+// TestEveryPrereqRowIsReached is the guard probePrereqs needs, and it
+// asks both halves TestEveryNarrowedLiteralIsReached asks, for the same
+// reasons.
+//
+// A table that only ever ADDS attributes to a probe cannot fail loudly:
+// every row makes some probe load, and a row that has stopped mattering
+// makes it load just the same. So neither half is optional.
+//
+// The first half is that the row still names something real. A key
+// whose element or attribute the vocabulary no longer declares pairs
+// nothing, and probeElement's own t.Fatalf cannot say so — it fires only
+// when a probe for that exact key runs, which is precisely what stops
+// happening when the declaration goes away.
+//
+// The second half is the counterfactual, and it is the one with teeth: a
+// row whose prerequisite has stopped being required — the element's
+// guards were reordered, or the requirement moved into the declaration
+// where probeElement's own def.Attrs loop would find it — reads
+// identically to a row that is still load-bearing. probeElementBare is
+// the only thing that can put the question, and the answer has to be
+// that the bare probe FAILS.
+func TestEveryPrereqRowIsReached(t *testing.T) {
+	declared := map[string]sweepTarget{}
+	for _, tg := range sweepTargets(t) {
+		declared[tg.def.Name+"."+tg.attr.Name] = tg
+	}
+	if len(declared) == 0 {
+		t.Fatal("no declarations found: this guard would pass vacuously")
+	}
+	checked := 0
+	for key, seeds := range probePrereqs {
+		tg, ok := declared[key]
+		if !ok {
+			t.Errorf("probePrereqs has a row for %s, which no element declares as "+
+				"a sweepable attribute any more", key)
+			continue
+		}
+		// The value the row exists to let through. literalFor is what
+		// the bind-only arm probes with, and it is the arm the table was
+		// added for; a row added for a different arm would need its own
+		// case here rather than a wider net.
+		// NOT A SKIP, because literalFor cannot return "" — every path
+		// falls through to "x", including KindEnum with an empty Enum.
+		// This was a `continue`, which reads as a coverage limit and is
+		// really a dead branch: the day literalFor gains an empty return,
+		// the row would drop out of this guard with nothing said, which
+		// is the silent skip everything else in this file routes through
+		// offHarness to prevent. Raised in review of #490.
+		value := literalFor(tg.attr)
+		if value == "" {
+			// THE probePrereqs KEY, not the attribute's bare Name. This
+			// map is keyed Element.Attr, so a reader told row "Key"
+			// cannot find the entry — it is "TypeAhead.Key". Nobody had
+			// read the message because the branch above it argues it
+			// cannot fire today, which is exactly why it has to name what
+			// it will need to name on the day it does. Raised in review
+			// of #490.
+			t.Errorf("literalFor has no literal for %s, so row %q cannot be "+
+				"probed and is unreached — give it one rather than letting the "+
+				"row leave the guard quietly", tg.attr.Kind, key)
+			continue
+		}
+		checked++
+		// THE CONTROL, and without it this row scores vacuously. The
+		// assertion below is "the BARE probe must fail", which also holds
+		// when the probe fails for a reason the prereqs have nothing to
+		// do with — and then the row reads as load-bearing forever, which
+		// is the silent pass this test was written to remove.
+		//
+		// "THE SEEDED PROBE MUST BUILD" IS THE WRONG CONTROL, and
+		// measuring it is what said so: four rows fail it —
+		// MenuItem.Checked, .Command, .Icon and Frozen.AllowError — not
+		// because the harness cannot host them but because the sweep's
+		// whole subject is attributes that REJECT a literal. The seeded
+		// probe is supposed to fail there.
+		//
+		// So the control is the DIFFERENCE. If seeding the prereqs
+		// changes nothing about how the probe fails, the row is not what
+		// makes it build and the assertion below is measuring something
+		// else. Raised in review of #490, whose suggested one-liner this
+		// replaces for the reason above.
+		seeded := harnessFor(tg.attr.Name, probeElementSeeded(t, tg.def, tg.attr.Name, value, true))
+		_, seededErr := Build([]byte("<Gooey>"+seeded+"</Gooey>"), defaultsContext())
+		bare := harnessFor(tg.attr.Name, probeElementBare(t, tg.def, tg.attr.Name, value))
+		_, bareErr := Build([]byte("<Gooey>"+bare+"</Gooey>"), defaultsContext())
+		if seededErr != nil && bareErr != nil && seededErr.Error() == bareErr.Error() {
+			t.Errorf("probePrereqs seeds %v for %s, and the probe fails IDENTICALLY "+
+				"with and without them:\n\t%v\n"+
+				"So the row changes nothing about this probe and the assertion "+
+				"below is passing on a failure the prereqs did not cause",
+				seeds, key, bareErr)
+			continue
+		}
+		if err := bareErr; err == nil {
+			t.Errorf("probePrereqs seeds %v for %s on the grounds that the probe "+
+				"cannot be built without them — and the bare probe <%s %s=%q> loads. "+
+				"The row seeds nothing the element still needs and should go",
+				seeds, key, tg.def.Name, tg.attr.Name, value)
+		}
+	}
+	// NON-VACUITY, the same floor the narrowing guard carries: a
+	// sweepTargets that stopped producing these attributes would skip
+	// every row and report nothing.
+	if checked == 0 {
+		t.Errorf("no probePrereqs row was reached through sweepTargets, so the "+
+			"counterfactual above ran on nothing (%d rows declared)",
+			len(probePrereqs))
 	}
 }
 
