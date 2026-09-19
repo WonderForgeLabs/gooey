@@ -521,7 +521,22 @@ buffer is `render.BufferText(b)`, every row newline-terminated, because a
 dump of the screen is as common a thing to want as a row and every caller
 that needed one wrote the loop out instead.
 
-**Never hand-roll any of the three.** To pin one of these,
+**Never hand-roll any of the three** — and read that as the target
+state, not as a description of the tree. It is not true today:
+[#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the open
+sweep, `apps/scene`'s `containsRow` still builds a row from
+`At(x, y).Rune` and so cannot hold a wide glyph at all, and nothing in
+the root suite reddens when a new one appears. That is the same silent
+shape this paragraph opens by describing, which is why the rule is
+written with its exception rather than as an absolute: an unqualified
+"never" here would be a hand-maintained claim of exactly the kind the
+Verify section refuses, and a reader would conclude the tree already
+obeys it. The enforcing guard has to key on the LOOP SHAPE — a
+per-column read of `Cell.Rune` accumulated into a string — because a
+symbol grep provably misses both directions: the
+`append(…, At(x, y).Rune)` spelling, and a loop that already calls
+`RowText`. It belongs with #516's last directory; until then this
+sentence expires with the issue. To pin one of these,
 use two strings of the same COLUMN width and different rune counts
 (`"世界"` against `"abcd"`) and assert they measure alike; an ASCII
 fixture agrees with itself under either rule and passes against the bug.
