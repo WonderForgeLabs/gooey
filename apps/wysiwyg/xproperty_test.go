@@ -391,8 +391,36 @@ func TestTheRootCountRefusalSaysWhatItCounted(t *testing.T) {
 				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="A" Type="string"/>` + "\n" +
 				`  <q:Property xmlns:q="` + markup.XNamespace + `" Name="B" Type="string"/>` + "\n" +
 				`</Gooey>` + "\n",
+			want: []string{"found 0", "<p:Property>", "<q:Property>", "are not root elements"},
+			not:  []string{"<x:Property>", "2 <p:Property>", "2 <q:Property>"},
+		},
+		{
+			// THE MIXED CASE ASSERTED AS A COUNT, which is the half the
+			// arm above could not state while it expected decls[0]'s
+			// spelling for both. The file holds one <p:Property> and
+			// one <q:Property>; "2 <p:Property> declarations" is a
+			// count of elements it does not contain, and it was the
+			// expectation here for two rounds. Raised in review of
+			// #522.
+			name: "three declarations, two of them sharing a binding",
+			doc: `<Gooey xmlns:p="` + markup.XNamespace + `">` + "\n" +
+				`  <p:Property Name="A" Type="string"/>` + "\n" +
+				`  <p:Property Name="B" Type="string"/>` + "\n" +
+				`  <q:Property xmlns:q="` + markup.XNamespace + `" Name="C" Type="string"/>` + "\n" +
+				`</Gooey>` + "\n",
+			want: []string{"found 0", "its 3 declarations", "<p:Property>, <p:Property>, <q:Property>"},
+			not:  []string{"3 <p:Property>", "<x:Property>"},
+		},
+		{
+			// AND THE AGREEING CASE KEEPS THE OLD WORDING, so the list
+			// form is reached only where a single spelling would lie.
+			name: "two declarations sharing one binding on the elements",
+			doc: `<Gooey>` + "\n" +
+				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="A" Type="string"/>` + "\n" +
+				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="B" Type="string"/>` + "\n" +
+				`</Gooey>` + "\n",
 			want: []string{"found 0", "its 2 <p:Property> declarations are not root elements"},
-			not:  []string{"<x:Property>", "<Property>"},
+			not:  []string{"declarations —", "<x:Property>"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
