@@ -283,9 +283,25 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 			// them would make this guard cry wolf on every historical
 			// design note until someone did.
 			//
-			// The negation arm above needs no such exemption, because a
-			// spec saying a host "does not lift" would still be wrong
-			// about its own date — the marker predates none of them.
+			// THE NEGATION ARM BELOW TAKES THE SAME EXEMPTION, and it
+			// is the same argument rather than a second one. This said
+			// the negation arm needed none, "because a spec saying a
+			// host 'does not lift' would still be wrong about its own
+			// date — the marker predates none of them", which argues
+			// the opposite of its conclusion: if the marker predates
+			// none of the specs it is NEWER than all of them, so at
+			// each of their dates the host genuinely did not lift and
+			// "does not lift" was RIGHT about its own date.
+			//
+			// Nothing is red today because no spec happens to phrase it
+			// that way — but "the vocabulary is anachronistic" is not a
+			// defence either: docs/specs/2026-08-10-container-backgrounds.md
+			// already uses the lift verb about the Overlay layer. So the
+			// asymmetry was a trap for whoever next adds a supersession
+			// note to a pre-#437 spec: it would have made this guard cry
+			// wolf on an accurate historical record, which is the exact
+			// failure the positional exemption exists to prevent.
+			// Raised in review of #456.
 			if positionRe.MatchString(s) && !strings.HasPrefix(path, "../docs/specs/") {
 				examined++
 				t.Errorf("%s ties a host that implements gooey.Overlay to a POSITION:\n\t%s\n"+
@@ -298,7 +314,7 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				continue
 			}
 			examined++
-			if !attachedRe.MatchString(s) {
+			if !attachedRe.MatchString(s) || strings.HasPrefix(path, "../docs/specs/") {
 				continue
 			}
 			t.Errorf("%s says a host that implements gooey.Overlay does not lift:\n\t%s\n"+
