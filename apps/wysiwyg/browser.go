@@ -407,7 +407,20 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	if n.Space == markup.XNamespace && n.Elem != "Gooey" {
 		prefix, bound := declBinding(n.Attrs)
 		if n.Elem != "Property" {
-			ed.status.Set("✗ " + rel + ": " + alienDeclMsg([]*node{n}, prefix, bound))
+			// THE FILE-LEVEL TAIL IS ADDED HERE, not inside
+			// alienDeclMsg, because that message is shared with the
+			// envelope-CHILD call sites where "no document to show" is
+			// simply false. Without it this arm said only "that is not
+			// a language element", which reads as a fault to fix in
+			// place — and the fix it prescribes, writing
+			// <prefix:Property>, is refused three lines up by the arm
+			// below as a whole file. That is the same
+			// sending-them-at-a-wall-we-know-about this branch split
+			// the alien case out to stop, one arm over and in the
+			// other direction. Raised in review of #522.
+			ed.status.Set("✗ " + rel + ": " +
+				alienDeclMsg([]*node{n}, prefix, bound) +
+				". A file whose whole content is one has no document to show")
 			return
 		}
 		if !bound {
