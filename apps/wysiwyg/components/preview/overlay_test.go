@@ -157,6 +157,61 @@ func TestTheOverlayTakesBackAWideMark(t *testing.T) {
 	}
 }
 
+// TestAMarkAtTheClipEdgeClaimsOnlyTheColumnItGot is the case where the
+// caller's intended width and the buffer's answer come apart.
+//
+// setCluster asks for two columns; render.Buffer.SetCell refuses to lay
+// a render.Continuation outside the clip and downgrades the write to a
+// SPACE, which is one column. A mark built from the CALLER's width
+// records two, and restoreMarks writes back every column a mark names.
+//
+// THE TWO BUFFER CALLS ARE NOT SCOPED ALIKE, which is the whole of why
+// that matters. render.Buffer.At is bounded on the buffer; SetCell is
+// bounded on the CLIP. So the prev[1] snapshot reaches a column the
+// overlay could not have written and does not own, while the write back
+// to it is dropped for as long as the clip still excludes it.
+//
+// THE CLIP IS NOT A CONSTANT, and the second half of this test is what
+// turns a latent disagreement into a lost cell. Composer.build takes a
+// clip from the component's BOUNDS every frame and Unclip widens back
+// out at the end of it, so an overlay that grows — a wider pane, a
+// changed grid extent — finds the column it once could not reach inside
+// its clip on the next frame. Unclip-then-Clip below is that frame
+// boundary, not test scaffolding: Clip INTERSECTS, so widening is only
+// reachable through Unclip. 'Z' is what the document subtree composed
+// into that column this time round, and the overlay paints after it.
+//
+// Raised in review of #524.
+func TestAMarkAtTheClipEdgeClaimsOnlyTheColumnItGot(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	full := f.Cells.Clip(render.Rect{X: 0, Y: 0, W: 3, H: 1})
+
+	o := &Overlay{}
+	o.setCluster(f, 2, 0, wideCell, 2, render.Style{Bg: render.RGB(190, 180, 90)})
+	if len(o.marks) != 1 {
+		t.Fatalf("setCluster left %d marks, want 1 — the rest of this test "+
+			"would pass vacuously", len(o.marks))
+	}
+	if got, want := o.marks[0].cols, f.Cells.At(2, 0).Width(); got != want {
+		t.Errorf("the mark claims %d columns and the cell it wrote is %d wide. "+
+			"SetCell downgraded the cluster to a space at the clip edge, so the "+
+			"caller's w is not the width that landed", got, want)
+	}
+
+	// The next frame: the overlay's bounds grew, and the column it could
+	// not reach before now holds content it did not write.
+	f.Cells.Unclip(full)
+	f.Cells.Clip(render.Rect{X: 0, Y: 0, W: 10, H: 1})
+	f.Cells.SetCell(3, 0, render.Cell{Rune: 'Z'})
+	o.restoreMarks(f)
+	if got := f.Cells.At(3, 0).Rune; got != 'Z' {
+		t.Errorf("restoring the mark put %q into column 3, which the overlay "+
+			"never wrote — the clip it painted under stopped at column 3, so "+
+			"prev[1] is a snapshot of somebody else's cell. A mark may only "+
+			"name the columns that landed", got)
+	}
+}
+
 // TestSetClusterAllocatesNothing is the paint-path pin: the guide writes
 // one of these per cell it draws, every frame it paints.
 //
@@ -172,11 +227,22 @@ func TestTheOverlayTakesBackAWideMark(t *testing.T) {
 // test stays green. It is `cols` being unprovable that puts the slice on
 // the heap — measured, the variable-size form allocates 1 per run.
 // Raised in review of #524.
+//
+// The fixture is wideCell, and the spelling it replaces is worth
+// recording because it type-checked and measured the wrong thing:
+// `wideWord[:len([]rune(wideWord))]` slices a STRING by a RUNE COUNT,
+// so it took the first 2 BYTES of a 6-byte constant. That is half of
+// 世 — invalid UTF-8, decoding to two U+FFFD — which is a narrow
+// two-rune cluster, not the one-rune two-column glyph the w=2 beside it
+// claims. Measured: `valid=false runes=[65533 65533]`. This is the
+// column-count trap of CLAUDE.md's "every width is a COLUMN count"
+// wearing the other hat — a rune count used where a byte offset goes.
+// Raised in review of #524.
 func TestSetClusterAllocatesNothing(t *testing.T) {
 	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
 	o := &Overlay{}
 	got := testing.AllocsPerRun(200, func() {
-		o.setCluster(f, 0, 0, wideWord[:len([]rune(wideWord))], 2, render.Style{})
+		o.setCluster(f, 0, 0, wideCell, 2, render.Style{})
 		o.marks = o.marks[:0]
 		f.Cells.SetCell(0, 0, render.Cell{Rune: ' '})
 		f.Cells.SetCell(1, 0, render.Cell{Rune: ' '})
