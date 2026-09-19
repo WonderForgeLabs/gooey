@@ -5,9 +5,29 @@ Date: 2026-08-30
 Issue: [#430](https://github.com/WonderForgeLabs/gooey/issues/430)
 **Superseded in part by:** `docs/specs/2026-09-05-overlay-ranks.md`
 ([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) — ordering
-*within* the layer is now RANKED, not document order. Everything else
-below still holds. `component.go`'s `Overlay` doc points readers here
-for the hit-testing gap, which is why the pointer has to run both ways.
+*within* the layer is now RANKED, not document order. `component.go`'s
+`Overlay` doc points readers here for the hit-testing gap, which is why
+the pointer has to run both ways.
+
+**And the hit-testing section below is written as a NOT-YET.** It said
+"everything else below still holds", which was wrong about the very
+paragraphs a reader arriving from `component.go` comes for: they gate
+the work on "a non-capturing overlay actually exists", and #439 is the
+commit that makes three of them exist. Two —
+[`ToastHost`](../markup-reference.md) and `AdornmentLayer` — are
+container overlays that take no pointer capture, so the gap is LIVE and
+tracked in
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465), which is
+how every other site that describes it now reads
+(`components/toast.go`'s `HitTestTransparent` doc, `mouse.go`,
+`docs/architecture.md`, `docs/markup-reference.md`'s ToastHost section,
+`docs/learn/07-app-chrome.md`). The section's own wording is left as it
+was written, because this file is a dated record; read it against this
+note. Nothing goes red on the drift —
+`gooey.TestARankOrdersPaintAndNotHitTesting` fires only if hit-testing
+BECOMES rank-aware, and the polarity guard keys on position rules and
+lift denials, not on "this does not exist yet". Raised in review of
+#456.
 
 ## The problem
 
