@@ -15,10 +15,23 @@ nothing about z-order argues with that.
 **Which surfaces are lifted, exactly.** `ToastHost`, `AdornmentLayer`
 and `Popup` **are** lifted — `Popup` through the surface it opens, which
 is the thing that carries the marker and is what a `MenuBar`'s
-**dropdown** is. Grep for `OverlaysPage()` and you find `AdornmentLayer`,
-`ToastHost` and `popupSurface` — the surface, not `Popup`, which is the
-indirection the clause above describes and the reason this instruction
-names a type the rest of this page tells you not to write down.
+**dropdown** is. Run
+
+```sh
+grep -rn 'func .*OverlaysPage()' --include='*.go' . | grep -v _test.go
+```
+
+and you find `AdornmentLayer`, `ToastHost` and `popupSurface` — the
+surface, not `Popup`, which is the indirection the clause above describes
+and the reason this instruction names a type the rest of this page tells
+you not to write down.
+
+Both halves of that command are load-bearing, and this sentence used to
+be "grep for `OverlaysPage()`", which returns neither the stated three
+nor a superset a reader can reconcile. Without `func` it also matches
+`component.go`'s interface declaration; without the `_test.go` filter it
+matches nine test fixtures that implement the marker to exercise it. A
+check offered as reproducible has to reproduce.
 
 **A `MenuBar` is not one of them, and the distinction is the useful
 half.** The bar is an ordinary component: `Grid.Row` places it, it

@@ -203,11 +203,25 @@ func (l *AdornmentLayer) Remove(a Adornment) {
 	for i, x := range l.adorns {
 		if x == a {
 			l.adorns = append(l.adorns[:i], l.adorns[i+1:]...)
-			// Not relying on Arrange's tail clear to catch up. It does,
-			// today, because Arrange runs unconditionally — but that is
-			// an accident of scheduling standing in for an invariant,
-			// which is what this PR argues against everywhere else.
-			// Raised in review of #456.
+			// THE RETENTION WINDOW THIS CLOSES IS ONE LAYOUT PASS, and
+			// saying so is the correction. This read "Arrange runs
+			// unconditionally — but that is an accident of scheduling
+			// standing in for an invariant", which contradicts this
+			// type's own doc a hundred lines up, where unconditional
+			// layout is stated as the invariant that makes anchoring
+			// re-evaluate for free. It is the invariant, not an
+			// accident, and the two sentences could not both stand in
+			// one file. So Arrange's tail clear (below) does catch up,
+			// and the slot holds a dropped Adornment only until the
+			// next pass.
+			//
+			// Clearing here anyway is a judgement, not a necessity:
+			// a bounded retention is still a retention, and the three
+			// sibling sites named below take the same trade. What it
+			// costs is in the next paragraph, and the cost is why the
+			// honest version of this sentence matters — an "accident of
+			// scheduling" would have made the clear mandatory and hidden
+			// that there was a trade at all. Raised in review of #456.
 			//
 			// AND IT IS WHAT MAKES A MID-Arrange REMOVAL A PANIC rather
 			// than a wrong pixel, which is the cost of taking it and is
@@ -229,10 +243,26 @@ func (l *AdornmentLayer) Remove(a Adornment) {
 			// this was the one site that took it without saying so.
 			//
 			// NOT REACHABLE TODAY, and that is why it is written rather
-			// than guarded: the only two `orphanable` implementors in
-			// the tree (tooltip.go, validation.go) nil their
-			// back-pointers and nothing else, and neither Tooltip nor
-			// ValidationMarker calls Remove from layout. A custom
+			// than guarded. All three routes, not one — the argument
+			// used to name three and discharge only the last, leaving a
+			// reader to redo the other two:
+			//
+			//   - a.Place: every implementor in the tree is PURE.
+			//     tipPopup.Place (tooltip.go), markerPopup.Place
+			//     (validation.go) and DragGhost.Place (dragghost.go)
+			//     compute a rect from their arguments and their own
+			//     fields — PlacePopup, clamp, min — and touch the layer
+			//     not at all.
+			//   - the adornment's own Arrange under ArrangeChild: same
+			//     three types, and none of them reaches the layer
+			//     either; ArrangeChild applies the layout sandwich and
+			//     calls Arrange, which is Base.Arrange for all of them.
+			//   - orphaned(): the only two `orphanable` implementors in
+			//     the tree (tooltip.go, validation.go) nil their
+			//     back-pointers and nothing else, and neither Tooltip
+			//     nor ValidationMarker calls Remove from layout.
+			//
+			// A custom
 			// adornment is app code and app code is what reaches Place
 			// and Arrange, so the next person to write one needs this
 			// sentence rather than a nil check standing in for it.
