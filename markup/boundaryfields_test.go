@@ -124,6 +124,34 @@ var boundaryPartition = map[string]struct {
 // is the same document, so the default is "inherits" and every `false`
 // owes a reason. The control partition's defaults run the other way for
 // the fields that make a control a contract.
+// partitionTables is EVERY partition table, declared beside them and
+// read by everything that has to cover all of them — partitionWords'
+// union and TestThePartitionTablesShareOneKeySet today.
+//
+// It exists because the union was a two-element literal in
+// referencedoc_test.go, which moved the coupling rather than removing
+// it: a third table declared here and left out of that literal
+// reintroduces the nil *regexp.Regexp partitionRunSide dereferences,
+// with the same symptom (a panic in whichever test is declared first)
+// and nothing red to name it. That is the enumerated-list shape
+// CLAUDE.md refuses, at a two-element sample. Adding a table is now one
+// edit, at the declaration site. Raised in review of #543.
+//
+// Each table carries its NAME because every consumer either iterates
+// them all or has to say which one is at fault, and a map has no name
+// to print.
+type namedPartition struct {
+	name string
+	part partition
+}
+
+func partitionTables() []namedPartition {
+	return []namedPartition{
+		{"boundaryPartition", boundaryPartition},
+		{"rowPartition", rowPartition},
+	}
+}
+
 var rowPartition = map[string]struct {
 	inherit bool
 	why     string

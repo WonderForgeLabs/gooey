@@ -428,19 +428,27 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 // which is the defect class this branch exists to fix. Raised in review
 // of #543.
 func TestThePartitionTablesShareOneKeySet(t *testing.T) {
-	for name := range boundaryPartition {
-		if _, ok := rowPartition[name]; !ok {
-			t.Errorf("boundaryPartition has %q and rowPartition does not; the "+
-				"two describe one context struct from two seams, so a name in "+
-				"one is a name in both", name)
-		}
-	}
-	for name := range rowPartition {
-		if _, ok := boundaryPartition[name]; !ok {
-			t.Errorf("rowPartition has %q and boundaryPartition does not; the "+
-				"two describe one Context struct from two seams, so a name in "+
-				"one is a name in both, and a key set that splits is a "+
-				"partition that has stopped being one", name)
+	// EVERY PAIR, from partitionTables, rather than the two spelled out
+	// here — so a third table joins this guard by being declared, not by
+	// somebody remembering this function. Both arms said the same thing
+	// in slightly different words until review of #543 read them side by
+	// side; deriving them is also what keeps one message from carrying
+	// more of the reason than the other.
+	tables := partitionTables()
+	for _, a := range tables {
+		for _, b := range tables {
+			if a.name == b.name {
+				continue
+			}
+			for name := range a.part {
+				if _, ok := b.part[name]; !ok {
+					t.Errorf("%s has %q and %s does not; they describe one "+
+						"Context struct from as many seams, so a name in one "+
+						"is a name in all of them, and a key set that splits "+
+						"is a partition that has stopped being one",
+						a.name, name, b.name)
+				}
+			}
 		}
 	}
 }
@@ -789,22 +797,35 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // guard written for exactly that condition cannot report it: Go runs
 // tests in declaration order, TestTheBoundaryGuardsPickTheirTable
 // passes rowPartition down this path, and it is declared EARLIER in
-// this file than TestThePartitionTablesShareOneKeySet — so the panic
+// this file than `TestThePartitionTablesShareOneKeySet` — so the panic
 // aborts the binary first and the key-set guard's carefully written
 // message never prints. Order is the load-bearing fact and the two
 // names carry it; the line numbers this comment first pinned were
-// accurate and unchecked, since TestEveryCitedTestNameResolves resolves
-// names and has no view of numbers. Measured in review of #490 by adding
+// accurate and unchecked. The names are BACKTICKED because that is the
+// only reason they are checked at all: `TestEveryCitedTestNameResolves`
+// reads Go comments through a backtick-anchored pattern, so the bare
+// spelling this comment first used bought nothing and claimed
+// otherwise. Measured in review of #543 by renaming the test. Measured in review of #490 by adding
 // one key to rowPartition: a nil-pointer stack trace in a test about
 // table dispatch, with nothing naming the real fault.
 //
 // Taking the union removes the dependency rather than documenting it.
 // The key-set test stays, and is now a claim ABOUT the tables rather
 // than a precondition this cache rests on.
+//
+// The set of tables comes from partitionTables (boundaryfields_test.go),
+// declared beside the tables themselves, because a literal here is a
+// hand-maintained list of every partition in the package — which is the
+// coupling moved rather than removed. Raised in review of #543.
 var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
 	out := map[string]*regexp.Regexp{}
-	for _, part := range []partition{boundaryPartition, rowPartition} {
-		for name := range part {
+	for _, tb := range partitionTables() {
+		for name := range tb.part {
+			// The `seen` guard saves a duplicate MustCompile and
+			// nothing else — the assignment is idempotent, since the
+			// pattern is derived from the name. It is not here for
+			// correctness, and saying so stops the next reader looking
+			// for the reason it is.
 			if _, seen := out[name]; !seen {
 				out[name] = regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
 			}
