@@ -832,6 +832,7 @@ func bareDeclWhy(n *node) string {
 // paste of this editor's own output therefore arrives with the
 // declaration already on the child and nothing to carry — the carry is
 // for the documents the editor did not write. Raised in review of #501.
+//
 // IT RETURNS THE REASON IT REFUSED, and the reason is the whole point
 // of the paragraph above: the envelope falls through to insertSubtree,
 // which reports "markup: unknown element <Gooey>" to somebody who has
@@ -842,6 +843,36 @@ func bareDeclWhy(n *node) string {
 // and explaining it in two places is what let them diverge; they are one
 // place now. An empty reason means this is not an envelope at all, which
 // is not a refusal. Raised in review of #522.
+//
+// `xmlns:x` IS DROPPED HERE, DELIBERATELY, and this is the one place
+// that is true. carryDeclarations skips markup.XNamespace because moving
+// an ELEMENT prefix down changes its scope — its own comment argues the
+// case, and calls deleting the guard a fidelity loss on every
+// `<Gooey xmlns:x>` file on disk. That argument is openWorkspaceFile's,
+// where the envelope survives in ed.envAttrs and "stays on the envelope"
+// means kept. HERE THE ENVELOPE IS THROWN AWAY two lines down, so the
+// same skip means discarded — silently, with no message. Measured:
+// pasting `<Gooey xmlns:x="…/x" xmlns:t="urn:t" Graphics="halfblock">`
+// over a Canvas carries xmlns:t onto the content root and drops
+// xmlns:x, leaving envAttrs empty.
+//
+// Dropping is CORRECT for a fragment and carrying would be wrong. x:
+// names elements, the `<x:Property>` elements it exists for are siblings
+// of the content root, and a fragment is a content subtree — so a
+// carried declaration would land on the root scoping nothing, which is
+// precisely the scope change the skip exists to prevent. Graphics goes
+// for the neighbouring reason fragmentFor argues: a fragment must not
+// carry the source document's envelope.
+//
+// WHAT HOLDS IT UP IS ANOTHER FUNCTION, which is the part worth writing
+// down rather than leaving to be rediscovered. It is harmless only
+// because nodeOf refuses a prefixed element (main.go), so nothing the
+// model can hold uses `x:` and no dropped declaration can strand a
+// prefix that is still in use. Relax that refusal — #522's
+// markup.XNamespace exemption is the live proposal — and this drop stops
+// being free in the same commit, with nothing here to notice.
+// TestAPastedEnvelopesXDeclarationIsDropped pins the behaviour so the
+// change has to be deliberate. Raised in review of #501.
 func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 	if n.Elem != "Gooey" {
 		return nil, false, ""
@@ -990,14 +1021,14 @@ func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
 	envelopeNamespaces(ed.envAttrs, ed.envDecls, doc)
 	collectNamespaces(ed.doc(), doc)
-	return reconcileNamespacesInto(n, doc)
+	return reconcileNamespacesInto(n, doc, map[string]string{})
 }
 
 // SORTED for the same reason collectNamespaces is, and for a different
 // consequence: any conflict anywhere refuses, so accept-vs-refuse does
 // not depend on the order, but WHICH conflict the message names does —
 // and the suite matches on that text. Raised in review of #501.
-func reconcileNamespacesInto(n *node, doc map[string]string) error {
+func reconcileNamespacesInto(n *node, doc, own map[string]string) error {
 	for _, k := range sortedKeys(n.Attrs) {
 		v := n.Attrs[k]
 		// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and this is
@@ -1028,7 +1059,11 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 		if !isNamespaceAttr(k) {
 			continue
 		}
-		bound, ok := doc[k]
+		bound, fromDoc := doc[k]
+		ok := fromDoc
+		if !ok {
+			bound, ok = own[k]
+		}
 		if !ok {
 			// RECORDED, so the REST OF THE FRAGMENT is compared against
 			// it. Without this line the walk only ever compares a
@@ -1052,7 +1087,7 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 			// depth, no scoping, last wins). A per-subtree copy would
 			// fix the nesting case and leave the sibling one, where the
 			// loader's table conflicts just as hard.
-			doc[k] = v
+			own[k] = v
 			continue
 		}
 		if bound != v {
@@ -1106,6 +1141,37 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 					"both bindings would stand and what an element means would " +
 					"depend on where it sits"
 			}
+			// WHICH PARTY HOLDS THE OTHER BINDING IS TRACKED, NOT
+			// ASSUMED. `own` above records a declaration the FRAGMENT
+			// made, so that the rest of the fragment is compared against
+			// it — which means a conflict here can be entirely inside
+			// the clipboard, with the document declaring nothing at all.
+			// The single message this used to have asserted the document
+			// as the other party regardless, and sent the author to look
+			// for a declaration that is not in their file: measured into
+			// the default page, whose source is a <Gooey> over a bare
+			// <Canvas Name="Root"> and which declares nothing, pasting
+			// `<Canvas xmlns:t="urn:A"><Button xmlns:t="urn:B"/></Canvas>`
+			// said `this document already declares it as "urn:A"`. The
+			// sibling and cousin spellings said the same. That is the
+			// misattribution class this branch spent round 14 removing
+			// from three backstop seams — a clause before the colon
+			// naming a party the code has not established — arriving at
+			// the message the round before had just added a branch to.
+			//
+			// The REMEDY is the half that actually cost the author
+			// something: "change the document's own declaration" is not
+			// available when both bindings are in the clipboard, and the
+			// one they can fix — the outer declaration in what they are
+			// pasting — was the one being named as the document's.
+			// Raised in review of #501.
+			if !fromDoc {
+				return fmt.Errorf("the pasted markup declares %s twice, as %q "+
+					"and as %q. %s. Rename one of the two in what you are "+
+					"pasting — this conflict is entirely inside what you "+
+					"copied, so the open document has nothing to change",
+					k, bound, v, mech)
+			}
 			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
 				"already declares it as %q. %s. Rename the prefix in what you are "+
 				"pasting, or change the document's own declaration deliberately",
@@ -1114,12 +1180,12 @@ func reconcileNamespacesInto(n *node, doc map[string]string) error {
 		delete(n.Attrs, k)
 	}
 	for _, name := range sortedKeys(n.Slots) {
-		if err := reconcileNamespacesInto(n.Slots[name], doc); err != nil {
+		if err := reconcileNamespacesInto(n.Slots[name], doc, own); err != nil {
 			return err
 		}
 	}
 	for _, k := range n.Kids {
-		if err := reconcileNamespacesInto(k, doc); err != nil {
+		if err := reconcileNamespacesInto(k, doc, own); err != nil {
 			return err
 		}
 	}

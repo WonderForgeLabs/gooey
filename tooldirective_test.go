@@ -31,8 +31,9 @@ const toolHost = "tools"
 // from anything they had asked for.
 //
 // Nothing in this repo could see that, for the same reason nothing could
-// see the `v0.0.0` requires that TestNestedModulesRequireAResolvableCore-
-// Version now guards: the workspace resolves siblings to the checkout and
+// see the `v0.0.0` requires that
+// TestNestedModulesRequireResolvableGooeyVersions now guards: the
+// workspace resolves siblings to the checkout and
 // CI inherits it, so the published requirement set is never the one being
 // built against. The fix keeps the vendored `go tool` mechanism and moves
 // the directive into `tools`, a module nobody imports.
