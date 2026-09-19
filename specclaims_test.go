@@ -455,23 +455,38 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 		}
 	}
 	if goCited == 0 {
-		// NAMED, BECAUSE THE POPULATION IS TWO. goCitations' doc records
-		// it: across every file goCommentSources reaches, exactly two
-		// comments cite a test name in backticks, and one of them is in
-		// THIS file. So the realistic trigger is not "the comments have
-		// stopped naming tests" and not "the pattern drifted" — it is
-		// someone rewording one of two specific comments, and a message
-		// that offers the two general diagnoses sends the reader to
-		// audit a regexp. Naming them lands the reader on the cause in
-		// one step. (The classifier itself is #530; this is the
-		// message.)
+		// NAMED, BECAUSE THE POPULATION IS TWO. goCitations' doc
+		// records it: across every file goCommentSources reaches,
+		// exactly two comments cite a test name in backticks, and one
+		// of them is in THIS file — testFuncsUnder's doc, where the
+		// qualifier-versus-package-clause argument is made, which is
+		// what makes it a plausible thing for someone to reword. So
+		// the realistic trigger is not "the comments have stopped
+		// naming tests" and not "the pattern drifted" — it is someone
+		// rewording one of two specific comments, and a message that
+		// offers the two general diagnoses sends the reader to audit a
+		// regexp. Naming them lands the reader on the cause in one
+		// step. (The classifier itself is #530; this is the message.)
+		//
+		// THE MESSAGE CARRIES THE COMMAND THAT RE-DERIVES THEM rather
+		// than resting on the two names, because the names are the
+		// half that rots: this message said "this file's own
+		// goCitations doc" for a round, and goCitations' doc holds no
+		// backticked citation at all — it writes TestX and TestFoo
+		// bare, by this file's own rule. A reader who trips the floor
+		// and is sent to a comment that cannot be the cause has been
+		// sent further from it than a general diagnosis would have.
+		// Raised in review of #490.
 		t.Errorf("no Go comment in the tree cites a test in backticks, so the " +
 			"half of this guard that reads Go checks nothing. The population is " +
-			"TWO — dependabotdirs_test.go and this file's own goCitations doc — " +
-			"so the likely cause is that one of those two comments was reworded " +
-			"or its backticks dropped, not that the pattern has drifted. Read " +
-			"those two first; goCitations' doc says why the population is that " +
-			"small and #530 is where widening it lives.")
+			"TWO — dependabotdirs_test.go and testFuncsUnder's doc in this file " +
+			"— so the likely cause is that one of those two comments was reworded " +
+			"or its backticks dropped, not that the pattern has drifted. Re-derive " +
+			"them rather than trusting those two names — grep the tree's Go files " +
+			"for a backticked identifier beginning Test (optionally package-" +
+			"qualified) on a comment line — because a name written here is the half " +
+			"that rots. goCitations' doc says why the population is that small, and " +
+			"#530 is where widening it lives.")
 	}
 }
 

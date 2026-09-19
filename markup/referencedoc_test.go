@@ -289,23 +289,21 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 	const probe = "A row inherits `Styles`, `Components`, `Elements` and " +
 		"`Handlers` from the page; the reasons live in `markup.rowPartition`."
 
-	if !enumeratesThePartition(probe) || !answersByNaming(probe) ||
+	probePart, probeTable := partitionFor(probe)
+	if !enumeratesThePartition(probePart, probe) || !answersByNaming(probePart, probe) ||
 		!answersWhatCrosses.MatchString(probe) {
 		t.Fatal("the probe does not clear the triggers, so it measures nothing " +
 			"about which table the guards then reach for")
 	}
-	if _, table := partitionFor(probe); table != "rowPartition" {
-		t.Errorf("a paragraph about the row seam is judged against %s", table)
+	if probeTable != "rowPartition" {
+		t.Errorf("a paragraph about the row seam is judged against %s", probeTable)
 	}
 
 	// THE DIRECTION. Against the row table the probe is exhaustive;
 	// against the control table it is reported as incomplete, and the
 	// field it is told to add is one a row must not claim.
-	named := namedPartitionFields(probe, true)
-	miss := func(part map[string]struct {
-		inherit bool
-		why     string
-	}) []string {
+	miss := func(part partition) []string {
+		named := namedPartitionFields(part, probe, true)
 		var out []string
 		for _, name := range inheritingFields(part) {
 			if !named[name] {
@@ -347,13 +345,15 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 	// resolves to rowPartition (it cites one) and nothing goes red.
 	const uncited = "Inside an `<ItemsView.ItemTemplate>` a row inherits " +
 		"`Styles`, `Components`, `Elements` and `Handlers` from the page."
-	if !enumeratesThePartition(uncited) || !answersByNaming(uncited) {
+	uncitedPart, uncitedTable := partitionFor(uncited)
+	if !enumeratesThePartition(uncitedPart, uncited) ||
+		!answersByNaming(uncitedPart, uncited) {
 		t.Fatal("the uncited probe does not clear the triggers, so it measures " +
 			"nothing about the vocabulary arm")
 	}
-	if _, table := partitionFor(uncited); table != "rowPartition" {
+	if uncitedTable != "rowPartition" {
 		t.Errorf("a row-seam paragraph with NO citation is judged against %s, "+
-			"which is every paragraph these guards exist to catch", table)
+			"which is every paragraph these guards exist to catch", uncitedTable)
 	}
 
 	// AND THE CITATION WINS OVER THE VOCABULARY. The fixture is a
@@ -373,6 +373,69 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 		t.Errorf("a control-seam paragraph that mentions the row seam "+
 			"contrastively is judged against %s", table)
 	}
+
+	// AND THE BAR ITSELF IS COUNTED FROM THE CHOSEN TABLE, which is the
+	// half the dispatch did not reach for a round: partitionFor decided
+	// which list a paragraph was measured AGAINST while the count that
+	// decided whether to measure it at all still came from the control
+	// seam. The two tables hold the same nineteen keys and disagree, of
+	// the exported ones, on `Declared` alone — so this is the only
+	// fixture that can tell the two readings apart, and it is the field
+	// the whole dispatch exists for.
+	//
+	// Under the row table this paragraph names ONE inheriting field and
+	// does not clear the >= 2 bar; under the control table `Declared`
+	// counts as a second and it does. Reading the bar from the wrong
+	// table therefore adjudicates a row-seam paragraph on the strength
+	// of a name the row seam says is on the other side, and then reports
+	// it against a list of eight. Raised in review of #490.
+	const barFixture = "Inside an `<ItemsView.ItemTemplate>` a row inherits " +
+		"`Declared` and `Styles` from the page."
+	barPart, barTable := partitionFor(barFixture)
+	if barTable != "rowPartition" {
+		t.Fatalf("the bar fixture resolves to %s, so it cannot show which "+
+			"table the bar is counted from", barTable)
+	}
+	if enumeratesThePartition(barPart, barFixture) {
+		t.Errorf("a row-seam paragraph naming Declared plus one row-inheriting " +
+			"field clears the enumeration bar, so the bar counted Declared as " +
+			"inheriting — which is the control seam's answer, not this " +
+			"paragraph's table")
+	}
+	if !enumeratesThePartition(boundaryPartition, barFixture) {
+		t.Fatal("the bar fixture does not clear the bar under the control " +
+			"table either, so the assertion above passes for a reason that has " +
+			"nothing to do with which table was consulted")
+	}
+}
+
+// TestThePartitionTablesShareOneKeySet is what lets partitionWords hold
+// one cache for both tables.
+//
+// The two partitions are separate declarations that describe the same
+// context struct from two seams, so they are expected to hold the same
+// field names and to disagree only about which of them cross. A field
+// added to one alone is the silent case: partitionWords is built from
+// boundaryPartition, so a name added only to rowPartition gets no
+// pattern, partitionRunSide's bare-name half never looks for it, and a
+// row-seam page can enumerate it with nothing red. The guard is cheap
+// and the failure it replaces is invisible.
+func TestThePartitionTablesShareOneKeySet(t *testing.T) {
+	for name := range boundaryPartition {
+		if _, ok := rowPartition[name]; !ok {
+			t.Errorf("boundaryPartition has %q and rowPartition does not; the "+
+				"two describe one context struct from two seams, so a name in "+
+				"one is a name in both", name)
+		}
+	}
+	for name := range rowPartition {
+		if _, ok := boundaryPartition[name]; !ok {
+			t.Errorf("rowPartition has %q and boundaryPartition does not, so "+
+				"partitionWords — built from boundaryPartition — holds no "+
+				"pattern for it and partitionRunSide cannot see it spelled "+
+				"bare on a row-seam page", name)
+		}
+	}
 }
 
 // rowSeamVocabulary is how a paragraph says it is about the ROW seam
@@ -385,6 +448,15 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 // and then reports it for citing the wrong table. These are the forms a
 // paragraph uses when the SEAM is its subject.
 var rowSeamVocabulary = regexp.MustCompile(`(?i)ItemTemplate|\bper[- ]row\b|\brow context\b|\ba row (?:inherits|is not a boundary)\b`)
+
+// partition is the shape both tables share. An ALIAS rather than a
+// defined type, so boundaryPartition and rowPartition — declared as
+// anonymous-struct maps in boundaryfields_test.go — pass without a
+// conversion and stay comparable to each other.
+type partition = map[string]struct {
+	inherit bool
+	why     string
+}
 
 // partitionFor picks the table a paragraph is answering ABOUT.
 //
@@ -431,10 +503,7 @@ var rowSeamVocabulary = regexp.MustCompile(`(?i)ItemTemplate|\bper[- ]row\b|\bro
 // cites `markup.rowPartition` and each names `<ItemsView.ItemTemplate>`
 // or "per-row" — so this is a claim about paragraphs nobody has written
 // yet.
-func partitionFor(flat string) (map[string]struct {
-	inherit bool
-	why     string
-}, string) {
+func partitionFor(flat string) (partition, string) {
 	switch {
 	case strings.Contains(flat, "rowPartition"):
 		return rowPartition, "rowPartition"
@@ -447,10 +516,7 @@ func partitionFor(flat string) (map[string]struct {
 }
 
 // inheritingFields is every exported field a partition says crosses.
-func inheritingFields(part map[string]struct {
-	inherit bool
-	why     string
-}) []string {
+func inheritingFields(part partition) []string {
 	var out []string
 	for name, rule := range part {
 		if rule.inherit && isExportedField(name) {
@@ -499,10 +565,10 @@ var backtickedWord = regexp.MustCompile("`([A-Za-z]+)`")
 // was never adjudicated and deleting its citation left both boundary
 // guards green — the per-page-vs-per-paragraph defect the round before
 // believed it had closed. Raised in review of #490.
-func backtickedPartition(flat string, inheritingOnly bool) map[string]bool {
+func backtickedPartition(part partition, flat string, inheritingOnly bool) map[string]bool {
 	named := map[string]bool{}
 	for _, m := range backtickedWord.FindAllStringSubmatch(flat, -1) {
-		if r, ok := boundaryPartition[m[1]]; ok && (r.inherit || !inheritingOnly) &&
+		if r, ok := part[m[1]]; ok && (r.inherit || !inheritingOnly) &&
 			isExportedField(m[1]) {
 			named[m[1]] = true
 		}
@@ -519,24 +585,24 @@ func backtickedPartition(flat string, inheritingOnly bool) map[string]bool {
 // set inline until round ten, which put the bar in two places and left
 // enumeratesThePartition — the function whose doc says it IS the bar —
 // called by nobody. Raised in review of #490.
-func namedPartitionFields(flat string, inheritingOnly bool) map[string]bool {
-	named := backtickedPartition(flat, inheritingOnly)
-	for _, name := range partitionRunSide(flat, inheritingOnly) {
+func namedPartitionFields(part partition, flat string, inheritingOnly bool) map[string]bool {
+	named := backtickedPartition(part, flat, inheritingOnly)
+	for _, name := range partitionRunSide(part, flat, inheritingOnly) {
 		named[name] = true
 	}
 	return named
 }
 
 // namesPartitionFields is how many of them there are.
-func namesPartitionFields(flat string, inheritingOnly bool) int {
-	return len(namedPartitionFields(flat, inheritingOnly))
+func namesPartitionFields(part partition, flat string, inheritingOnly bool) int {
+	return len(namedPartitionFields(part, flat, inheritingOnly))
 }
 
 // answersByNaming is the REQUIRE direction's bar: a paragraph that
 // answers the crossing question and names two or more partition fields
 // on EITHER side is giving the answer, and has to point at the source.
-func answersByNaming(flat string) bool {
-	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(flat, false) >= 2
+func answersByNaming(part partition, flat string) bool {
+	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(part, flat, false) >= 2
 }
 
 // enumeratesThePartition reports that a paragraph answers the crossing
@@ -554,8 +620,8 @@ func answersByNaming(flat string) bool {
 // inheriting side. The sentence outlived the round that widened one of
 // them, and while it stood it sent a reader auditing scope-agreement to
 // a function neither guard called. Raised in review of #490.
-func enumeratesThePartition(flat string) bool {
-	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(flat, true) >= 2
+func enumeratesThePartition(part partition, flat string) bool {
+	return answersWhatCrosses.MatchString(flat) && namesPartitionFields(part, flat, true) >= 2
 }
 
 // TestNoPageEnumeratesTheBoundaryPartition is the guard widened past the
@@ -578,7 +644,11 @@ func enumeratesThePartition(flat string) bool {
 // paragraph that makes an inheritance CLAIM and backticks two or more
 // partition fields. Two escapes, and only two: name every inheriting
 // field (the reference paragraph, which is checked field-by-field above),
-// or cite boundaryPartition instead of enumerating (what the three
+// or cite the partition governing that paragraph's own seam instead of
+// enumerating — boundaryPartition for the control boundary and
+// rowPartition for a template row, chosen by partitionFor, so a
+// row-seam page that follows this sentence by citing boundaryPartition
+// writes the citation that goes red (what the three
 // corrected pages now do).
 //
 // A PARAGRAPH, NOT A LINE, for the reason the test above gives: these
@@ -631,19 +701,27 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 			// The trigger is a word boundary rather than a substring,
 			// and what that buys is on answersWhatCrosses — stated
 			// once, for backtickedPartition's reason.
-			if !enumeratesThePartition(flat) {
+			//
+			// THE TABLE IS CHOSEN FIRST, before the bar is applied,
+			// and that order is load-bearing rather than tidy. The bar
+			// counts fields ON THE INHERITING SIDE, and which side a
+			// field is on is exactly what the two tables disagree
+			// about — `Declared` crosses a control boundary and does
+			// NOT cross into a row (#512). Picking the table after
+			// counting meant a row-seam paragraph's bar and its
+			// missing-list came from different tables: the one field
+			// they disagree on is the one this whole dispatch exists
+			// for, so the inconsistency sat precisely where it does
+			// the most harm. Raised in review of #490.
+			part, table := partitionFor(flat)
+			if !enumeratesThePartition(part, flat) {
 				continue
 			}
 			// Backticked or bare, on the inheriting side: see
 			// namedPartitionFields, which owns both spellings and the
 			// argument for each.
-			named := namedPartitionFields(flat, true)
+			named := namedPartitionFields(part, flat, true)
 			checked++
-			// WHICH TABLE, chosen per paragraph: see partitionFor. The
-			// two disagree on six fields, so judging a row-seam
-			// paragraph against the control seam's list reports it for
-			// leaving out what a row correctly does not inherit.
-			part, table := partitionFor(flat)
 			if strings.Contains(flat, table) {
 				continue // cites the source rather than copying it
 			}
@@ -690,6 +768,15 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // TestNoPageEnumeratesTheBoundaryPartition 0.46s -> 0.21s and
 // TestEveryPageThatAnswersWhatCrossesCitesThePartition 0.10s -> 0.05s,
 // against a 4.5s markup suite. Raised in review of #490.
+// ONE CACHE FOR BOTH TABLES, and that is a measurement rather than an
+// oversight. Everything else that reads a partition had to be
+// parameterised when partitionFor landed, because it reads the
+// `inherit` bit and the two tables disagree. This reads only the KEYS,
+// and the two hold the same nineteen —
+// TestThePartitionTablesShareOneKeySet is what keeps that true, since
+// a key added to one table alone would leave this cache missing a
+// pattern for it and the bare-name half of the guard silently blind to
+// that field. Raised in review of #490.
 var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
 	out := map[string]*regexp.Regexp{}
 	for name := range boundaryPartition {
@@ -739,7 +826,7 @@ var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
 // differently"), and the separators a list uses are short. The gap is
 // measured in the flattened paragraph, so a list wrapped over three
 // source lines is still one run. Raised in review of #490.
-func partitionRunSide(flat string, inheritingOnly bool) []string {
+func partitionRunSide(part partition, flat string, inheritingOnly bool) []string {
 	const maxGap = 30 // ", registered " and friends; not a clause
 
 	type hit struct {
@@ -748,7 +835,7 @@ func partitionRunSide(flat string, inheritingOnly bool) []string {
 	}
 	lower := strings.ToLower(flat)
 	var hits []hit
-	for name, rule := range boundaryPartition {
+	for name, rule := range part {
 		if (inheritingOnly && !rule.inherit) || !isExportedField(name) {
 			continue
 		}
@@ -811,7 +898,7 @@ func partitionRunSide(flat string, inheritingOnly bool) []string {
 // `flat` reddens this test and nothing else. Raised in review of #490.
 func TestPartitionRunSideIndexesOneStringOnly(t *testing.T) {
 	const run = "styles, components and handlers cross"
-	want := partitionRunSide(run, true)
+	want := partitionRunSide(boundaryPartition, run, true)
 	if len(want) < 3 {
 		t.Fatalf("the ASCII control found %v, want a run of at least three: "+
 			"this test's premise is that the same sentence is recognised "+
@@ -820,7 +907,7 @@ func TestPartitionRunSideIndexesOneStringOnly(t *testing.T) {
 	}
 	// U+212A, three bytes, folding to one. Anywhere before the run is
 	// enough — the shift applies to every offset after it.
-	got := partitionRunSide("\u212A "+run, true)
+	got := partitionRunSide(boundaryPartition, "\u212A "+run, true)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("a KELVIN SIGN before the run changes the answer from %v to "+
 			"%v. The hit offsets are measured in the lowercased string and "+
@@ -897,15 +984,15 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 				continue
 			}
 			// THE SEAM PICKS THE TABLE, not the guard: partitionFor.
-			_, table := partitionFor(flat)
+			part, table := partitionFor(flat)
 			if strings.Contains(flat, table) {
 				cited = true
-				if answersByNaming(flat) {
+				if answersByNaming(part, flat) {
 					adjudicated++
 				}
 				continue
 			}
-			if answersByNaming(flat) {
+			if answersByNaming(part, flat) {
 				t.Errorf("%s answers what crosses a context seam by naming "+
 					"fields and does not cite markup."+table+":\n\t%s\n"+
 					"Every such paragraph has to point at the partition, not just "+
@@ -915,8 +1002,11 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 			}
 		}
 		if !cited {
-			t.Errorf("%s makes no paragraph that answers what crosses a control "+
-				"boundary AND cites markup.boundaryPartition. The forbid-direction "+
+			t.Errorf("%s makes no paragraph that answers what crosses a context "+
+				"seam AND cites the partition that seam is governed by "+
+				"(markup.boundaryPartition for the control boundary, "+
+				"markup.rowPartition for a template row — partitionFor picks "+
+				"per paragraph). The forbid-direction "+
 				"guard cannot see this: it reports a page that names a PROPER "+
 				"SUBSET, and a paragraph with the citation deleted names none, "+
 				"which passes. Each of these four pages answered the question "+
@@ -944,7 +1034,9 @@ func TestEveryPageThatAnswersWhatCrossesCitesThePartition(t *testing.T) {
 	// clause is adjudicating an empty set. Raised in review of #490.
 	if adjudicated == 0 {
 		t.Error("no paragraph on any of these four pages answers what crosses by " +
-			"naming two or more partition fields AND cites markup.boundaryPartition, " +
+			"naming two or more partition fields AND cites the partition its own " +
+			"seam is governed by (either markup.boundaryPartition or " +
+			"markup.rowPartition, per partitionFor), " +
 			"so the per-paragraph clause above ruled on nothing: answersByNaming has " +
 			"stopped recognising this corpus and the clause passes over any number " +
 			"of uncited answers")

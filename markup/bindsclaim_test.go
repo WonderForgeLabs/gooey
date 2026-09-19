@@ -196,7 +196,10 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 // Text.Bold and VStack.Gap now REFUSE `{{.S}}` rather than honouring
 // it. Refusing is the better half of #488's "decide which": a binding
 // the catalog says is not a binding should not load, and honouring it
-// would have made BindsLiteral a lie in the other direction.
+// would have made BindsLiteral a lie in the other direction. Deleting
+// the nine is what the test above demands, and it is why it demands
+// it: a note about a bug that is gone spends the attention that would
+// find the next one.
 //
 // TWO OF #488's ORIGINAL ELEVEN REMAIN — TypeAhead.Key, which reads a
 // rune, and ButtonBar.Separator, which reads a string. Neither litBool
@@ -210,12 +213,12 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 // named here rather than left to arithmetic: the lead-in said "of
 // #488's original eleven, two remain plus one" and then gave three
 // names, leaving the reader to work out which was the extra and where
-// it came from, one paragraph above a block added to stop exactly that. Deleting the nine is what the test
-// above demands, and it is why it demands it: a note about a bug that
-// is gone spends the attention that would find the next one.
+// it came from, one paragraph above a block added to stop exactly
+// that.
 //
-// THAT IS NOT THE LENGTH OF silentlyBindable, and the sentence this
-// replaced said "the ones that remain" against a list holding six. The
+// THOSE THREE ARE NOT THE LENGTH OF silentlyBindable, and the sentence
+// this replaced said "the ones that remain" against a list holding
+// six. The
 // other three are the Validate entries, which did not survive #488's
 // eleven — they arrived afterwards, from the harness reaching further
 // rather than from anything changing in the loader, and carry their own
