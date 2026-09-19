@@ -450,10 +450,18 @@ func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
 	}
 	// AND RowText ON THE SAME ROW, which was only INHERITED from
 	// SpanText and is the answer the converted sites actually meet:
-	// components/menuicon_test.go reads RowText(f.Cells, r.Y+1) off a
-	// bounds rect, so a dropdown that stopped painting hands it a row of
-	// blanks rather than an error — and an absence assertion over blanks
-	// cannot fail. A nil buffer is empty and an out-of-range row of a
+	// components/colorpicker_test.go:228 reads RowText(f.Cells, 4) and
+	// asserts !strings.Contains(row, "xterm"), so a readout that stopped
+	// painting — or a fixture one row shorter — hands it blanks rather
+	// than an error, and an absence assertion over blanks cannot fail.
+	//
+	// THE FIRST CITATION HERE WAS A COUNTER-EXAMPLE. It named
+	// components/menuicon_test.go, where every RowText off a bounds rect
+	// is immediately guarded by a PRESENCE assertion that fatals on
+	// blanks (:197, :282, :410 — checked in review of #520). That file
+	// catches the padding rather than hiding it, so a reader who
+	// followed the citation — which is the whole reason this file writes
+	// citations — found the rule refuted by its own example. A nil buffer is empty and an out-of-range row of a
 	// REAL one is padded; those are different answers to "there is
 	// nothing here", so both are chosen here rather than one of them
 	// being read off the delegation.

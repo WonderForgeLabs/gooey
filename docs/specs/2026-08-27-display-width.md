@@ -201,9 +201,9 @@ superseded does not:
    width too.** Two more whole-row reads survived the conversion as
    `rowText(f, 0, y, <literal>)`, each literal a copy of a width
    declared dozens of lines above it — `components/layout_test.go`'s
-   `20` (the composer's, 46 lines up) and
-   `components/colorpicker_test.go`'s `30` (`pickerAt`'s `Cols`, 197
-   lines up). Both assertions are ABSENCE claims —
+   `20` (the composer at the top of that test) and
+   `components/colorpicker_test.go`'s `30` (`pickerAt`'s own
+   `Caps.Cols`). Both assertions are ABSENCE claims —
    `TrimSpace(row) != ""` and `!strings.Contains(row, "xterm")` — so the
    phantom blanks a widened fixture would hand them do not fail, they
    pass. They read `render.RowText(f.Cells, y)` now. What let them
