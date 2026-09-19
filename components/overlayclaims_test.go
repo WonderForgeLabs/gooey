@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -316,6 +317,35 @@ func nearSpan(line string, at []int) string {
 // passes in CI and walks into somebody else's tree on yours.
 func overlayProseFiles(t *testing.T, root string) []string {
 	t.Helper()
+	// TRACKED FILES ONLY, which is the half this walk did not get from
+	// its sibling. walkDocFiles (zorderdocs_test.go) was hardened
+	// against exactly this in an earlier round of the same PR, with the
+	// reason written out there: a stray notes.md, a CLAUDE-old.md kept
+	// beside a conflict resolution, any scratch file in the root — each
+	// of them makes a guard fail naming a file that is not part of the
+	// repository, in a suite whose subject IS the repository. This one
+	// took the dot-prune, the vendor prune and the floor and not this,
+	// and a reviewer reproduced the result with one untracked file at
+	// the root: the components guard went red over a tree the root
+	// guards called green. The floor comment below makes the argument —
+	// a lesson learned in one place does not protect its sibling — for
+	// the floor half and not for this half.
+	//
+	// git, not .gitignore parsing: the question is exactly "is this
+	// file part of the repo", and git is the authority on it. `-C root`
+	// rather than a prefix dance, so the listing comes back relative to
+	// the same directory this walk reports against. A tree where the
+	// command cannot run is not this guard's business, so a failure to
+	// list falls back to walking everything — the floor below would
+	// then be what speaks. Raised in review of #458.
+	tracked := map[string]bool{}
+	if out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output(); err == nil {
+		for _, rel := range strings.Split(string(out), "\x00") {
+			if rel != "" {
+				tracked[filepath.ToSlash(filepath.Join(root, rel))] = true
+			}
+		}
+	}
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -328,6 +358,9 @@ func overlayProseFiles(t *testing.T, root string) []string {
 			if d.Name() == "vendor" {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		if len(tracked) > 0 && !tracked[filepath.ToSlash(p)] {
 			return nil
 		}
 		switch filepath.Ext(p) {

@@ -43,19 +43,11 @@ const (
 	// cites docs/architecture.md, which is the sentence to keep in
 	// step.
 	//
-	// BOTH THIS PARAGRAPH AND THE ONE BELOW SAT ABOVE `const (`, where
-	// go doc renders a paragraph as the documentation of all three
-	// values — so `go doc gooey.Visible` answered with an essay about
-	// Hidden. Round 9 moved the contract sentence down and left the
-	// maintenance prose about it up there, rendering in exactly the
-	// place it says it no longer does; round 11 moved the rest. Same
-	// class as #483. Raised in review of #458, twice.
-	//
 	// Hidden renders no content and is NOT HIT-TESTED, rather than
 	// "does not paint", which is what this said and is wrong in both
-	// halves. A hidden LEAF
-	// still pre-clears its own bounds, so it erases a visible sibling
-	// it overlaps (#508); and since #465 FocusManager.HitTest skips a
+	// halves. A hidden LEAF still pre-clears its own bounds, so it
+	// erases a visible sibling it overlaps (#508); and since #465
+	// FocusManager.HitTest skips a
 	// hidden NODE, so a press over a hidden button lands on whatever
 	// is beneath it. Only the node — a Visible child of a Hidden
 	// parent is still hittable.

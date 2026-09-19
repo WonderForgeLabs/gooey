@@ -1132,7 +1132,17 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // branch adds two to is main's, not the one it forked from. Stating
 // the delta rather than the arithmetic is what survives the next such
 // merge.
-const wantIdentChecked = 23
+//
+// IT WENT DOWN ONCE AND SHOULD NOT HAVE. An earlier round resolved a
+// stale `overlayOf` (`component.go:281`) citation by deleting the
+// number and lowering this constant to match — which drops the one
+// function this whole PR turns on out of the checked set, and is the
+// inverse of this branch's own recorded rule that an unlined citation
+// is not checked at all. overlayOf is at component.go:302 and the
+// sentence is about the two ifs at :303-308, so the citation is
+// repointable; it was repointed and the constant went back up. Raised
+// in review of #458.
+const wantIdentChecked = 24
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.

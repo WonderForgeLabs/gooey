@@ -343,7 +343,7 @@ change repaints exactly the components that read it.
 `ArrangeChild`.** The interface is `Container { ChildComponents() []Component }`
 (`component.go:39`) — the framework walks children, never the container.
 Parents never call `child.Measure`/`child.Arrange`; `MeasureChild`
-(`layout.go:310`) and `ArrangeChild` (`layout.go:367`) apply the
+(`layout.go:302`) and `ArrangeChild` (`layout.go:359`) apply the
 margin/size/align/visibility sandwich, and skipping them silently drops all
 four. A component calling `Base.Arrange(b)` on *itself* is fine and common.
 A cycle no longer kills the process, and the fix is bigger than the issue
@@ -438,7 +438,7 @@ comment COUNTS them by category (three doc comments, a spec heading, a
 test message) rather than listing them; derive the sites with a grep for
 `floor` rather than expecting a list to be there. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
-not to each node, so `overlayOf` (`component.go`) answers the parent's
+not to each node, so `overlayOf` (`component.go:302`) answers the parent's
 `parentOverlay` BEFORE testing the marker — reverse those two `if`s and a
 rank-2 container's rank-0 child lands in an earlier bucket, the parent
 paints after it, and a parent that covers its bounds erases the child it
