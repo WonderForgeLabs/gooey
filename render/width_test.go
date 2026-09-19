@@ -450,18 +450,30 @@ func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
 	}
 	// AND RowText ON THE SAME ROW, which was only INHERITED from
 	// SpanText and is the answer the converted sites actually meet:
-	// components/colorpicker_test.go:228 reads RowText(f.Cells, 4) and
-	// asserts !strings.Contains(row, "xterm"), so a readout that stopped
-	// painting — or a fixture one row shorter — hands it blanks rather
-	// than an error, and an absence assertion over blanks cannot fail.
+	// components' TestColorPickerReadoutIsTierSpecific reads
+	// RowText(f.Cells, 4) and asserts !strings.Contains(row, "xterm"),
+	// so a readout that stopped painting — or a fixture one row shorter
+	// — hands it blanks rather than an error, and an absence assertion
+	// over blanks cannot fail.
 	//
 	// THE FIRST CITATION HERE WAS A COUNTER-EXAMPLE. It named
-	// components/menuicon_test.go, where every RowText off a bounds rect
-	// is immediately guarded by a PRESENCE assertion that fatals on
-	// blanks (:197, :282, :410 — checked in review of #520). That file
-	// catches the padding rather than hiding it, so a reader who
-	// followed the citation — which is the whole reason this file writes
-	// citations — found the rule refuted by its own example. A nil buffer is empty and an out-of-range row of a
+	// components/menuicon_test.go, where every RowText off a bounds
+	// rect is immediately guarded by a PRESENCE assertion that fatals
+	// on blanks — TestAnIconItemPlacesItsImageWhenPixelsExist,
+	// TestAWideIconRuneDoesNotOverrunItsGutter and
+	// TestAZeroWidthIconRuneDoesNotStealACell, each checked in review
+	// of #520. That file catches the padding rather than hiding it, so
+	// a reader who followed the citation — which is the whole reason
+	// this file writes citations — found the rule refuted by its own
+	// example.
+	//
+	// NAMES, NOT LINE NUMBERS, and here that is not a preference. These
+	// point OUT of render into components, which render cannot import,
+	// so no compiler, test or guard in this tree can see them go stale —
+	// one inserted line in menuicon_test.go would have falsified three
+	// of them in silence. A test name is greppable; :410 is not. Raised
+	// in review of #520, which is also where the citations above were
+	// first written as line numbers. A nil buffer is empty and an out-of-range row of a
 	// REAL one is padded; those are different answers to "there is
 	// nothing here", so both are chosen here rather than one of them
 	// being read off the delegation.

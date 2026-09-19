@@ -62,7 +62,7 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 
 	rows := frameRows(f)
 	// EVERY MATCH, not the last one — matchRows' own doc carries the
-	// reason. frameText just widened from a fixed 14 rows to the whole
+	// reason. frameRows just widened from a fixed 14 rows to the whole
 	// frame, which is more rows for a second match to hide in.
 	const noItem = "This test compares ONE lead column against another, so " +
 		"an absent item leaves nothing to compare."

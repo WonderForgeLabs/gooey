@@ -34,14 +34,11 @@ import (
 // class: none of these readers takes a width it was not given by the
 // thing it is reading.
 //
-// "NEITHER OF THOSE TWO" is what that last clause said until review of
-// #520, and the opening clause had been widened from "frameText and
-// screen, which is the pair" in the same commit — so a paragraph whose
-// point is that counts decay closed on a count, two sentences later,
-// already wrong by one. "Each took its extent as parameters" was wrong
-// in the other direction: frameRows is one of the readers the widened
-// clause covers and arrived in 4f0b381 with the signature it has, never
-// having taken an extent at all.
+// That clause decayed twice, one round apart, and how is in item 7 of
+// docs/specs/2026-08-27-display-width.md rather than here: every
+// sentence of that account is about what a previous revision of THIS
+// comment said, which a reader of the file cannot check and the next
+// edit to the paragraph silently falsifies.
 //
 // rowText IS THE EXCEPTION, AND IT IS THE RULE ITSELF THAT MOVES. It
 // exists to read a caller-chosen REGION, so its window cannot come from
@@ -59,15 +56,17 @@ import (
 // want it — under a doc block about dropdowns, or about a colour picker,
 // or about the Composer — so the explanation was retold in each
 // consumer's comments and the copies went stale independently. The
-// readers below are distinguished by what they read rather than by who
-// asked — a region of a row, a whole row of a buffer, a whole frame as
-// text, a whole frame as rows, a whole composition — plus the one row
-// search every positional assertion in this package needs.
+// readers below are distinguished by what they READ rather than by who
+// asked for them: each one is named for its receiver and its extent, so
+// the name answers "which of these do I want" without a list to consult.
 //
-// NO COUNT HERE, and that is the point rather than terseness: the
-// sentence said FOUR and listed four, and the first reader added after
-// it made both wrong at once with nothing to go red. The declarations
-// are the inventory.
+// NO COUNT AND NO LIST, and that is the point rather than terseness.
+// The sentence said FOUR and listed four, and the first reader added
+// after it made both wrong at once with nothing to go red. Removing the
+// number and leaving the list it counted — which is what the round
+// before this one did — buys nothing: a list decays exactly the way a
+// count does, silently, on the sixth reader. The declarations are the
+// inventory.
 //
 // [#358]: https://github.com/WonderForgeLabs/gooey/issues/358
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
