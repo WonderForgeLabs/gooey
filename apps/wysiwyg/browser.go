@@ -70,6 +70,12 @@ type workspace struct {
 	err string
 }
 
+const (
+	fuzzyRun      = 3 // per step of a consecutive run
+	fuzzyBoundary = 8 // once, at the start of a run that begins a segment
+	fuzzyGap      = 3 // per character skipped between hits
+)
+
 // fuzzyMatch is a case-insensitive subsequence match with a score and the
 // matched positions.
 //
@@ -121,12 +127,6 @@ type workspace struct {
 //
 // TestFuzzyPrefersContiguousAndSegmentStarts pins all three orderings,
 // and it is the test that caught the inversion.
-const (
-	fuzzyRun      = 3 // per step of a consecutive run
-	fuzzyBoundary = 8 // once, at the start of a run that begins a segment
-	fuzzyGap      = 3 // per character skipped between hits
-)
-
 func fuzzyMatch(q, s string) (bool, int, []int) {
 	qr := []rune(strings.ToLower(q))
 	sr := []rune(s)

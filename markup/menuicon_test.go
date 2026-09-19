@@ -273,19 +273,6 @@ func TestAOneCellIconRuneStillLoads(t *testing.T) {
 	}
 }
 
-// TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes.
-//
-// The refusal above gated on PRESENCE (`_, ok := ic.Attrs[a]`) while
-// every other read in the same builder gates on a non-empty VALUE
-// (`if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw != ""`). So
-// `Icon=""` was fatal on a separator and a no-op three lines later on
-// anything else, which is one attribute spelling meaning two things.
-//
-// The error text is the tell: it says the attribute "would be accepted
-// and silently ignored", and for an empty value nothing would be — there
-// is nothing to ignore. A diagnostic that describes a consequence that
-// cannot happen is the same defect the refusal was added to remove, one
-// level up. Found in review of #455.
 // separatorRejects is every attribute a separator refuses, taken from
 // the declaration the loader ranges over. One spelling of the set, for
 // the guard and for the thing guarded.
@@ -299,6 +286,21 @@ func separatorRejects() []string {
 	return out
 }
 
+// TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes reads an
+// empty attribute on a separator the way every other read in the builder
+// does.
+//
+// The refusal above gated on PRESENCE (`_, ok := ic.Attrs[a]`) while
+// every other read in the same builder gates on a non-empty VALUE
+// (`if raw := strings.TrimSpace(ic.Attrs["Icon"]); raw != ""`). So
+// `Icon=""` was fatal on a separator and a no-op three lines later on
+// anything else, which is one attribute spelling meaning two things.
+//
+// The error text is the tell: it says the attribute "would be accepted
+// and silently ignored", and for an empty value nothing would be — there
+// is nothing to ignore. A diagnostic that describes a consequence that
+// cannot happen is the same defect the refusal was added to remove, one
+// level up. Found in review of #455.
 func TestASeparatorTreatsAnEmptyAttributeTheWayEveryOtherReadDoes(t *testing.T) {
 	// DERIVED, for the reason the refusal itself now is: a hand-written
 	// copy of defMenuItem.Attrs minus Separator goes stale silently, and

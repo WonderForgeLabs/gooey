@@ -265,29 +265,6 @@ func comparedNothing(seen []ownRequire, tagged []string) bool {
 // that names it.
 type ownRequire struct{ dir, path, version string }
 
-// shapeMsg is what a require of this shape is wrong about, and "" for
-// one that is fine.
-//
-// RENDER THEN DISPATCH, which is the idiom skewMsg, pinCoverage and
-// emptyPopulationMsg already use here — and the reason is measured
-// rather than stylistic. The three arms were three `if shape == …`
-// blocks in the loop, and disabling any of them, or all three at once,
-// left the whole root package GREEN: pinsOf has already taken a
-// rejected require out of the skew and existence populations, so with
-// its reporter gone nothing downstream notices and a v0.0.0 sentinel
-// would sit in the tree in silence. One renderer cannot lose one arm
-// without losing all of them, and each shape's own remedy becomes
-// assertable from a table.
-//
-// NOT BECAUSE OF A `continue` IN THE CALLER, which this said and which
-// was not true by the time it said it. The caller's loop had a trailing
-// `continue` as its last statement, reaching nothing, inside a bare
-// block left over from when `seen` was accumulated in it. What makes the
-// ordering structural is that pinsOf FILTERS — a rejected require is out
-// of the skew and existence populations before they are read — and that
-// is what pinsOf's doc calls load-bearing. Both the `continue` and the
-// block are gone; a reader deleting dead code should not have to wonder
-// whether a doc means they broke something. Raised in review of #497.
 // pseudoVersionRoutes is the three ways to get a real pseudo-version,
 // shared by every arm whose answer is "go and get one".
 //
@@ -320,6 +297,29 @@ const pseudoVersionRoutes = "Get a real pseudo-version with `GOWORK=off go list 
 	"workspace refuse with `inconsistent vendoring`, including the one " +
 	"that would re-run this test."
 
+// shapeMsg is what a require of this shape is wrong about, and "" for
+// one that is fine.
+//
+// RENDER THEN DISPATCH, which is the idiom skewMsg, pinCoverage and
+// emptyPopulationMsg already use here — and the reason is measured
+// rather than stylistic. The three arms were three `if shape == …`
+// blocks in the loop, and disabling any of them, or all three at once,
+// left the whole root package GREEN: pinsOf has already taken a
+// rejected require out of the skew and existence populations, so with
+// its reporter gone nothing downstream notices and a v0.0.0 sentinel
+// would sit in the tree in silence. One renderer cannot lose one arm
+// without losing all of them, and each shape's own remedy becomes
+// assertable from a table.
+//
+// NOT BECAUSE OF A `continue` IN THE CALLER, which this said and which
+// was not true by the time it said it. The caller's loop had a trailing
+// `continue` as its last statement, reaching nothing, inside a bare
+// block left over from when `seen` was accumulated in it. What makes the
+// ordering structural is that pinsOf FILTERS — a rejected require is out
+// of the skew and existence populations before they are read — and that
+// is what pinsOf's doc calls load-bearing. Both the `continue` and the
+// block are gone; a reader deleting dead code should not have to wonder
+// whether a doc means they broke something. Raised in review of #497.
 func shapeMsg(shape requireShape, r ownRequire) string {
 	dir := r.dir
 	switch shape {
@@ -475,7 +475,6 @@ func emptyPopulationMsg(mods, found int) string {
 		"absent one for both", found, mods)
 }
 
-// skewGroup is the requires naming one revision that is not the newest.
 // skewMsg is one skew group's failure, rendered rather than formatted at
 // the call — so a test can assert what the reader is handed.
 //
@@ -545,6 +544,7 @@ func skewMsg(g skewGroup, newestRev string, revisions int) string {
 		newestRev, newestRev, newestRev, remedy)
 }
 
+// skewGroup is the requires naming one revision that is not the newest.
 type skewGroup struct {
 	// rev is the 12-character COMMIT the group's requires name, and it is
 	// what the remedy prints.
@@ -1475,34 +1475,6 @@ func hasRevisionTail(v string) bool {
 	return true
 }
 
-// malformedPseudo is the one shape this file could not report: a
-// version TRYING to be a pseudo-version and failing.
-//
-// TWO WAYS TO FAIL, AND THE FIRST VERSION SAW ONE. It was
-// `!revisionOf(v).ok && stampOf(v) != ""`, which re-derived the reason
-// from stampOf alone — so the case where the STAMP is what is broken was
-// unreachable by construction: a 13- or 15-digit stamp makes stampOf
-// answer "" and the whole thing collapses to "plain tag". Measured on
-// this branch, every one of these was filed as a tag and reported by
-// nothing:
-//
-//	v0.0.0-2026091313223-e5cdb56ececd     13-digit stamp
-//	v0.0.0-202609131322321-e5cdb56ececd   15-digit
-//	v0.0.0--e5cdb56ececd                  no stamp at all
-//	v0.0.0-2026091x132232-e5cdb56ececd    a letter in the stamp
-//
-// Go's pseudo-version form requires EXACTLY 14 digits, so each of these
-// is read as an ordinary prerelease and the proxy is asked for a tag of
-// that name — the same unresolvable require as the clipped revision,
-// with shapeMsg silent and skewFrom filing it under `tagged`, which is
-// the mis-filing shapeMalformed's own comment calls "what let it past
-// every check in this file".
-//
-// THE DISCRIMINATOR IS THE TAIL, asked directly rather than through
-// revisionOf's conjunction. `>= 2` dashes is what keeps a legitimate
-// prerelease tag out: v1.2.3-abcdef123456 has one dash and a hex tail,
-// and the arm at TestEveryRequireShapeReachesItsOwnArm pins that it
-// stays a tag. Raised in review of #497.
 // stampSlot reports that v's penultimate dash-part is where a stamp
 // would go and is ROUGHLY stamp-shaped: 13 to 15 characters, the same
 // slot stampOf reads exactly.
@@ -1556,6 +1528,34 @@ func stampSlot(v string) bool {
 	return len(slot) >= 13 && len(slot) <= 15
 }
 
+// malformedPseudo is the one shape this file could not report: a
+// version TRYING to be a pseudo-version and failing.
+//
+// TWO WAYS TO FAIL, AND THE FIRST VERSION SAW ONE. It was
+// `!revisionOf(v).ok && stampOf(v) != ""`, which re-derived the reason
+// from stampOf alone — so the case where the STAMP is what is broken was
+// unreachable by construction: a 13- or 15-digit stamp makes stampOf
+// answer "" and the whole thing collapses to "plain tag". Measured on
+// this branch, every one of these was filed as a tag and reported by
+// nothing:
+//
+//	v0.0.0-2026091313223-e5cdb56ececd     13-digit stamp
+//	v0.0.0-202609131322321-e5cdb56ececd   15-digit
+//	v0.0.0--e5cdb56ececd                  no stamp at all
+//	v0.0.0-2026091x132232-e5cdb56ececd    a letter in the stamp
+//
+// Go's pseudo-version form requires EXACTLY 14 digits, so each of these
+// is read as an ordinary prerelease and the proxy is asked for a tag of
+// that name — the same unresolvable require as the clipped revision,
+// with shapeMsg silent and skewFrom filing it under `tagged`, which is
+// the mis-filing shapeMalformed's own comment calls "what let it past
+// every check in this file".
+//
+// THE DISCRIMINATOR IS THE TAIL, asked directly rather than through
+// revisionOf's conjunction. `>= 2` dashes is what keeps a legitimate
+// prerelease tag out: v1.2.3-abcdef123456 has one dash and a hex tail,
+// and the arm at TestEveryRequireShapeReachesItsOwnArm pins that it
+// stays a tag. Raised in review of #497.
 func malformedPseudo(v string) bool {
 	if _, ok := revisionOf(v); ok {
 		return false

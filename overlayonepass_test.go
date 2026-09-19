@@ -860,35 +860,6 @@ func TestEveryReusedSliceInComposerClearsToCap(t *testing.T) {
 	}
 }
 
-// TestEveryReusedSliceThatHoldsAReferenceClearsToCap is the same rule as
-// TestEveryReusedSliceInComposerClearsToCap, asked of the whole tree —
-// which is where the argument clearToCap's own doc makes actually lives.
-//
-// That argument is about a Dynamic list shrinking from ten thousand rows
-// to ten and pinning ~9,990 components nobody can reach, and nothing in
-// it is about composer.go. Live resets outside that file hold exactly
-// what it describes: FocusManager's order, watchers and mnemonics,
-// refilled by m.walk on the same structural re-sync that drives
-// orderPaint; ItemsView's kids, which IS the windowed list;
-// AdornmentLayer's filter-in-place, where the tail is the dropped
-// tooltip or the finished drag ghost; ButtonBar's cut, whose element
-// holds the button it hid. A guard scoped to one file leaves a general
-// defect fixed in one place, which is the shape this PR argues against
-// elsewhere. Raised in review of #456.
-//
-// THE EXEMPTION IS DERIVED, NOT LISTED, because a list of "slices that
-// are fine" is the enumeration this repo keeps deleting. A reset is
-// exempt when its ELEMENT TYPE cannot hold a reference — resolved
-// through the tree's own type declarations, recursively — so []int,
-// []gooey.Size and []cutMember each answer for themselves and a new
-// value-typed slice needs no annotation at all. The classifier FAILS
-// CLOSED: a type it cannot resolve is treated as holding a reference, so
-// being wrong costs a comment rather than a silent hole.
-//
-// A string counts as a value here, deliberately. It does point at
-// backing bytes, but those are bounded by the string and are not a
-// component tree; counting them would flag every []string reset in the
-// repo for a few bytes each.
 // TestOnlyAClearThatReachesCapExemptsAReset is the fixture the tree
 // itself cannot supply: every real site in the repo is already written
 // the right way, so the guard above is green under BOTH rules and could
@@ -1555,6 +1526,42 @@ type clearSite struct {
 	ordered bool
 }
 
+// THIS COMMENT WAS ON A DIFFERENT DECLARATION. The blank line
+// between it and the fixture below it was lost, so the whole group
+// merged onto TestOnlyAClearThatReachesCapExemptsAReset and this
+// test was left bare — the exact shape #483's guard is for, found
+// by it on this branch's merge of main. Moved here rather than
+// re-split, because this is where it documents something.
+//
+// TestEveryReusedSliceThatHoldsAReferenceClearsToCap is the same rule as
+// TestEveryReusedSliceInComposerClearsToCap, asked of the whole tree —
+// which is where the argument clearToCap's own doc makes actually lives.
+//
+// That argument is about a Dynamic list shrinking from ten thousand rows
+// to ten and pinning ~9,990 components nobody can reach, and nothing in
+// it is about composer.go. Live resets outside that file hold exactly
+// what it describes: FocusManager's order, watchers and mnemonics,
+// refilled by m.walk on the same structural re-sync that drives
+// orderPaint; ItemsView's kids, which IS the windowed list;
+// AdornmentLayer's filter-in-place, where the tail is the dropped
+// tooltip or the finished drag ghost; ButtonBar's cut, whose element
+// holds the button it hid. A guard scoped to one file leaves a general
+// defect fixed in one place, which is the shape this PR argues against
+// elsewhere. Raised in review of #456.
+//
+// THE EXEMPTION IS DERIVED, NOT LISTED, because a list of "slices that
+// are fine" is the enumeration this repo keeps deleting. A reset is
+// exempt when its ELEMENT TYPE cannot hold a reference — resolved
+// through the tree's own type declarations, recursively — so []int,
+// []gooey.Size and []cutMember each answer for themselves and a new
+// value-typed slice needs no annotation at all. The classifier FAILS
+// CLOSED: a type it cannot resolve is treated as holding a reference, so
+// being wrong costs a comment rather than a silent hole.
+//
+// A string counts as a value here, deliberately. It does point at
+// backing bytes, but those are bounded by the string and are not a
+// component tree; counting them would flag every []string reset in the
+// repo for a few bytes each.
 func TestEveryReusedSliceThatHoldsAReferenceClearsToCap(t *testing.T) {
 	parsed := parseTree(t)
 	types := typeIndex(parsed)

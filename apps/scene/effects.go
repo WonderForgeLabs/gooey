@@ -67,9 +67,8 @@ func palette(v float64, t int) color.RGBA {
 	}
 }
 
-// starfield is perspective projection and nothing else: z decreases, x/z
-// and y/z grow, brightness rises as z falls. The stars are a fixed set
-// seeded once and recycled, so the field is identical run to run.
+// stars is a fixed set seeded once and recycled, so the field is
+// identical run to run.
 var stars = makeStars(420)
 
 type star struct{ x, y, z float64 }
@@ -96,6 +95,8 @@ func hash01(n int) float64 {
 	return float64(h%100000) / 100000
 }
 
+// starfield is perspective projection and nothing else: z decreases, x/z
+// and y/z grow, brightness rises as z falls.
 func starfield(dst *image.RGBA, t int) {
 	b := dst.Bounds()
 	w, h := b.Dx(), b.Dy()

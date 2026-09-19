@@ -729,6 +729,8 @@ func TestEveryRankedTypeIsAlsoAnOverlay(t *testing.T) {
 
 var overlayRankRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlayRank\(\)`)
 
+var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
+
 // overlayMarkedReceivers is every receiver type of an OverlaysPage
 // method in this package's non-test source, sorted.
 //
@@ -736,8 +738,11 @@ var overlayRankRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlayRank\(\)`)
 // declare this method", one method on one line per implementor by the
 // convention this package already follows, and a loader here would pull
 // the whole package graph into a guard whose subject is three lines.
-var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
-
+//
+// THE var WAS INSERTED BETWEEN THIS AND ITS SUBJECT, leaving the
+// comment describing a regexp and the function bare. Found by #483's
+// guard on the merge of main into that branch — which is the shape
+// that guard exists for, met in code that had already landed.
 func overlayMarkedReceivers(t *testing.T) []string {
 	// UNQUALIFIED, because the subject is one package's own map and
 	// every name the walk can reach is in it. receiversDeclaring keys by

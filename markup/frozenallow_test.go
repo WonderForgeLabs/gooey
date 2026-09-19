@@ -2013,23 +2013,6 @@ func rowValue[T any](t *testing.T, ctx *Context, rows *prop.Property[[]post], ti
 	return nil
 }
 
-// TestARowRealizedAfterLoadStillSeesThePagesArms is why the page's map is
-// captured OUTSIDE the factory rather than read through ctx when a row is
-// built.
-//
-// document.build's defer restores ctx.arms.sinks to what it found, and
-// for the outermost document that is nil — so by the time a row is
-// realized, ctx.arms.sinks is nil and arms.outer would be an empty
-// lookup. The sibling test above cannot see this: ItemsView.Validate
-// realizes one throwaway row at LOAD, while build is still on the stack
-// and ctx.arms.sinks is still the page's map, so both spellings pass
-// there. A collection that is empty at load and filled by a timer is the
-// discriminating shape, and it is the ordinary one — the same asymmetry
-// the ns/res captures above are written up for.
-//
-// The factory's error surfaces on ItemsView.Err(); the second assertion
-// is again the damage, because a refusal that arrives after the page's
-// message is gone is not a refusal.
 // TestTwoItemTemplatesCannotArmOneSink is the collision one scope
 // further out than collide reaches.
 //
@@ -2219,6 +2202,23 @@ func TestANestedListsRowStillSeesThePagesArms(t *testing.T) {
 	}
 }
 
+// TestARowRealizedAfterLoadStillSeesThePagesArms is why the page's map is
+// captured OUTSIDE the factory rather than read through ctx when a row is
+// built.
+//
+// document.build's defer restores ctx.arms.sinks to what it found, and
+// for the outermost document that is nil — so by the time a row is
+// realized, ctx.arms.sinks is nil and arms.outer would be an empty
+// lookup. The sibling test above cannot see this: ItemsView.Validate
+// realizes one throwaway row at LOAD, while build is still on the stack
+// and ctx.arms.sinks is still the page's map, so both spellings pass
+// there. A collection that is empty at load and filled by a timer is the
+// discriminating shape, and it is the ordinary one — the same asymmetry
+// the ns/res captures above are written up for.
+//
+// The factory's error surfaces on ItemsView.Err(); the second assertion
+// is again the damage, because a refusal that arrives after the page's
+// message is gone is not a refusal.
 func TestARowRealizedAfterLoadStillSeesThePagesArms(t *testing.T) {
 	const page = `<Gooey>
   <VStack>
