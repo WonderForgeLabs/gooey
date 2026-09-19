@@ -128,7 +128,7 @@ func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 		}
 		files++
 		for _, s := range stolenComments(fset, f, filepath.Dir(path)) {
-			t.Error(s)
+			t.Error(s + moduleNote(moduleOwningDir(filepath.Dir(path), modules)))
 		}
 		examined += docsExamined(f)
 	}
@@ -1053,10 +1053,11 @@ func alpha() {}
 `,
 			want: "alpha",
 			wantMsg: "the doc comment on beta opens by naming alpha, which is the " +
-				"declaration DIRECTLY BELOW it. That is a doc comment that was " +
-				"separated from what it documents — either beta was inserted " +
-				"between it and alpha, or the blank line between two comment " +
-				"groups was lost, and either way beta reads as a comment about alpha.",
+				"declaration DIRECTLY BELOW it. That is a doc comment opening on " +
+				"the wrong name: alpha carries a doc comment of its own where it " +
+				"stands, so nothing was separated from anything and nothing is " +
+				"undocumented — the comment on beta simply reads as a comment " +
+				"about alpha. The edit is to beta's first word.",
 		},
 		{
 			// A BLOCK WHOSE DOC IS ON ITS FIRST SPEC, which documented()
@@ -1124,6 +1125,55 @@ func gamma() {}
 				"documents — either beta was inserted between it and gamma, or " +
 				"the blank line between two comment groups was lost, and either " +
 				"way gamma is now undocumented.",
+		},
+		{
+			// THE SAME THEFT WITH THE SUBJECT AT SPEC INDEX 1, which
+			// nothing reported until review of #503 round 14 measured
+			// it. laterUndocumented scanned with declaresDirectlyBelow,
+			// whose Specs[0] fence belongs to the ADJACENCY arm, so a
+			// name declared as the second-or-later entry of a later
+			// block was invisible while the identical theft at index 0
+			// reported in full. Move alpha to index 0 here and the arm
+			// below this one is what fires.
+			name:         "a comment stolen by a later block's second entry",
+			wantExamined: 1,
+			src: `// alpha is the alpha table.
+func beta() {}
+
+func other() {}
+
+var (
+	gamma = 1
+	alpha = 2
+)
+`,
+			want: "alpha",
+			wantMsg: "the doc comment on beta opens by naming alpha, which is a " +
+				"LATER declaration in this file that has no doc comment of its " +
+				"own. That is a doc comment that was separated from what it " +
+				"documents — either beta was inserted between it and alpha, or " +
+				"the blank line between two comment groups was lost, and either " +
+				"way alpha is now undocumented.",
+		},
+		{
+			// AND THE COUNTERFACTUAL FOR IT: the same block, with a doc
+			// on the spec that declares alpha. specDocumented is what
+			// answers now, not the block's first spec, so this is a
+			// cross reference and reports nothing.
+			name:         "a later block's second entry that carries its own doc",
+			wantExamined: 1,
+			src: `// alpha is the alpha table.
+func beta() {}
+
+func other() {}
+
+var (
+	gamma = 1
+
+	// alpha is the alpha table.
+	alpha = 2
+)
+`,
 		},
 		{
 			// THE COUNTERFACTUAL FOR THE ARM ABOVE, and the whole reason
@@ -1208,10 +1258,13 @@ func spec() {}
 		},
 		{
 			// ADJACENCY IS THE SIGNATURE, and a block below is adjacent
-			// only at its FIRST entry. Both arms are here because the
-			// rule used to scan the whole block and announce whatever it
-			// found as "the declaration DIRECTLY BELOW it" — five
-			// entries from where the name was. Raised in review of #503.
+			// only at its FIRST entry. This arm and the two after it are
+			// here because the rule used to scan the whole block and
+			// announce whatever it found as "the declaration DIRECTLY
+			// BELOW it" — five entries from where the name was. What
+			// that fence buys is an honest MESSAGE; a bare name deeper
+			// in the block is still reported, by the distance arm, which
+			// says so. Raised in review of #503.
 			name:         "the first entry of the block directly below is theft",
 			wantExamined: 1,
 			src: `// alpha is the alpha table.
@@ -1225,7 +1278,22 @@ var (
 			want: "alpha",
 		},
 		{
-			name:         "a later entry of the block below it is a cross reference",
+			// AND A LATER ENTRY OF THAT BLOCK IS STILL REPORTED, by the
+			// DISTANCE arm rather than the adjacency one — which is the
+			// correction this pair needed. The arm above restricts
+			// ADJACENCY to the block's first entry so the message can
+			// honestly say "directly below"; it does not make a bare
+			// name five entries down a cross reference, because this
+			// file's discriminator for the distance arm is stated and
+			// measured: an honest cross reference names something that
+			// is itself DOCUMENTED, and alpha here is bare.
+			//
+			// This arm asserted "reports nothing" until review of #503
+			// round 14 measured the predicate: laterUndocumented scanned
+			// with the adjacency fence, so alpha at spec index 2 was
+			// invisible while the identical theft at index 0 reported in
+			// full. The counterfactual is the arm below.
+			name:         "a later entry of the block below it, left bare",
 			wantExamined: 1,
 			src: `// alpha is the alpha table.
 func beta() {}
@@ -1233,6 +1301,31 @@ func beta() {}
 var (
 	gamma = map[string]int{}
 	delta = map[string]int{}
+	alpha = map[string]int{}
+)
+`,
+			want: "alpha",
+			wantMsg: "the doc comment on beta opens by naming alpha, which is a " +
+				"LATER declaration in this file that has no doc comment of its " +
+				"own. That is a doc comment that was separated from what it " +
+				"documents — either beta was inserted between it and alpha, or " +
+				"the blank line between two comment groups was lost, and either " +
+				"way alpha is now undocumented.",
+		},
+		{
+			// THE CROSS REFERENCE, which is the same shape with alpha
+			// documented where it stands. Nothing was taken from it, so
+			// the sentence above beta is prose about a documented name.
+			name:         "a later entry of the block below it, documented",
+			wantExamined: 1,
+			src: `// alpha is the alpha table.
+func beta() {}
+
+var (
+	gamma = map[string]int{}
+	delta = map[string]int{}
+
+	// alpha is the alpha table.
 	alpha = map[string]int{}
 )
 `,
@@ -1621,14 +1714,26 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	// remedy, because nothing was lost — the reader is looking for a
 	// wrong comment, not a missing one. Raised in review of #503.
 	separated := func(name, first string, bare bool) string {
-		lost := fmt.Sprintf("%s is now undocumented", first)
+		// THE WHOLE SENTENCE TURNS ON bare, not just its tail. The
+		// opening clause — separated from what it documents, something
+		// inserted between them, a blank line lost — IS the
+		// lost-doc narrative, and where first carries its own doc none
+		// of it happened. Round 13 changed the closing clause and left
+		// the first two thirds sending that reader to look for an
+		// insertion or a lost line that never existed, with a fixture
+		// pinning the wrong narrative as correct. Raised in review of
+		// #503, twice.
 		if !bare {
-			lost = fmt.Sprintf("%s reads as a comment about %s", name, first)
+			return fmt.Sprintf("That is a doc comment opening on the wrong name: "+
+				"%s carries a doc comment of its own where it stands, so nothing "+
+				"was separated from anything and nothing is undocumented — the "+
+				"comment on %s simply reads as a comment about %s. The edit is to "+
+				"%s's first word.", first, name, first, name)
 		}
 		return fmt.Sprintf("That is a doc comment that was separated from what it "+
 			"documents — either %s was inserted between it and %s, or the blank line "+
-			"between two comment groups was lost, and either way %s.",
-			name, first, lost)
+			"between two comment groups was lost, and either way %s is now "+
+			"undocumented.", name, first, first)
 	}
 	inherited := func(name, first string) string {
 		return fmt.Sprintf("That is a block doc that no longer opens on its own "+
@@ -1828,9 +1933,35 @@ func confirmHint(file, pkg, name string) string {
 	return fmt.Sprintf(" Confirm with `go doc -u %s %s`", target, name)
 }
 
+// moduleNote names the module a finding belongs to, and it exists for
+// the FAILURE MESSAGE rather than for the scan — the same reason
+// overlayonepass_test.go's owningModule does, and the same shape:
+// TestNoDocCommentNamesTheDeclarationBelowIt walks the whole tree,
+// nested modules included, from the ROOT module's suite. So a theft
+// added in packs/temporal-workflow reddens `go test ./...` at the repo
+// root while that module's own `go test ./...` stays green, and
+// CLAUDE.md's verify loop prints `all nested modules green` over it.
+// Naming the module is what closes the distance between where the
+// defect is and where the red appears. The guard computed the
+// attribution for its floor already and spent it on nothing else until
+// review of #503.
+func moduleNote(mod string) string {
+	if mod == "" || mod == "." {
+		return ""
+	}
+	return fmt.Sprintf(" That file is in the %s module, which this guard reaches "+
+		"from the ROOT module's suite: %s's own `go test ./...` stays green over "+
+		"it, and so does CLAUDE.md's nested-module loop.", mod, mod)
+}
+
 // docsExamined is the population stolenComments could rule on: every
-// documented declaration, and every documented spec inside a block, that
-// has another one below it.
+// documented declaration or spec that the rule has something to compare
+// against — another declaration below it, another spec below it in the
+// same block, or, for a documented block of more than one entry, its own
+// later entries. That last case is why this is not simply "has another
+// one below it", which is what this sentence said while the body five
+// lines down already carried the exception and a fixture asserted it.
+// Raised in review of #503.
 func docsExamined(f *ast.File) int {
 	n := 0
 	for i, d := range f.Decls {
@@ -2039,12 +2170,39 @@ func documented(d ast.Decl) (name string, doc *ast.CommentGroup, ok bool) {
 //
 // Shadowing is not a concern here because Go forbids two package-level
 // declarations of one name in a file, so there is at most one to find.
+//
+// ANY ENTRY OF A BLOCK, not just its first. This scanned with
+// declaresDirectlyBelow, which asks `specDeclares(d.Specs[0], want)` —
+// the ADJACENCY predicate, whose Specs[0] fence is right for the arm
+// above and imports a fence this one deliberately does not have. A name
+// declared at spec index 1 or later of a later block was reported by
+// nothing, while the identical theft at index 0 reported in full; the
+// tree holds no instance today, so it was a latent false negative with
+// nothing able to go red over it, and the sentence above claiming the
+// scan "stops at the declaration that declares want" was false of a
+// block. declaresIn and specDocumented already existed one scope up and
+// are the predicates these sentences describe. Raised in review of
+// #503.
 func laterUndocumented(rest []ast.Decl, want string) bool {
 	for _, d := range rest {
-		if !declaresDirectlyBelow(d, want) {
-			continue
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			if d.Name.Name != want {
+				continue
+			}
+			return !documentedItself(d)
+		case *ast.GenDecl:
+			if !declaresIn(d.Specs, want) {
+				continue
+			}
+			// The block's own doc documents every entry in it; failing
+			// that, the question is the doc on the spec that declares
+			// want, not on the block's first.
+			if _, _, ok := documented(d); ok {
+				return false
+			}
+			return !specDocumented(d.Specs, want)
 		}
-		return !documentedItself(d)
 	}
 	return false
 }
@@ -2240,6 +2398,22 @@ func TestTheGuardsDerivedFloorAndItsHintMeanWhatTheySay(t *testing.T) {
 		t.Error("a sibling directory whose name merely starts with the module's " +
 			"counts as covering it")
 	}
+	// AND THE ATTRIBUTION REACHES THE MESSAGE, which is the half that
+	// was computed and spent on nothing. A finding in a nested module
+	// has to say so, because the red appears in the root module's suite
+	// and the contributor is running the nested one's. Raised in review
+	// of #503.
+	if got := moduleNote("."); got != "" {
+		t.Errorf("a root-module finding carries a module note (%q); there is no "+
+			"distance to close, and every finding in the tree's biggest module "+
+			"would carry it", got)
+	}
+	if got := moduleNote("packs/temporal-workflow"); !strings.Contains(got, "packs/temporal-workflow") ||
+		!strings.Contains(got, "ROOT module's suite") {
+		t.Errorf("a nested-module finding's note is %q; it has to name the module "+
+			"AND say where the red appears, or it closes no distance", got)
+	}
+
 	// A ONE-CHARACTER MODULE DIRECTORY, which is where "shortest" stops
 	// being a figure of speech. "." is spelled with one character and
 	// claims none of the path, so measuring it with len made it TIE with

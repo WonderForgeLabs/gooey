@@ -611,6 +611,18 @@ failure message says so at the point it fires. A `retains nothing:`
 comment above the reset is the documented escape, for elements that
 genuinely cannot hold a reference.
 
+**`TestNoDocCommentNamesTheDeclarationBelowIt` has exactly that shape,
+and the same two consequences.** It walks every non-test Go file in the
+tree, nested modules included, from the ROOT module's suite — so a doc
+comment separated from its declaration in `packs/temporal-batch` reddens
+`go test ./...` at the repo root while that module's own run stays green
+and the loop above prints `all nested modules green`. Its findings name
+the owning module for that reason. A doc comment whose first word is the
+name of the declaration BELOW it is the signature: an insertion between a
+comment and its subject leaves the comment attached to the newcomer, both
+files compile, `go doc` renders confidently, and the only symptom is a
+paragraph describing the wrong thing.
+
 **Heavy dependencies live in nested modules.** The rule is about what an
 SDK drags in, not about the count: a dependency that pulls a client library,
 a protocol stack or a transitive graph belongs in a nested module, and the
