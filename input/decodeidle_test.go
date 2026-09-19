@@ -19,8 +19,52 @@ import (
 // That is a liveness bug no decoding test can see, because every
 // individual byte still decodes correctly. What is broken is that the
 // loop cannot make progress, so the assertion has to be about progress:
-// when idle, EVERY non-empty input must either consume a byte or produce
-// an event.
+// every input in THIS SWEEP'S RANGE must either consume a byte or
+// produce an event under idle.
+//
+// The range is the scope, not a detail. Stated as "every non-empty
+// input" — which it was — the claim is false, and contradicted by
+// TestTheIdleExceptionIsExactlyThePasteMarker, below in this file:
+// splitPasteMarker holds 3-to-5-byte marker prefixes, and decodePaste
+// holds an open paste indefinitely.
+//
+// WHY EACH CALLER IS SAFE IS A DIFFERENT ANSWER, and "by construction"
+// was true of one of the three. TestIdleDecodeAlwaysMakesProgress
+// sweeps one and two bytes, which splitPasteMarker's three-byte floor
+// puts outside the exception — that one IS structural. The other two
+// reach inside it:
+//
+//   - TestIdleDecodeMakesProgressOnNestedEscapes asserts buf[:3] and
+//     buf[:4], squarely in the 3-to-5-byte range, and is green only
+//     because its alphabet has no '2', so no marker prefix is
+//     constructible from it. That is an accident of the alphabet, not a
+//     property of the sweep — the same accident this branch diagnoses in
+//     TestFinalDecodeMakesProgressOnNestedEscapes, whose inherited
+//     alphabet could not spell the thing that file is about. Measured
+//     here: adding '2' produces TWO stranding inputs, "\x1b[2" and
+//     "\x1b[20", and reddens the sweep against a CORRECT decoder. They
+//     were reached 17 and 1 times respectively when the 3-byte assertion
+//     sat in the innermost loop; hoisting it (review of #445) makes each
+//     reached once per distinct buffer, which is what a count of inputs
+//     should mean.
+//   - TestIdleDecodeMakesProgressOnEscBeforeAMouseReport is safe because
+//     every input in it is SEVEN BYTES OR MORE, so the buffer itself can
+//     never be one of the ≤5-byte prefixes splitPasteMarker accepts, and
+//     decodeEsc's nested-escape arm consumes the leading Esc alone. Not
+//     "each is a complete sequence": measured, "\x1b\x1b[200~" is seven
+//     bytes and its tail alone answers (0, false) — an OPEN PASTE, the
+//     exception that waits forever — and "\x1b\x1b[?1000;1006" is
+//     labelled a truncated mode report in the list itself. The old
+//     rationale invited a reader to add "\x1b[200~", which is what a
+//     terminal actually sends, to a list of "complete sequences"; that
+//     one strands, and the sweep would go red against a CORRECT decoder.
+//     Corrected in review of #445 round twelve.
+//
+// So widening either alphabet means skipping the buffers
+// splitPasteMarker accepts, the way the five-byte ceiling is handled one
+// file over. See input.Decode's doc for the exception list and
+// input.DecodeFinal for which half is bounded. Scoped in review of #445,
+// corrected per caller in review of #445 round eleven.
 func assertProgress(t *testing.T, b []byte) {
 	t.Helper()
 	_, n, ok := Decode(b, true)
@@ -54,15 +98,39 @@ func TestIdleDecodeAlwaysMakesProgress(t *testing.T) {
 // in the grammar (the introducers, an SGR mouse prefix and its finals, a
 // parameter separator and digits, the CSI tilde, a plain rune, and the
 // three bytes that decode to nothing), which is where the branches are.
+//
+// THE ALPHABET MAY NOT GAIN A '2' WITHOUT SKIPPING THE MARKER PREFIXES,
+// and this is the caveat TestFinalDecodeMakesProgressOnNestedEscapes
+// carries for its five-byte ceiling. These buffers are three and four
+// bytes long, inside splitPasteMarker's 3-to-5-byte hold, so the only
+// reason assertProgress's absolute holds here is that "\x1b[2…" cannot
+// be spelled from the bytes below. Measured: adding '2' yields TWO
+// stranding inputs — "\x1b[2" and "\x1b[20" — and turns this test red
+// against a decoder doing exactly what it should. (That figure read 18
+// until review of #445: the 3-byte assertion sat in the innermost loop,
+// so the two inputs were hit 18 times between them and the count was of
+// assertion hits rather than of inputs. The breakdown at :44 was the
+// honest form and is kept; this line now agrees with it.) A reader
+// widening the alphabet has to skip what splitPasteMarker accepts, not
+// weaken the assertion.
 func TestIdleDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 	alpha := []byte{0x1b, '[', 'O', '<', 'M', 'm', ';', '~', '0', '1', 'a', 0x00, 0x7f, 0x80, 0xff, ' '}
 	buf := make([]byte, 4)
+	// ONE ASSERTION PER LENGTH, AT THAT LENGTH'S OWN LOOP LEVEL, the way
+	// TestFinalDecodeMakesProgressOnNestedEscapes does it. The 3-byte
+	// call sat in the innermost loop, so every 3-byte buffer was asserted
+	// 16 times — which is where the "18 stranding inputs" figure came
+	// from: two distinct inputs, hit 18 times. Hoisting makes the
+	// measurement the number of INPUTS, which is what the comment above
+	// claims it is, and drops 16x redundant work on the 3-byte tier.
+	// Raised in review of #445.
 	for _, w := range alpha {
 		for _, x := range alpha {
 			for _, y := range alpha {
+				buf[0], buf[1], buf[2] = w, x, y
+				assertProgress(t, buf[:3])
 				for _, z := range alpha {
-					buf[0], buf[1], buf[2], buf[3] = w, x, y, z
-					assertProgress(t, buf[:3])
+					buf[3] = z
 					assertProgress(t, buf[:4])
 				}
 			}
@@ -80,10 +148,19 @@ func TestIdleDecodeMakesProgressOnNestedEscapes(t *testing.T) {
 // had not yet timed out.
 func TestIdleDecodeMakesProgressOnEscBeforeAMouseReport(t *testing.T) {
 	for _, seq := range []string{
-		"\x1b\x1b[<0;10;5M",   // Esc, then an SGR press — decodes, but is not a key
-		"\x1b\x1b[<0;10;5m",   // Esc, then the matching release
-		"\x1b\x1b[<64;1;1M",   // Esc, then a wheel report
-		"\x1b\x1b[200~",       // Esc, then bracketed paste — a known shape, unmapped
+		"\x1b\x1b[<0;10;5M", // Esc, then an SGR press — decodes, but is not a key
+		"\x1b\x1b[<0;10;5m", // Esc, then the matching release
+		"\x1b\x1b[<64;1;1M", // Esc, then a wheel report
+		// Esc, then an OPEN paste — the tail waits, and the LEADING Esc
+		// is what makes progress. Not "a known shape, unmapped", which
+		// is what this line said and which the paragraph above retires:
+		// decodeCSI routes params=="200" && final=='~' to decodePaste
+		// (input/decode.go), and a payload with no end marker answers
+		// (0, false). The unmapped arm is somewhere else entirely and
+		// this input never reaches it. A reader who trusted the old
+		// label concluded the tail is consumed, which is the premise
+		// that paragraph exists to remove. Raised in review of #445.
+		"\x1b\x1b[200~",
 		"\x1b\x1b[?1000;1006", // Esc, then a truncated mode report
 	} {
 		assertProgress(t, []byte(seq))
@@ -93,11 +170,16 @@ func TestIdleDecodeMakesProgressOnEscBeforeAMouseReport(t *testing.T) {
 // TestTheIdleExceptionIsExactlyThePasteMarker is the UPPER bound on the
 // liveness exception, and until PR #425's review nothing asserted it.
 //
-// Decode's doc is careful that the (0, false)-under-idle exception is
-// "the narrow thing it is: ESC [ 2 0 0 ~ and its prefixes from the third
-// byte on, nothing else", and cites the exhaustive walk above as the
-// enforcement. But that walk covers 1- and 2-byte inputs — precisely the
-// range the exception stays OUT of, as the doc itself says. So the walk
+// Decode's doc is careful that the (0, false)-under-idle exception has
+// TWO members and no more — a SPLIT MARKER (ESC [ 2 0 0 ~ or
+// ESC [ 2 0 1 ~ and their prefixes from the third byte on) and an OPEN
+// PASTE — and cites the exhaustive walk above as the enforcement.
+// Paraphrased rather than quoted: this carried a verbatim quotation of
+// the single-member sentence that doc used to open with, and a grep for
+// it now finds nothing but the quotation marks. "Nothing else" is also
+// the opposite of what the two-member list says. But that walk covers
+// 1- and 2-byte inputs — precisely the range the exception stays OUT
+// of, as the doc itself says. So the walk
 // proves the exception does not start too early and says nothing about
 // where it stops.
 //

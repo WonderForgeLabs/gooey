@@ -26,12 +26,40 @@ Two consequences that are easy to trip over:
   here, but it means `go test` in a nested module is no longer testing that
   module against what it *requires*. That require is read for the first time
   OUTSIDE this repo, by somebody's `go get`, so
-  `TestNestedModulesRequireAResolvableCoreVersion` reads it in here instead: a
-  nested module must require core at a published commit, never the `v0.0.0`
-  placeholder, which no proxy can serve. The `replace … => ../..` beside it
+  `TestNestedModulesRequireResolvableGooeyVersions` reads it in here instead:
+  a nested module must require **every** module of this tree — core and its
+  siblings alike — at a published commit, never the `v0.0.0` placeholder or
+  its canonical `v0.0.0-00010101000000-…` spelling, neither of which a proxy
+  can serve. It must also require them all at the SAME commit: these paths
+  are published by one push, so two revisions is skew, and core sitting
+  behind its own siblings is a module that builds in here and fails every
+  `go get` outside. The `replace … => ../..` beside it
   does not save you — a replace in a *dependency's* go.mod is ignored by
   whoever depends on it, and applies only here, where the workspace has
   already made it redundant.
+
+  **`apps/*` are a different case, and the pin buys them nothing.**
+  `go install pkg@version` refuses any target module whose own go.mod
+  carries `replace` directives, and refuses **before** resolving a single
+  require — so every `apps/*` module stays un-installable while it keeps
+  the replace lines that make in-tree development work, whatever version
+  it names. This bullet claimed the pin made `apps/*` installable until
+  review of [#497](https://github.com/WonderForgeLabs/gooey/pull/497)
+  measured it.
+  The requires this guard is about are read by `go get` of every module
+  in the tree that is NOT under `apps/`, where a replace in a
+  dependency's go.mod is ignored rather than fatal. Named by the property
+  rather than listed: this bullet spelled five of them out until review
+  of [#497](https://github.com/WonderForgeLabs/gooey/pull/497), which is
+  the shape the Verify section below forbids for exactly the reason that
+  applies here — `TestCLAUDEMDNamesNoDeletedModule` only checks the
+  namespaces in its own list, so `paint`, `mcp` and `grpc` carry no
+  prefix it can see and renaming any of the three would have left the
+  sentence pointing at nothing with nothing red. The list was also
+  already incomplete in spirit: the `packs/temporal-*` modules are
+  distributed the same way, and are outside this sentence today only
+  because they happen to require nothing of the tree — which stops being
+  true the day one of them requires core.
 - **`GOPROXY=off` does not prove vendoring works.** It blocks downloads
   while the local module cache still satisfies everything, so a tree that
   would fail on a clean machine passes for you. The discriminating checks
@@ -129,6 +157,18 @@ is repo-global and shared with every one of those agents) and never
 go vet ./...     # whole-repo compile check — use this, not `go build`
 go test ./...
 ```
+
+**The root suite needs a full clone with `origin/main`.** Several guards
+read git history rather than the working tree — the own-module pins are
+checked for existence, for their commit stamp, and for being ancestors of
+the published branch — so on a `git clone --depth 1` the pinned revisions
+are not objects and the suite goes red saying nothing was checked. That
+is a real answer, not a false alarm: a run that verified nothing must not
+report `ok`. The fix is `git fetch --unshallow` (or `--deepen=50`, which
+reaches them while the clone stays shallow) and `git fetch origin main`
+if the ref is missing. This lived only inside a failure message and a
+`ci.yml` comment until review of #497 pointed out that "a red suite is
+yours" then costs a contributor the attention that rule exists to buy.
 
 `./...` stops at the module boundary, and every nested module it skips has
 to be run on its own. **Discover them — never enumerate them.** A written

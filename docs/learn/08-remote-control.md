@@ -120,14 +120,62 @@ Code:
 claude mcp add --transport http kanban http://127.0.0.1:7778/mcp
 ```
 
-The tool inventory: `tree_snapshot`, `screen_text`, `list_values`,
-`list_styles`, `invoke_command`, `set_value`, `send_keys`, `send_mouse`,
-`focus`, `swap_markup`, `patch_markup`, `validate_markup`,
+The tool inventory: `tree_snapshot`, `screen_size`, `screen_text`,
+`list_values`, `list_styles`, `invoke_command`, `set_value`, `send_keys`,
+`send_mouse`, `focus`, `swap_markup`, `patch_markup`, `validate_markup`,
 `register_properties`, `unregister_properties`. The rest of this tutorial exercises the
 important ones; the calls below all use the same `tools/call` shape.
-`send_mouse` coordinates can currently only be inferred — no tool
-reports terminal size, tracked in
-[#204](https://github.com/WonderForgeLabs/gooey/issues/204).
+
+`screen_size` reports the visible surface — `{cols, rows}` in cells, its
+absolute origin `{x, y}`, and the terminal's cell metrics in pixels for
+sizing graphics ([#204](https://github.com/WonderForgeLabs/gooey/issues/204)).
+
+A session scoped to an island is told the island's size, because the
+island is that session's whole screen. **`send_mouse` still takes
+absolute screen cells**, so add `x`/`y` to a position within your surface
+to get the coordinate it accepts: an island at `y=1` is told `rows=3`, and
+a guest that sends `y=0` is refused while the island's last row goes
+unreachable. Unscoped, the origin is `(0,0)` and the conversion is a
+no-op.
+
+**Only one of your two coordinate sources needs it.** `screen_text` is
+homed at `(0,0)` because it is a *screen*: the host renders your island
+into a fresh buffer of exactly that size, and a screen starts at its own
+origin. That is the reason `x`/`y` are what you add to a position read
+off it — not confidentiality, which `screen_size` retires by telling you
+the origin outright.
+`tree_snapshot` emits each element's `bounds` from the live tree, which
+are **already absolute** even when the snapshot is rooted at your island.
+Adding the origin to those is the same off-by-`y0` this tool exists to
+fix, one source over, and it fails quietly: the converted point lands on
+a real component (wrong click, no error) or outside the island (refused,
+with a message saying the point is outside an island whose own snapshot
+you computed it from).
+
+**The cell metrics are `0` only when nobody has measured them, and the
+converse does not hold.** Branch on the zero rather than dividing by it —
+but do not read a non-zero pair as a measurement. Two places substitute
+`term.DefaultCellW/H` (10×20): the capability probe itself does it
+whenever it could not measure, whatever the app paints on, and the
+runtime does it for a pixel-plane app that never probed at all. So `0`
+means *certainly unmeasured*; non-zero means *usable*, not *measured*,
+and nothing in the payload tells the two apart. The ordinary `0` case is
+a cell-plane app with the probe off, which is the default — the probe is
+a round trip only graphics apps need.
+
+Before this tool the screen had to be read off `screen_text`, whose lines
+are trailing-trimmed (so the width it implies is the longest *painted*
+line), or inferred from the root's arranged bounds in `tree_snapshot`.
+That inference is reliable for an unscoped session — the composer arranges
+the root to the whole screen whatever it declares — and for a scoped one it
+returns the same rect this tool does, because a scoped `tree_snapshot` is
+rooted at the island and reports its bounds from the same call. It costs a
+whole tree to learn two integers, and it cannot report the cell metrics at
+all. Which of the two surfaces you are looking at, `screen_size` answers by
+*contract* rather than by a field — the result is this session's visible
+surface, whatever its scope — so you never have to ask. Do not try to read
+it off the numbers: `x`/`y` are `(0,0)` for an unscoped session and also for
+a session scoped to an island arranged at the origin.
 
 ```sh
 curl -s http://127.0.0.1:7778/mcp \
