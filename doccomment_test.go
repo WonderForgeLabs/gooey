@@ -43,9 +43,23 @@ import (
 // flags honest sentences — a test whose name starts with the function it
 // exercises, a wrapper whose comment opens by naming the unexported form
 // it calls. What theft actually looks like is narrower and unambiguous:
-// the comment names X, and X is the very next declaration. Nothing
-// legitimate has that shape, because a comment about the thing below it
-// would be that thing's comment.
+// the comment names X, and X is either DIRECTLY BELOW it or later in
+// the file and BARE.
+//
+// THE SECOND HALF IS NOT THE ORIGINAL RULE. This said "X is the very
+// next declaration", and "nothing legitimate has that shape, because a
+// comment about the thing below it would be that thing's comment",
+// until review of #503 round 13 — by which point three of the four arms
+// fired at other distances: laterUndocumented at any distance, and the
+// two block arms on any later entry of the block. A reader who took the
+// header literally would not expect the distance arm to exist, in the
+// guard's first paragraph, in the file whose subject is a comment that
+// stopped describing what sits beneath it, with nothing able to go red
+// over it. What replaced distance is documented-ness: an honest cross
+// reference names something that is itself documented, and a stolen
+// comment names something left bare, because the theft is what took its
+// doc away. The generated-code note below is the OTHER correction to
+// "nothing legitimate has that shape".
 func TestNoDocCommentNamesTheDeclarationBelowIt(t *testing.T) {
 	var files, examined int
 	// TWO MAPS, because one cannot tell a module the walk never reached
@@ -506,7 +520,14 @@ func TestTheRemediationGrepAgreesWithTheRule(t *testing.T) {
 	// without it they anchor the whole file and the pattern matches only
 	// a one-line file.
 	re := regexp.MustCompile("(?m)" + generatedMarkerPattern)
-	generated := 0
+	// compared, NOT len(paths). paths is every walked .go file and the
+	// loop continues past one that does not parse, so len(paths) is the
+	// population the walk OFFERED rather than the one this comparison
+	// covered. They are equal today only because all of them parse; the
+	// walk deliberately includes testdata, so one broken fixture makes
+	// the denominator overstate what was checked — in a floor whose
+	// whole job is to say how much was. Raised in review of #503.
+	generated, compared := 0, 0
 	for _, path := range paths {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -516,6 +537,7 @@ func TestTheRemediationGrepAgreesWithTheRule(t *testing.T) {
 		if err != nil {
 			continue // as the walk does: a file that does not parse is not this rule's business
 		}
+		compared++
 		if rule, grep := ast.IsGenerated(f), re.Match(src); rule != grep {
 			t.Errorf("%s: ast.IsGenerated says %v and the arm's grep says %v, so the "+
 				"remediation this floor prints names a different set of files than "+
@@ -538,16 +560,16 @@ func TestTheRemediationGrepAgreesWithTheRule(t *testing.T) {
 	// no generated file in it makes this test pass against any pattern
 	// at all, including one that matches nothing.
 	if generated == 0 {
-		t.Fatalf("the walk found no generated file among %d, so this comparison "+
-			"holds between two empty sets and would pass against any pattern",
-			len(paths))
+		t.Fatalf("the walk found no generated file among the %d that parsed, so "+
+			"this comparison holds between two empty sets and would pass against "+
+			"any pattern", compared)
 	}
 	// GUARDED, because the sentence is a claim about the run it is in:
 	// a t.Logf after t.Errorf prints alongside the failure it contradicts.
 	if !t.Failed() {
 		t.Logf("%d of %d parsed files are generated, and the arm's grep agrees on "+
 			"every one (`go test -v` prints this; a passing `go test` does not)",
-			generated, len(paths))
+			generated, compared)
 	}
 }
 
@@ -1000,6 +1022,57 @@ func alpha() {}
 				"separated from what it documents — either beta was inserted " +
 				"between it and alpha, or the blank line between two comment " +
 				"groups was lost, and either way alpha is now undocumented.",
+		},
+		{
+			// ADJACENT AND DOCUMENTED, which no fixture covered in
+			// either direction. The finding is real — beta's comment
+			// opens by naming something else, so beta is
+			// mis-documented — but NOTHING WAS LOST, and the sentence
+			// said "alpha is now undocumented" about a declaration
+			// carrying its own doc comment. The counterfactual arm that
+			// existed pinned the discriminator only at distance >= 2,
+			// which is exactly the asymmetry. Raised in review of #503.
+			name: "adjacent and documented is a wrong comment, not a lost one",
+			// ONE, NOT TWO: docsExamined counts a documented
+			// declaration only when something FOLLOWS it, and the
+			// second one here is last.
+			wantExamined: 1,
+			src: `// alpha is the entry point; this one does the work.
+func beta() {}
+
+// alpha does the alpha thing.
+func alpha() {}
+`,
+			want: "alpha",
+			wantMsg: "the doc comment on beta opens by naming alpha, which is the " +
+				"declaration DIRECTLY BELOW it. That is a doc comment that was " +
+				"separated from what it documents — either beta was inserted " +
+				"between it and alpha, or the blank line between two comment " +
+				"groups was lost, and either way beta reads as a comment about alpha.",
+		},
+		{
+			// A BLOCK WHOSE DOC IS ON ITS FIRST SPEC, which documented()
+			// answers "undocumented" for because it reads the BLOCK's
+			// Doc. The later-undocumented arm then reported a
+			// declaration whose doc comment is on the line directly
+			// above it. Fourteen blocks in this tree have this shape and
+			// none of them fires today, which is why this fixture is the
+			// only thing that can hold it. Raised in review of #503.
+			name: "a var block documented on its first spec is documented",
+			// ONE, NOT TWO: docsExamined counts a documented
+			// declaration only when something FOLLOWS it, and the
+			// second one here is last.
+			wantExamined: 1,
+			src: `// alpha is the alpha thing.
+func beta() {}
+
+func other() {}
+
+var (
+	// alpha is the alpha table.
+	alpha = map[string]int{}
+)
+`,
 		},
 		{
 			name:         "an honest comment that names itself",
@@ -1520,11 +1593,34 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 	// write a second doc comment for a declaration that already has one
 	// and leave first bare, which is the edit the guard exists to
 	// prevent. Raised in the round after, on #503 again.
-	separated := func(name, first string) string {
+	// separated takes `bare` — whether `first` was MEASURED to have no
+	// doc comment of its own — rather than asserting it.
+	//
+	// The closing clause said "%s is now undocumented" at all three call
+	// sites, and only one of them looked. Round 12's whole argument is
+	// that documented-ness rather than distance is what separates theft
+	// from prose, and that check lived in laterUndocumented alone: the
+	// adjacency arm and the spec-level arm both printed the claim
+	// without asking. Reproduced — a doc on `parse` opening with
+	// "Parse", with a documented `Parse` directly below, was told
+	// "either way Parse is now undocumented", and the go doc -u hint
+	// sent the reader to a declaration that already renders correctly.
+	//
+	// THE FINDING IS STILL REAL WHERE first IS DOCUMENTED, which is why
+	// the discriminator is not simply applied at all four sites: the
+	// comment on `name` opens by naming something else, so `name` is
+	// mis-documented whatever `first`'s state is. What changes is the
+	// remedy, because nothing was lost — the reader is looking for a
+	// wrong comment, not a missing one. Raised in review of #503.
+	separated := func(name, first string, bare bool) string {
+		lost := fmt.Sprintf("%s is now undocumented", first)
+		if !bare {
+			lost = fmt.Sprintf("%s reads as a comment about %s", name, first)
+		}
 		return fmt.Sprintf("That is a doc comment that was separated from what it "+
 			"documents — either %s was inserted between it and %s, or the blank line "+
-			"between two comment groups was lost, and either way %s is now "+
-			"undocumented.", name, first, first)
+			"between two comment groups was lost, and either way %s.",
+			name, first, lost)
 	}
 	inherited := func(name, first string) string {
 		return fmt.Sprintf("That is a block doc that no longer opens on its own "+
@@ -1540,7 +1636,7 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 				switch {
 				case i+1 < len(f.Decls) && declaresDirectlyBelow(f.Decls[i+1], first):
 					report(d.Pos(), name, first, "the declaration DIRECTLY BELOW it",
-						separated(name, first))
+						separated(name, first, !documentedItself(f.Decls[i+1])))
 				// A BLOCK'S DOC NAMING A LATER ENTRY OF ITS OWN BLOCK,
 				// which nothing reported until review of #503. documented
 				// answers for a block with its FIRST spec's name, and the
@@ -1596,10 +1692,13 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 				// real, against the dozen false positives the distance
 				// version produced.
 				case laterUndocumented(f.Decls[i+1:], first):
+					// `true` is not an assertion here: this arm's
+					// predicate IS the measurement, which is why it
+					// carries the locator that states it.
 					report(d.Pos(), name, first,
 						"a LATER declaration in this file that has no doc "+
 							"comment of its own",
-						separated(name, first))
+						separated(name, first, true))
 				}
 			}
 		}
@@ -1676,7 +1775,12 @@ func stolenComments(fset *gotoken.FileSet, f *ast.File, pkg string) []string {
 			if specDeclares(g.Specs[j+1], first) {
 				locator = "the entry of this block DIRECTLY BELOW it"
 			}
-			report(sp.Pos(), name, first, locator, separated(name, first))
+			// MEASURED HERE TOO. The named entry is a spec of this same
+			// block, so the question is whether THAT spec carries a doc
+			// of its own — findSpec answers it directly rather than
+			// letting the sentence assume.
+			report(sp.Pos(), name, first, locator,
+				separated(name, first, !specDocumented(g.Specs[j+1:], first)))
 		}
 	}
 	return out
@@ -1932,8 +2036,58 @@ func laterUndocumented(rest []ast.Decl, want string) bool {
 		if !declaresDirectlyBelow(d, want) {
 			continue
 		}
-		_, _, documentedItself := documented(d)
-		return !documentedItself
+		return !documentedItself(d)
+	}
+	return false
+}
+
+// documentedItself reports whether d carries a doc comment of its own,
+// wherever Go puts it for that shape.
+//
+// THE BLOCK'S DOC IS NOT THE ONLY PLACE. `documented` answers for a
+// *ast.GenDecl from the BLOCK's Doc, so a parenthesised block with no
+// doc of its own whose first spec carries one answered "undocumented" —
+// and laterUndocumented reported it, printing "a LATER declaration in
+// this file that has no doc comment of its own" about a declaration
+// whose doc comment is on the line directly above it.
+//
+// Measured over this tree with the guard's own treeWalk: FOURTEEN such
+// blocks across twelve files, including markup/catalog.go — the file
+// the block-level work was written for — plus render/color.go,
+// control/control.go, companion.go, validate/validate.go,
+// handlers/exec/exec.go, paint/shapes/shapes.go,
+// components/buttonchrome.go, apps/wysiwyg/editors.go,
+// apps/wysiwyg/servelink.go, cmd/browser/gifplay.go and
+// cmd/typeahead/typeahead_test.go. Each is a name that produces a false
+// finding with a false sentence the moment any doc comment above it
+// opens with it. Nothing fires today, so the tree is green and the
+// measurement is the only way to see it — which is the argument for
+// making it rather than reasoning about it.
+//
+// declaresDirectlyBelow already descends to Specs[0] for exactly this
+// reason; this is the same descent on the other question. Raised in
+// review of #503.
+func documentedItself(d ast.Decl) bool {
+	if _, _, ok := documented(d); ok {
+		return true
+	}
+	if g, ok := d.(*ast.GenDecl); ok && g.Tok != gotoken.IMPORT && len(g.Specs) > 0 {
+		_, _, ok := documentedSpec(g.Specs[0])
+		return ok
+	}
+	return false
+}
+
+// specDocumented reports whether the spec declaring want, among specs,
+// carries a doc comment of its own — the spec-level twin of
+// documentedItself.
+func specDocumented(specs []ast.Spec, want string) bool {
+	for _, sp := range specs {
+		if !specDeclares(sp, want) {
+			continue
+		}
+		_, _, ok := documentedSpec(sp)
+		return ok
 	}
 	return false
 }
