@@ -1,0 +1,975 @@
+package mcp
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/control"
+	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/term"
+)
+
+// screenSizeRootMarkup declares every shape that is supposed to detach a
+// root from the screen: a margin, a fixed size, and a non-stretch
+// alignment on both axes.
+//
+// All five, because the claim this fixture backs names all five. An
+// earlier version declared Width/Height/Margin while the prose said
+// alignment had been measured too — an overclaim of exactly the kind
+// this test exists to retire, caught in review of #504.
+const screenSizeRootMarkup = `<Gooey>
+  <Border Name="Inset" Width="20" Height="5" Margin="2" HAlign="Start" VAlign="Start">
+    <Text Name="InsetText">inset</Text>
+  </Border>
+</Gooey>`
+
+// TestTheRootAlwaysFillsTheScreen corrects this feature's own stated
+// rationale, and is the reason the correction cannot rot.
+//
+// ScreenSize's doc comment and issue #204 both said the root-bounds
+// inference "equals the terminal only while the root happens to fill it —
+// give the root a margin, a fixed Width or a non-stretch alignment and
+// the client silently computes coordinates against a screen that is not
+// there." That is FALSE, and measurably so: Composer.Frame arranges the
+// root with `c.root.Arrange(Rect{0, 0, c.cols, c.rows})` and Base.Arrange
+// is `e.bounds = b`, so the root stores the screen whatever it declares.
+// Margin, Width and Height are applied by MeasureChild/ArrangeChild — the
+// sandwich the root, being nobody's child, never passes through.
+//
+// So the inference was RELIABLE for an unscoped session, and screen_size
+// earns its place for the other reasons instead: screen_text's lines are
+// trailing-trimmed so the width it implies is the longest PAINTED line,
+// learning two integers should not cost a whole tree, and neither
+// workaround carries the cell metrics at all.
+//
+// AND IT IS RELIABLE FOR A SCOPED ONE TOO. This said the scoped case is
+// "the case with a wrong answer, not merely an unproven one". It is not:
+// Service.Tree roots a scoped snapshot at the island and walk emits
+// bounds from the same Bounds() call islandBounds makes, so the root
+// bound IS screen_size's cols/rows/x/y —
+// TestATreeSnapshotBoundIsAlreadyAbsolute below fatals if any of the
+// four ever diverges, which makes this file's header a claim its own
+// test contradicts. Four, because it compared y alone until review of
+// #504: x was pinned indirectly by the corner round-trip and the extent
+// was not pinned at all. What the inference does not supply is that the root it
+// read was the island rather than the screen. Raised in review of #504,
+// and it is the same shape as the claim this test retires: a rationale
+// written from reasoning instead of measurement.
+//
+// If someone ever makes the root honour its own size, this test fails and
+// the old justification becomes true again — which is the point of
+// pinning it rather than deleting the sentence.
+func TestTheRootAlwaysFillsTheScreen(t *testing.T) {
+	app := newTestApp(t, screenSizeRootMarkup, nil)
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := newClient(t, s)
+
+	wantCols, wantRows := screenOf(t, app)
+	b := rootBounds(t, c.json("tree_snapshot", nil))
+	if b.W != wantCols || b.H != wantRows {
+		t.Errorf("a root declaring Width=20 Height=5 Margin=2 HAlign=Start VAlign=Start "+
+			"reports bounds %dx%d; "+
+			"want the full %dx%d, because Composer.Frame arranges the root to the "+
+			"screen and Base.Arrange stores what it is given",
+			b.W, b.H, wantCols, wantRows)
+	}
+
+	sz := c.json("screen_size", nil)
+	if int(sz["cols"].(float64)) != wantCols || int(sz["rows"].(float64)) != wantRows {
+		t.Errorf("screen_size reports %vx%v, want the terminal's %dx%d",
+			sz["cols"], sz["rows"], wantCols, wantRows)
+	}
+	// THE ORIGIN IS THE OTHER HALF OF THE CONTRACT, and it was the half
+	// no test read. The schema promises x/y are 0 for an unscoped
+	// session — "the screen is the region" — and a client adds them to
+	// every coordinate it sends, so a non-zero pair here would displace
+	// every press by the same offset, silently. Its scoped twin is
+	// TestAGuestIsToldWhereItsIslandIs. Raised in review of #504.
+	if x, ok := sz["x"].(float64); !ok || x != 0 {
+		t.Errorf("x = %v on an unscoped session, want 0: the whole screen is the "+
+			"region, so its origin is the screen's", sz["x"])
+	}
+	if y, ok := sz["y"].(float64); !ok || y != 0 {
+		t.Errorf("y = %v on an unscoped session, want 0: the whole screen is the "+
+			"region, so its origin is the screen's", sz["y"])
+	}
+}
+
+// TestAnUnscopedZeroExtentIsAnAnswerToo is the second cause of a 0x0,
+// and the schema named only the first.
+//
+// extentTail explained a zero extent as "a scoped session whose island
+// is collapsed or not yet arranged". An UNSCOPED session reports 0x0 as
+// well, whenever the terminal has no size — the unscoped arm reads
+// buf.W/buf.H straight off the composer, and a pty nobody ran stty on
+// is 0x0 and paints nothing, which this repo's own demo workflows say
+// in as many words. A client with one explanation for a value with two
+// causes answers "your island is collapsed" to a session holding no
+// grant, or treats the zero as impossible and divides by it.
+//
+// THE SIZE IS SET BEFORE THE SERVER EXISTS, because this is about the
+// terminal having no size at all rather than about a resize: a Resize
+// through the service would go through the same path either way, and
+// what is under test is the value the unscoped arm reads. Raised in
+// review of #504.
+func TestAnUnscopedZeroExtentIsAnAnswerToo(t *testing.T) {
+	app := newTestApp(t, screenSizeRootMarkup, nil)
+	done := make(chan struct{})
+	app.Post(func() {
+		app.cols, app.rows = 0, 0
+		app.attach(app.comp.Root())
+		close(done)
+	})
+	<-done
+
+	s, err := New(app, Options{Context: app.ctx, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := newClient(t, s)
+
+	sz := c.json("screen_size", nil)
+	// NOT AN ERROR, which is the half a client branches on first: a
+	// denial and a zero are different answers and only one of them says
+	// the session is still usable.
+	if _, isErr := sz["error"]; isErr {
+		t.Fatalf("screen_size on a zero-sized terminal answered with an error: %v", sz)
+	}
+	if got := sz["cols"]; got != float64(0) {
+		t.Errorf("cols = %v on an unscoped session whose terminal is 0x0, want 0", got)
+	}
+	if got := sz["rows"]; got != float64(0) {
+		t.Errorf("rows = %v on an unscoped session whose terminal is 0x0, want 0", got)
+	}
+	// AND THE SCHEMA HAS TO SAY SO. The value above is what the code
+	// does; this is the claim a client reads, and it was the half that
+	// named only the island.
+	d, _ := screenSizeSchema()["properties"].(map[string]any)
+	cols, _ := d["cols"].(map[string]any)
+	desc, _ := cols["description"].(string)
+	if !strings.Contains(desc, "ANY session") {
+		t.Errorf("cols' description explains a zero extent as\n\t%q\nwhich does "+
+			"not cover the unscoped terminal-has-no-size cause this test just "+
+			"produced", desc)
+	}
+}
+
+// TestTheCellMetricsSayWhenNobodyMeasured pins BOTH arms, because the
+// interesting one is the zero.
+//
+// The probe that fills these is opt-in (gooey.WithCapabilityProbe), so
+// an UNPROBED host reports 0 — and a client doing
+// `pixels = cols * cellWidth` gets 0 while one doing `cols / cellWidth`
+// divides by zero. The schema says 0 means "never probed"; this is what
+// makes that a checked claim rather than a sentence.
+//
+// NOT "a cell-plane app reports 0", which is what this said and is
+// false the moment the probe runs. term.Screen.Detect substitutes
+// DefaultCellW/H on `caps.CellW == 0` with no plane test at all, so a
+// probed cell-plane app reports a cell size it never measured; App's
+// pixel-plane backfill is a SECOND substitution site that only fires
+// where Detect did not. The unprobed arm below is therefore about the
+// probe, not about the plane. Corrected in review of #504.
+//
+// The earlier version of this assertion was `got["cellWidth"] == nil`,
+// which a JSON 0 satisfies — so it was green over exactly the case it
+// looked like it was covering.
+func TestTheCellMetricsSayWhenNobodyMeasured(t *testing.T) {
+	t.Run("unprobed reports zero", func(t *testing.T) {
+		_, _, _, c := setup(t)
+		got := c.json("screen_size", nil)
+		if w, ok := got["cellWidth"].(float64); !ok || w != 0 {
+			t.Errorf("cellWidth = %v on a host that never probed, want 0", got["cellWidth"])
+		}
+		if h, ok := got["cellHeight"].(float64); !ok || h != 0 {
+			t.Errorf("cellHeight = %v on a host that never probed, want 0", got["cellHeight"])
+		}
+	})
+
+	t.Run("probed reports what the terminal said", func(t *testing.T) {
+		app, _, _, c := setup(t)
+		const wantW, wantH = 7, 15
+		done := make(chan struct{})
+		app.Post(func() {
+			app.comp.SetCaps(term.Caps{CellW: wantW, CellH: wantH})
+			close(done)
+		})
+		<-done
+
+		got := c.json("screen_size", nil)
+		if int(got["cellWidth"].(float64)) != wantW || int(got["cellHeight"].(float64)) != wantH {
+			t.Errorf("cell metrics %vx%v, want the probed %dx%d — the values are passed "+
+				"through from Composer.Caps, so a zero here means they were dropped",
+				got["cellWidth"], got["cellHeight"], wantW, wantH)
+		}
+	})
+}
+
+// islandOffOriginMarkup puts the island SECOND, so its origin is not
+// (0,0).
+//
+// mcpIslandMarkup puts the Border first, which makes the island's origin
+// (0,0) — and there the island-relative and absolute coordinate spaces
+// coincide, so every origin bug is invisible. This is the same fixture
+// blind spot in the other axis.
+const islandOffOriginMarkup = `<Gooey>
+  <VStack Gap="0">
+    <Text Name="Theirs">{{.Host.Secret}}</Text>
+    <Border Name="Mine" Title="mine">
+      <Text Name="MineText">{{.Mine.Body}}</Text>
+    </Border>
+  </VStack>
+</Gooey>`
+
+// islandOffXOriginMarkup is the same page turned on its side, so the
+// island's origin is off zero in X instead of in Y.
+//
+// DERIVED, not copied: one fixture with two stack elements would be two
+// pages that happen to look alike, and a change to one of them would
+// leave the other axis quietly testing something else. The VStack is the
+// only difference between the two cases, which is the point.
+var islandOffXOriginMarkup = strings.NewReplacer(
+	"<VStack Gap=\"0\">", "<HStack Gap=\"0\">",
+	"</VStack>", "</HStack>",
+).Replace(islandOffOriginMarkup)
+
+// islandCollapsedMarkup is islandOffOriginMarkup with the island
+// collapsed, DERIVED rather than copied so the two fixtures cannot drift
+// into being two different pages — which would make "one reports 0x0 and
+// the other does not" a statement about the markup instead of about the
+// collapse. If the anchor below ever stops matching, Replace returns the
+// original and the collapsed arm reports a live size, which is a
+// failure, not a silent pass.
+var islandCollapsedMarkup = strings.Replace(islandOffOriginMarkup,
+	`<Border Name="Mine" Title="mine">`,
+	`<Border Name="Mine" Title="mine" Visibility="Collapsed">`, 1)
+
+// islandGuest builds a scoped session over src and returns its client.
+//
+// The three off-origin cases below each wrote out the same four steps —
+// two sources, newTestApp, New with an island grant, newClient — and the
+// copies had already begun to differ: one seeded Host.Secret with "s"
+// rather than "hunter2" for no reason it states. islandServer
+// (grant_test.go:30) is the same shape for the ORIGIN-AT-ZERO fixture and
+// cannot serve here; it hard-codes the markup and the island name and
+// returns a host client nothing here wants.
+//
+// BOTH the markup and the island name are parameters, because the cases
+// vary along both axes independently: "Ghost" over the ordinary fixture
+// is the island that is gone, "Mine" over the collapsed fixture is the
+// island that is merely degenerate, and those are the two answers
+// islandRect is careful to keep apart.
+// It returns the app as well as the client, because a caller that wants
+// to probe the terminal's cell size has to Post SetCaps onto the UI
+// goroutine and there is no other handle on it.
+func islandGuest(t *testing.T, src, island string) (*client, *testApp) {
+	t.Helper()
+	app := newTestApp(t, src, map[string]any{
+		"Mine": map[string]any{"Body": prop.NewSource("m0")},
+		"Host": map[string]any{"Secret": prop.NewSource("hunter2")},
+	})
+	gs, err := New(app, Options{
+		Context: app.ctx,
+		Timeout: 5 * time.Second,
+		Grant:   control.Island(island, island),
+	})
+	if err != nil {
+		t.Fatalf("New (guest): %v", err)
+	}
+	return newClient(t, gs), app
+}
+
+// TestAGuestIsToldWhereItsIslandIs is the half that makes the size
+// actionable rather than merely honest.
+//
+// SendPointer takes ABSOLUTE screen cells and mayPoint refuses anything
+// landing outside the island. So a guest told "your screen is 60x3", with
+// an island that actually starts at y=1, has one row it cannot reach and
+// one the host refuses — the tool would be handing out coordinates its
+// own pointer call rejects. The origin is what closes that, and the
+// assertion below is the round trip: convert with x/y, and send_mouse
+// must accept every corner.
+//
+// BOTH AXES, and the second one is not symmetry for its own sake. The
+// only off-origin fixture here was a VStack, so the island's x was zero
+// on every run and `size.X` could have been hard-coded, dropped, or
+// swapped with Y and nothing would have gone red — the same blind spot
+// the VStack fixture was added to close in the other direction, left
+// open one axis over. The arms differ in exactly one thing, the stack,
+// and each names the coordinate its own fixture makes non-zero.
+func TestAGuestIsToldWhereItsIslandIs(t *testing.T) {
+	for _, tc := range []struct {
+		name, axis, markup string
+		origin             func(x0, y0 int) int
+		outside            func(x0, y0 int) (int, int)
+	}{
+		{"stacked vertically", "y", islandOffOriginMarkup,
+			func(_, y0 int) int { return y0 },
+			func(x0, y0 int) (int, int) { return x0, y0 - 1 }},
+		{"stacked horizontally", "x", islandOffXOriginMarkup,
+			func(x0, _ int) int { return x0 },
+			func(x0, y0 int) (int, int) { return x0 - 1, y0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guest, _ := islandGuest(t, tc.markup, "Mine")
+
+			sz := guest.json("screen_size", nil)
+			x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
+			cols, rows := int(sz["cols"].(float64)), int(sz["rows"].(float64))
+
+			if tc.origin(x0, y0) == 0 {
+				t.Fatalf("the island reports origin %s=0, so this fixture cannot tell "+
+					"an origin-aware answer from one that assumes (0,0); sz=%v",
+					tc.axis, sz)
+			}
+			// Every corner of the island, converted through the reported
+			// origin, must be a coordinate send_mouse accepts. Without
+			// x/y a guest can only guess these, and the guess is wrong by
+			// exactly the origin.
+			for _, p := range [][2]int{{0, 0}, {cols - 1, 0}, {0, rows - 1}, {cols - 1, rows - 1}} {
+				guest.ok("send_mouse", map[string]any{
+					"kind": "click", "x": x0 + p[0], "y": y0 + p[1],
+				})
+			}
+			// And the cell directly outside the island along that axis is
+			// NOT the guest's, which is what proves the conversion is a
+			// translation rather than a blanket permit.
+			ox, oy := tc.outside(x0, y0)
+			guest.fails("send_mouse", map[string]any{
+				"kind": "click", "x": ox, "y": oy,
+			}, "outside this session's island")
+		})
+	}
+}
+
+// TestAGuestIsToldItsIslandsSize is the half that makes the tool safe to
+// add to a scoped session.
+//
+// A guest's whole screen IS its island — that is the fiction Screen
+// already maintains by cropping, and a size tool that answered with the
+// terminal would break it in the one direction that matters: a client
+// told the screen is 60x14 when it may only touch a 60x3 border computes
+// coordinates for cells it cannot reach, and send_mouse REFUSES every one
+// of them — control's mayPoint denies both arms, the coordinate nothing
+// would receive and the one whose target is outside the island. This said
+// "answers those with silence", which is the reading that makes an
+// out-of-island click look like it fails open. Silence is what an
+// UNSCOPED session gets, where mayPoint returns nil and the event reaches
+// nothing; it is the opposite of what the session this test is named for
+// gets. Raised in review of #504.
+//
+// The assertion that the two DIFFER is not decoration. If the island
+// happened to fill the terminal, both arms would read the same and this
+// test would pass against a tool that ignored the grant entirely.
+func TestAGuestIsToldItsIslandsSize(t *testing.T) {
+	guest, host := islandServer(t)
+
+	g := guest.json("screen_size", nil)
+	h := host.json("screen_size", nil)
+
+	if g["cols"] == h["cols"] && g["rows"] == h["rows"] {
+		t.Fatalf("the guest and the host are told the same size (%vx%v), so this test "+
+			"cannot tell a scoped answer from an unscoped one", g["cols"], g["rows"])
+	}
+	// The island is a Border inside a VStack that also holds a Text, so
+	// it is strictly shorter than the screen and no wider.
+	if int(g["rows"].(float64)) >= int(h["rows"].(float64)) {
+		t.Errorf("the guest is told %v rows and the host %v; the island is one of two "+
+			"children of a VStack and cannot be as tall as the screen", g["rows"], h["rows"])
+	}
+	if int(g["cols"].(float64)) > int(h["cols"].(float64)) {
+		t.Errorf("the guest is told %v columns, wider than the host's %v", g["cols"], h["cols"])
+	}
+}
+
+// rootBounds reads the root component's arranged bounds out of a
+// tree_snapshot — the inference #204 exists to replace, kept here only so
+// a test can assert screen_size is NOT it.
+func rootBounds(t *testing.T, snap map[string]any) gooey.Rect {
+	t.Helper()
+	tree, ok := snap["tree"].(map[string]any)
+	if !ok {
+		t.Fatalf("tree_snapshot carries no tree: %v", snap)
+	}
+	b, ok := tree["bounds"].(map[string]any)
+	if !ok {
+		t.Fatalf("tree_snapshot root carries no bounds: %v", tree)
+	}
+	return gooey.Rect{
+		X: int(b["x"].(float64)), Y: int(b["y"].(float64)),
+		W: int(b["w"].(float64)), H: int(b["h"].(float64)),
+	}
+}
+
+// screenOf reads the test app's terminal size THROUGH the UI loop.
+//
+// testApp documents cols/rows as "written and read only by run(), or by a
+// closure run() drained", and a test reading them directly commits the
+// same violation the tools are forbidden — it just happens not to race
+// today because nothing resizes. Asserting against a value fetched the
+// illegal way would make this file the one place the contract is not
+// kept. Raised in review of #504.
+func screenOf(t *testing.T, app *testApp) (cols, rows int) {
+	t.Helper()
+	done := make(chan struct{})
+	app.Post(func() {
+		cols, rows = app.cols, app.rows
+		close(done)
+	})
+	<-done
+	return cols, rows
+}
+
+// TestAnIslandThatIsGoneIsDeniedByName covers islandRect's first error
+// path, which had no test anywhere in the repo — the extraction that
+// created it moved three copies of the check into one place and left the
+// one place uncovered, which is the usual way a refactor loses an
+// assertion.
+//
+// It is asserted on screen_size AND screen_text because islandRect is
+// what both now call: a regression that broke the resolution would
+// otherwise show up on whichever tool nobody tested.
+func TestAnIslandThatIsGoneIsDeniedByName(t *testing.T) {
+	// "Ghost" is a name the tree does not contain. The grant is
+	// well-formed; the element simply is not there, which is the state a
+	// swap or a patch can produce at runtime.
+	guest, _ := islandGuest(t, islandOffOriginMarkup, "Ghost")
+
+	// The message names the island, because a client that cannot see the
+	// tree has no other way to tell "you may not" from "it is gone".
+	guest.fails("screen_size", nil, `island "Ghost", which names no element`)
+	guest.fails("screen_text", nil, `island "Ghost", which names no element`)
+}
+
+// TestACollapsedIslandIsZeroSizedAndNotAnError is the OTHER arm of the
+// same resolution, and the one three surfaces describe and none pinned.
+//
+// islandRect deliberately does not test W/H: a collapsed or not-yet-
+// arranged island resolves SUCCESSFULLY to a zero-size rect, because it
+// is not gone and islandGone would be a lie about it. So screen_size
+// answers 0x0 and screen_text answers "" — both without an error.
+// islandRect's doc comment says so, and both screenSizeSchema's cols and
+// its rows tell clients "0 is a real answer, not an error". Nothing
+// asserted it, which means the next reader to see cols:0 in a trace is
+// free to "fix" it into a denial and every one of those three sentences
+// goes quietly false.
+//
+// THE LIVE ARM IS THE NON-VACUITY. Zero is what an app that never
+// composed reports too, and a fixture that never arranged would satisfy
+// every assertion below against a tool that answered 0x0 unconditionally.
+// The same markup with the island visible reports a real size, so the
+// zero is attributable to the collapse and to nothing else.
+func TestACollapsedIslandIsZeroSizedAndNotAnError(t *testing.T) {
+	const capW, capH = 7, 15
+	liveGuest, _ := islandGuest(t, islandOffOriginMarkup, "Mine")
+	live := liveGuest.json("screen_size", nil)
+	if int(live["cols"].(float64)) == 0 || int(live["rows"].(float64)) == 0 {
+		t.Fatalf("the uncollapsed fixture already reports a zero extent (%v), so this "+
+			"test cannot tell a collapsed island from one that never arranged", live)
+	}
+
+	guest, app := islandGuest(t, islandCollapsedMarkup, "Mine")
+	done := make(chan struct{})
+	app.Post(func() {
+		app.comp.SetCaps(term.Caps{CellW: capW, CellH: capH})
+		close(done)
+	})
+	<-done
+
+	// Not fails(): the call must SUCCEED. An error here is the regression
+	// this exists to catch — islandRect learning to refuse a degenerate
+	// rect, which would deny a guest whose island is merely closed.
+	sz := guest.json("screen_size", nil)
+	if cols, rows := int(sz["cols"].(float64)), int(sz["rows"].(float64)); cols != 0 || rows != 0 {
+		t.Errorf("a collapsed island reports %dx%d; islandRect and screenSizeSchema both "+
+			"say a collapsed island is 0x0", cols, rows)
+	}
+	// The cell metrics are the terminal's and have nothing to do with the
+	// island, so they must NOT have been zeroed along with it — which is
+	// what a blanket "return an empty ScreenSize" would do.
+	//
+	// THE CAPS WERE SET BEFORE THAT CALL, and the assertion reads their
+	// VALUES off it. Asking whether the keys are present could never
+	// fail: screenSize writes all six unconditionally, so the map has
+	// them whatever ScreenSize returned, and the fixture's caps were zero
+	// anyway — the arm agreed with a blanket zeroing and with the correct
+	// answer alike.
+	//
+	// ONE CALL, not two. This read the values off a SECOND
+	// guest.json("screen_size", nil) taken immediately after the first,
+	// with the caps already set above both and nothing changed in
+	// between — an extra round trip and one more thing for a later
+	// reader to reconcile. Raised in review of #504, both halves.
+	if int(sz["cellWidth"].(float64)) != capW || int(sz["cellHeight"].(float64)) != capH {
+		t.Errorf("a collapsed island reports cell metrics %vx%v, want the probed "+
+			"%dx%d: the terminal's cell size is not the island's, and zeroing it "+
+			"with the extent is what a blanket empty ScreenSize would do",
+			sz["cellWidth"], sz["cellHeight"], capW, capH)
+	}
+
+	if txt := guest.ok("screen_text", nil); txt != "" {
+		t.Errorf("a collapsed island renders %q; it crops to nothing", txt)
+	}
+	if txt := guest.ok("screen_text", map[string]any{"styled": true}); txt != "" {
+		t.Errorf("a collapsed island renders %q styled; both forms crop to nothing", txt)
+	}
+}
+
+// TestATreeSnapshotBoundIsAlreadyAbsolute is the other half of the
+// origin's contract, and the half a client can get wrong in the same
+// direction the tool exists to fix.
+//
+// A scoped session has TWO coordinate sources and they do not agree.
+// screen_text is homed at (0,0) deliberately — a fresh buffer of the
+// island's size IS a screen, and a screen starts at its own origin, so
+// the stream is not a set of absolute cursor moves into somebody else's
+// page — and a position read off it is what x/y converts. NOT
+// confidentiality: this sentence carried that reason until review of
+// #504, and screen_size hands the origin over outright, so the reason it
+// gave was one the tool beside it had already retired.
+// tree_snapshot emits Bounds() from the live tree, which are already
+// absolute even when the snapshot is rooted at the island. An agent that
+// obeys screen_size unconditionally adds y0 to a bound that already
+// carries it and clicks y0 rows low: on a real component, silently, or
+// outside the island, refused by a message saying the point is outside
+// an island whose own snapshot it came from.
+//
+// THE CONVERTED ARM IS WHAT MAKES THIS DISCRIMINATING. Accepting the raw
+// bound would pass just as well against a session that permitted the
+// whole screen; the fixture's island starts below y=0, so double
+// conversion walks off the bottom and must be refused. Raised in review
+// of #504.
+func TestATreeSnapshotBoundIsAlreadyAbsolute(t *testing.T) {
+	guest, _ := islandGuest(t, islandOffOriginMarkup, "Mine")
+
+	sz := guest.json("screen_size", nil)
+	x0, y0 := int(sz["x"].(float64)), int(sz["y"].(float64))
+	cols, rows := int(sz["cols"].(float64)), int(sz["rows"].(float64))
+	if y0 == 0 {
+		t.Fatalf("the island reports origin y=0, so this fixture cannot tell an "+
+			"already-absolute bound from a converted one; sz=%v", sz)
+	}
+
+	node := findName(guest.json("tree_snapshot", nil)["tree"].(map[string]any), "Mine")
+	if node == nil {
+		t.Fatal("the guest's snapshot does not contain its own island")
+	}
+	b, ok := node["bounds"].(map[string]any)
+	if !ok {
+		t.Fatalf("the island node carries no bounds: %v", node)
+	}
+	bx, by := int(b["x"].(float64)), int(b["y"].(float64))
+	bw, bh := int(b["w"].(float64)), int(b["h"].(float64))
+
+	// ALL FOUR NUMBERS, because the claim this test is cited for is that
+	// the snapshot's bound IS screen_size's rect — and it asserted one of
+	// them. x was pinned only indirectly, by the corner round-trip below,
+	// and the EXTENT was not pinned at all: under-reporting cols and rows
+	// by one cell each, clamped so a collapsed island still answers 0x0,
+	// left the whole tree green. Measured in review of #504. An island's
+	// content rect is exactly one Border's chrome away from its arranged
+	// rect, so that is not a hypothetical substitution.
+	for _, c := range []struct {
+		name      string
+		got, want int
+	}{
+		{"x", bx, x0},
+		{"y", by, y0},
+		{"w", bw, cols},
+		{"h", bh, rows},
+	} {
+		if c.got != c.want {
+			t.Fatalf("the snapshot reports the island's %s as %d and screen_size "+
+				"reports %d; the two are documented as the same rect, so if they "+
+				"diverge the advice in screenSizeSchema is wrong in a way no "+
+				"client can detect. bounds=%v screen_size=%v",
+				c.name, c.got, c.want, b, sz)
+		}
+	}
+
+	// THE LAST ROW OF THE ISLAND, not the first. A double conversion of
+	// the TOP row lands y0 rows down and is still inside a 3-row island —
+	// silently wrong, and a fixture that cannot tell the two apart. The
+	// bottom row is the one that leaves the island when it is converted
+	// again, which is the whole point: a client obeying the rule
+	// unconditionally loses its own last row exactly the way a client
+	// that never heard of the origin loses its first.
+	last := by + bh - 1
+
+	// Unconverted: accepted, because the bound is already in send_mouse's
+	// frame.
+	guest.ok("send_mouse", map[string]any{"kind": "click", "x": bx, "y": last})
+
+	// Converted: refused, because it has been offset twice.
+	guest.fails("send_mouse", map[string]any{
+		"kind": "click", "x": bx + x0, "y": last + y0,
+	}, "outside this session's island")
+}
+
+// TestTheScreenSizeSchemaAndItsResultNameTheSameKeys is the derived
+// guard the six wire names did not have.
+//
+// screenSizeSchema declares them twice — once as properties, once in the
+// required list — and Server.screenSize writes them a third time, as a
+// map literal in tools.go. Three hand-written copies of one vocabulary,
+// and nothing compared them: renaming "cellWidth" in the schema alone
+// leaves a published contract promising a key no result carries, and a
+// client that branches on its absence reads "the host never probed" for
+// every host. The schema is data and the result is data, so the
+// comparison needs no third list here. Raised in review of #504.
+func TestTheScreenSizeSchemaAndItsResultNameTheSameKeys(t *testing.T) {
+	_, _, _, c := setup(t)
+	got := c.json("screen_size", nil)
+
+	schema := screenSizeSchema()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok || len(props) == 0 {
+		t.Fatalf("screenSizeSchema declares no properties (%v), so this test "+
+			"would compare the result against an empty set", schema)
+	}
+	for name, v := range props {
+		if _, ok := got[name]; !ok {
+			t.Errorf("the schema publishes %q and screen_size's result does not "+
+				"carry it: a client reading the contract asks for a key that is "+
+				"never there", name)
+		}
+		// AND THE DESCRIPTION IS RENDERED, not written. Four of these
+		// six go through fmt.Sprintf over extentTail/originTail, and
+		// nothing in this module asserted on a rendered description
+		// string — so a tail that grows a literal %, or a second verb
+		// added for one axis, ships %!s(MISSING) into a published JSON
+		// Schema with gofmt, vet, -race and every inventory guard
+		// green. That is the silent-staleness failure this file was
+		// built around, arriving through the mechanism the file
+		// introduced to prevent it. Raised in review of #504.
+		d, _ := v.(map[string]any)["description"].(string)
+		if strings.Contains(d, "%!") {
+			t.Errorf("%q's description carries fmt residue (%q): a tail grew a %% "+
+				"and Sprintf shipped it to every generated client", name, d)
+		}
+		if d == "" {
+			t.Errorf("%q publishes an empty description, so the check above "+
+				"ruled on nothing for it", name)
+		}
+	}
+	for name := range got {
+		if _, ok := props[name]; !ok {
+			t.Errorf("screen_size returns %q and the schema does not publish it, "+
+				"so a client generated from the contract cannot see it", name)
+		}
+	}
+
+	// REQUIRED IS THE THIRD COPY, and it is the one a client's decoder
+	// actually enforces. A key published as a property but left out of
+	// required is optional to every generated client, which is exactly
+	// wrong for six fields that are always present.
+	req, ok := schema["required"].([]string)
+	if !ok {
+		if anys, isAny := schema["required"].([]any); isAny {
+			for _, v := range anys {
+				req = append(req, v.(string))
+			}
+		} else {
+			t.Fatalf("screenSizeSchema's required is %T, not a list of names", schema["required"])
+		}
+	}
+	if len(req) != len(props) {
+		t.Errorf("the schema publishes %d properties and requires %d of them; "+
+			"every field of this result is always present, so a key missing "+
+			"from required is optional to every generated client for no reason",
+			len(props), len(req))
+	}
+	for _, name := range req {
+		if _, ok := props[name]; !ok {
+			t.Errorf("required names %q, which is not a published property", name)
+		}
+	}
+}
+
+// schemaField is one described node of a published JSON Schema and the
+// path it sits at.
+type schemaField struct {
+	at   string // a JSON-pointer-ish trail, for the failure message
+	desc string
+	top  bool // a direct property of the schema, not a nested one
+}
+
+// describedFields is every description a published schema carries, at
+// any depth.
+//
+// ONE LEVEL WAS NOT EVERY LEVEL, and the sweep's own doc said it asked
+// both questions "of every published string". It walked
+// schema["properties"] one level deep and skipped anything carrying a
+// $ref, on the reasoning that a $ref is documented where the definition
+// is. The first half is true; the second was not, because the
+// definition was never visited either. The skip was a hole, not a
+// delegation.
+//
+// treeSnapshotSchema is the measurement: every described field lives
+// under $defs.node and its ONLY top-level property is "tree", which is a
+// $ref — so the sweep visited ZERO described fields of that tool's
+// output schema. registrationsArg's items.properties (swap_markup,
+// register_properties) and boundsSchema's x/y/w/h were unreachable the
+// same way. Measured before this walk existed: putting "%s" and "%d"
+// into two $defs.node descriptions left `go test ./mcp` green with vet
+// silent throughout, which is exactly the concatenated-tail case this
+// instrument exists for. Raised in review of #504.
+//
+// $defs IS VISITED DIRECTLY rather than resolved through the $ref. The
+// question is what SHIPS — the whole schema object goes to the client —
+// so a definition nothing references is still published and still worth
+// sweeping, and resolving would need a pointer resolver to reach the
+// same strings. A definition reached twice is visited twice; the checks
+// are idempotent and the path distinguishes the reports.
+func describedFields(m map[string]any) []schemaField {
+	var out []schemaField
+	var walk func(node any, at string, top bool)
+	walk = func(node any, at string, top bool) {
+		switch n := node.(type) {
+		case map[string]any:
+			if d, ok := n["description"].(string); ok || n["type"] != nil {
+				// A NODE WITH A type AND NO description IS THE EMPTY
+				// CASE the caller reports. A container — "properties",
+				// "$defs" — has neither, and must not be reported as an
+				// undescribed field.
+				out = append(out, schemaField{at: at, desc: d, top: top})
+			}
+			for _, key := range []string{"properties", "$defs", "definitions"} {
+				if sub, ok := n[key].(map[string]any); ok {
+					for name, v := range sub {
+						walk(v, at+"/"+name, false)
+					}
+				}
+			}
+			if items, ok := n["items"]; ok {
+				walk(items, at+"[]", false)
+			}
+		}
+	}
+	for _, key := range []string{"properties", "$defs", "definitions"} {
+		if sub, ok := m[key].(map[string]any); ok {
+			for name, v := range sub {
+				walk(v, name, key == "properties")
+			}
+		}
+	}
+	return out
+}
+
+// TestNoPublishedToolSchemaShipsFmtResidue is the check above widened to
+// every tool, because the hazard is not screen_size's.
+//
+// The test above was written for four rendered descriptions in one
+// schema. send_mouse's x and y became the fifth and sixth in the round
+// after — they render pointerFrameRule, for the same reason the origin
+// tails render, and a guard scoped to one function would not have
+// covered them. A tail that grows a literal %, or a second verb added
+// for one axis, ships %!s(MISSING) into a published JSON Schema with
+// gofmt, vet, -race and every inventory guard green; whose schema it is
+// makes no difference to the client reading it. Raised in review of
+// #504.
+//
+// TWO RESIDUES, because only one of these tails goes through Sprintf.
+// extentTail, originTail and pointerFrameRule are rendered, so a
+// mismatched verb in them is caught by go vet's printf check at build
+// time for a constant format and by the "%!" search here for a computed
+// one. cellTail is plain CONCATENATION (schemas.go), and cellProbeRule
+// reaches clients twice that way — through cellTail into
+// cellWidth/cellHeight, and directly into screen_size's Description
+// (tools.go). A "%s" added to either ships VERBATIM: vet sees no format
+// call at all, and nothing ever rendered it, so there is no "%!" to
+// find. The asymmetry is invisible from this test, which reads as
+// covering all six descriptions alike — so the sweep asks both
+// questions of every published string, and the unconsumed-verb half is
+// the one that covers the concatenated tails. The published strings
+// hold no literal % today, so it starts green. Raised in review of
+// #504.
+//
+// IT SITS DIRECTLY ABOVE THE FUNC, with no unbroken run of comment
+// lines between it and any other declaration: a doc block spliced onto
+// the comment of a neighbouring type attaches to that type, and the
+// paragraph above — the one that refuses simplifying this to a single
+// "%!" search — then no longer sits beside what it is refusing.
+func TestNoPublishedToolSchemaShipsFmtResidue(t *testing.T) {
+	// A % FOLLOWED BY A FORMAT LETTER, with its flag and width run: what
+	// a tail that was never rendered looks like. "%!"-style residue
+	// cannot match it — "!" is neither a flag nor a letter — so the two
+	// checks are independent rather than one subsuming the other.
+	//
+	// THE PREVIOUS SPELLING DID NOT DO WHAT THE SENTENCE ABOVE IT SAID.
+	// It was `%[-+ #0]*[0-9.]*[a-zA-Z]`, under a claim that "%%" is left
+	// alone because an escaped percent is a legal thing to carry. It was
+	// not left alone, and neither was an ordinary percentage. A SPACE is
+	// a legal Go flag and was in the class, so any percent followed by a
+	// space and a letter matched:
+	//
+	//	"50%% done"    →  "% d"
+	//	"100% of it"   →  "% o"
+	//	"a %% b"       →  "% b"
+	//	"50% done."    →  "% d"
+	//
+	// A guard that is right about the case it was written for and wrong
+	// about the case its own comment excludes gets LOOSENED rather than
+	// obeyed the first time it cries wolf, and this is the one
+	// instrument covering the concatenated tails — where vet is blind
+	// and there is no "%!" to find.
+	//
+	// ONE CHANGE CARRIES ALL FOUR ROWS, and saying so is the point of
+	// having measured. Dropping the space flag removes every row above;
+	// narrowing the letters to Go's actual verbs removes none of them
+	// and is kept only because a prose letter after a width run ("%5z")
+	// is not a verb and should not read as one. Stripping "%%" before
+	// the search was the third change I wrote and it is NOT here: with
+	// the space gone it removes no row either, and it would make the
+	// matcher strictly less sensitive — a published "%%s" is a
+	// concatenated tail shipping "%s" to a client, which is exactly what
+	// this looks for.
+	//
+	// THE SPACE FLAG IS A DELIBERATE HOLE, not an oversight: "% d" and
+	// "% x" are real Go verbs and an unrendered one now goes unseen. It
+	// is the cheaper miss. A description carrying "100% of the terminal
+	// width" is a sentence somebody will write, and " d"/" x" after a
+	// percent is not a shape any published tail here has; the
+	// alternative trades a plausible false alarm for an implausible
+	// false negative. Raised in review of #504.
+	verbs := regexp.MustCompile(`%[-+#0]*[0-9.]*[bcdeEfFgGopqstTvxXU]`)
+	verb := verbs.FindString
+	// AND THE MATCHER IS ASSERTED, because every published string is
+	// clean today, so the sweep below starts green and would stay green
+	// over any matcher at all — including one that matches nothing.
+	// These arms are what make the three measured rows above a
+	// regression rather than a note. Raised in review of #504.
+	for _, tc := range []struct{ in, want string }{
+		{"ships %s here", "%s"},
+		{"%-3d wide", "%-3d"},
+		{"reports %v", "%v"},
+		{"50%% done", ""},
+		{"100% of it", ""},
+		{"a %% b", ""},
+		{"50% done.", ""},
+		{"no percent at all", ""},
+		// NOT EXCLUDED, and deliberately: a published description is a
+		// RENDERED string, so a literal "%%" in one came from
+		// concatenation and ships "%s" to every generated client.
+		{"%%s", "%s"},
+	} {
+		if got := verb(tc.in); got != tc.want {
+			t.Errorf("verb(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	s := &Server{}
+	tools := s.v1Tools()
+	if len(tools) == 0 {
+		t.Fatal("v1Tools published nothing, so this sweep would rule on no schema at all")
+	}
+	described := 0
+	for _, tl := range tools {
+		if tl.Description == "" {
+			t.Errorf("%s publishes no description", tl.Name)
+		}
+		if strings.Contains(tl.Description, "%!") {
+			t.Errorf("%s's description carries fmt residue: %q", tl.Name, tl.Description)
+		}
+		if v := verb(tl.Description); v != "" {
+			t.Errorf("%s's description ships the unrendered verb %q to every "+
+				"generated client: %q. This one is CONCATENATED rather than "+
+				"Sprintf'd, so neither vet's printf check nor the %%! search "+
+				"above can see it", tl.Name, v, tl.Description)
+		}
+		// BOTH SCHEMAS. screen_size — the tool whose rendered
+		// descriptions this sweep was generalized from — publishes
+		// screenSizeSchema as its OUTPUT schema, so a sweep over
+		// Schema alone reads past it and reports green while the
+		// residue ships. Measured: emptying one of its argument
+		// descriptions left an arguments-only version of this test ok.
+		for _, sch := range []struct {
+			kind string
+			m    map[string]any
+		}{{"argument", tl.Schema}, {"result field", tl.OutputSchema}} {
+			for _, f := range describedFields(sch.m) {
+				if f.desc == "" {
+					// THE EMPTY-DESCRIPTION FLOOR STAYS AT THE TOP
+					// LEVEL, and the residue checks below do not. They
+					// are different claims: "every published string is
+					// free of residue" is true of the whole schema, and
+					// "every field carries a description" is a rule
+					// these schemas make about their top-level
+					// properties and not about an array wrapper or a
+					// $defs entry. Widening both together would have
+					// reported fourteen intermediate nodes as
+					// undescribed — node/children, values[], keys[] and
+					// friends — which is a scope change wearing a bug
+					// fix's clothes. Raised in review of #504.
+					if f.top {
+						t.Errorf("%s's %q %s publishes an empty description, so the "+
+							"residue check ruled on nothing for it", tl.Name, f.at, sch.kind)
+					}
+					continue
+				}
+				described++
+				if strings.Contains(f.desc, "%!") {
+					t.Errorf("%s's %q %s carries fmt residue (%q): a tail grew a "+
+						"%% and Sprintf shipped it to every generated client",
+						tl.Name, f.at, sch.kind, f.desc)
+				}
+				if v := verb(f.desc); v != "" {
+					t.Errorf("%s's %q %s ships the unrendered verb %q: %q. A tail "+
+						"that is CONCATENATED rather than Sprintf'd — cellTail and "+
+						"cellProbeRule are the ones in this inventory — reaches the "+
+						"client with the verb intact, which neither vet nor the %%! "+
+						"search can see", tl.Name, f.at, sch.kind, v, f.desc)
+				}
+			}
+		}
+	}
+	// AND THE WALK REACHES NESTED DESCRIPTIONS, asserted rather than
+	// assumed. Every published string is clean, so the sweep is green
+	// over a walk that visits nothing below the top level — which is
+	// exactly what it did until review of #504, with tree_snapshot's
+	// entire output schema swept by nothing because its only top-level
+	// property is a $ref. A floor over the COUNT would not have caught
+	// that either; what discriminates is reaching a field that can only
+	// be reached by recursing.
+	//
+	// BOTH DESCENTS, SEPARATELY, because they are two mechanisms and a
+	// single "something nested was seen" floor passes when either one
+	// alone survives — measured: disabling only the properties/$defs
+	// descent leaves the items descent reaching values[] and a combined
+	// count non-zero.
+	var nestedProp, throughItems int
+	for _, tl := range tools {
+		for _, f := range describedFields(tl.OutputSchema) {
+			if strings.Contains(f.at, "[]") {
+				throughItems++
+			}
+			if strings.Contains(f.at, "/") {
+				nestedProp++
+			}
+		}
+	}
+	if nestedProp == 0 {
+		t.Error("the sweep visited no description under a nested `properties` or " +
+			"`$defs` map, so tree_snapshot's $defs.node — whose only top-level " +
+			"property is a $ref, and which holds every described field that tool " +
+			"publishes — is ruled on by nothing")
+	}
+	if throughItems == 0 {
+		t.Error("the sweep visited no description under an `items` schema, so " +
+			"registrationsArg's element properties and every values[]/named[] " +
+			"element are ruled on by nothing")
+	}
+
+	// A FLOOR OVER THE FIELDS, not over the tools: a tool with no
+	// arguments is ordinary, and a sweep that found none at all would
+	// pass against any residue.
+	if described == 0 {
+		t.Fatalf("%d tools published no described argument or result field between "+
+			"them, so the residue check above ruled on nothing", len(tools))
+	}
+}

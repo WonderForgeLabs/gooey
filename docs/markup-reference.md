@@ -574,7 +574,7 @@ Each section takes either form, and giving one section both is a load error:
 
 | Form | Meaning |
 |---|---|
-| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal — though the exported element catalog still declares all three literal-only, so a property palette built on it will say otherwise ([#314](https://github.com/WonderForgeLabs/gooey/issues/314)). |
+| `Left` / `Center` / `Right` attribute | Shorthand for "a dim line of text". Bindable or literal, and the exported element catalog now says so — it declared all three literal-only until [#314](https://github.com/WonderForgeLabs/gooey/issues/314), so a property palette built on it disagreed with the loader, which had honoured the binding all along. |
 | `<StatusBar.Left>` / `.Center` / `.Right` | A property element holding exactly one component — anything at all. |
 
 ```xml
@@ -886,7 +886,7 @@ ctx.Rules = map[string]markup.RuleFunc{
 
 The constructor receives the attribute's literal and may reject it — a typed load error. An attribute that is neither a built-in nor a registered rule is a load error naming both sets. The built-ins cover the DataAnnotations vocabulary; `ctx.Rules` is for **domain** rules beyond it (an internal account-number format, a reserved-name list, a check against a lookup table).
 
-The registration is not *quite* like `Components` and `Handlers` in one respect: `Rules` does not yet cross the control boundary (tracked in [#314](https://github.com/WonderForgeLabs/gooey/issues/314)). A page registering `ctx.Rules["Email"]` and then writing `<Validate Email="true"/>` inside an Include or UserControl gets "unknown rule", listing only the built-ins. Keep custom rules in the page, or have the control's setup copy `Rules` into the context it returns.
+The registration is exactly like `Components` and `Handlers`, including across the control boundary. It was not until [#314](https://github.com/WonderForgeLabs/gooey/issues/314): `Rules` was nil inside every control, so a page registering `ctx.Rules["Email"]` and then writing `<Validate Email="true"/>` inside an Include or UserControl got "unknown rule" listing only the built-ins. No workaround is needed now, and the copy-into-the-context one this paragraph used to prescribe is not just unnecessary but misleading — it suggests the boundary is something a control has to opt into.
 
 ### ValidationMarker
 
@@ -933,7 +933,9 @@ The marker is persistent: it lives in the layer for as long as it is attached, s
 
 One field has no markup attribute yet: `Scroll` (Go only) turns a list with **no** `Selected` binding into a tail-anchored scroll view — the log-pane shape, where 0 pins the window to the end and scrolling up moves into history that stays put while new items arrive. A Go-composed view sets the field directly; `apps/kanban` registers such a view as a custom element for exactly this reason.
 
-**The template is a factory, not a tree.** Its element subtree is captured at load and instantiated once per item, against a context whose values are *that item's* — dot is the ITEM. Page values are deliberately out of reach inside a template, the same isolation a UserControl gets; anything a row needs must come through the projection. Everything else the document carries — styles, registered components, handlers, includes, the `xmlns` table — is inherited, so a template may place a registered custom component exactly like any other markup.
+**The template is a factory, not a tree.** Its element subtree is captured at load and instantiated once per item, against a context whose values are *that item's* — dot is the ITEM. Page values are deliberately out of reach inside a template, the same isolation a UserControl gets; anything a row needs must come through the projection. What else crosses the seam is `markup.rowPartition` (`markup/boundaryfields_test.go`), which is this seam's own table and sits directly below `markup.boundaryPartition` — the UserControl boundary's — in the same file. The two are not the same answer, and the number of fields they differ on is deliberately not written here: it was, as "one exception", and it was six. Read the table. The one worth knowing before you hit it is `Declared`, which a row does **not** inherit, so a control declaring `<x:Property>` inside a template has no declared surface in the MCP snapshot ([#512](https://github.com/WonderForgeLabs/gooey/issues/512)).
+
+The exception that is worth stating in prose is the load-time cycle ancestry, because it is what makes a legitimate shape legal: it is RESET, so a template may instantiate its own control. That terminates for any source that is not self-supplying; the bound on the one that is not is `markup.MaxTemplateDepth` (64), and exceeding it is a load error naming this element. This sentence used to answer the crossing question with four names, which is [#314](https://github.com/WonderForgeLabs/gooey/issues/314) restated as prose — and then with a count, which is the same defect wearing a smaller hat.
 
 **Items come from a projection.** Without reflection, gooey cannot walk a struct's fields, so the app says what a row is made of:
 
@@ -1098,9 +1100,9 @@ An `embed.FS` reports a constant zero `ModTime` for every file, so a watcher ove
 | Attribute | Meaning |
 |---|---|
 | `Name` | **Required.** The companion's label in errors, and the element's `Name=` identity for `markup.Find` and tree snapshots. |
-| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the document's directory. Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
-| `Dir` | Working directory, resolved against the document's directory. Must exist at load time. |
-| `Log` | Output file, resolved against the document's directory. Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
+| `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the PAGE's directory (`Context.Dir`). Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
+| `Dir` | Working directory, resolved against the PAGE's directory (`Context.Dir`). Must exist at load time. |
+| `Log` | Output file, resolved against the PAGE's directory (`Context.Dir`). Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
 | `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. Empty, unparseable, or non-positive is a load error. |
 | `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. Empty, unparseable, or non-positive is a load error. |
 | `CleanEnv` | Starts the child from an **empty** environment. `"true"` or `"false"`, and nothing else — `CleanEnv="1"` is a **load error**, as it is on every other literal bool. This row documented the `strconv.ParseBool` spellings (`1`, `TRUE`, `T`) until [#460](https://github.com/WonderForgeLabs/gooey/issues/460): on a security switch the laxer grammar is the worse one, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell, and five spellings of "yes" is five chances for a near-miss. Default is inherit-and-override. |
@@ -1117,7 +1119,7 @@ Unknown attributes are a **load error**, as they now are on every element: a mis
 
 **Bindings in `<Arg>` and `<Var Value>` are snapshots**, read once when the child starts. Changing the property afterwards does not restart the child — an argv is a value a process was launched with, not one it observes. This is what lets a declaration depend on something only Go knows (an MCP endpoint that is not knowable until the listener is bound): the app puts it in a property, the document binds it.
 
-**Paths are document-relative.** `Dir` and `Log` resolve against `Context.Dir`, which an app sets to the same directory it rooted the page's `fs.FS` at:
+**Paths are page-relative.** `Dir` and `Log` resolve against `Context.Dir`, which an app sets to the same directory it rooted the page's `fs.FS` at. The PAGE's, not the enclosing document's, and the two genuinely disagree for `UserControl(otherFS, …)`: `fsys` is replaced while `Dir` is inherited, so a control loaded from another filesystem still resolves its `<Companion>` paths where the app runs. These rows said "the document's directory" while `companionPath`, `companionDir`, `companionLog` and `hostPath` had been corrected to say the page's — raised in review of #490.
 
 ```go
 app = gooey.NewApp(markup.Page(os.DirFS(dir), "page.gooey", ctx))
@@ -1126,7 +1128,7 @@ ctx.Dir = dir
 
 `fs.FS` cannot answer this — `os.DirFS(dir)` offers no way back to `dir`, and `chdir`/`open` do not take an `fs.FS`. An empty `Context.Dir` falls back to the process's working directory.
 
-**Today that only holds for a companion declared in the page.** `Context.Dir` is not among the fields a UserControl or Include inherits from its parent, so a `<Companion>` inside a control file sees an empty `Dir` and resolves `Dir=`/`Log=` against the process's working directory even when the app set `ctx.Dir` — tracked in [#314](https://github.com/WonderForgeLabs/gooey/issues/314). Declare companions in the page, or pass absolute paths, until it is fixed.
+**A control inherits it when it leaves it empty.** `Context.Dir` is among the fields a UserControl or Include inherits from its parent on that condition, so a `<Companion>` inside a control file resolves `Dir=`/`Log=` against the same directory the page does — unless its setup returns a `Context` carrying a `Dir` of its own, which it then keeps. This paragraph said "holds at any depth", which reads as unconditional and is the one thing it is not; the same overstatement was corrected in `Context.Dir`'s own doc comment in review of #490. It did not until [#314](https://github.com/WonderForgeLabs/gooey/issues/314), where an uninherited `Dir` was empty and `hostPath` fell back to the process's working directory — silently, since nothing restricts `<Companion>` to page level.
 
 **Lifetime is the composition's, not the app's.** The Composer starts the child when the tree goes live and stops it — cancelling, then waiting, bounded by `StopTimeout` — on `Composer.Close`. That covers every teardown path (quit, signal, context cancellation, panic). A requested stop does **not** run `Exited`.
 
@@ -1202,7 +1204,7 @@ Text content and text-valued attributes (`Text` content, `Border Title`, `Button
 <Text>lines: {{.Count}} ({{.State}})</Text>
 ```
 
-Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`textSource`, `markup/markup.go:1952`) is:
+Each `{{.Path}}` must resolve to a live handle or a plain value of a **formattable type**, and anything else is a build error, as is a path that does not resolve. The accepted set (`markup.textSource`) is:
 
 | Handle | Plain value | Rendered as |
 |---|---|---|
@@ -1601,7 +1603,11 @@ Context isolation is the contract: `setup(e, parent)` returns the instance's own
 - `parent.Command(e.Attrs["Open"])` resolves an event attribute the same way `Click` does; the control can then hand the command to a component or expose it in its own context (storylist puts `Open` in its context so its markup can attach it to a `<KeyBinding>`).
 - Literal attributes arrive as plain strings (`Title="stories"`).
 
-`Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent context when the child leaves them nil; `Named` is scoped per instance (like `x:Name` in templates). Layout attributes on the instance element apply to the instance and are not passed through.
+Everything a page registers inherits from the parent context when the child leaves it unset — `Styles`, `Components`, `Elements`, `Handlers`, `Rules`, `Declared`, `Includes`, `Dispatcher`, `Dir` and `Variant`. What does NOT cross is `Values` and `Named`: values arrive only through the declared surface, which is what makes a control a contract rather than a macro, and `Named` is scoped per instance (like `x:Name` in templates). That partition is not maintained by hand — `markup.boundaryPartition` (in `markup/boundaryfields_test.go`, which is where both partitions and their guard live) carries a row per field with the reason, and a test fails if `Context` grows a field the partition does not account for ([#314](https://github.com/WonderForgeLabs/gooey/issues/314) is what happens when a list like the one this sentence used to be goes stale: it named four of the ten). Layout attributes on the instance element apply to the instance and are not passed through.
+
+`Elements` inheriting has a cost, and it is a document that used to load and now does not. A control whose setup registers `Components["Meter"]` privately, on a page that declares `Elements["Meter"]`, is a name present in both maps — one of the two is unreachable, and which one won would depend on the order of the arms that read them, so the loader refuses it rather than picking. The refusal names the control, because at this seam the two registrations have two authors and neither wrote a duplicate. Two ways out: stop registering the private builder and let the declared element through, or declare the control's own under a different name.
+
+A child context is built in one other place — the per-row context an `<ItemsView.ItemTemplate>` is realized in — and it is a separate partition with the opposite default. A row is not a boundary: it inherits unless something about being per-row makes it impossible, so the split above is the control seam's answer and not the row's, and a field can sit on opposite sides of the two. The reasons live in `markup.rowPartition`, beside it in `markup/boundaryfields_test.go`, a row per field, and the same guard fails if `Context` grows one it does not account for — which is why they are not repeated here. The row copied ten fields and dropped six until [#490](https://github.com/WonderForgeLabs/gooey/pull/490). One of those opposite answers is worth knowing about before you hit it: `Declared` is page-wide at the control seam and row-local at this one, because the row factory runs per realization and never unregisters, so sharing the page's registry would retain one entry and one dead row subtree per row ever scrolled past. The price is that a control declaring `<x:Property>` **inside** an `<ItemsView.ItemTemplate>` does not appear in the page registry, so an inspection surface built on it — the MCP tree snapshot — reports no declared surface for that instance.
 
 A control that also [declares properties](#declared-properties-xproperty) gets them resolved *before* setup runs and installed into the context setup returns; setup reads them through `parent.DeclaredProperties()` and extends the context with private members.
 

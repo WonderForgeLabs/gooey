@@ -37,14 +37,28 @@ import (
 
 const endpointPath = "/mcp"
 
+// instructions is the prose inventory every MCP client reads before it
+// reads a tool description, and TestTheServerInstructionsNameEveryTool
+// derives the expectation from v1Tools so a tool added tomorrow reddens
+// here rather than going unmentioned.
+//
+// THE BACKTICKS ARE LOAD-BEARING, not decoration. The guard used to ask
+// only whether the name appeared anywhere in this string, and one tool is
+// called `focus` — an ordinary English word this sentence would contain
+// whether or not the tool were named — so that entry was unchecked for as
+// long as it existed, and `register_properties` was satisfied by the
+// `unregister_properties` beside it. A backtick pair is the delimiter
+// both surfaces already had available, and it is what the guard now
+// matches on. Raised in review of #504.
 const instructions = "This server drives a running gooey terminal app. " +
-	"tree_snapshot and screen_text show what is on screen; list_values shows the bindable " +
-	"state and list_styles the registered style names; invoke_command, set_value, " +
-	"send_keys, send_mouse and focus act on it; register_properties grows the bindable " +
-	"state with new typed source properties and unregister_properties removes names " +
-	"again; swap_markup replaces the whole page, " +
+	"`tree_snapshot` and `screen_text` show what is on screen and `screen_size` how big it is; " +
+	"`list_values` shows the bindable " +
+	"state and `list_styles` the registered style names; `invoke_command`, `set_value`, " +
+	"`send_keys`, `send_mouse` and `focus` act on it; `register_properties` grows the bindable " +
+	"state with new typed source properties and `unregister_properties` removes names " +
+	"again; `swap_markup` replaces the whole page, " +
 	"optionally registering new properties first so the new page can bind them; " +
-	"patch_markup replaces one named element's subtree, and validate_markup checks markup " +
+	"`patch_markup` replaces one named element's subtree, and `validate_markup` checks markup " +
 	"against the live context without touching the app. Every call runs on the app's UI " +
 	"goroutine and returns after the next frame has been composed, so a read taken right " +
 	"after a write sees the write."

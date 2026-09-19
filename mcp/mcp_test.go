@@ -1697,7 +1697,7 @@ func TestStructuredContentAndOutputSchemas(t *testing.T) {
 		_, ok := m["outputSchema"].(map[string]any)
 		hasSchema[m["name"].(string)] = ok
 	}
-	for _, want := range []string{"tree_snapshot", "list_values", "list_styles", "validate_markup"} {
+	for _, want := range []string{"tree_snapshot", "screen_size", "list_values", "list_styles", "validate_markup"} {
 		if !hasSchema[want] {
 			t.Errorf("%s publishes no outputSchema", want)
 		}
