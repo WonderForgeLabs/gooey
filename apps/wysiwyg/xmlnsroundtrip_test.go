@@ -2208,6 +2208,15 @@ func TestAPasteCannotRebindAPrefixTheEnvelopeHolds(t *testing.T) {
 // inner declaration REPEATING the outer one is redundant, not
 // conflicting, and is dropped the way a redundant declaration is
 // dropped everywhere else in this function.
+//
+// EVERY REFUSING ARM PASSES AN EMPTY DOCUMENT, which is what makes this
+// test the place the message's OTHER half is pinned. Both colliding
+// bindings are in the fragment, so any sentence naming the open document
+// as the other party is false here — and the assertion that used to
+// stand, `Contains(err, "xmlns:t")`, was true under that wording too. It
+// watched the misattribution land and stayed green. The arms now assert
+// the party and the remedy, and restoring the single old message turns
+// all three red (mutation-checked).
 func TestAPasteCannotRebindAPrefixAgainstITSELF(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -2245,7 +2254,7 @@ func TestAPasteCannotRebindAPrefixAgainstITSELF(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the fixture does not parse: %v", err)
 			}
-			err = reconcileNamespacesInto(n, map[string]string{})
+			err = reconcileNamespacesInto(n, map[string]string{}, map[string]string{})
 			if tc.refuse {
 				if err == nil {
 					t.Fatalf("a fragment binding t twice was accepted whole, so "+
@@ -2255,6 +2264,28 @@ func TestAPasteCannotRebindAPrefixAgainstITSELF(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), "xmlns:t") {
 					t.Errorf("the refusal does not name the colliding prefix: %v", err)
+				}
+				// THE PARTY, NOT JUST THE PREFIX. Every arm here has
+				// BOTH bindings in the clipboard against an empty
+				// document, so a sentence naming the document is false
+				// on all three — and `Contains(err, "xmlns:t")` held
+				// under the wording that did, which is why this arm
+				// watched the misattribution go in and said nothing.
+				// Asserting the remedy too, because that was the half
+				// with a cost: it sent the author to change a
+				// declaration their file does not contain.
+				if strings.Contains(err.Error(), "this document") ||
+					strings.Contains(err.Error(), "the document's own declaration") {
+					t.Errorf("the refusal blames the open document for a conflict "+
+						"whose two bindings are both in the paste — the document "+
+						"passed here declares nothing, and an author following "+
+						"the remedy goes looking for a declaration that is not "+
+						"in their file: %v", err)
+				}
+				if !strings.Contains(err.Error(), "declares xmlns:t twice") {
+					t.Errorf("the refusal does not say the paste declares the "+
+						"prefix twice, which is the one fact that locates the "+
+						"conflict for the author: %v", err)
 				}
 				return
 			}
@@ -2452,5 +2483,57 @@ func TestTheOtherTwoSeamsDoNotClaimAParentingCause(t *testing.T) {
 					"going: %s", seam.name, got)
 			}
 		})
+	}
+}
+
+// TestAPastedEnvelopesXDeclarationIsDropped pins a silent drop as
+// intended rather than leaving it to be read as an oversight.
+//
+// carryDeclarations skips markup.XNamespace so the declaration "stays on
+// the envelope". On the OPEN path that means kept — openWorkspaceFile
+// holds the envelope in ed.envAttrs. On the PASTE path unwrapGooey
+// discards the envelope, so the same skip means discarded, with no
+// message. The two paths share a function whose comment argues the open
+// path's case, which is why this needed a test rather than a sentence.
+//
+// Dropping is right: x: names ELEMENTS, its <x:Property> elements are
+// siblings of the content root, and a pasted fragment is a content
+// subtree — a carried declaration would scope nothing. The asymmetry
+// against xmlns:t in the same envelope is the assertion, because that is
+// what looks like a bug and is not.
+//
+// IT IS SAFE ONLY BECAUSE nodeOf REFUSES A PREFIXED ELEMENT, so nothing
+// the model can hold uses x: and no drop can strand a live prefix. That
+// is a second function holding this one up, and #522 proposes to relax
+// exactly it. When it does, this test is the thing that goes red.
+func TestAPastedEnvelopesXDeclarationIsDropped(t *testing.T) {
+	src := `<Gooey xmlns:x="` + markup.XNamespace + `" xmlns:t="urn:t" ` +
+		`Graphics="halfblock"><Canvas Name="P" Canvas.Left="0" Canvas.Top="0">` +
+		`<Button Name="B"/></Canvas></Gooey>`
+	n, err := nodeOf(src)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	root, ok := unwrapGooey(n)
+	if !ok {
+		t.Fatalf("a <Gooey> over one root did not unwrap")
+	}
+	if got, ok := root.Attrs["xmlns:t"]; !ok || got != "urn:t" {
+		t.Errorf("the envelope's xmlns:t did not reach the content root (got %q, "+
+			"present=%v). carryDeclarations moves a prefix the root does not "+
+			"already declare, and without it a pasted document's expression "+
+			"prefixes are lost — which is #472's own bug surviving through "+
+			"paste:\n%s", got, ok, root.markup(""))
+	}
+	if got, ok := root.Attrs["xmlns:x"]; ok {
+		t.Errorf("the envelope's xmlns:x was carried onto the content root as "+
+			"%q. x: names ELEMENTS and XML scopes those to the subtree that "+
+			"declares them, so moving it down changes what it covers — the "+
+			"scope change carryDeclarations' markup.XNamespace skip exists to "+
+			"prevent:\n%s", got, root.markup(""))
+	}
+	if got, ok := root.Attrs["Graphics"]; ok {
+		t.Errorf("the envelope's Graphics=%q reached the content root. A "+
+			"fragment must not carry the source document's envelope", got)
 	}
 }
