@@ -279,8 +279,19 @@ func TestEveryAdornmentIsHitTestTransparent(t *testing.T) {
 	// PROMOTION TO A FIXED POINT, because embedding chains: a type
 	// embedding a type embedding DragGhost has Anchor and Place too, and
 	// one pass would stop at the middle. The loop runs until nothing
-	// changes, which terminates because Go forbids a cycle of embedded
-	// struct types.
+	// changes, and it terminates because it is MONOTONE over a finite
+	// set: every pass only ever adds method names to `methods`, never
+	// removes one, and the names come from a fixed corpus. Cycles are
+	// therefore irrelevant here, not impossible — which is the part
+	// worth stating, because "Go forbids a cycle of embedded struct
+	// types" is what this said and it is false. Go forbids a cycle of
+	// embedded VALUE types; `type node struct{ *node }` compiles, an
+	// A/B pair through pointers compiles (verified), and receiverName
+	// unwraps *ast.StarExpr — so such a shape does reach `embeds` as a
+	// genuine cycle. A reader adding an early exit or a visited-set on
+	// the strength of the old reason would be reasoning from a premise
+	// that does not hold, in the file whose whole subject is a stated
+	// reason outliving what it describes.
 	//
 	// AN EMBEDDER IS NOT EXEMPTED BY INHERITING HitTestTransparent. It
 	// lands in `adornments` carrying the promoted method, so the call

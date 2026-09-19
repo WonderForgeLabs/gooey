@@ -503,8 +503,10 @@ func TestAnOverlayOutsideItsParentPaintsAndIsNotHit(t *testing.T) {
 // constrained by, because it is the reason #465 could not simply ask the
 // Composer for c.paint and index it.
 //
-// HitTest runs on every motion report, and ?1003h sends one per cell
-// crossed. The rewrite threads its running best through a pointer and
+// HitTest runs on every UNCAPTURED motion report, and ?1003h sends one
+// per cell crossed; a captured move reads it on none, and the unheld
+// press and the release that do read it are not motion events. The
+// rewrite threads its running best through a pointer and
 // numbers nodes with an int rather than collecting candidates, and none
 // of that is visible in any behavioural assertion — a version that built
 // a slice per event would pass every other test in this file.
@@ -536,9 +538,10 @@ func TestTheHitWalkAllocatesNothing(t *testing.T) {
 			"count below is measuring the wrong walk", hit)
 	}
 	if n := testing.AllocsPerRun(100, func() { m.HitTest(0, 0) }); n != 0 {
-		t.Errorf("HitTest allocated %v times per call, want 0. It runs on every motion "+
-			"report — ?1003h sends one per cell crossed — so per-event garbage here is "+
-			"paid on every pointer move across the screen", n)
+		t.Errorf("HitTest allocated %v times per call, want 0. It runs on every "+
+			"UNCAPTURED motion report — ?1003h sends one per cell crossed — so "+
+			"per-event garbage here is paid on every uncaptured pointer move "+
+			"across the screen", n)
 	}
 
 	// THE ZERO ABOVE IS THE WALK'S, NOT THE FRAME'S, and measuring it
@@ -831,6 +834,23 @@ func TestADragIsNotWalkedForByAQueryEither(t *testing.T) {
 		// condition this query has spelled with !m.held since it was
 		// written and DispatchMouse did not. Raised in review of #458.
 		{"held press", input.MouseEvent{Kind: input.MousePress, X: 0, Y: 0}},
+		// THE RELEASE IS THE FOURTH KIND, and it is the whole of the
+		// difference between this query's condition and DispatchMouse's.
+		// A captured release reads the hit THERE — m.within(captor, hit)
+		// decides whether a click is synthesized — and reads nothing
+		// HERE, because a query synthesizes nothing. That asymmetry is
+		// argued in mouse.go and in the spec, and until this row it was
+		// argued nowhere that runs: widening the early return to
+		// dispatch's shape,
+		//
+		//	&& ev.Kind != input.MouseRelease
+		//
+		// left the root suite, components and control all green while
+		// restoring a whole-tree walk per captured release in
+		// Service.mayPoint — per guest, per release, on the caller the
+		// spec calls the load-bearing one. Measured; this row is what
+		// turns it red.
+		{"release", input.MouseEvent{Kind: input.MouseRelease, X: 0, Y: 0}},
 	} {
 		before = box.walks
 		if got := m.MouseTarget(tc.ev); got != Component(sink) {

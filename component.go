@@ -211,7 +211,9 @@ type Overlay interface{ OverlaysPage() }
 //
 // AND THE TWO PLANES NOW READ IT DIFFERENTLY, which is the sharper cost
 // and was not here. Paint SAMPLES the rank at re-sync; hitTest reads it
-// LIVE, through overlayOf, on every motion event (#465). So a
+// LIVE, through overlayOf, on every UNCAPTURED motion event — and on
+// unheld presses and releases, which are not motion events at all,
+// while a captured move reads it on none (#465). So a
 // non-constant rank no longer merely restacks late — on the frame the
 // value changes, paint answers with the old rank and input with the new
 // one, and the planes disagree about which overlay is on top. That is

@@ -135,6 +135,7 @@ const (
 	planeZOrder     = "z-order"
 	planeInput      = "hit-walk"
 	planeVisibility = "Visibility"
+	planeCost       = "hit-walk cost"
 )
 
 // rulePlane is one plane's whole configuration, and it is a VALUE
@@ -3432,5 +3433,184 @@ func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
 				"in this package. A stale exemption is the thing that would hide "+
 				"the next rewiring", name)
 		}
+	}
+}
+
+// retiredCostClaim is the FOURTH plane, and it exists because the three
+// above scan for the wrong thing to catch it.
+//
+// zOrderRule scans the z-order phrasings and visibilityRule the
+// Visibility ones; inputRule scans what the hit walk ORDERS BY. None of
+// them has a pattern for what the walk COSTS, which is a separate claim
+// with its own retirement: #465 did not change which component a press
+// lands on for an uncaptured move, it changed how often the walk runs at
+// all. So "HitTest runs on every motion report" stayed true-looking and
+// unreachable by every guard in this file, and it was corrected BY HAND
+// in four separate rounds — mouse.go's godoc and docs/architecture.md in
+// round 9, CLAUDE.md in the same round, and then component.go,
+// overlayrank_test.go, components/hostalloc_test.go and
+// overlayhit_test.go here. A claim corrected by hand four times is one
+// nobody is guarding.
+//
+// THE CLAIM IS WRONG IN BOTH DIRECTIONS AT ONCE, which is why the
+// qualifier is a word and not a citation. DispatchMouse walks when
+//
+//	m.captor == nil || (press && !m.held) || Kind == MouseRelease
+//
+// so a CAPTURED move reads the hit on NO motion event — a drag across
+// the whole screen costs nothing — while the unheld press and the
+// release that do read it are not motion events. "Every motion report"
+// overstates the drag case and understates the other two.
+//
+// THE OPTIONAL `(\w+ )?` IS LOAD-BEARING. Without it the corrected
+// sentences — "on every UNCAPTURED motion event" — would not match the
+// pattern at all, and the plane would be exempting them by failing to
+// see them rather than by recognising the qualifier. With it they match
+// and are then cleared by costQualifierRes, which is the path the
+// honesty arm below drives.
+var retiredCostClaim = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(hit-?test(ing|s)?|the hit walk)\b.{0,60}?\bruns? on every (\w+ )?motion (report|event)`),
+	regexp.MustCompile(`(?i)reads? it live\b.{0,60}?\bon every (\w+ )?motion (report|event)`),
+	regexp.MustCompile(`(?i)allocation per cell of (\w+ )?pointer travel`),
+	regexp.MustCompile(`(?i)paid on every (\w+ )?pointer move`),
+}
+
+func statesTheRetiredCostClaim(line string) bool {
+	return matchesAny(line, retiredCostClaim)
+}
+
+// costPrefilterWords covers both shapes the patterns match: the motion
+// phrasings and the allocation-per-travel ones, which can state the cost
+// without the word "motion" anywhere on the line.
+var costPrefilterWords = []string{"motion", "pointer"}
+
+// costQualifierRes takes the three words that SCOPE the claim, plus a
+// NARROWED epitaph set. A citation is deliberately not among them: #465
+// is cited by sentences that state this cost wrongly, so accepting it
+// would exempt exactly the lines this plane exists to find.
+//
+// IT DOES NOT USE epitaphRes, AND THAT IS MEASURED RATHER THAN
+// FASTIDIOUS. qualifiedIn clears a hit if any qualifier matches a window
+// of two lines either side, and epitaphRes' second pattern contains
+// `no longer` — which is ordinary prose in exactly the paragraph this
+// plane is aimed at. component.go's own sentence runs:
+//
+//	… hitTest reads it LIVE, through overlayOf, on every motion event.
+//	So a non-constant rank NO LONGER merely restacks late …
+//
+// With epitaphRes folded in, that hit matched the pattern, was not
+// cleared by any scope word, and was cleared anyway by the "no longer"
+// two lines below it — so the plane exempted the very site it was
+// written for and the guard reported nothing. Caught by mutating the
+// corrected wording back and finding the scan still green.
+//
+// The two kept patterns are the ones that can only be a deliberate
+// epitaph. `stopped being`, `was never`, `not any more` and the
+// convention/position families go for the same reason `no longer` does:
+// they are sentences people write about behaviour, not markers.
+var costEpitaphRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)used to (say|state|be)|is what this said|is what this used to`),
+	regexp.MustCompile(`(?i)superseded|retired`),
+}
+
+var costQualifierRes = append([]*regexp.Regexp{
+	regexp.MustCompile(`(?i)uncaptured`),
+	regexp.MustCompile(`(?i)captured`),
+	regexp.MustCompile(`(?i)\bdrags?\b`),
+}, costEpitaphRes...)
+
+var supersededOfCost = regexp.MustCompile(`(?i)hit-?test|hit walk|motion|pointer|#465`)
+
+func TestNoFileTeachesTheRetiredCostClaim(t *testing.T) {
+	scanForRetiredRule(t, costRule)
+}
+
+var costRule = rulePlane{
+	states:    statesTheRetiredCostClaim,
+	prefilter: costPrefilterWords,
+	quals:     costQualifierRes,
+	of:        supersededOfCost,
+	plane:     planeCost,
+	advice: "The hit walk does not run on every motion report. Since " +
+		"#465 DispatchMouse walks when the captor is nil, on an " +
+		"unheld press, or on a release — so a CAPTURED move reads " +
+		"the hit on no motion event at all and a drag costs " +
+		"nothing, while the press and release that do read it are " +
+		"not motion events. Scope the sentence: say UNCAPTURED " +
+		"motion, or name the drag as the case that pays nothing. " +
+		"The markers this test accepts are in costQualifierRes — " +
+		"a #465 citation is NOT one of them, because the sentences " +
+		"this plane exists to catch cite it too.",
+}
+
+// TestTheRetiredCostGuardCanActuallyFire is the honesty arm its three
+// siblings each carry: a negative assertion driven only by a clean tree
+// cannot tell "nothing to find" from "switched off".
+//
+// The `want: false` rows are the ones that matter here, because this
+// plane's whole design is that the corrected sentences REACH the
+// patterns and are cleared by a qualifier. A row that passes by not
+// matching would hide a pattern that had stopped working.
+func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			"the wording component.go carried",
+			"hitTest reads it LIVE, through overlayOf, on every motion event (#465).",
+			true,
+		},
+		{
+			"the wording hostalloc_test.go carried",
+			"the user pays one allocation per cell of pointer travel.",
+			true,
+		},
+		{
+			"the wording overlayhit_test.go carried",
+			"HitTest runs on every motion report, and ?1003h sends one per cell crossed.",
+			true,
+		},
+		{
+			"the failure message's wording",
+			"per-event garbage here is paid on every pointer move across the screen",
+			true,
+		},
+		{
+			"the scoped form reaches the pattern and is cleared by the qualifier",
+			"HitTest runs on every UNCAPTURED motion report, and ?1003h sends one per cell crossed.",
+			false,
+		},
+		{
+			"naming the drag clears it too",
+			"HitTest runs on every motion report except during a drag, which pays nothing.",
+			false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statesTheRetiredCostClaim(tc.line); !got && tc.want {
+				t.Errorf("the cost plane does not match %q, so the four sites it "+
+					"was written for would survive it", tc.line)
+			}
+			if !tc.want {
+				// TWO CONDITIONS, and the second is the one that would
+				// go quietly wrong: the line must MATCH the pattern and
+				// then be cleared by a qualifier. A scoped sentence that
+				// simply fails to match is exempted by the plane's
+				// blindness rather than by its rule, and a later
+				// narrowing of the pattern would look identical here.
+				if !statesTheRetiredCostClaim(tc.line) {
+					t.Errorf("%q does not reach the pattern at all, so it is "+
+						"exempted by the plane not seeing it rather than by "+
+						"costQualifierRes clearing it", tc.line)
+				}
+				if !matchesAny(tc.line, costQualifierRes) {
+					t.Errorf("%q matches the pattern and no qualifier clears "+
+						"it, so the guard would report a correctly scoped "+
+						"sentence", tc.line)
+				}
+			}
+		})
 	}
 }

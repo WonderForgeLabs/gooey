@@ -14,11 +14,17 @@ import (
 //
 // The walk allocates nothing of its own. ToastHost.ChildComponents and
 // AdornmentLayer.ChildComponents each build a fresh slice per call, and
-// HitTest runs on every motion report — ?1003h sends one per cell
-// crossed — so while either host holds anything the user pays one
-// allocation per cell of pointer travel. In cmd/toolkit, apps/wysiwyg
-// and docs/learn/examples/07-app-chrome the host spans every row, so
-// that is the whole screen.
+// HitTest runs on every UNCAPTURED motion report — ?1003h sends one per
+// cell crossed — so while either host holds anything the user pays one
+// allocation per cell of UNCAPTURED pointer travel. In cmd/toolkit,
+// apps/wysiwyg and docs/learn/examples/07-app-chrome the host spans
+// every row, so that is the whole screen.
+//
+// A DRAG PAYS NONE OF IT, which is the scope the unqualified sentence
+// here got wrong: under a held capture DispatchMouse walks for no move
+// at all, so dragging on the wysiwyg canvas past a live tip costs zero.
+// The reads that remain are the uncaptured move, the unheld press and
+// the release — the last two not motion events.
 //
 // EMPTY IS GENUINELY ZERO, and that is not a courtesy of the walk:
 // make([]T, 0) returns the zero base and allocates nothing. It is the

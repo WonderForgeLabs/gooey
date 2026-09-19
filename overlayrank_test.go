@@ -264,7 +264,9 @@ func TestARankOrdersHitTestingAsWellAsPaint(t *testing.T) {
 // component.go says "Return a constant" and now says WHY in the sharper
 // form this branch introduced: paint SAMPLES the rank at structural
 // re-sync (Composer.orderPaint writes it), while hitTest reads it LIVE
-// through overlayOf on every motion event. Nothing refuses a varying
+// through overlayOf on every UNCAPTURED motion event — and on unheld
+// presses and releases, while a captured move reads it on none.
+// Nothing refuses a varying
 // rank — OverlayRank() is a plain method on an exported interface — so
 // the sentence was the whole enforcement, and the failure it warns about
 // is now a PLANE DISAGREEMENT rather than a late restack. That is the
