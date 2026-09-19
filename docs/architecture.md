@@ -1483,8 +1483,11 @@ The mechanics that keep it inside the framework's constraints:
   applied real subtree scoping, and `splitDeclarations` switches on it
   without consulting `ns` at all. `ctx.ns` answers a different
   question — which URI a prefix inside an attribute VALUE means, the
-  `t:` of `Click="{{t:Fire}}"`; a prefix on an attribute NAME is refused
-  outright (`markup.namespacedAttrError`) and reaches no table — and this sentence
+  `t:` of `Click="{{t:Fire}}"`; a prefix on an attribute NAME is never
+  looked up there, because `parse` refuses it outright
+  (`markup.namespacedAttrError`); the reserved `xmlns:` declarations are
+  the other side of that rule rather than an exception to it, consumed
+  three arms earlier and the thing that BUILDS the table — and this sentence
   named its two readers as "and nowhere else" until review of
   [#501](https://github.com/WonderForgeLabs/gooey/pull/501) grepped it
   and found four, `itemsview.go`'s capture-for-a-deferred-row among

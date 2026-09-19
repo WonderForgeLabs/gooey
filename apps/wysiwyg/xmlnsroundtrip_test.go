@@ -1574,7 +1574,8 @@ func TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen(t *testing.T) {
 // expression — may come down onto the content root, because markup.parse
 // resolves one through a flat document-wide table and any element's
 // declaration reaches any expression. (A prefix on an attribute NAME is
-// refused outright and reaches no table at all.) An ELEMENT prefix
+// never looked up in that table — parse refuses it outright — except for
+// the reserved xmlns: declarations, which are what build it.) An ELEMENT prefix
 // may not, because encoding/xml resolved it with real subtree scoping and
 // <x:Property> is a SIBLING of the content root, not a descendant — a
 // declaration moved onto the root is out of scope at the very element it

@@ -339,9 +339,12 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 			// the `t:` of Click="{{t:Fire}}" — through ctx.ns, which
 			// parse builds flat and document-wide, so there any element
 			// may carry the declaration. A prefix on an attribute NAME
-			// never reaches ctx.ns at all: parse refuses it outright
+			// is never LOOKED UP in ctx.ns: parse refuses it outright
 			// with namespacedAttrError, so <Button t:Click="Fire"/> is
-			// a load error rather than a flat resolution. This
+			// a load error rather than a flat resolution. The reserved
+			// xmlns: declarations are not an exception to that rule but
+			// the other side of it — parse consumes them three arms
+			// earlier, and they are what BUILDS the table. This
 			// paragraph said "an ATTRIBUTE prefix" for both until
 			// review of #501 read it literally, which collapses the
 			// refused case into the resolved one on the very axis it is
