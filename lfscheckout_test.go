@@ -1,6 +1,7 @@
 package gooey
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,4 +102,73 @@ func isCheckout(uses string) bool {
 		return false
 	}
 	return len(uses) == len(want) || uses[len(want)] == '@'
+}
+
+// TestTheLegThatRunsTheRootModuleGetsFullHistory pins the OTHER thing
+// ci.yml's checkout step decides, and it is the half that used to be
+// remembered rather than derived.
+//
+// Several guards in the root suite read git history — the own-module
+// pins are checked for existence, for their commit stamp, and for
+// ancestry of origin/main — and `actions/checkout` produces
+// `refs/remotes/origin/main` and the parent commits they need ONLY at
+// `fetch-depth <= 0`. At depth 1 on a pull request it fetches the merge
+// commit and none of its parents, and `pinCoverage` reds the suite with
+// "NOTHING was checked here".
+//
+// The step used to spell that requirement as `matrix.mode == 'test'` —
+// the tier NAME, not the leg carrying the root module — with the bridge
+// between them in a prose comment. `discover` derives a `depth` per leg
+// now, and this asserts the two halves of that: the expression is read
+// off the matrix rather than recomputed here, and the matrix field is
+// computed from whether the leg holds `.`. Raised in review of #497.
+func TestTheLegThatRunsTheRootModuleGetsFullHistory(t *testing.T) {
+	b, err := os.ReadFile(".github/workflows/ci.yml")
+	if err != nil {
+		t.Fatalf("reading ci.yml: %v", err)
+	}
+	var wf ghWorkflow
+	if err := yaml.Unmarshal(b, &wf); err != nil {
+		t.Fatalf("ci.yml does not parse as YAML: %v", err)
+	}
+
+	// EVERY CHECKOUT IN THE FILE, not one job by name. Exactly one of
+	// them departs from the action's default, and which job holds it is
+	// not this test's business — the job that runs the module matrix has
+	// been renamed once already.
+	set := map[string]string{}
+	for job, j := range wf.Jobs {
+		for i, st := range j.Steps {
+			if !isCheckout(st.Uses) {
+				continue
+			}
+			if v, ok := st.With["fetch-depth"]; ok {
+				set[fmt.Sprintf("job %q step %d", job, i+1)] = fmt.Sprint(v)
+			}
+		}
+	}
+	if len(set) != 1 {
+		t.Fatalf("ci.yml has %d checkout step(s) setting fetch-depth, want "+
+			"exactly 1: %v. The other checkouts ask git nothing about history, "+
+			"and a second one departing from the default is either a duplicate "+
+			"of this rule or a new one nothing here explains", len(set), set)
+	}
+	for where, got := range set {
+		if got != "${{ matrix.depth }}" {
+			t.Errorf("ci.yml: %s sets fetch-depth to %q. It must read the "+
+				"matrix's derived `depth`: keying full history on the tier NAME "+
+				"is a coupling to the `case` in discover that nothing checks, and "+
+				"that `case` carries its own proposal to invert itself — after "+
+				"which the root module is in the `race` leg at depth 1 and the "+
+				"root suite reds pointing at a fetch-depth: 0 on the wrong leg",
+				where, got)
+		}
+	}
+
+	// THE DERIVATION ITSELF is TestCIMatrixPackingPartitionsEveryModule's,
+	// which extracts ci.yml's own jq program and RUNS it over a fixture
+	// where the root module sits in the `test` tier — so the two halves
+	// are pinned by execution rather than by two copies of a string. This
+	// test owns only the half it can see: that the step reads the
+	// matrix's answer instead of recomputing one.
 }

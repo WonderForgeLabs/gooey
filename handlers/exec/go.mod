@@ -13,12 +13,13 @@ module github.com/WonderForgeLabs/gooey/handlers/exec
 go 1.25.6
 
 require (
-	github.com/WonderForgeLabs/gooey v0.0.0-20260822170725-f67f0f6cff61
+	github.com/WonderForgeLabs/gooey v0.0.0-20260913132232-e5cdb56ececd
 	github.com/itchyny/gojq v0.12.17
 )
 
 require (
 	github.com/itchyny/timefmt-go v0.1.6 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
