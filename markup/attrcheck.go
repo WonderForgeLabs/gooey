@@ -142,6 +142,7 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 	// This paragraph sat above the asData gate rather than this one
 	// until review of #486 round 8 — describing a deferral two gates
 	// away, and citing acceptedByParent, which misplaced replaced.
+	misplacedHere := false
 	if ok && spec.Pseudo && !asData {
 		if misplaced(e, spec, ctx) {
 			// THE DEFERRAL COVERS THE EXHAUSTIVE CHECK TOO, and it
@@ -158,7 +159,38 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 			// were probed through Build before and after. Raised in
 			// review of #486 round 2, which is round 1's finding 1 one
 			// gate over.
-			return nil
+			//
+			// IT DEFERS THE UNIVERSALS, NOT THE WHOLE CHECK, and
+			// returning nil here was the difference. The deferral is
+			// only honest where a diagnosis actually follows, and
+			// nothing obliges a host's Build to refuse its own
+			// placement — the framework never asks it to and no
+			// document says it must. A host def carrying ParsedBy AND a
+			// Build that simply builds therefore bought SILENCE:
+			// measured on a fourth child added to hostTableCtx,
+			//
+			//	<VStack><BuiltRow Label="a" Bogus="x"/></VStack>  err=<nil>
+			//	<VStack><BuiltRow Labl="a"/></VStack>             err=<nil>
+			//
+			// — the document loads, the component is built, the typo is
+			// dropped, and origin/main refuses both. That is #461's own
+			// class arriving through the gate added to close it.
+			//
+			// The suite could not see it because all three of
+			// hostTableCtx's children shared one build closure that
+			// opens `if e.parent != "Table"`, so the FIXTURE supplied
+			// the deferral target the gate merely assumes.
+			//
+			// Narrowed to the names cannotApplyTo covers rather than
+			// gated on d.Build == nil: the second would stand down only
+			// where no Build exists, and defMenu HAS one, so it would
+			// hand `<VStack><Menu Name="Zonk">` back the "this element
+			// takes Title" lie this deferral was added to remove.
+			// Deferring the universals keeps that, while the element's
+			// own declared vocabulary is still judged — which is a true
+			// sentence wherever it fires. Raised in review of #486
+			// round 9.
+			misplacedHere = true
 		}
 	}
 
@@ -194,13 +226,58 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 		// and is simply in the wrong place, which is a different
 		// mistake from a typo and deserves a different sentence.
 		if parent, ok := attached[name]; ok {
-			return fmt.Errorf("markup: <%s %s=%q>: %s is contributed by a <%s> parent, but this element's parent is %s; it would be ignored here",
-				e.Name, name, e.Attrs[name], name, parent, describeParent(e.parent))
+			return holdIfMisplaced(misplacedHere, fmt.Errorf("markup: <%s %s=%q>: %s is contributed by a <%s> parent, but this element's parent is %s; it would be ignored here",
+				e.Name, name, e.Attrs[name], name, parent, describeParent(e.parent)))
 		}
-		return fmt.Errorf("markup: <%s %s=%q>: no such attribute%s",
-			e.Name, name, e.Attrs[name], suggest(name, allowed, attached))
+		return holdIfMisplaced(misplacedHere, fmt.Errorf("markup: <%s %s=%q>: no such attribute%s",
+			e.Name, name, e.Attrs[name], suggest(name, allowed, attached)))
 	}
 	return nil
+}
+
+// deferredFault is an attribute fault on a MISPLACED element: real, but
+// outranked by the placement fault if one actually follows.
+//
+// THE DEFERRAL USED TO BE A GUESS. checkAttrs runs before the element's
+// own Build, so on `<VStack><Tab Name="Z">…` complaining about the
+// attribute preempted defTab.Build's "<Tab> is only valid directly
+// inside <Tabs>" and told the author to move an attribute — a remedy
+// that leaves the document just as broken. The fix was to return nil and
+// let Build speak, which is right exactly when Build DOES speak.
+//
+// Nothing obliges it to. A host's Context.Elements def may carry ParsedBy
+// and a Build that simply builds — the framework never asks that Build to
+// refuse its own placement and no document says it must — and then
+// returning nil bought SILENCE. Measured on such a def:
+//
+//	<VStack><Built Label="a" Bogus="x"/></VStack>  err=<nil>
+//	<VStack><Built Labl="a"/></VStack>             err=<nil>
+//
+// The document loads, the component is built, the typo is dropped, and
+// origin/main refuses both — #461's own class arriving through the gate
+// added to close it.
+//
+// So the fault is HELD rather than dropped, and build() emits it only
+// after buildComponent returns without one. The ordering is the whole
+// point: a real placement diagnosis still wins, and where none arrives
+// the author hears about the attribute instead of nothing.
+//
+// NARROWING THE CHECK TO THE UNIVERSALS WOULD NOT DO, and was tried:
+// TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs pins that
+// a misplaced <Row Bogus="x"> reports its PLACEMENT, which round 2
+// established, and judging the element's own vocabulary there reports
+// the attribute instead. Holding is what satisfies both. Raised in
+// review of #486 round 9.
+type deferredFault struct{ err error }
+
+func (d deferredFault) Error() string { return d.err.Error() }
+func (d deferredFault) Unwrap() error { return d.err }
+
+func holdIfMisplaced(misplaced bool, err error) error {
+	if misplaced {
+		return deferredFault{err}
+	}
+	return err
 }
 
 // refuseComponentAttr rejects a universal attribute on a pseudo-element,
@@ -757,8 +834,13 @@ func propRemedy(e Element, spec ElementSpec, ctx *Context, name string) string {
 // attributeHere's doc argues that prescribing the attribute spelling is
 // safe because "if the element does not take the name, the attribute
 // gate answers with its own list, which is a better error". That is true
-// for a name the vocabulary gate sees — <Tab.Frobnicate> reaches
-// suggest() — and FALSE for anything cannotApplyTo covers, because
+// for a name the vocabulary gate sees — <Menu.Frobnicate> reaches
+// suggest(), measured:
+//
+//	<MenuBar><Menu Title="_F" Frobnicate="x">…
+//	  -> no such attribute; this element takes Title
+//
+// — and FALSE for anything cannotApplyTo covers, because
 // refuseComponentAttr intercepts those before the vocabulary gate runs
 // and answers with no advice at all. Measured:
 //
@@ -772,6 +854,17 @@ func propRemedy(e Element, spec ElementSpec, ctx *Context, name string) string {
 // whole function exists to close, reintroduced through the one gate
 // attributeHere's argument did not account for. Raised in review of
 // #486.
+//
+// THE EXAMPLE IS <Menu> AND NOT <Tab>, which is what this said and was
+// measurably false. <Tab> is the one pseudo-element with AttrsKnown
+// false, so checkAttrs returns before the vocabulary gate and
+// suggest() is never reached: `<Tabs><Tab Header="a" Frobnicate="x">`
+// loads with err=nil and the attribute is dropped. attributeHere's own
+// doc twenty lines below says exactly that, and
+// TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped pins it — so
+// the sentence here was standing as a counter-example to the caveat it
+// sits above. <Menu> and <MenuItem> are AttrsKnown, so they are the
+// names for which the claim holds. Raised in review of #486 round 9.
 func sayableHere(name string) bool { return !cannotApplyTo(name) }
 
 // attributeHere is what can be said when no DESTINATION can be named:

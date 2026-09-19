@@ -420,4 +420,43 @@ func TestTheCatalogMemoDoesNotOutliveItsBuild(t *testing.T) {
 		t.Error("Catalog() does not see an element the unexported catalog does, " +
 			"so the memo has reached the form it was not meant to cover")
 	}
+
+	// THE NESTED LOAD, which is the second failure mode this test's own
+	// doc names and did not exercise. document.build saves the field,
+	// installs a fresh one and restores it on the way out; every
+	// assertion above runs in ONE build, so prevCat was never read.
+	// Without the restore, an Include assembled against the child's
+	// Context leaves ITS memo installed on the way back out, and the
+	// rest of the outer build answers from a catalog that is not its
+	// own. Raised in review of #486 round 9.
+	nested := &Context{
+		Elements: map[string]*ElementDef{},
+		Includes: fstest.MapFS{
+			"card.gooey": {Data: []byte(`<Gooey><Text>inner</Text></Gooey>`)},
+		},
+	}
+	page := []byte(`<Gooey><VStack><Card/><Text>outer</Text></VStack></Gooey>`)
+	if _, err := Build(page, nested); err != nil {
+		t.Fatalf("the nested fixture does not load, so the arm below is about "+
+			"nothing: %v", err)
+	}
+	if nested.catalogNoIncludes != nil {
+		t.Error("the memo survived a build that contained a NESTED load, so the " +
+			"include's own arming was never restored — the outer build's " +
+			"remaining elements answer from the catalog the include assembled")
+	}
+	// AND THE OUTER BUILD STILL SEES ITS OWN REGISTRATIONS afterwards,
+	// which is the consequence a nil field alone cannot show.
+	nested.Elements["Späth"] = &ElementDef{Name: "Späth", Known: true}
+	found = false
+	for _, sp := range nested.catalog(false) {
+		if sp.Name == "Späth" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("after a build containing a nested load, a newly registered " +
+			"element is missing from the catalog — the memo outlived the " +
+			"build through the include path")
+	}
 }

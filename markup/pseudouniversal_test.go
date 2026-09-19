@@ -1887,6 +1887,17 @@ func TestARemedyOnAnUncheckedSurfaceSaysTheNameCanBeDropped(t *testing.T) {
 //
 // <Row>'s Build refuses its own placement the way defTab's does, so the
 // misplaced arm has a real diagnosis to defer TO.
+//
+// AND <Built> IS THE FOURTH, WHICH EXISTS BECAUSE THAT SENTENCE IS AN
+// ASSUMPTION. Nothing obliges a host's Build to refuse its own
+// placement — the framework never asks it to, and no document says it
+// must. The three children above all share ONE build closure opening
+// `if e.parent != "Table"`, so the fixture was SUPPLYING the deferral
+// target the production gate merely assumed, and the suite could not
+// see a host that simply builds. <Built> carries ParsedBy and a Build
+// that returns a component unconditionally; before the narrowing in
+// review of #486 round 9 it loaded misplaced-with-a-typo and reported
+// nothing. Raised in review of #486 round 9.
 func hostTableCtx() *Context {
 	build := func(e Element, ctx *Context) (gooey.Component, error) {
 		if e.parent != "Table" {
@@ -1931,7 +1942,96 @@ func hostTableCtx() *Context {
 			Attrs:    []AttrSpec{{Name: "Label"}},
 			Children: ChildSpec{Mode: ModeNone},
 		},
+		// NO PLACEMENT REFUSAL, deliberately: this Build is what a host
+		// writes when the container is the only thing that ever parses
+		// the child, so there is nothing for the misplaced deferral to
+		// defer to.
+		"Built": {
+			Name:     "Built",
+			Known:    true,
+			ParsedBy: "Table",
+			Attrs:    []AttrSpec{{Name: "Label"}},
+			Children: ChildSpec{Mode: ModeNone},
+			Build: func(e Element, ctx *Context) (gooey.Component, error) {
+				return &components.Text{}, nil
+			},
+		},
 	}}
+}
+
+// TestADeferralBuysNoSilenceWhereNoDiagnosisFollows is the arm the three
+// original children of hostTableCtx could not be.
+//
+// checkAttrs stands down from the attribute check when the element is
+// misplaced, because the placement fault is the larger one and its own
+// Build will report it. That is true of <Row>, <ORow> and <Tab> — and
+// it is an ASSUMPTION about every other host, not a rule the framework
+// enforces. <Built> is the counterexample: ParsedBy set, and a Build
+// that just builds.
+//
+// Measured before the narrowing, with the whole check deferred:
+//
+//	<VStack><Built Label="a" Bogus="x"/></VStack>  -> <nil>
+//	<VStack><Built Labl="a"/></VStack>             -> <nil>
+//
+// origin/main refuses both. The document loaded, the component was
+// built, and the typo was dropped — #461's own class arriving through
+// the gate added to close it.
+//
+// THE UNIVERSAL STAYS DEFERRED, which is the other half and the reason
+// this is a narrowing rather than a removal: Name on a misplaced
+// element is the smaller fault, and reporting it says "this element
+// takes Label" about a name every other element accepts. The last arm
+// pins that the placement diagnosis still wins there.
+func TestADeferralBuysNoSilenceWhereNoDiagnosisFollows(t *testing.T) {
+	ctx := hostTableCtx()
+	for _, tc := range []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			"an unknown attribute is still refused",
+			`<Gooey><VStack><Built Label="a" Bogus="x"/></VStack></Gooey>`,
+			"no such attribute",
+		},
+		{
+			"a typo is still suggested against",
+			`<Gooey><VStack><Built Labl="a"/></VStack></Gooey>`,
+			"did you mean Label?",
+		},
+		{
+			"correctly placed and correctly spelled still loads",
+			`<Gooey><Table Title="t"><Built Label="a"/></Table></Gooey>`,
+			"",
+		},
+		{
+			// THE DEFERRAL ITSELF, on the child that has a diagnosis to
+			// defer to. Without this arm the narrowing could be widened
+			// into a removal and nothing would say so.
+			"a universal on a misplaced element defers to the placement fault",
+			`<Gooey><VStack><Row Name="Zonk" Label="a"/></VStack></Gooey>`,
+			"only valid directly inside <Table>",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Build([]byte(tc.src), ctx)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("a correctly placed, correctly spelled child was refused: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("loaded clean, want %q — the deferral bought silence where "+
+					"no diagnosis follows, so the document builds and the attribute "+
+					"is dropped with nothing reported anywhere", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refused with %q, want it to contain %q", err, tc.want)
+			}
+		})
+	}
 }
 
 // TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs is #461's

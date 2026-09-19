@@ -19,6 +19,7 @@ package markup
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -1213,12 +1214,26 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 	}
 	defer pop()
 
+	// A MISPLACED ELEMENT'S ATTRIBUTE FAULT IS HELD, NOT DROPPED. See
+	// deferredFault: checkAttrs runs before Build, so the placement
+	// diagnosis has not been produced yet and cannot be compared against.
+	// Holding lets Build speak first and still reports the attribute when
+	// Build says nothing at all.
+	var held error
 	if err := checkAttrs(e, ctx, false); err != nil {
-		return nil, err
+		var d deferredFault
+		if errors.As(err, &d) {
+			held = d.err
+		} else {
+			return nil, err
+		}
 	}
 	w, err := buildComponent(e, ctx)
 	if err != nil {
 		return nil, err
+	}
+	if held != nil {
+		return nil, held
 	}
 	if err := applyLayout(e, w, ctx); err != nil {
 		return nil, err
@@ -1735,9 +1750,20 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		// property — so <MenuItem Name="Save"> loaded clean while
 		// nothing here ever called named(), and ctx.Named stayed empty.
 		// Accepted, silently dropped: the exact class this declaration
-		// exists to close. Both gates now ask !spec.Pseudo, which is the
-		// declared form of "there is nothing to address". Found in
-		// review of #454.
+		// exists to close. Found in review of #454.
+		//
+		// THE TWO GATES NO LONGER ASK THE SAME QUESTION, and this
+		// sentence said they both ask !spec.Pseudo. Context.vocabulary
+		// now decides Name on the CALL SITE — its `builds` parameter,
+		// attrcheck.go — because a host's Context.Elements def may
+		// carry ParsedBy and a real Build at once, and buildComponent
+		// calls named() on what that Build returns. Grant.AttrsFor
+		// still asks Pseudo, and catalog.go documents why the two
+		// deliberately disagree;
+		// TestTheDesignerOffersNoNameRowWhereTheLoaderHonoursOne pins
+		// the divergence. This comment is two files from either of
+		// them, so it was the one place a reader of buildMenuBar would
+		// learn the opposite. Raised in review of #486 round 9.
 		//
 		// This is also what makes catalogen's half-check sound. Its
 		// comment says the under-declared direction "stays loud the
