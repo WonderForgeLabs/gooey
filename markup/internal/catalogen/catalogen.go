@@ -251,8 +251,8 @@ func checkPseudo(d defInfo, buildOf map[string]*ast.FuncLit, funcs map[string]*a
 		// pseudo-element and an ordinary one. The skip is right for an
 		// ordinary element because applyLayout consumes Margin, Width
 		// and the rest outside its Build. A pseudo-element has no
-		// applyLayout — a nil Proto makes TakesLayout false, so
-		// vocabulary() never adds the universal set to it — but
+		// applyLayout — Pseudo makes TakesLayout false, so vocabulary()
+		// never adds the universal set to it — but
 		// checkAttrs allows anything in spec.Attrs regardless. So
 		// declaring Margin on <MenuItem> made it settable, unread and
 		// silently dropped, with the whole suite green: the exact

@@ -376,6 +376,15 @@ type ElementSpec struct {
 	// telling a custom OriginRegistered component apart.
 	Attaches  bool
 	HasLayout bool
+	// AxesKnown reports that the four axes above were DERIVED FROM A
+	// PROTO rather than defaulted, and it is to them what AttrsKnown is
+	// to Attrs. Without it every axis reads false for two different
+	// facts at once — "the type does not do this" and "no type was
+	// given" — and a consumer cannot tell a <Timer>, which really is
+	// not laid out, from a host def with a real Build and no Proto,
+	// which is. TakesLayout is where that mattered; see its doc for the
+	// measurement.
+	AxesKnown bool
 	Doc       string
 }
 
@@ -586,18 +595,20 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // resolved — the same join, reached without a registry lookup. See
 // AttachedAttrs above for why a Context consumer needs this form.
 //
-// THE AGREEMENT WITH THE LOADER IS ONE-DIRECTIONAL, and the sentence
-// below about the two gates having to agree states the half that holds.
-// Nothing this offers fails to load: the TakesLayout gate here and
-// Context.vocabulary's are the same predicate on the same spec. The
-// converse is not guarded and cannot be from here — TakesLayout reads
-// HasLayout, which ElementDef.axes derives from the PROTO, so a HOST's
-// def with a real Build and no Proto answers false while build() runs
-// applyLayout on the component that Build returns. With AttrsKnown
-// false, checkAttrs stands down and <Host Margin="2"> loads with the
-// margin honoured, and this offers no row for it. Measured both ways in
-// TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne, which is
-// also what will go red if somebody closes it. Raised in review of #486.
+// THE AGREEMENT WITH THE LOADER RUNS BOTH WAYS FOR LAYOUT, and one
+// half of that is newer than the other. Nothing this offers fails to
+// load, because the TakesLayout gate here and Context.vocabulary's are
+// the same predicate on the same spec. The converse used to be
+// unguarded: TakesLayout read HasLayout, which ElementDef.axes derives
+// from the PROTO, so a HOST's def with a real Build and no Proto
+// answered false while build() ran applyLayout on the component that
+// Build returns — it LOADED with the margin honoured and this offered
+// no row for it. AxesKnown is what separated "does not" from "cannot
+// say"; TakesLayout answers true where nobody can say otherwise, so the
+// row is offered and the load agrees. Measured both ways in
+// TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef, which is what
+// goes red if either side drifts. Raised in review of #486 and closed
+// in round 10 of it.
 //
 // AND THE PARENT IS THE OTHER THING THIS CANNOT SEE, which is a second
 // unguarded direction rather than a restatement of the first. Whether
@@ -621,8 +632,9 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // the sentence below calls the one that must agree. It cannot be closed
 // from here without the parent, and adding a parent parameter would
 // make a catalog query depend on where the element is about to be put —
-// so it is STATED, the way the layout direction above is. Raised in
-// review of #486.
+// so it is STATED and pinned. The layout direction above USED to be
+// stated the same way and is now closed, which is why this paragraph
+// no longer points at it as the precedent. Raised in review of #486.
 func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	out := append([]AttrSpec(nil), e.Attrs...)
 	if TakesLayout(e) {
@@ -829,7 +841,26 @@ func AttrsFor(e ElementSpec, parent string) []AttrSpec {
 // would let someone set Width on a <Timer> and then fail the load — the
 // catalog lying about the target, through the artifact built to stop it.
 // Found by TestDeclaredVocabularyElementsKeepTheirExactSet.
-func TakesLayout(e ElementSpec) bool { return e.HasLayout && !e.NonVisual }
+// THE UNKNOWABLE DEF ANSWERS TRUE, and that conjunct is what makes this
+// predicate match the loader in BOTH directions rather than one. HasLayout
+// is derived from Proto, so a def with a real Build and no Proto reports
+// false for "the type does not accept layout" and for "nobody can say"
+// alike — and build() runs applyLayout on whatever that Build returns.
+// Answering false there refused Margin, Width, Grid.Row and every other
+// attached name on an element that honours all of them: measured in review
+// of #486 on one def, flipping Known alone, <Built Label="a" Grid.Row="0"
+// Width="7"/> inside a <Grid> was a load error with Known true and read
+// back Grid.Row=0 Width=7 with Known false. AxesKnown is the question
+// AttrsKnown already asks about the element's own attributes, asked about
+// the behavioural axes instead.
+//
+// Pseudo is the third conjunct rather than a consequence of the first two.
+// A pseudo-element also has no Proto, so !AxesKnown holds for it — but it
+// builds NO component, which is a reason to withhold the layout surface
+// that survives knowing everything about it.
+func TakesLayout(e ElementSpec) bool {
+	return (e.HasLayout || !e.AxesKnown) && !e.NonVisual && !e.Pseudo
+}
 
 // BuiltinElements returns the DECLARED table: the element vocabulary
 // this build of gooey compiled in, with no reference to any app. Callers

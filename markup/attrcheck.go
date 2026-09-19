@@ -73,8 +73,9 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 	//
 	// A page that loaded stopped loading, and the reason given was
 	// false. This is the hazard refuseComponentAttr's own doc names for
-	// !TakesLayout — refusing off an absent-by-default signal breaks
-	// working apps — arriving through ParsedBy instead.
+	// !TakesLayout — refusing an element's universals off a fact about
+	// its LAYOUT breaks working apps — arriving through ParsedBy
+	// instead.
 	//
 	// THE DISCRIMINATING QUESTION IS THE CALL SITE, not the spec. An
 	// element consumed as DATA is one its reader walked out of
@@ -301,13 +302,22 @@ func holdIfMisplaced(misplaced bool, err error) error {
 // or applyLayout() with it.
 //
 // !TakesLayout is NOT interchangeable here, and reaching for it would
-// break working apps. It is absent-by-default, and the construct that
-// shows the difference is a HOST'S Context.Elements ElementDef with a
-// real Build and no Proto: ctx.spec resolves it, AttrsKnown is false,
-// TakesLayout is false — and Pseudo is false, because no reason is
-// stated. build() runs applyLayout on the component it returns, so its
-// universals are honoured, and refusing them off the absence would
-// break it.
+// break working apps. The two ask different questions — "builds no
+// component" against "is not laid out" — and the construct that shows
+// the difference is any NON-VISUAL element: a <Timer> builds a real
+// component, reaches named(), and answers TakesLayout false only
+// because it occupies no space. Refusing Name off that would break
+// every document that addresses one.
+//
+// THE WITNESS USED TO BE A DIFFERENT ONE, and round 10 of #486 removed
+// it rather than weakening the claim. It was a HOST'S Context.Elements
+// def with a real Build and no Proto: TakesLayout read HasLayout
+// straight off the missing Proto and answered false for "cannot say" as
+// well as for "does not", so refusing off it refused Margin, Width and
+// every attached name on an element that honours all of them. That is
+// AxesKnown now, and TakesLayout answers true there — so this gate and
+// that one agree about such a def, and the non-visual case is what they
+// still part company on.
 //
 // NOT Context.Components, which this comment used to cite. ctx.spec
 // returns ok=false for one of those, so both gates short-circuit alike
@@ -315,9 +325,9 @@ func holdIfMisplaced(misplaced bool, err error) error {
 // checking the claim would find it does not hold and could conclude
 // the gate is over-cautious. The fixture in
 // TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals is the
-// discriminating shape, and it is a Context.Elements def for exactly
-// this reason; the first attempt at that test used Components and could
-// not tell the two gates apart. Corrected in review of #486.
+// Context.Elements shape for exactly this reason; the first attempt at
+// that test used Components and could not tell the two gates apart.
+// Corrected in review of #486.
 //
 // Grant.AttrsFor already implements the same rule on the other side —
 // it withholds the layout rows on !TakesLayout and the identity row on

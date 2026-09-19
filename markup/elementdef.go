@@ -292,6 +292,7 @@ func (d *ElementDef) spec() ElementSpec { return d.specAs(OriginBuiltin) }
 // is exactly as knowable as a builtin one.
 func (d *ElementDef) specAs(origin Origin) ElementSpec {
 	nonVisual, focusable, attaches, hasLayout := d.axes()
+	axesKnown := d.Proto != nil
 	// Copied for the same reason Attrs and Slots are: a spec is handed
 	// out, and a caller must not be able to reach back through it and
 	// edit the registry's own definition.
@@ -337,6 +338,7 @@ func (d *ElementDef) specAs(origin Origin) ElementSpec {
 		Focusable: focusable,
 		Attaches:  attaches,
 		HasLayout: hasLayout,
+		AxesKnown: axesKnown,
 		Doc:       d.Doc,
 	}
 }

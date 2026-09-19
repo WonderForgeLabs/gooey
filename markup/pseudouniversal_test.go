@@ -133,12 +133,16 @@ func TestTheAdvertisementCheckCanActuallyFire(t *testing.T) {
 // refusing anything from it would invent a rule the catalog cannot
 // support. Pseudo is not part of that vocabulary: it is an AFFIRMATIVE
 // derived fact (a nil Proto AND a stated reason, elementdef.go), and it
-// entails that no universal applies. !TakesLayout is the opposite kind
-// of fact — absent-by-default. A host's Context.Components builder has
-// no Proto either, so TakesLayout is false for it while the framework
-// still applies Margin to the component it returns; refusing the layout
-// set off that absence would break working apps. Only the affirmative
-// fact is safe to refuse from.
+// entails that no universal applies. !TakesLayout is a DIFFERENT fact,
+// and it was the opposite KIND of fact until round 10 of #486: a host
+// def with a real Build and no Proto reported false, so refusing off it
+// refused Margin on an element the framework really does apply Margin
+// to. AxesKnown closed that particular absence, and TakesLayout now
+// names Pseudo outright — but the two gates still part company on a
+// NON-VISUAL element, which builds a real component and simply occupies
+// no space. <Timer Name="Tick"> reaches named() like anything else, and
+// a gate reading !TakesLayout would refuse it. Only the affirmative fact
+// is safe to refuse from.
 func TestNoPseudoElementAcceptsAUniversalAttribute(t *testing.T) {
 	ctx := &Context{}
 	for _, s := range pseudoSpecs(t) {
@@ -432,28 +436,35 @@ func TestEveryPseudoElementRefusesAUniversalTheSameWay(t *testing.T) {
 // this tree did not have, and it is here because a mutation went SILENT
 // without it.
 //
-// Swapping refuseComponentAttr's gate from spec.Pseudo to !TakesLayout(spec)
-// broke nothing in the suite, and the comment beside that gate asserts
-// the swap would break working apps. That claim was unpinned.
+// Swapping a universal-attribute gate from "this element builds no
+// component" to "this element's declared surface takes no layout" broke
+// nothing in the suite, and the comments beside those gates assert the
+// swap would break working apps. That claim was unpinned.
 //
 // THE DISCRIMINATING SHAPE IS NARROW, and finding it is the whole
 // exercise. It needs an element ctx.spec RESOLVES — a Context.Components
-// entry returns !ok, so both gates short-circuit and the first attempt at
-// this test could not tell them apart — with AttrsKnown false so the
-// early return is reached, a nil Proto so TakesLayout is false, and NO
-// stated reason, so Pseudo is false. That is a HOST's ElementDef with a
-// real Build and no Proto, which is exactly the case ElementSpec.Pseudo
-// names as the reason its derivation takes both conjuncts.
+// entry returns !ok, so every gate short-circuits and the first attempt
+// at this test could not tell them apart — with AttrsKnown false so
+// checkAttrs' early return is reached, a nil Proto so nothing about its
+// behaviour is derivable, and NO stated reason, so Pseudo is false. That
+// is a HOST's ElementDef with a real Build and no Proto, which is
+// exactly the case ElementSpec.Pseudo names as the reason its derivation
+// takes both conjuncts.
 //
 // Such an element BUILDS A REAL COMPONENT, and build() runs applyLayout
 // and applyTooltipShorthand on whatever comes back (markup.go), so its
-// universals are honoured. !TakesLayout cannot tell it from a <Tab>;
-// Pseudo can.
+// universals are honoured.
 //
-// BOTH HALVES ARE ASSERTED, not just the load. "It still loads" would
-// pass against a build that accepted the attribute and dropped it —
-// which is the very defect #461 is about, so the absence of an error
-// proves nothing on its own here.
+// THE FIXTURE'S OWN GUARD INVERTED IN ROUND 10, and the flip is the
+// finding rather than an adjustment to it. It used to require
+// !TakesLayout here, because TakesLayout read HasLayout straight off a
+// Proto this def does not have and so reported false for "does not"
+// and "cannot say" alike — which is what refused Margin, Width and every
+// attached name on an element that honours all of them. AxesKnown
+// separates the two, TakesLayout now answers true where nobody can say
+// otherwise, and the guard asks for that instead. A fixture that
+// reported !TakesLayout again would mean the derivation had gone back to
+// reading an absent Proto. Raised in review of #486 round 10.
 func TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals(t *testing.T) {
 	ctx := &Context{Elements: map[string]*ElementDef{
 		"LogPane": {
@@ -466,12 +477,12 @@ func TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals(t *testing.T) {
 		},
 	}}
 	spec, ok := ctx.spec("LogPane")
-	if !ok || spec.AttrsKnown || spec.Pseudo || TakesLayout(spec) {
+	if !ok || spec.AttrsKnown || spec.Pseudo || spec.AxesKnown || !TakesLayout(spec) {
 		t.Fatalf("the fixture is not the discriminating shape — it needs "+
-			"resolved/!AttrsKnown/!Pseudo/!TakesLayout and is %v/%v/%v/%v, so "+
-			"the two gates would agree about it and this test could not see "+
-			"the difference",
-			ok, !spec.AttrsKnown, !spec.Pseudo, !TakesLayout(spec))
+			"resolved/!AttrsKnown/!Pseudo/!AxesKnown/TakesLayout and is "+
+			"%v/%v/%v/%v/%v, so the gates would agree about it and this test "+
+			"could not see the difference",
+			ok, !spec.AttrsKnown, !spec.Pseudo, !spec.AxesKnown, TakesLayout(spec))
 	}
 	root, err := Build([]byte(`<Gooey><LogPane Name="Pane" Margin="2"/></Gooey>`), ctx)
 	if err != nil {
@@ -496,30 +507,31 @@ func TestAnUnenumerableElementThatBuildsOneKeepsItsUniversals(t *testing.T) {
 	}
 }
 
-// TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne is the OTHER
-// side of the shape above, and it is the direction Grant.AttrsFor's
+// TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef is the OTHER side
+// of the shape above, and it used to be the direction Grant.AttrsFor's
 // comment did not have.
 //
-// That comment says the grid's gate and the loader's "must agree or the
-// grid offers a row that fails to load", and one direction is guarded:
-// AttrsFor withholds on !TakesLayout and Context.vocabulary refuses on
-// the same predicate, so nothing offered is refused. The converse is not
-// guarded and cannot be from here. TakesLayout reads HasLayout, which
-// ElementDef.axes derives from the PROTO — so a host def with a real
-// Build and no Proto answers false, while build() runs applyLayout on
-// whatever its Build returns and the component really does satisfy
-// gooey.HasLayout. Measured, both arms:
+// That comment says the grid's gate and the loader's must agree "or the
+// grid offers a row that fails to load", and for a long time only one
+// direction was: both withheld on !TakesLayout, so nothing offered was
+// refused, while the converse went unguarded. TakesLayout read HasLayout,
+// which ElementDef.axes derives from the PROTO — so a host def with a
+// real Build and no Proto answered false, and build() ran applyLayout on
+// whatever its Build returned. Measured then, both arms:
 //
-//	Known: true   → <Host Margin="2"> is a load error, and no Margin row.
-//	Known: false  → it LOADS with Margin={2 2 2 2}, and still no Margin row.
+//	Known: true   → <LogPane Margin="2"> was a load error, and no Margin row.
+//	Known: false  → it LOADED with Margin={2 2 2 2}, and still no Margin row.
 //
-// The second is an attribute the loader honours that the designer cannot
-// show — the same class of invisibility #461 was, one gate over, and
-// not closable at the catalog layer: without a Proto there is nothing to
-// ask, which is what AttrsKnown already says about the element's own
-// attributes. So it is stated and pinned rather than fixed, and the pin
-// is what keeps the comment honest. Raised in review of #486.
-func TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne(t *testing.T) {
+// The second was an attribute the loader honoured that the designer could
+// not show — the same class of invisibility #461 was, one gate over.
+//
+// IT IS CLOSED NOW, by AxesKnown: TakesLayout answers true where nobody
+// can say otherwise, so both gates see the unknowable def the same way
+// and both halves of the agreement hold. This test is what keeps that
+// true, and it asserts the pair rather than either side — a grid row with
+// no load, or a load with no row, is the defect in one direction or the
+// other. Raised in review of #486, closed in review of #486 round 10.
+func TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef(t *testing.T) {
 	hostDef := func(known bool) map[string]*ElementDef {
 		return map[string]*ElementDef{"LogPane": {
 			Name:  "LogPane",
@@ -540,67 +552,56 @@ func TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne(t *testing.T) {
 		return false
 	}
 
-	// THE GUARDED DIRECTION. An enumerable host def refuses the row at
-	// load exactly where the grid withholds it, which is the agreement
-	// the comment claims.
-	ctx := &Context{Elements: hostDef(true)}
-	spec, ok := ctx.spec("LogPane")
-	if !ok {
-		t.Fatal("the fixture did not resolve")
-	}
-	if offers(spec, "Margin") {
-		t.Error("the grid offers a Margin row for an element whose declared " +
-			"surface takes no layout")
-	}
-	if _, err := Build([]byte(`<Gooey><LogPane Title="t" Margin="2"/></Gooey>`), ctx); err == nil {
-		t.Error("an enumerable host def accepted Margin while the grid " +
-			"withheld the row, so the two gates no longer agree in the " +
-			"direction that IS guarded")
-	}
-
-	// AND THE UNGUARDED ONE. Drop AttrsKnown and checkAttrs stands down —
-	// the element's own vocabulary is genuinely unknown — but the
-	// universal set is not the element's, and applyLayout honours it off
-	// the built component's type.
-	ctx = &Context{Elements: hostDef(false)}
-	spec, ok = ctx.spec("LogPane")
-	if !ok {
-		t.Fatal("the fixture did not resolve")
-	}
-	if TakesLayout(spec) {
-		t.Fatal("the fixture is not the discriminating shape: a def with no " +
-			"Proto reports TakesLayout, so both gates would agree about it")
-	}
-	root, err := Build([]byte(`<Gooey><LogPane Title="t" Margin="2"/></Gooey>`), ctx)
-	if err != nil {
-		t.Fatalf("the unenumerable host def now refuses Margin, which would "+
-			"close this gap — update the comment on Grant.AttrsFor with it: %v", err)
-	}
-	var pane gooey.Component
-	var walk func(c gooey.Component)
-	walk = func(c gooey.Component) {
-		if _, isText := c.(*components.Text); isText {
-			pane = c
+	// BOTH VALUES OF Known, because they reach the loader by different
+	// routes and only one of them can be refused at all. With AttrsKnown
+	// false checkAttrs declines to judge the element's own vocabulary and
+	// returns before the universal set is consulted, so that arm would
+	// load whatever this function did; the enumerable arm is the one that
+	// can go red, and it is the arm that WAS red.
+	for _, known := range []bool{true, false} {
+		ctx := &Context{Elements: hostDef(known)}
+		spec, ok := ctx.spec("LogPane")
+		if !ok {
+			t.Fatalf("Known=%v: the fixture did not resolve", known)
 		}
-		if cc, isC := c.(gooey.Container); isC {
-			for _, k := range cc.ChildComponents() {
-				walk(k)
+		if spec.AxesKnown {
+			t.Fatalf("Known=%v: the fixture is not the discriminating shape — "+
+				"a def with no Proto must report AxesKnown false, or the two "+
+				"gates agree about it for an uninteresting reason", known)
+		}
+		if !offers(spec, "Margin") {
+			t.Errorf("Known=%v: the grid withholds the Margin row for an "+
+				"element whose Build returns a component that honours it", known)
+		}
+		root, err := Build([]byte(`<Gooey><LogPane Title="t" Margin="2"/></Gooey>`), ctx)
+		if err != nil {
+			t.Fatalf("Known=%v: the loader refuses a Margin the grid offers: %v",
+				known, err)
+		}
+		var pane gooey.Component
+		var walk func(c gooey.Component)
+		walk = func(c gooey.Component) {
+			if _, isText := c.(*components.Text); isText {
+				pane = c
+			}
+			if cc, isC := c.(gooey.Container); isC {
+				for _, k := range cc.ChildComponents() {
+					walk(k)
+				}
 			}
 		}
-	}
-	walk(root)
-	if pane == nil {
-		t.Fatal("the host element built nothing findable, so the layout it " +
-			"was given cannot be read back")
-	}
-	if m := pane.(gooey.HasLayout).LayoutProps().Margin; m.L != 2 {
-		t.Errorf("Margin reached no layout (%+v), so the loader does not in "+
-			"fact honour what the grid withholds", m)
-	}
-	if offers(spec, "Margin") {
-		t.Error("the grid now offers the Margin row the loader honours, which " +
-			"closes the gap — delete the second half of Grant.AttrsFor's " +
-			"comment about only one direction being guarded")
+		walk(root)
+		if pane == nil {
+			t.Fatalf("Known=%v: the host element built nothing findable, so "+
+				"the layout it was given cannot be read back", known)
+		}
+		// ACCEPTANCE IS NOT THE CLAIM. "It loaded" passes just as well
+		// against a build that took the attribute and dropped it, which is
+		// the defect #461 is about.
+		if m := pane.(gooey.HasLayout).LayoutProps().Margin; m.L != 2 {
+			t.Errorf("Known=%v: Margin reached no layout (%+v), so the grid "+
+				"offers a row nothing honours", known, m)
+		}
 	}
 }
 

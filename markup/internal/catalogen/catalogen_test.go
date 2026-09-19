@@ -157,8 +157,8 @@ func TestTheHelperIdiomIsAChildRead(t *testing.T) {
 //
 // The skip is right for an ordinary element — applyLayout consumes
 // Margin, Width and the rest outside its Build. A pseudo-element has no
-// applyLayout: a nil Proto makes TakesLayout false, so vocabulary()
-// never adds the universal set to it. But checkAttrs allows anything in
+// applyLayout: Pseudo makes TakesLayout false, so vocabulary() never
+// adds the universal set to it. But checkAttrs allows anything in
 // spec.Attrs, so DECLARING one makes it settable, unread and dropped.
 // Verified in the real vocabulary before the fix: adding Margin to
 // defMenuItem left the suite green and

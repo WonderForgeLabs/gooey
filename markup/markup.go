@@ -1741,8 +1741,11 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		// It works with no other change because both elements declare
 		// Known: true, so ctx.spec finds an exhaustive Attrs set, and
 		// Element.parent is already stamped at parse time. Neither
-		// carries a Layout — a nil Proto makes TakesLayout false — so
-		// the layout half of the universal set is not offered on them.
+		// carries a Layout — both are Pseudo, which TakesLayout names as
+		// a conjunct of its own — so the layout half of the universal set
+		// is not offered on them. It said "a nil Proto makes TakesLayout
+		// false" until round 10 of #486: a nil Proto now means only that
+		// nobody can say, and Pseudo is the fact that answers.
 		//
 		// THAT WAS TRUE OF SEVEN UNIVERSALS AND FALSE OF THE EIGHTH.
 		// Name is hoisted ABOVE the TakesLayout gate in both vocabulary
