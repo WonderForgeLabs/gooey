@@ -863,11 +863,15 @@ func TestAFloatedSurfaceFollowsTheDocumentItIsShowing(t *testing.T) {
 	}
 }
 
-// cellLine reads w cells of row y as a string.
+// cellLine reads w cells of row y as a string, through Cell.Text()
+// rather than .Rune: a continuation cell holds render.Continuation,
+// which is rune -1 and encodes as U+FFFD, so a per-rune read cannot be
+// asserted against any row holding a wide glyph. Raised in review of
+// #524.
 func cellLine(f *gooey.Frame, x, y, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
+		sb.WriteString(f.Cells.At(x+i, y).Text())
 	}
 	return strings.TrimRight(sb.String(), " ")
 }

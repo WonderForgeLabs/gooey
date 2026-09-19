@@ -407,7 +407,19 @@ func (p *valueEditor) surfaceSize() gooey.Size {
 		opts := p.options()
 		w := 0
 		for _, o := range opts {
-			w = max(w, len([]rune(optionLabel(o))))
+			// COLUMNS, and TestAStyleListIsSizedInColumns pins it.
+			//
+			// This comment used to say no fixture could discriminate the
+			// rule, on the grounds that the options are an element spec's
+			// declared enum values and so are Go source. That argument
+			// covers KindEnum and KindBool and reaches none of the other
+			// three arms: KindStyle, KindCommand and KindBinding are keys
+			// of ctx.Styles and ctx.Values, which are maps the running app
+			// fills and an in-package test can write a wide glyph into.
+			// The claim was true of less than it said — the shape this
+			// change's own statusaddr.go rewrite is about — and the
+			// mutation it recorded as SILENT is now CAUGHT.
+			w = max(w, render.StringWidth(optionLabel(o)))
 		}
 		return gooey.Size{W: w + 4, H: len(opts) + 2}
 	case editTracks:
@@ -562,15 +574,25 @@ func optionLabel(s string) string {
 	return s
 }
 
+// pad fits s into EXACTLY w columns: clipped if it is too wide, filled
+// with spaces if it is not. Both halves were rune counts, and this is
+// the helper a DOCUMENT's own text reaches — drawStepper paints
+// `◂ value ▸` through it.
+//
+// Exactly w on both paths matters because these surfaces float over the
+// page: the fill is what blanks the tail of a longer row, and
+// render.ClipCols can stop a column short of its budget when the next
+// glyph would straddle the edge, so the clip needs the fill after it
+// rather than instead of it.
 func pad(s string, w int) string {
-	r := []rune(s)
 	if w <= 0 {
 		return ""
 	}
-	if len(r) >= w {
-		return string(r[:w])
+	s = render.ClipCols(s, w)
+	if n := w - render.StringWidth(s); n > 0 {
+		s += strings.Repeat(" ", n)
 	}
-	return s + strings.Repeat(" ", w-len(r))
+	return s
 }
 
 func clampInt(v, lo, hi int) int {

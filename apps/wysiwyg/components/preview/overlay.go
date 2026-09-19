@@ -446,24 +446,43 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 
 // fit truncates a spec to the space its track actually has, so a wide
 // spelling in a narrow column cannot run into its neighbour.
+//
+// COLUMNS, not runes. This was statusaddr.go's ellipsize body character
+// for character, including the defect that one was rewritten for, and
+// the sweep that fixed the four helpers in package main stopped at this
+// package's boundary: fit("世世世", 4) answered "it fits" and returned
+// six columns for a four-column track. A track spec is authored text —
+// tracks.go reads it off the document's Tracks= attribute and does not
+// validate it — so this is reachable from a .gooey file, not only from
+// Go source. Raised in review of #524.
 func fit(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= w {
+	if render.StringWidth(s) <= w {
 		return s
 	}
 	if w == 1 {
 		return "…"
 	}
-	return string(r[:w-1]) + "…"
+	return render.ClipCols(s, w-1) + "…"
 }
 
+// drawText writes a string across the guide's cells, ONE GRAPHEME
+// CLUSTER AT A TIME AND BY ITS COLUMN WIDTH.
+//
+// It walked []rune and passed x+i as a column, which is the second half
+// of the same trap fit held: a rune index is not a column, and
+// Buffer.Set lays no render.Continuation — so a wide glyph left the
+// buffer believing one column where the terminal draws two, and the next
+// rune landed on a cell the previous one already covered. CLAUDE.md
+// names this pair. Raised in review of #524.
 func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style) {
-	for i, r := range []rune(s) {
-		o.setCell(f, x+i, y, r, st)
-	}
+	render.EachCluster(s, func(cluster string, _, _, w int) bool {
+		o.setCluster(f, x, y, cluster, w, st)
+		x += max(w, 1)
+		return true
+	})
 }
 
 // mark is one cell the overlay wrote, and what was under it.
@@ -480,7 +499,22 @@ func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style) 
 type mark struct {
 	x, y  int
 	wrote rune
-	prev  render.Cell
+	// EVERY COLUMN THE CLUSTER COVERS, not just the lead. A fixed array
+	// because nothing this component draws is wider than two columns and
+	// the alternative allocates once per glyph per frame on the paint
+	// path; cols says how many of it are live.
+	//
+	// TWO IS THE CELL PLANE'S OWN CEILING, not this component's taste in
+	// glyphs. render.Cell.Width answers 1 or 2 and nothing else, and
+	// Buffer.SetCell lays at most one render.Continuation beside a lead
+	// — so a mark can never span a third column whatever it is handed.
+	// An earlier version of this comment argued the cap from what the
+	// track specs happen to contain, which is a fact about this file's
+	// fixtures and would stop being true the day a guide drew something
+	// else. It is the plane that makes the array safe. Raised in review
+	// of #524.
+	prev [2]render.Cell
+	cols int
 }
 
 // restoreMarks puts back what the last frame's guide covered up.
@@ -493,8 +527,18 @@ type mark struct {
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
-		if f.Cells.At(m.x, m.y).Rune == m.wrote {
-			f.Cells.SetCell(m.x, m.y, m.prev)
+		if f.Cells.At(m.x, m.y).Rune != m.wrote {
+			continue
+		}
+		// THE LEAD FIRST, THEN THE REST, and the order is the whole of
+		// it. Writing the lead makes healSeam repair the orphaned
+		// continuation beside it — with the style THAT CELL currently
+		// holds, which is the overlay's, so the seam repair leaves a
+		// blank carrying the guide's background. Restoring the
+		// continuation afterwards is what puts the cell the overlay
+		// found back.
+		for c := 0; c < m.cols; c++ {
+			f.Cells.SetCell(m.x+c, m.y, m.prev[c])
 		}
 	}
 	o.marks = o.marks[:0]
@@ -524,15 +568,89 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 // render.Buffer.Set is already bounds-checked; the nil guard is for
 // tests that render without a frame.
 func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
+	o.setCluster(f, x, y, string(r), render.RuneWidth(r), st)
+}
+
+// setCluster is setCell over a whole grapheme cluster, and every write
+// in this file goes through it.
+//
+// ALL OF THE CLUSTER'S COLUMNS MUST BE FREE, not just its first: the
+// blank check is what keeps a guide from destroying the content it
+// describes, and a wide glyph whose second column is occupied would
+// overwrite that neighbour while its own cell looked empty.
+//
+// WHAT WAS WRITTEN IS READ BACK, rather than assumed, because
+// Buffer.SetCell is allowed to write something else: it answers with a
+// SPACE where a wide cluster's second column would fall outside the
+// clip. Recording the intended rune there would leave restoreMarks
+// refusing to lift its own mark.
+//
+// THE COLUMN COUNT COMES OFF THAT SAME READBACK, and taking it from the
+// caller's `w` instead was a real defect rather than a spelling
+// preference. At a clip edge the two disagree: SetCell downgrades the
+// wide cluster to a space, so the cell is ONE column while `w` still
+// says two. Measured on a 10-wide buffer clipped to W=3, drawing 世 at
+// x=2 — At(2,0).Width()==1, and the mark claimed cols=2. Cell.Width is
+// the same answer SetCell just reached, so the readback settles it.
+//
+// WHAT AN OVER-CLAIMING MARK COSTS turns on an asymmetry between the
+// two buffer calls, and it is worth stating exactly because the obvious
+// reading overstates it. render.Buffer.At is BUFFER-scoped
+// (render/cell.go, bounded on W and H); render.Buffer.SetCell is
+// CLIP-scoped (render/cell.go, bounded on the clip rect). So prev[1]
+// snapshots a column this component could not have written and does not
+// own — the read reaches where the write cannot — while restoreMarks'
+// write back to it is DROPPED for as long as the clip still excludes
+// it. That is not a guarantee, because the clip is not a constant: it
+// is the component's bounds, re-taken every frame by Composer.build,
+// and Unclip widens back out at the end of each. An overlay whose
+// bounds grow — the pane widens, the grid extent changes — finds that
+// column inside its clip on a later frame, and the stale blank lands on
+// whatever the document subtree composed there this time. Recording
+// what was actually written removes the question rather than relying on
+// a clip staying put.
+//
+// ONE MARK FOR THE PAIR AND BOTH ITS CELLS IN IT. The lift is still one
+// decision — the guard reads the lead, and healSeam means a foreign
+// write to the lead cannot leave our tail orphaned — but WHAT IS PUT
+// BACK is per column, because healSeam repairs the orphaned
+// continuation with the style that cell currently holds, and that is
+// the OVERLAY's. Measured on this component before the fix, drawing 世
+// in the guide's style and lifting it again:
+//
+//	after draw:    c0={世 fg=0,255,0 bg=255,0,0}  c1={Continuation, same}
+//	after restore: c0={' ' style unset}           c1={' ' fg=0,255,0 bg=255,0,0}
+//
+// cursorStyle carries a background, so what survived a lifted mark was a
+// highlighted blank cell on a clean node that will not repaint — which
+// is the persistence this whole mark model exists for.
+//
+// The paragraph this replaces said a second cell would be "dead weight"
+// and cited TestTheOverlayTakesBackAWideMark for it. That test collects
+// .Rune only, so it could not see the style and the claim was true of
+// less than it said. It compares whole render.Cell values now. Raised in
+// review of #524.
+func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st render.Style) {
 	if f == nil || f.Cells == nil {
 		return
 	}
-	prev := f.Cells.At(x, y)
-	if !blank(prev.Rune) {
-		return
+	cols := min(max(w, 1), len(mark{}.prev))
+	var prev [2]render.Cell
+	for c := 0; c < cols; c++ {
+		prev[c] = f.Cells.At(x+c, y)
+		if !blank(prev[c].Rune) {
+			return
+		}
 	}
-	f.Cells.Set(x, y, r, st)
-	o.marks = append(o.marks, mark{x: x, y: y, wrote: r, prev: prev})
+	cell := render.Cell{Rune: []rune(cluster)[0], Style: st}
+	if len([]rune(cluster)) > 1 {
+		cell.Cluster = cluster
+	}
+	f.Cells.SetCell(x, y, cell)
+	got := f.Cells.At(x, y)
+	o.marks = append(o.marks, mark{
+		x: x, y: y, wrote: got.Rune, prev: prev, cols: max(got.Width(), 1),
+	})
 }
 
 // blank is what counts as an empty cell. Both spellings occur: a cleared

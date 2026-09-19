@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // The correction, asserted: the copy is not a service state.
@@ -134,8 +136,14 @@ func TestTheNoticeSaysWhatItIsAbout(t *testing.T) {
 					"phrase in the status bar that does not name the clipboard is a "+
 					"phrase about whatever is nearest it", got)
 			}
-			if n := len([]rune(got)); n > copyNoticeWidth {
-				t.Errorf("the %s message is %d runes and will be clipped into %d: %q\n"+
+			// COLUMNS. copyNoticeWidth is a cell budget and `got` carries
+			// caveatFn()'s text and a clipboard error, neither of which
+			// this package chooses the characters of — so a rune count
+			// here is the same pairing #524 removed from ellipsize's own
+			// guard one file over, and it passes for a message two cells
+			// too wide the moment one of those strings holds a wide glyph.
+			if n := render.StringWidth(got); n > copyNoticeWidth {
+				t.Errorf("the %s message is %d columns and will be clipped into %d: %q\n"+
 					"The reserved width has to hold the messages this app actually "+
 					"produces, or the ellipsis lands exactly where the information is.",
 					tc.name, n, copyNoticeWidth, got)
@@ -164,9 +172,18 @@ func TestTheRealFailureReasonSurvivesTheReservedWidth(t *testing.T) {
 	}
 	f, _ := c.Frame()
 	nb := ed.addrs.notice.Bounds()
+	// .Text(), not .Rune. A per-rune readback renders render.Continuation
+	// as a literal rune, which is the reason CLAUDE.md gives for the whole
+	// wide-glyph class having been unassertable: no fixture holding one
+	// could be read back through it. render.RowText is the helper for
+	// this, and it takes a whole ROW — the notice owns columns
+	// [nb.X, nb.X+nb.W) of a 160-column strip, and a byte slice of
+	// RowText's answer is not a column slice — so the span is walked
+	// here and the fix is the cell accessor, which is what RowText itself
+	// uses. Raised in review of #524.
 	var painted strings.Builder
 	for x := nb.X; x < nb.X+nb.W; x++ {
-		painted.WriteRune(f.Cells.At(x, nb.Y).Rune)
+		painted.WriteString(f.Cells.At(x, nb.Y).Text())
 	}
 	if got := strings.TrimRight(painted.String(), " "); got != msg {
 		t.Errorf("the notice painted %q for the message %q — the reserved %d cells do "+
