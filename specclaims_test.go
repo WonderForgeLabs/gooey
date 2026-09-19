@@ -28,12 +28,12 @@ import (
 // package qualifier.
 //
 // The qualifier is not decoration and matching it is not optional: six
-// live citations in docs/specs are written `markup.TestX` and
-// `wysiwyg.TestX`, and the first version of this guard's pattern required
-// a backtick immediately before `Test`, so all six were invisible to it —
-// a guard against rot that could not see the citations most likely to
-// rot, because a cross-package name is the one whose test you are least
-// likely to notice renaming. Review of PR #476 caught that.
+// live citations in docs/specs are written as a backticked markup.TestX
+// or wysiwyg.TestX, and the first version of this guard's pattern
+// required a backtick immediately before Test, so all six were invisible
+// to it — a guard against rot that could not see the citations most
+// likely to rot, because a cross-package name is the one whose test you
+// are least likely to notice renaming. Review of PR #476 caught that.
 var citedTestName = regexp.MustCompile("`(?:([a-z][A-Za-z0-9_]*)\\.)?(Test[A-Za-z0-9_]*)`")
 
 // testFuncDecl is a test function declaration in the tree.
@@ -305,7 +305,7 @@ func testFuncsUnder(t *testing.T, root string) map[string]map[string]bool {
 			found[m[1]][dir] = true
 			// AND UNDER THE MODULE'S OWN NAME, for a root-package test.
 			// filepath.Base(filepath.Dir(path)) is "." there, so
-			// `gooey.TestFoo` — the natural spelling, and the one the
+			// gooey.TestFoo — the natural spelling, and the one the
 			// race-tier citation above now uses — could never resolve:
 			// the report read "the test exists, but in `.`, not gooey",
 			// which is a false failure with a confusing message. Raised
@@ -432,6 +432,116 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 			"so this test checks nothing. Either the docs have stopped citing " +
 			"tests or the pattern has drifted from how they are written.")
 	}
+
+	// GO COMMENTS TOO, and this half was missing while claudemd_test.go's
+	// symbol guard skipped every Test-prefixed name with "TEST NAMES
+	// BELONG TO TestEveryCitedTestNameResolves". They did not: this test
+	// read proseFiles, which is Markdown, so a test name cited in a Go
+	// comment was adjudicated by neither guard. A delegation is only as
+	// true as the corpus the delegate reads. Raised in review of #490.
+	goCited := 0
+	for _, p := range goCommentSources(t) {
+		cites := goCitations(t, p)
+		goCited += len(cites)
+		for _, f := range unresolved(cites, funcs) {
+			t.Errorf("%s:%d cites %s in a comment and %s.\n\t%s\n"+
+				"A renamed test leaves the sentence reading as a reference to "+
+				"something. Fix the name, or reword the sentence so it does not "+
+				"claim a test. DELETING THE BACKTICKS IS NOT THE FIX, though it "+
+				"would silence this: the backticks are the only reason this "+
+				"citation is checked at all, so removing them retires the claim "+
+				"instead of settling it — see goCitations' doc and #530. (#468)",
+				f.file, f.line, f.cited(), f.why, f.text)
+		}
+	}
+	if goCited == 0 {
+		// NAMED, BECAUSE THE POPULATION IS TWO. goCitations' doc
+		// records it: across every file goCommentSources reaches,
+		// exactly two comments cite a test name in backticks, and one
+		// of them is in THIS file — testFuncsUnder's doc, where the
+		// qualifier-versus-package-clause argument is made, which is
+		// what makes it a plausible thing for someone to reword. So
+		// the realistic trigger is not "the comments have stopped
+		// naming tests" and not "the pattern drifted" — it is someone
+		// rewording one of two specific comments, and a message that
+		// offers the two general diagnoses sends the reader to audit a
+		// regexp. Naming them lands the reader on the cause in one
+		// step. (The classifier itself is #530; this is the message.)
+		//
+		// THE MESSAGE CARRIES THE COMMAND THAT RE-DERIVES THEM rather
+		// than resting on the two names, because the names are the
+		// half that rots: this message said "this file's own
+		// goCitations doc" for a round, and goCitations' doc holds no
+		// backticked citation at all — it writes TestX and TestFoo
+		// bare, by this file's own rule. A reader who trips the floor
+		// and is sent to a comment that cannot be the cause has been
+		// sent further from it than a general diagnosis would have.
+		// Raised in review of #490.
+		t.Errorf("no Go comment in the tree cites a test in backticks, so the " +
+			"half of this guard that reads Go checks nothing. The population is " +
+			"TWO — dependabotdirs_test.go and testFuncsUnder's doc in this file " +
+			"— so the likely cause is that one of those two comments was reworded " +
+			"or its backticks dropped, not that the pattern has drifted. Re-derive " +
+			"them rather than trusting those two names — grep the tree's Go files " +
+			"for a backticked identifier beginning Test (optionally package-" +
+			"qualified) on a comment line — because a name written here is the half " +
+			"that rots. goCitations' doc says why the population is that small, and " +
+			"#530 is where widening it lives.")
+	}
+}
+
+// goCitations is every backticked test-name citation in one Go file's
+// COMMENTS.
+//
+// Go has no headings and no fences, so it needs none of readProse: the
+// parser separates comment from code, which is the only classification
+// this corpus requires.
+//
+// WHAT IT ADJUDICATES IS A SMALL FRACTION OF ITS OWN CORPUS, and the
+// sentence that used to stand here claimed otherwise: "a name that is
+// not a live reference is spelled WITHOUT backticks, which is honest and
+// needs nothing to classify it." Measured over the 617 files
+// goCommentSources reaches, the corpus is the other way round — TWO
+// backticked citations against roughly thirteen hundred bare Test
+// mentions, of which 39 across 31 distinct names do not resolve. The
+// bare ones are overwhelmingly live references, several of them added by
+// the same commits that add guards. So backticks are not a liveness
+// convention this tree follows; they are an accident of how one author
+// felt about formatting on the day, and the guard checks whichever
+// citations that accident happened to mark.
+//
+// THE FLOOR BELOW IS WHAT KEEPS THIS FROM BEING VACUOUS, not evidence of
+// coverage: goCited == 0 catches the pattern drifting to nothing, and at
+// a population of two it is very nearly that test already.
+//
+// LIVENESS AS THE CLASSIFIER is the fix and it is #530 rather than this
+// PR, because it is a sweep and not a rule change: 12 of the 31 are line
+// -wrap artifacts a join rule would resolve, ~9 are schematic
+// placeholders (TestX, TestFoo) needing a rule of their own that is not
+// a skip list, and ~19 are names that genuinely do not resolve and need
+// a rename chased or a sentence reworded. The measurement and the
+// breakdown are on the issue so the next person does not re-derive them.
+// Raised in review of #490.
+//
+// It has no plannedMarker and wants none: the Markdown half needs one
+// because a spec's "Implementation plan" section proposes tests for
+// issues not yet built, and a Go comment has no such section.
+func goCitations(t *testing.T, path string) []citation {
+	t.Helper()
+	c, err := goCommentIndex()
+	if err != nil {
+		t.Fatalf("indexing Go comments: %v", err)
+	}
+	var out []citation
+	for _, l := range c.files[path].lines {
+		for _, m := range citedTestName.FindAllStringSubmatch(l.text, -1) {
+			out = append(out, citation{
+				file: path, line: l.line,
+				pkg: m[1], name: m[2], text: strings.TrimSpace(l.text),
+			})
+		}
+	}
+	return out
 }
 
 // TestNoMarkedSectionNamesALandedTest is what stops the exemption from
@@ -650,7 +760,7 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 
 	// THE ROOT MODULE ANSWERS TO ITS OWN NAME. testFuncsUnder keys a
 	// root-package test under filepath.Base(filepath.Dir(path)), which is
-	// ".", so `gooey.TestFoo` — the spelling CLAUDE.md's race-tier
+	// ".", so gooey.TestFoo — the spelling CLAUDE.md's race-tier
 	// citation now uses — reported "the test exists, but in `.`, not
 	// gooey". A false failure with a confusing message. Raised in review
 	// of #476.

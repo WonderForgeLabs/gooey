@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 )
 
 // A markup control that is its own ancestor never stops instantiating.
@@ -168,5 +171,296 @@ func TestARegisteredElementKeyMustMatchItsName(t *testing.T) {
 	nilDef := &Context{Elements: map[string]*ElementDef{"Table": nil}}
 	if _, err := Load(fsys, "p.gooey", nilDef); err != nil {
 		t.Errorf("a Context holding a nil ElementDef failed to load: %v", err)
+	}
+}
+
+// TestAControlsAncestryIsNotAliasedByItsSiblings is the test the
+// three-index slice at usercontrol.go's `child.controls = append(...)`
+// did not have, and the reason it is worth having is not the load path
+// these other tests take.
+//
+// Every context built during a Load is used and dropped inside that
+// Load, so a sibling overwriting the slot a previous sibling wrote
+// cannot be observed there — the previous sibling's whole subtree is
+// already built, the walk being depth-first and single-goroutine. The
+// hazard is a context that OUTLIVES its build: markup/itemsview.go's row
+// context captures ctx.controls and builds rows from it at scroll time,
+// long after every sibling has appended. Rewrite that array in between
+// and the cycle guard reads an ancestry that names controls the row is
+// not inside — so a genuine cycle through the row's own control is not
+// found, and #216's `fatal error: stack overflow` comes back on a path
+// no test walks.
+//
+// The probe stands in for that retained context. It captures the LIVE
+// slice its control was handed and a copy of the contents at that
+// moment; if the two disagree once Load has returned, somebody
+// rewrote ancestry that was still being pointed at.
+//
+// THE DEPTH IS LOAD-BEARING AND IS NOT ARITHMETIC IN THE TEST. Append
+// only leaves spare capacity once growth has over-allocated, which does
+// not happen at the first two levels — a two-deep fixture passes against
+// the bug. Rather than write down what Go's growth rule does today, the
+// fixture nests until a spare slot exists and the assertion below
+// requires the observation to be there: if a future runtime allocates
+// differently, this fails as "the fixture no longer reaches the hazard"
+// rather than passing quietly.
+func TestAControlsAncestryIsNotAliasedByItsSiblings(t *testing.T) {
+	type shot struct {
+		at    string
+		live  []string // the slice the control was handed, still aliasing
+		taken []string // its contents at build time
+	}
+	var shots []shot
+	probe := &ElementDef{
+		Name:     "Probe",
+		Proto:    &components.Text{},
+		Known:    true,
+		Doc:      "Records the ancestry its enclosing control was built with.",
+		Attrs:    []AttrSpec{{Name: "At", Kind: KindString, Binds: BindsLiteral, Origin: OriginRegistered}},
+		Children: ChildSpec{Mode: ModeLeaf},
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			shots = append(shots, shot{
+				at:    e.Attrs["At"],
+				live:  ctx.controls,
+				taken: append([]string{}, ctx.controls...),
+			})
+			return &components.Text{}, nil
+		},
+	}
+
+	// Alpha and Beta are siblings deep enough that their parent's
+	// ancestry has a spare slot to fight over.
+	fsys := fstest.MapFS{}
+	for name, src := range map[string]string{
+		"app.gooey":   `<Gooey><Outer/></Gooey>`,
+		"outer.gooey": `<Gooey><Mid/></Gooey>`,
+		"mid.gooey":   `<Gooey><Inner/></Gooey>`,
+		"inner.gooey": `<Gooey><VStack><Alpha/><Beta/></VStack></Gooey>`,
+		"alpha.gooey": `<Gooey><Probe At="alpha"/></Gooey>`,
+		"beta.gooey":  `<Gooey><Probe At="beta"/></Gooey>`,
+	} {
+		fsys[name] = &fstest.MapFile{Data: []byte(src)}
+	}
+	if _, err := Load(fsys, "app.gooey", &Context{
+		Includes: fsys,
+		Elements: map[string]*ElementDef{"Probe": probe},
+	}); err != nil {
+		t.Fatalf("the fixture does not load: %v", err)
+	}
+
+	// Non-vacuity, in both directions. Two probes, each four controls
+	// deep, or the fixture is not the one this test describes — and a
+	// one-shot run would make the comparison below vacuous, since
+	// nothing would have appended after the capture.
+	if len(shots) != 2 {
+		t.Fatalf("the fixture built %d probes, not 2: %v", len(shots), shots)
+	}
+	for _, s := range shots {
+		if len(s.taken) != 4 {
+			t.Fatalf("the %s probe's control is %d deep, not 4, so its parent's "+
+				"ancestry has no spare slot for a sibling to write into and this "+
+				"test cannot see the bug: %v", s.at, len(s.taken), s.taken)
+		}
+	}
+
+	// The assertion. Beta appended after Alpha's context was captured;
+	// if that append landed in Alpha's backing array, Alpha's ancestry
+	// now says "Beta".
+	for _, s := range shots {
+		for i := range s.taken {
+			if s.live[i] != s.taken[i] {
+				t.Errorf("the %s control was built with ancestry %v and now reads %v — "+
+					"a sibling's append rewrote an array it was still pointing at. A "+
+					"context that outlives its build (itemsview.go's row context) would "+
+					"run the cycle guard against that, and miss a cycle through %q.",
+					s.at, s.taken, s.live, s.taken[len(s.taken)-1])
+				break
+			}
+		}
+	}
+}
+
+// The error names ONE control: the innermost one, whose file the author
+// opens. Attribution was added for the both-maps refusal (see
+// TestAControlCannotShadowAPageDeclaredElement) and, wrapped on every
+// unwind frame, it stacked — three controls deep gave three names and
+// three "markup: " prefixes, and a cycle named the loop twice, once in
+// the prefix and once in the trace it already carried.
+//
+// Counting is the assertion rather than a substring match, because a
+// stacked message CONTAINS the right one: `strings.Contains(err, "mid")`
+// passes for "control outer: control mid: …" just as happily.
+func TestANestedControlErrorNamesTheInnermostControlOnce(t *testing.T) {
+	err := loadCycle(t, map[string]string{
+		"app.gooey":   `<Gooey><Outer/></Gooey>`,
+		"outer.gooey": `<Gooey><Mid/></Gooey>`,
+		"mid.gooey":   `<Gooey><Nope/></Gooey>`,
+	})
+	if err == nil {
+		t.Fatal("an unknown element three controls deep loaded without error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "mid.gooey") {
+		t.Errorf("error does not name the control the author must open: %v", err)
+	}
+	if strings.Contains(msg, "outer.gooey") {
+		t.Errorf("error names an enclosing control the author cannot fix by editing: %v", err)
+	}
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+	if n := strings.Count(msg, "control "); n != 1 {
+		t.Errorf("error says %q %d times, not once: %v", "control ", n, err)
+	}
+}
+
+// The cycle refusal already names its control and traces the whole loop,
+// so it is the case attribution must leave alone. Its message is the one
+// that read worst when it did not: "markup: control card.gooey: markup:
+// control card.gooey includes itself: card.gooey → card.gooey" named one
+// file four times.
+func TestACycleRefusalIsNotAttributedTwice(t *testing.T) {
+	err := loadCycle(t, map[string]string{
+		"app.gooey":  `<Gooey><Card/></Gooey>`,
+		"card.gooey": `<Gooey><Card/></Gooey>`,
+	})
+	if err == nil {
+		t.Fatal("a self-including control loaded without error")
+	}
+	msg := err.Error()
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+	// Three: the attribution, and the two ends of the loop it traces.
+	// A second attribution makes it four.
+	if n := strings.Count(msg, "card.gooey"); n != 3 {
+		t.Errorf("error names card.gooey %d times, not 3 (the attribution plus "+
+			"both ends of the trace): %v", n, err)
+	}
+}
+
+// TestARecursionThroughOneSetupNamesItOnce is the case
+// TestASetupsOwnLoadErrorIsNotAttributedTwice structurally cannot
+// reach: its inner Load takes a FRESH Context, so the ancestry restarts
+// and the setup is entered exactly once.
+//
+// Here the setup includes a document that reaches the control again, so
+// the same seam is crossed twice on the way down and twice on the way
+// back up. Measured before the fix:
+//
+//	markup: control b.gooey: control b.gooey: control a.gooey includes
+//	itself: a.gooey → a.gooey — …
+//
+// b.gooey twice, which is the frame-per-name stacking attributedErr
+// exists to end, arriving from the one direction attributeSetup did not
+// cover. Raised in review of #490.
+//
+// AND THE NAME IS STILL THERE ONCE, which is the half a blanket "pass
+// an already-attributed error through" would have lost: the cycle
+// message traces the loop (a.gooey → a.gooey) and never names the
+// control whose setup entered it, so b.gooey is the only pointer back
+// to the instantiation.
+func TestARecursionThroughOneSetupNamesItOnce(t *testing.T) {
+	fsys := fstest.MapFS{
+		"a.gooey": &fstest.MapFile{Data: []byte(`<Gooey><B/></Gooey>`)},
+		"b.gooey": &fstest.MapFile{Data: []byte(`<Gooey><Text>x</Text></Gooey>`)},
+	}
+	ctx := &Context{
+		Includes: fsys,
+		Components: map[string]Builder{
+			"B": UserControl(fsys, "b.gooey", func(e Element, parent *Context) (*Context, error) {
+				_, err := Include(fsys, "a.gooey")(e, parent)
+				return nil, err
+			}),
+		},
+	}
+	_, err := Load(fsys, "a.gooey", ctx)
+	if err == nil {
+		t.Fatal("the setup re-entered the control and the load succeeded")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "includes itself") {
+		t.Fatalf("the load failed for some other reason than the cycle, so this "+
+			"measures nothing: %v", err)
+	}
+	if n := strings.Count(msg, "b.gooey"); n != 1 {
+		t.Errorf("the error names b.gooey %d times, want once — the setup is one "+
+			"control however many times the recursion passes through it: %v", n, err)
+	}
+	// Three: the attribution on a.gooey, and the two ends of the trace.
+	if n := strings.Count(msg, "a.gooey"); n != 3 {
+		t.Errorf("the error names a.gooey %d times, want 3 (the attribution plus "+
+			"both ends of the trace): %v", n, err)
+	}
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
+	}
+}
+
+// A SETUP IS ARBITRARY GO, and the commonest thing it does with a
+// document is load another one — a control whose code-behind builds a
+// sub-view, a designer that renders a preview. That gives the reader TWO
+// facts worth having: which file holds the bad element, and which
+// control's setup asked for that file. They are different questions the
+// moment several controls preview the same sub-document, where the inner
+// name alone leads back to no instantiation at all.
+//
+// So both names, each ONCE, and one "markup: " on the sentence:
+//
+//	markup: control outer.gooey: control mid.gooey: unknown element <Nope>
+//
+// This asserted the ABSENCE of outer.gooey until review of #490 pointed
+// out that the absence had thereby become a contract. What must not
+// happen is a name per FRAME of this package's own recursion — that is
+// doc.build's site, which stays innermost-only — and a second "markup: "
+// per frame, which is what the first version of the fix produced by
+// building the attributedErr inline:
+//
+//	markup: control outer.gooey: markup: control mid.gooey: unknown element <Nope>
+func TestASetupsOwnLoadErrorIsNotAttributedTwice(t *testing.T) {
+	// The inner document instantiates a CONTROL that fails, so the error
+	// the setup gets back is already attributed to mid.gooey. A setup
+	// whose own Load fails at the top level is a different case and is
+	// correctly named after the control whose setup it is.
+	inner := fstest.MapFS{
+		"inner.gooey": &fstest.MapFile{Data: []byte(`<Gooey><Mid/></Gooey>`)},
+		"mid.gooey":   &fstest.MapFile{Data: []byte(`<Gooey><Nope/></Gooey>`)},
+	}
+	fsys := fstest.MapFS{
+		"app.gooey":   &fstest.MapFile{Data: []byte(`<Gooey><Outer/></Gooey>`)},
+		"outer.gooey": &fstest.MapFile{Data: []byte(`<Gooey><Text>x</Text></Gooey>`)},
+	}
+	ctx := &Context{
+		Includes: fsys,
+		Components: map[string]Builder{
+			"Outer": UserControl(fsys, "outer.gooey", func(e Element, parent *Context) (*Context, error) {
+				_, err := Load(inner, "inner.gooey", &Context{Includes: inner})
+				return nil, err
+			}),
+		},
+	}
+	_, err := Load(fsys, "app.gooey", ctx)
+	if err == nil {
+		t.Fatal("the setup returned an error and the load succeeded")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "mid.gooey") {
+		t.Errorf("the error does not name the control the inner load failed in: %v", err)
+	}
+	if n := strings.Count(msg, "outer.gooey"); n != 1 {
+		t.Errorf("the error names outer.gooey %d times, want once: the setup that "+
+			"chose the failing document is the other half of where to look, and "+
+			"more than once is the frame-per-name stacking attributedErr exists "+
+			"to stop: %v", n, err)
+	}
+	if n := strings.Count(msg, "mid.gooey"); n != 1 {
+		t.Errorf("the error names mid.gooey %d times, want once: %v", n, err)
+	}
+	if i, j := strings.Index(msg, "outer.gooey"), strings.Index(msg, "mid.gooey"); i > j {
+		t.Errorf("the inner control is named before the setup that loaded it, so "+
+			"the sentence reads inside-out: %v", err)
+	}
+	if n := strings.Count(msg, "markup: "); n != 1 {
+		t.Errorf("error carries the package prefix %d times, not once: %v", n, err)
 	}
 }
