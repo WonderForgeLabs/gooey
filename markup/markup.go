@@ -1285,9 +1285,28 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 		// value implements gooey.HasLayout is known only here, after
 		// Build has run. Raised in review of #486, on the round that
 		// let an unknowable def through the check.
+		// A NAME THE ELEMENT DECLARES IS ITS OWN, and skipping it is
+		// the difference between a refusal and a lie. layoutOnlyName
+		// answers off a fixed table, so it says "Width" about a def
+		// that declares Width in its Attrs and reads e.Attrs["Width"]
+		// in its own Build — the attribute IS applied, and the remedy
+		// this error prescribes ("Remove Width") breaks a working
+		// element. That is the walk-from-a-refusal-into-a-worse-
+		// document shape the remedy discipline in this file exists to
+		// stop, arriving in the one place where the refusal is new.
+		//
+		// The collision is not hypothetical: Height sits in both
+		// tables on <Sparkline> in this tree today. Raised in review
+		// of #486.
+		declared := map[string]bool{}
+		if spec, ok := ctx.spec(e.Name); ok {
+			for _, a := range spec.Attrs {
+				declared[a.Name] = true
+			}
+		}
 		var dropped []string
 		for k := range e.Attrs {
-			if layoutOnlyName(k) {
+			if layoutOnlyName(k) && !declared[k] {
 				dropped = append(dropped, k)
 			}
 		}
@@ -1409,11 +1428,19 @@ func layoutInt(l *gooey.Layout, name string) *int {
 	return nil
 }
 
-// layoutOnlyName reports whether name is an attribute applyLayout is
-// the only consumer of — the universal LAYOUT row and the attached
-// properties. Name and Tooltip are deliberately absent: both are
-// universal but neither goes through the Layout, so a component with no
-// Layout still honours them and refusing them would be wrong.
+// layoutOnlyName reports whether name is in the universal LAYOUT row or
+// the attached properties — the names applyLayout consumes. Name and
+// Tooltip are deliberately absent: both are universal but neither goes
+// through the Layout, so a component with no Layout still honours them
+// and refusing them would be wrong.
+//
+// IT IS NOT "THE ONLY CONSUMER", which is what this doc used to claim,
+// and the caller is where that is settled rather than here: an element
+// may DECLARE one of these names in its own Attrs and read it in its
+// own Build, and this fixed table cannot see that. Height does exactly
+// that on <Sparkline> in this tree. applyLayout skips declared names
+// before it reports; a predicate answering off a name alone cannot.
+// Raised in review of #486.
 //
 // It is a switch over the same names layoutInt and applyLayout's own
 // switch already spell, rather than a derived set, because those two are

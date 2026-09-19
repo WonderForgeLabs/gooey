@@ -682,8 +682,72 @@ func TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName(t *testing.T) {
 	if _, err := Build([]byte(`<Gooey><Bareish Label="a" Name="pane"/></Gooey>`), ctx); err != nil {
 		t.Errorf("<Bareish Name=\"pane\"/> is refused (%v), and Name does not "+
 			"go through the Layout — the refusal is scoped to the attributes "+
-			"applyLayout is the only consumer of", err)
+			"applyLayout consumes", err)
 	}
+
+	// AND A NAME THE ELEMENT DECLARES IS NOT REFUSED EITHER, which is
+	// the arm that makes "applyLayout consumes" narrower than "is the
+	// only consumer of". A def may declare Width in its own Attrs and
+	// read e.Attrs["Width"] in its own Build — Height does exactly that
+	// on <Sparkline> in this tree — and layoutOnlyName, answering off a
+	// fixed table, says Width about it anyway. The refusal's remedy is
+	// "Remove Width", which breaks a working element: a walk from a
+	// refusal into a worse document, in the one place where the refusal
+	// is new. Raised in review of #486.
+	declaring := &Context{Elements: map[string]*ElementDef{"Widthy": {
+		Name:  "Widthy",
+		Known: true,
+		Attrs: []AttrSpec{{Name: "Width"}},
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			if e.Attrs["Width"] == "" {
+				return nil, fmt.Errorf("the fixture's Build did not receive Width")
+			}
+			return layoutlessComponent{}, nil
+		},
+	}}}
+	if _, err := Build([]byte(`<Gooey><Widthy Width="7"/></Gooey>`), declaring); err != nil {
+		t.Errorf("<Widthy Width=\"7\"/> is refused (%v). The def DECLARES Width "+
+			"and its own Build consumes it, so the claim that it \"would be "+
+			"accepted and never applied\" is false and the prescribed remedy "+
+			"breaks the element", err)
+	}
+
+	// AND THE Context.Components SHAPE, which the catalog gate never
+	// reaches: its spec does not resolve, so checkAttrs returns early
+	// and applyLayout is the only gate there is. That makes the refusal
+	// WIDER than the AxesKnown arm this test is named for — a host app
+	// with a custom component that does not embed gooey.Base turns
+	// <LogPane Margin="2"/> from "loads and drops" into a load error.
+	// It is the silent drop being closed rather than a new restriction,
+	// and it is pinned here because the reference documents it as a
+	// breaking change and a documented claim with no arm is how the
+	// scope drifts back. Raised in review of #486.
+	host := &Context{Components: map[string]Builder{
+		"LogPane": func(e Element, ctx *Context) (gooey.Component, error) {
+			return layoutlessComponent{}, nil
+		},
+	}}
+	if _, ok := host.spec("LogPane"); ok {
+		t.Fatal("the LogPane spec resolves, so checkAttrs is not skipped and " +
+			"this arm is not measuring the Components path")
+	}
+	err = mustFail(t, host, `<Gooey><LogPane Margin="2"/></Gooey>`)
+	for _, want := range []string{"Margin", "LogPane"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the Components-path refusal does not name %s:\n\t%v", want, err)
+		}
+	}
+}
+
+// mustFail builds src and requires an error, returning it.
+func mustFail(t *testing.T, ctx *Context, src string) error {
+	t.Helper()
+	_, err := Build([]byte(src), ctx)
+	if err == nil {
+		t.Fatalf("%s loaded, and the component it builds has no Layout — the "+
+			"layout attribute was accepted and dropped", src)
+	}
+	return err
 }
 
 // TestAMisplacedPseudoElementReportsItsPlacement is finding 1 of #486's
@@ -2371,6 +2435,48 @@ func TestAHostPseudoElementThatBuildsKeepsWhatItBuildsWith(t *testing.T) {
 		t.Error("<Panel.Behaviors> loaded and its <Tooltip> attached to nothing — " +
 			"accepted and dropped, which is what asserting the load alone would " +
 			"have passed over")
+	}
+
+	// AND THE LAYOUT ROW, which this test asserted Name and the
+	// attachment for and stopped — so the suite was green over an
+	// element that answered two ways about the same fact. Name is
+	// decided at the CALL SITE (Context.vocabulary's `builds`), so
+	// <Panel Name="p"> loaded and was applied; Margin was decided by
+	// TakesLayout, whose `&& !e.Pseudo` cannot see that this element is
+	// being built, so <Panel Margin="2"> was refused with "no such
+	// attribute; this element takes Label, Name" — about a name
+	// Panel.Build's *components.VStack would have honoured. Measured in
+	// review of #486.
+	built, err := Build([]byte(
+		`<Gooey><Deck><Panel Label="a" Margin="2"><Text>y</Text></Panel></Deck></Gooey>`), ctx)
+	if err != nil {
+		t.Fatalf("<Panel Margin=\"2\"> is refused (%v). Panel is Pseudo by "+
+			"derivation and carries a real Build whose component has a "+
+			"Layout, so build() would have applied it — the refusal names "+
+			"an attribute every other element takes", err)
+	}
+	// AND IT LANDED, because a refusal lifted into an acceptance that
+	// drops the value is the silent drop this PR is about, wearing the
+	// other hat.
+	var margin gooey.Thickness
+	var seen bool
+	var find func(c gooey.Component)
+	find = func(c gooey.Component) {
+		if l := gooey.LayoutOf(c); l != nil && !seen {
+			if m := l.Margin; m != (gooey.Thickness{}) {
+				margin, seen = m, true
+			}
+		}
+		if cont, ok := c.(gooey.Container); ok {
+			for _, k := range cont.ChildComponents() {
+				find(k)
+			}
+		}
+	}
+	find(built)
+	if !seen {
+		t.Errorf("<Panel Margin=\"2\"> loaded and no component in the tree "+
+			"carries a Margin: accepted and dropped. Got %+v", margin)
 	}
 }
 

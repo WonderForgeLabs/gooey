@@ -82,9 +82,14 @@ belong to* — and each was a way of answering it wrongly:
 - **The `universal` skip does not apply to a pseudo-element.** Skipping
   `Margin`/`Width`/`Visibility` is right for an ordinary element, whose
   `applyLayout` consumes them outside its `Build`. A pseudo-element has no
-  `applyLayout` — a nil `Proto` makes `TakesLayout` false, so `vocabulary()`
+  `applyLayout` — `Pseudo` makes `TakesLayout` false, so `vocabulary()`
   never adds the universal set — but `checkAttrs` allows anything in
-  `spec.Attrs`. So *declaring* `Margin` on `<MenuItem>` made it settable,
+  `spec.Attrs`. (This said "a nil `Proto` makes `TakesLayout` false", which
+  stopped being true in review of [#486](https://github.com/WonderForgeLabs/gooey/pull/486):
+  a nil `Proto` now answers `true` where the def carries a `Build`, and
+  `Pseudo` is the conjunct that answers for the menu elements. The same
+  sentence was corrected in `markup/internal/catalogen/catalogen.go` and
+  `markup/markup.go` by that branch; this was its third copy.) So *declaring* `Margin` on `<MenuItem>` made it settable,
   unread and silently dropped, with the whole suite green and
   `<MenuItem Text="Open" Margin="3"/>` building with `err == nil`. The
   silent-drop defect again, one set of names over.

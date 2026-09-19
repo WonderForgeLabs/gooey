@@ -1099,7 +1099,31 @@ func (ctx *Context) vocabulary(spec ElementSpec, parentName string, builds bool)
 		}
 	}
 	attached = map[string]string{}
-	if !TakesLayout(spec) {
+	// THE LAYOUT ROW IS DECIDED AT THE CALL SITE TOO, exactly where
+	// Name is, and for the same reason. TakesLayout ends in `&&
+	// !e.Pseudo`, which is right for Grant.AttrsFor — that answers off
+	// the spec alone and cannot see whether this element is being
+	// BUILT. Here it can: a host def that is Pseudo by derivation
+	// (ParsedBy or Opaque set) and carries a real Build returns a
+	// component whose Layout build() then applies, so refusing Margin
+	// on it is the lie refuseComponentAttr's own doc names — "no such
+	// attribute; this element takes Label, Name" about a name that
+	// would have been honoured.
+	//
+	// Measured in review of #486 on this PR's own hostDeckCtx fixture:
+	// <Panel Name="p"> loaded and was applied while <Panel Margin="2">
+	// was refused, so one element answered two ways about the same
+	// fact. Pseudo is `Proto == nil && (Opaque != "" || ParsedBy !=
+	// "")` and says nothing about Build — rounds 7 and 9 of this PR
+	// established that, and attrcheck.go's own refuseComponentAttr
+	// doc says it in capitals.
+	//
+	// The conjuncts mirror TakesLayout's own middle term rather than
+	// restating it: !AxesKnown && Builds is "nobody has declared the
+	// axes and there is a Build to ask", which is what makes the
+	// answer "accepted and honoured, or refused by name" — applyLayout
+	// reports what it cannot apply.
+	if !TakesLayout(spec) && !(builds && !spec.AxesKnown && spec.Builds) {
 		return allowed, attached
 	}
 	for _, a := range universalAttrs {
