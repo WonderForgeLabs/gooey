@@ -425,6 +425,75 @@ func (c *countingPost) Post(f func()) {
 	c.n.Add(1)
 }
 
+// drainBudget is how long drainUntilPosts waits for n posts at a poll
+// interval of `every`. Extracted from it so the arithmetic is CHECKABLE
+// WITHOUT WAITING ONE OUT: the budget only shows itself on the failure
+// path, so as an expression inside the loop it could be wrong in either
+// direction and the suite would stay green either way — silently
+// flaky in one direction and silently slow in the other.
+//
+// IT CLAMPS ZERO THE WAY FileWatcher.Start CLAMPS IT, and that mirroring
+// is the point rather than defensive tidiness. Start resolves the
+// interval before it ticks — `if every <= 0 { every = DefaultWatchInterval }`
+// — so a watcher declared without an Interval polls at 300ms, which is
+// how the component is documented to be used. A caller passing
+// w.Interval for such a watcher was handing this a zero, taking the
+// 50ms floor, and at n=40 budgeting 4s against 40 x 300ms = 12s of
+// unavoidable ticking: a guaranteed red, reported as "the poll
+// goroutine is not running" while the goroutine ran exactly as
+// configured. That is verbatim the failure the `every` parameter was
+// added to prevent, left open in the one case a caller reaches by
+// writing nothing. Raised in review of #511.
+//
+// THE FLOOR DOES NOT SCALE because it is about a scheduler granting the
+// goroutine no slot at all, which no interval changes.
+func drainBudget(n int64, every time.Duration) time.Duration {
+	if every <= 0 {
+		every = DefaultWatchInterval
+	}
+	per := 50 * time.Millisecond
+	if every > per {
+		per = every
+	}
+	return 2*time.Second + time.Duration(n)*per
+}
+
+// TestDrainBudgetScalesWithTheCallersInterval pins both halves of the
+// budget, because both were unexercised by anything that runs.
+//
+// Every drainUntilPosts caller passes time.Millisecond, which is under
+// the floor — so `if every > per` never fired in the committed suite and
+// the scaling added for it was dead code the next person inherits. The
+// zero row is the one finding #511 opened on: it is not reachable from
+// any caller in this file TODAY, and it is the row a caller reaches by
+// writing `Interval:` nowhere and passing `w.Interval` here.
+//
+// Written as a table rather than as a converted caller because what is
+// under test is arithmetic, and a converted caller would pay two seconds
+// of real waiting to assert it indirectly. Raised in review of #511.
+func TestDrainBudgetScalesWithTheCallersInterval(t *testing.T) {
+	for _, c := range []struct {
+		why   string
+		n     int64
+		every time.Duration
+		want  time.Duration
+	}{
+		{"unset Interval takes the component's own default, not the floor",
+			40, 0, 2*time.Second + 40*DefaultWatchInterval},
+		{"a negative Interval clamps the same way Start clamps it",
+			40, -time.Second, 2*time.Second + 40*DefaultWatchInterval},
+		{"below the floor, the floor holds",
+			40, time.Millisecond, 2*time.Second + 40*50*time.Millisecond},
+		{"above the floor, the budget follows the interval",
+			40, 200 * time.Millisecond, 2*time.Second + 40*200*time.Millisecond},
+	} {
+		if got := drainBudget(c.n, c.every); got != c.want {
+			t.Errorf("drainBudget(%d, %s) = %s, want %s — %s",
+				c.n, c.every, got, c.want, c.why)
+		}
+	}
+}
+
 // drainUntilPosts pumps the dispatcher until the watcher has posted n
 // more times than it had at base — what a test means by "let the watcher
 // get past this edit". It returns the delta it observed, so a caller can
@@ -450,15 +519,10 @@ func (c *countingPost) Post(f func()) {
 // survives a retune and a quoted pair does not.
 //
 // AND `every` IS THE CALLER'S Interval, because what sets the post rate
-// is FileWatcher.Interval and this helper cannot see it. A flat 50ms per
-// post is ~39x the cost at the millisecond every caller polls at today —
-// a property of the CALLERS, not of the helper, and this file already
-// holds a 200ms watcher that drainFor's doc invites converting. At n=40
-// that would be eight seconds of unavoidable ticking against a
-// four-second budget: a guaranteed red reported as "the poll goroutine
-// is not running" while it runs exactly as configured. The floor does
-// not scale, because it is about a scheduler granting no slot at all,
-// which no interval changes.
+// is FileWatcher.Interval and this helper cannot see it. The arithmetic
+// is drainBudget and TestDrainBudgetScalesWithTheCallersInterval says
+// what it does — a table, where this paragraph was ten lines arguing
+// from an evaluated worst case that no caller in the file reached.
 //
 // THE DISCRIMINATING MUTATION REMOVES ONLY THE FIRST WAIT in
 // TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay — the baseline
@@ -471,11 +535,7 @@ func (c *countingPost) Post(f func()) {
 func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64, every time.Duration) int64 {
 	t.Helper()
 	base := c.n.Load()
-	per := 50 * time.Millisecond
-	if every > per {
-		per = every
-	}
-	budget := 2*time.Second + time.Duration(n)*per
+	budget := drainBudget(n, every)
 	deadline := time.Now().Add(budget)
 	// HOISTED, so the failure below quotes what was OBSERVED. The loop
 	// exits on the last in-loop check seeing `got < n`, and the poll
@@ -490,10 +550,17 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 	for time.Now().Before(deadline) {
 		disp.Drain()
 		if got = c.n.Load() - base; got >= n {
-			// `got`, NOT A SECOND LOAD. countingPost.Post increments
-			// AFTER it enqueues and Dispatcher.Drain takes the whole
-			// queue, so every one of `got` was on the queue when the
-			// check passed and every one of their closures has run.
+			// `got`, NOT A SECOND LOAD — and the drain BELOW is what
+			// makes it honest, not the one at the top of the loop.
+			// countingPost.Post increments AFTER it enqueues, so a post
+			// can be enqueued after that first drain and counted before
+			// this Load: at the moment `got` is read, up to one closure
+			// has not run yet. The drain below takes the whole queue,
+			// and every post counted before the Load was enqueued
+			// before it — so by the time `got` is RETURNED all of them
+			// have run. The sentence here used to say "when the check
+			// passed", which points at the first drain and one line off
+			// from the statement carrying the argument.
 			// Re-loading after the drain counts posts the still-ticking
 			// poll goroutine enqueued DURING it, which is the same
 			// one-post overclaim as printing the constant — the thing
