@@ -257,6 +257,20 @@ type ElementSpec struct {
 	// Opaque, when set, is the reason the generator could not enumerate
 	// this element — the text of its //gooey:catalog-opaque annotation.
 	Opaque string
+	// ParsedBy names the element whose Build consumes this one, for a
+	// pseudo-element that has no Build of its own worth speaking of —
+	// <Menu> and <MenuItem> are both read by <MenuBar>. Empty for a
+	// pseudo-element that says why through Opaque instead, and empty
+	// for everything that builds a component.
+	//
+	// It is carried onto the spec rather than consumed and dropped at
+	// ElementDef because a diagnostic wants to NAME the reader:
+	// "<MenuBar> reads <Menu> as data" tells an author where the
+	// attribute went, and "its parent reads it as data" does not.
+	// Raised in review of #486 — refuseComponentAttr's reason clause leaned
+	// on this field while the type it reads did not carry it, so the
+	// message it could actually produce was the generic one.
+	ParsedBy string
 	// Open reports that the attribute set is extensible at runtime, so
 	// entries may carry an Origin different from the element's.
 	Open  bool
@@ -362,6 +376,15 @@ type ElementSpec struct {
 	// telling a custom OriginRegistered component apart.
 	Attaches  bool
 	HasLayout bool
+	// AxesKnown reports that the four axes above were DERIVED FROM A
+	// PROTO rather than defaulted, and it is to them what AttrsKnown is
+	// to Attrs. Without it every axis reads false for two different
+	// facts at once — "the type does not do this" and "no type was
+	// given" — and a consumer cannot tell a <Timer>, which really is
+	// not laid out, from a host def with a real Build and no Proto,
+	// which is. TakesLayout is where that mattered; see its doc for the
+	// measurement.
+	AxesKnown bool
 	Doc       string
 }
 
@@ -571,6 +594,47 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // AttrsFor is the package-level AttrsFor with the parent already
 // resolved — the same join, reached without a registry lookup. See
 // AttachedAttrs above for why a Context consumer needs this form.
+//
+// THE AGREEMENT WITH THE LOADER RUNS BOTH WAYS FOR LAYOUT, and one
+// half of that is newer than the other. Nothing this offers fails to
+// load, because the TakesLayout gate here and Context.vocabulary's are
+// the same predicate on the same spec. The converse used to be
+// unguarded: TakesLayout read HasLayout, which ElementDef.axes derives
+// from the PROTO, so a HOST's def with a real Build and no Proto
+// answered false while build() ran applyLayout on the component that
+// Build returns — it LOADED with the margin honoured and this offered
+// no row for it. AxesKnown is what separated "does not" from "cannot
+// say"; TakesLayout answers true where nobody can say otherwise, so the
+// row is offered and the load agrees. Measured both ways in
+// TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef, which is what
+// goes red if either side drifts. Raised in review of #486 and closed
+// in round 10 of it.
+//
+// AND THE PARENT IS THE OTHER THING THIS CANNOT SEE, which is a second
+// unguarded direction rather than a restatement of the first. Whether
+// the loader honours Name turns on whether the element is read AS DATA,
+// and that is a fact about its PARENT — Context.vocabulary gets it from
+// checkAttrs' asData, and this function is handed a spec and nothing
+// else. A HOST def that SHADOWS a builtin reader's child is where the
+// two come apart, because a shadowing def carries a Proto, so Pseudo is
+// false and TakesLayout is true and the universalAttrs branch below
+// adds Name. Measured on Elements["Tab"] = {Known, Proto:
+// &components.Text{}, Attrs: [Header]}:
+//
+//	AttrsFor(that <Tab>)  -> [HAlign Header Height Margin Name
+//	                          Tooltip VAlign Visibility Width]
+//	Build(<Tabs><Tab Header="a" Name="zonk">…)
+//	                      -> markup: <Tab Name="zonk">: <Tabs> reads
+//	                         <Tab> as data, so it builds no component
+//	                         for Name to apply to
+//
+// So the grid offers a row that fails to load, which is the direction
+// the sentence below calls the one that must agree. It cannot be closed
+// from here without the parent, and adding a parent parameter would
+// make a catalog query depend on where the element is about to be put —
+// so it is STATED and pinned. The layout direction above USED to be
+// stated the same way and is now closed, which is why this paragraph
+// no longer points at it as the precedent. Raised in review of #486.
 func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	out := append([]AttrSpec(nil), e.Attrs...)
 	if TakesLayout(e) {
@@ -581,18 +645,60 @@ func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 		// element that BUILDS one can be addressed. A pseudo-element is
 		// consumed as data and never reaches named(), so offering the row
 		// invites an edit the loader accepts and nothing honours. The
-		// loader refuses it for the same reason (Context.vocabulary), and
-		// these two must agree or the grid offers a row that fails to
-		// load.
+		// loader withholds it for the same reason (Context.vocabulary),
+		// and in THIS direction the two must agree or the grid offers a
+		// row that fails to load.
 		//
-		// THE AGREEMENT IS CONDITIONED ON AttrsKnown, which is the half a
-		// reader has to know: checkAttrs returns early on !AttrsKnown
-		// (attrcheck.go), so for an OPAQUE pseudo-element this gate drops
-		// the row and the loader does not refuse it. <Tab> is the one
-		// such element today, so <Tab Name="Zonk"> still loads clean and
-		// is still dropped — the same silent-drop class, one element
-		// over. Pre-existing, not fixed here, tracked in #461; if that
-		// issue is closed this paragraph is wrong and the code is right.
+		// THE OTHER DIRECTION IS NOT GUARDED, and the sentence above
+		// used to claim it was. Context.vocabulary decides Name on the
+		// CALL SITE — `builds`, which is `!asData` — and this function
+		// has only the spec. For the builtins the two answers coincide,
+		// because buildTabs and buildMenuBar are the readers and they
+		// pass asData. For a HOST def carrying ParsedBy AND a real Build
+		// they do not: the parent's Build routes children through
+		// BuildChildren, the child reaches build(), named() runs, and
+		// the grid still offers nothing. Measured:
+		//
+		//	AttrsFor(hostDeckCtx's <Panel>)            -> [Label]
+		//	Build(`<Deck><Panel Label="a" Name="p">…`) -> ctx.Named["p"]
+		//
+		// Carrying a has-a-Build bit onto the spec does not close it:
+		// defTab, defMenu and defMenuItem all have a non-nil Build whose
+		// only job is to refuse, so the bit is true for exactly the
+		// three elements the row must stay off — measured, it reddens
+		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement and
+		// TestTheCatalogDoesNotOfferNameOnAPseudoElement. The fact that
+		// separates the two is whether Build RETURNS a component, which
+		// no field can state. So the gap is pinned rather than closed,
+		// by TestTheDesignerOffersNoNameRowWhereTheLoaderHonoursOne —
+		// which is also what goes red if somebody closes it. Raised in
+		// review of #486.
+		//
+		// THE AGREEMENT WAS ONCE CONDITIONED ON AttrsKnown, and is not
+		// any more (#461). checkAttrs returned early on !AttrsKnown, so
+		// for an OPAQUE pseudo-element this gate dropped the row while
+		// the loader accepted it: <Tab Name="Zonk"> loaded clean and was
+		// dropped, with no designer surface left to reveal it.
+		// checkAttrs now refuses every attribute only a COMPONENT could
+		// carry BEFORE either of its gates — the universal set and any
+		// attached property, which is what cannotApplyTo admits — because
+		// neither belongs to the element's own surface and so both
+		// survive not knowing it (refuseComponentAttr, attrcheck.go).
+		//
+		// TestNoPseudoElementAcceptsAUniversalAttribute and
+		// TestTheDesignerOffersNoUniversalRowOnAPseudoElement assert the
+		// two halves over the catalog rather than over a list, so a
+		// fourth pseudo-element joins both without an edit.
+		//
+		// THAT IS TRUE OF THE GATES AND WAS NOT TRUE OF THE WIRING, and
+		// the distinction is worth keeping because the sentence above
+		// used to be written without it. Both of those tests call
+		// checkAttrs themselves, so neither can see a BUILDER that never
+		// calls it — which is the defect #461 actually was.
+		// TestEveryPseudoElementIsRefusedThroughAWholeLoad covers that,
+		// and its cases are hand-written markup with a derived
+		// completeness check, because a document cannot be generated
+		// from a spec. Raised in review of #486.
 		for _, a := range universalAttrs {
 			if a.Kind == KindIdentity {
 				out = append(out, a)
@@ -735,7 +841,26 @@ func AttrsFor(e ElementSpec, parent string) []AttrSpec {
 // would let someone set Width on a <Timer> and then fail the load — the
 // catalog lying about the target, through the artifact built to stop it.
 // Found by TestDeclaredVocabularyElementsKeepTheirExactSet.
-func TakesLayout(e ElementSpec) bool { return e.HasLayout && !e.NonVisual }
+// THE UNKNOWABLE DEF ANSWERS TRUE, and that conjunct is what makes this
+// predicate match the loader in BOTH directions rather than one. HasLayout
+// is derived from Proto, so a def with a real Build and no Proto reports
+// false for "the type does not accept layout" and for "nobody can say"
+// alike — and build() runs applyLayout on whatever that Build returns.
+// Answering false there refused Margin, Width, Grid.Row and every other
+// attached name on an element that honours all of them: measured in review
+// of #486 on one def, flipping Known alone, <Built Label="a" Grid.Row="0"
+// Width="7"/> inside a <Grid> was a load error with Known true and read
+// back Grid.Row=0 Width=7 with Known false. AxesKnown is the question
+// AttrsKnown already asks about the element's own attributes, asked about
+// the behavioural axes instead.
+//
+// Pseudo is the third conjunct rather than a consequence of the first two.
+// A pseudo-element also has no Proto, so !AxesKnown holds for it — but it
+// builds NO component, which is a reason to withhold the layout surface
+// that survives knowing everything about it.
+func TakesLayout(e ElementSpec) bool {
+	return (e.HasLayout || !e.AxesKnown) && !e.NonVisual && !e.Pseudo
+}
 
 // BuiltinElements returns the DECLARED table: the element vocabulary
 // this build of gooey compiled in, with no reference to any app. Callers
@@ -820,7 +945,42 @@ func markNested(specs []ElementSpec) {
 // AND NOTHING ELSE — Builder is an opaque func — so its entry carries
 // AttrsKnown false, which a consumer must distinguish from an element
 // that genuinely takes no attributes.
-func (ctx *Context) Catalog() []ElementSpec {
+func (ctx *Context) Catalog() []ElementSpec { return ctx.catalog(true) }
+
+// catalog is Catalog with the Includes source made optional, for the one
+// caller that asks a question no include can answer — see namingParent.
+// Everything else about the assembly, the collision order included, is
+// identical, so the two cannot disagree about which element wins a name.
+func (ctx *Context) catalog(withIncludes bool) []ElementSpec {
+	// MEMOIZED FOR THE DURATION OF ONE BUILD, and only the
+	// withIncludes=false form, which is the one the load path asks for
+	// repeatedly. document.build clears and restores the field the same
+	// way it does ctx.ns, so a nested Load (a UserControl mid-build)
+	// cannot hand its parent a catalog assembled against a different
+	// Context.Elements, and a later rebuild against the same Context
+	// re-assembles.
+	//
+	// THE COST IS PER ELEMENT, which is what makes this worth a field.
+	// misplaced -> declaredHome -> namingParent asks for this catalog,
+	// and misplaced's first line short-circuits only when the PARENT
+	// NAMES the child — so a ModeRestricted container costs nothing,
+	// and an Opaque pseudo-element under a plain BuildChildren
+	// container pays a full assembly (BuiltinElements plus markNested)
+	// for every child. Measured on that shape before the memo, a
+	// document of N such rows:
+	//
+	//	rows    assemblies    load before    load after
+	//	   1              1        0.08ms        0.08ms
+	//	  50             50        3.4ms         0.28ms
+	//	 200            200        13.4ms        0.91ms
+	//
+	// Linear in rows times the whole catalog, against one assembly per
+	// load now. For scale, the same 200-row document where declaredHome
+	// short-circuits on ParsedBy — and so never asks — is 0.6ms.
+	// Raised in review of #486.
+	if !withIncludes && ctx.catalogNoIncludes != nil && *ctx.catalogNoIncludes != nil {
+		return *ctx.catalogNoIncludes
+	}
 	builtins := BuiltinElements()
 	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Elements)+len(ctx.Components))
 	seen := make(map[string]bool, len(builtins))
@@ -842,6 +1002,16 @@ func (ctx *Context) Catalog() []ElementSpec {
 	// information rather than correct it. That asymmetry is the point of
 	// declaring.
 	for name, d := range ctx.Elements {
+		if d == nil {
+			// A nil def declares nothing to enumerate, and specAs on it
+			// is a nil dereference — measured, Catalog() panicked on
+			// Context{Elements: {"Leafy": nil}}. This is a read-only
+			// enumeration a designer calls without loading anything, so
+			// it skips rather than reporting; Context.spec is where the
+			// same shape turns into a named load error. Raised in
+			// review of #486.
+			continue
+		}
 		seen[name] = true
 		out = append(out, d.specAs(OriginRegistered))
 	}
@@ -869,11 +1039,16 @@ func (ctx *Context) Catalog() []ElementSpec {
 			Doc:        "Registered by the host app. Its attributes cannot be enumerated: a Builder is a func, not a schema.",
 		})
 	}
-	out = append(out, ctx.includeElements(seen)...)
+	if withIncludes {
+		out = append(out, ctx.includeElements(seen)...)
+	}
 	// After every source has contributed, so a host's restricted
 	// container marks its own pseudo-children too.
 	markNested(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if !withIncludes && ctx.catalogNoIncludes != nil {
+		*ctx.catalogNoIncludes = out
+	}
 	return out
 }
 

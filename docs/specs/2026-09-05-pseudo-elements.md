@@ -88,6 +88,27 @@ belong to* — and each was a way of answering it wrongly:
   unread and silently dropped, with the whole suite green and
   `<MenuItem Text="Open" Margin="3"/>` building with `err == nil`. The
   silent-drop defect again, one set of names over.
+
+  That document no longer reproduces it, and the reason is a different
+  fix: [#461](https://github.com/WonderForgeLabs/gooey/issues/461) made a
+  universal attribute on a pseudo-element a load error outright, so
+  `<MenuItem Margin="3"/>` is now refused with *"`<Menu>` reads
+  `<MenuItem>` as data, so it builds no component for Margin to apply
+  to"* whether or not the declaration exists. The reproduction above is
+  historical; the check this section describes is still the one that
+  stops the DECLARATION.
+
+  **And "universal" was not the whole set.** Review of #486 measured the
+  same gate one spelling over: `<Tab Name="Zonk">` was refused while
+  `<Tab Grid.Row="1">` loaded, was dropped and reported nothing. An
+  attached property is an instruction to the element's *container* about
+  a component, and a pseudo-element has none to instruct — so it is
+  refusable by the argument this section already makes, without knowing
+  the element's own surface. That last clause is what makes it sayable
+  of a `<Tab>`, whose `Opaque` annotation means the ordinary
+  unknown-attribute gate cannot fire; for `<Menu>` and `<MenuItem>` that
+  gate already covered both cases, which is why the fix is the attached
+  rule alone rather than a widening to `spec.Attrs`.
 - **The helper idiom is a read.** `scan` recognises `Bound(e, ctx, "Text")`
   and `optDuration(e, "Tick")`; the child walk saw only `x.Attrs["…"]`. That
   gap is loud in the wrong direction — the declaration is real and the read is
@@ -313,6 +334,126 @@ rebuilding the catalog. `ed.specs` is that catalog by name, taken in
 gesture. `TestAttrRowsDoesNotRebuildTheCatalog` bounds it at 135, from both
 measurements rather than a guess.
 
+## Both pseudo-element rules were phrased over the builtins only
+
+The three builtin pseudo-elements share a shape that is not the general
+one: every one of them sits under a `ModeRestricted` container, and the
+only content any of them restricts itself to is another pseudo-element.
+Two rules were written against that shape and neither holds off it. A
+host's own registration is where they come apart, and no builtin fixture
+can show it — which is why both tests below construct one.
+
+**Placement is not `namesChild` alone.** The stand-down that lets a
+misplaced element's `Build` report the larger fault asked
+`acceptedByParent` — since replaced by `misplaced`, which is where the
+reasoning below now lives — and that predicate asked whether the parent
+is a `ModeRestricted` container naming this element. `ModeRestricted` is the operative word: a
+host container that hands its children to `BuildChildren` takes *many* of
+them and enumerates nothing, so every correctly-placed pseudo-child under
+it read as misplaced and lost the exhaustive unknown-attribute gate along
+with the universal refusal. Measured on a host `<Table>` (`ModeMany`)
+holding a `<Row>` (`ParsedBy: "Table"`, `Known: true`, `Attrs: [Label]`):
+
+```
+<Table><Row Label="a" Bogus="x"/></Table>   ->  <nil>
+<Table><Row Label="a" Name="n"/></Table>    ->  <nil>
+```
+
+`origin/main` refused both. So the branch that exists to make a
+pseudo-element's attributes visible had made a host's invisible — #461,
+one registration tier over.
+
+`readerOf` is the repair and it takes two routes, because the parent's
+`Children.Only` cannot answer for a parent that has none. Where the
+parent restricts its children that list *is* the placement rule and a
+miss is a genuine misplacement; where it restricts nothing, `ParsedBy` is
+the declaration left, and it is the same fact from the element's own
+side. Scoping it that way is what keeps `<MenuBar><MenuItem Name="x"/>`
+deferring to `defMenuItem.Build` even though `MenuItem.ParsedBy` is
+`<MenuBar>`.
+
+**The content remedy is decided per attribute, not per element.**
+`pseudoRemedy` asked whether the content inside was a pseudo-element,
+which reads as "does the content build something a universal can land
+on". It does not follow. `<Timer>`, `<KeyBinding>`, `<Tooltip>`,
+`<Validate>`, `<TypeAhead>`, `<ValidationMarker>` and `<Companion>` all
+build a component and all take `Name`, and not one of them carries a
+`Layout` — so a pseudo-element restricted to any of them was told to move
+a `Margin` onto content that refuses it for the same reason:
+
+```
+<Deck><Panel Margin="2"/></Deck>
+  -> ... no component for Margin to apply to; put it on the content inside instead
+<VStack><Timer Margin="2" Interval="1s"/></VStack>
+  -> no such attribute; this element takes Enabled, Interval, Name, Tick
+```
+
+`acceptsInside` asks `ctx.vocabulary` — the function that will judge the
+prescribed document — with the pseudo-element as the destination's
+parent. `Name` on the same `<Panel>` still gets the remedy, so the answer
+genuinely differs by attribute and the test asserts both directions.
+
+**The test's own predicate had the same bug.**
+`TestARefusalPrescribesOnlyAPlaceThatExists` checks the production answer
+against `acceptsAUniversal`, which mirrored the element-level predicate
+character for character and was asked once per element for all eight
+names. It agreed with the bug by construction. It is now asked per
+attribute and restates the rule over `ElementSpec` rather than calling
+`ctx.vocabulary`, because a helper that calls the implementation cannot
+disagree with it.
+
+**And the repair above was itself phrased over one of three
+spellings.** `Pseudo` is `Proto == nil && (Opaque != "" || ParsedBy !=
+"")`, so it is true two ways, and `readerOf`'s second route asked only
+about `ParsedBy`. An `Opaque`-declared host pseudo-element under a
+`ModeMany` container matched neither route, stood down, and lost the
+same gate — #461's silent-drop class with one field substituted for the
+other. `misplaced` replaces it with a rule that has three answers rather
+than two: the parent names this element, the catalog names a *different*
+home, or the catalog names **no** home at all. Only the middle one is a
+misplacement, and only a misplacement has a placement diagnosis worth
+deferring to; "the catalog knows no home" is not a destination.
+
+**`Pseudo` is not "builds no component", and two refusals rested on
+that.** The derivation says nothing about `Build`. A host
+`Context.Elements` def may carry `ParsedBy` *and* a real `Build`, and
+then `buildComponent` calls `named()` on what it returns and `attachAll`
+on its attachments — so refusing `Name` and every `<X.Foo>` on it broke
+a page that loaded, with a reason that was false. The discriminating
+question is the CALL SITE: an element reaching `checkAttrs` from
+`buildTabs` or `buildMenuBar` was walked out of `e.Children` and is
+consumed as data; one reaching it from `build()` is about to be built,
+whatever the catalog says about who declared it. `checkAttrs` takes that
+as a parameter now, and it is also what decides whether `Name` is in the
+element's vocabulary.
+
+The suite had encoded the false claim: the previous round's fixtures both
+gave their pseudo def a real `Build` and then required `Name` on it to be
+a load error. The fixture now carries all three spellings — `ParsedBy`
+with a `Build`, `Opaque`, and `ParsedBy` with none — and derives its
+assertions from them.
+
+**The remedy's default arm never asked the content, and it is `<Tab>`'s
+live path.** `pseudoRemedy` consulted `acceptsInside` on the
+`ModeRestricted` arm and answered unconditionally everywhere else.
+`<Tab>` is `ModeUnknown`, so the one pseudo-element whose content is
+actually present in the document was the one whose content was never
+consulted: `<Tabs><Tab Header="a" Margin="2"><Timer Interval="1s"/></Tab></Tabs>`
+was told to put the `Margin` on a `<Timer>` that refuses it. For
+`ModeUnknown`/`ModeMany`/`ModeOne` the content is a fact of the
+document, so the function takes the `Element` and asks `e.Children`.
+
+**A registered element with no `Build` was a SEGV.** Reproducing the
+first of these turned it up: `buildComponent` called `d.Build` without
+asking whether there was one, and a pseudo-element's natural host
+declaration has none — `ParsedBy` means "declared here, read there", so
+there is nothing to put in the field. It is the stand-down's own
+precondition: that gate defers to "the element's own `Build`, which is
+about to say something more useful", and for this shape the something
+more useful was a nil dereference inside a load. `noBuild` answers with
+the sentence the gate promises, phrased from the catalog — the reader,
+and the placement that follows from it.
+
 ## What is checked
 
 Every clause below was verified by reverting it alone and watching the named
@@ -328,6 +469,9 @@ test go red.
 | `Pseudo` blocks the mis-pairing | `TestThePointerCannotReachAMenuItem` |
 | `checkAttrs` on `<Menu>` / `<MenuItem>` / a separator item | `TestAnUnknownMenuAttributeIsALoadError` |
 | an undeclared read off a child element | `TestDeclaredVocabularyMatchesTheCode` (via `checkPseudoPool`) |
+| a host pseudo-element under a non-`ModeRestricted` reader, all three ways `Pseudo` is true, and the no-`Build` shape | `TestAHostsPseudoElementIsCheckedWhereItsReaderSaysItBelongs` |
+| a host pseudo-element that BUILDS keeps its `Name` and its attachments | `TestAHostPseudoElementThatBuildsKeepsWhatItBuildsWith` |
+| the content remedy decided per attribute, asked of the document's own children | `TestTheContentRemedyIsDecidedPerAttribute` |
 | `markNested` drops the `Pseudo` conjunct | `TestARestrictedContainerDoesNotHideARealElement` |
 | `markNested` sets instead of assigning | `TestMarkNestedIsIdempotent` |
 | `pairAgrees` asks the catalog per node | `TestARebuildDoesNotRebuildTheCatalogPerNode` |
@@ -335,6 +479,11 @@ test go red.
 | the child walk ignores the `generic` deny-list | `TestTheDenyListAppliesToTheChildWalk` |
 | `Pseudo` derived from a nil `Proto` alone | `TestAHostElementWithNoProtoIsNotPseudo` |
 | the `universal` skip applied to a pseudo-element | `TestAPseudoElementGetsNoUniversalPass` (and `Margin` on `<MenuItem>` in the real vocabulary) |
+| an attached property accepted and dropped on a pseudo-element | `TestAPseudoElementRefusesAnAttachedProperty` |
+| an unknown attribute reaching a declared surface but not an opaque one | `TestAnUnknownAttributeReachesAKnownPseudoSurfaceAndNotAnOpaqueOne` |
+| the `ParsedBy` clause in the refusal's reader name | `TestTheParsedByFallbackNamesAHostRegisteredReader` |
+| the reader named from the document's parent, not the alphabet | `TestTheReaderIsTheDocumentsParentAndNotTheAlphabetsFirst` |
+| the content remedy withheld from an attached property | `TestARefusalPrescribesOnlyAPlaceThatExists` (its attached arm) |
 | the helper idiom not counted as a read | `TestTheHelperIdiomIsAChildRead` |
 | a pseudo-element's own `Build` not scanned | `TestAPseudoElementsOwnBuildIsScanned` |
 | `specOf` rebuilds the catalog | `TestAttrRowsDoesNotRebuildTheCatalog` |
