@@ -581,9 +581,11 @@ n.node = prop.NewComputed(func() int {
     outer := c.frame.sink // placements are filed under this node
     n.places = clearToCap(n.places) // NOT n.places[:0]: see the retention note
     c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
+    prevClip := c.frame.Cells.Clip(render.Rect(n.bounds)) // #357
     if paintable(w) {
         w.Render(c.frame)
     }
+    c.frame.Cells.Unclip(prevClip)
     c.frame.sink = outer
     c.painted++
     n.stamp = c.frameSeq
@@ -595,6 +597,17 @@ The pre-clear is three cases and a fall-through, spelled out under
 [damage semantics](#damage-semantics-pre-clear-leaves-fill-backgrounds-repaint-in-z-order)
 below; `c.clearStyle(n)` is what makes it the nearest ancestor's
 background rather than the terminal default.
+
+**The `Cells.Clip` bracket around `Render` was missing from this quote**
+until review of #456, and the block marks its other elisions with `...`
+— so a reader took everything unmarked as complete. That collides with
+`paintOne`'s doc, which says reading the two side by side is the only
+check that they still say the same thing, and with `Compose`'s, which
+names this bracket as one of the two remaining divergences between the
+two paths ([#493](https://github.com/WonderForgeLabs/gooey/issues/493),
+whose whole difficulty is that no fixture overruns its rect). Anyone
+doing that comparison against this quote saw a `Composer.build` that
+does not clip, and concluded the paths already agree.
 
 Evaluating the computed *is* painting the component. Because `Render` runs
 inside an evaluation context, every property the component reads while
