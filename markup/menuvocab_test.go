@@ -56,10 +56,6 @@ func TestAnUnknownMenuAttributeIsALoadError(t *testing.T) {
 	}
 }
 
-// TestTheMenuVocabularyStillLoadsWhatItDeclares is the other half, and
-// it is not ceremony: a check that rejects everything would pass the
-// test above. Every attribute the two elements declare is exercised
-// here, so an over-tight vocabulary fails rather than looking correct.
 // TestAPseudoElementRefusesName is the one universal that was NOT
 // correctly withheld, and it is the same silent-drop class the declared
 // vocabulary exists to close.
@@ -155,6 +151,11 @@ func TestTheCatalogDoesNotOfferNameOnAPseudoElement(t *testing.T) {
 	}
 }
 
+// TestTheMenuVocabularyStillLoadsWhatItDeclares is the other half, and
+// it is not ceremony: a check that rejects everything would pass the
+// refusal test above. Every attribute the two elements declare is
+// exercised here, so an over-tight vocabulary fails rather than looking
+// correct.
 func TestTheMenuVocabularyStillLoadsWhatItDeclares(t *testing.T) {
 	src := `<Gooey><MenuBar>
 	  <Menu Title="_File">
