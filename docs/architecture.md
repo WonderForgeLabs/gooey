@@ -568,7 +568,7 @@ n.node = prop.NewComputed(func() int {
     n.covered = false
     if b, ok := w.(Bounded); ok {
         r := b.Bounds()
-        if _, isContainer := w.(Container); !isContainer {
+        if !isContainer(w) {
             fillRect(c.frame.Cells, r, c.clearStyle(n)) // a leaf
             n.covered = true
         } else if !paintable(w) {
@@ -579,7 +579,7 @@ n.node = prop.NewComputed(func() int {
         // a chrome-only container pre-clears nothing
     }
     outer := c.frame.sink // placements are filed under this node
-    n.places = n.places[:0]
+    n.places = clearToCap(n.places) // NOT n.places[:0]: see the retention note
     c.frame.sink = func(p graphics.Placement) { n.places = append(n.places, p) }
     if paintable(w) {
         w.Render(c.frame)
@@ -634,9 +634,16 @@ A container *with* a `Background` is different by declaration: its fill
 covers its children, so the Composer's z-ordered repaint puts them back.
 Z-order is document order (children above parents, later siblings above
 earlier) **in two layers**: the ordinary tree, and then every component
-implementing `gooey.Overlay` — a popup surface, and whatever grows one
-next — lifted to the end with its subtree, because a dropdown is not at
-a position in the document, it is on top of it. The paint loop forces a
+implementing `gooey.Overlay` lifted to the end with its subtree, because
+a dropdown is not at a position in the document, it is on top of it. The
+marker decides membership and nothing else — which components carry it
+is a question for the source, not for a list here, and it is more than
+the popup surface the sentence used to name. Inside the lifted layer the
+order is no longer arrival: `gooey.OverlayRanker` buckets it — popup 0,
+toast 10, adornment 20, equal ranks keeping document order — so a toast
+is above an open menu whichever was declared first. The mouse-side
+paragraph below carries the same rule and the warning that hit-testing
+does not share it. The paint loop forces a
 repaint of every node above a rect somebody below just painted — the
 forcing is a `Set` between evaluations, never inside one, so the
 evaluation-only-reads discipline holds. The same pass makes overlapping
@@ -1055,15 +1062,39 @@ Mouse events route the same way keys do — one target, then its
 ancestors — but the target comes from hit-testing instead of focus.
 `FocusManager.HitTest` returns the deepest component whose arranged
 `Bounds()` contain the cell, children before ancestors and later
-siblings before earlier ones (they paint on top); `Collapsed` subtrees,
-zero-size components, and `HitTestTransparent` components are not hit.
+siblings before earlier ones; `Collapsed` subtrees, zero-size
+components, and `HitTestTransparent` components are not hit.
+
+That sibling preference used to be justified as "they paint on top",
+and that reason is gone: paint order is the ordinary tree plus a
+RANKED overlay layer (`gooey.OverlayRanker` — popup 0, toast 10,
+adornment 20, equal ranks keeping document order), and this walk knows
+about neither half. **The two planes can now
+disagree, and the disagreement is silent.** A ranked overlay host
+declared FIRST paints its toasts above a button and leaves the click to
+the button, because the button is the later sibling.
+`TestARankOrdersPaintAndNotHitTesting` (root package) is what keeps
+that from drifting; it fails if hit-testing ever becomes rank-aware, so
+the caveat and the code cannot part company quietly. Closing the gap —
+by marking `Toast` transparent, or by making this walk layer-aware — is
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+
 The transparency marker is what lets a page-spanning overlay host exist
-at all: a `ToastHost` or an `AdornmentLayer` sits above everything as
-the root's last child, which makes it the *first* thing hit-testing
-finds — an invisible layer that would eat every click and starve every
-hover beneath it. Transparency is about the component's own surface,
-not its subtree, so the toasts and adornments inside stay hittable. The
-walk allocates nothing, because it runs on every motion report.
+at all: a `ToastHost` or an `AdornmentLayer` spans the whole page, so
+the pointer meets it before anything it covers — an invisible layer
+that would eat every click and starve every hover beneath it. Declared
+last it is the *first* thing the walk finds, which is the worst case
+and no longer the required position (#437 lifted overlays, #439 ranked
+them). Transparency is about the component's own surface, not its
+subtree, so the toasts and adornments inside stay hittable — which is
+exactly why their own position still matters for clicks. The walk
+allocates nothing **of its own**, because it runs on every motion
+report — but it is not allocation-free, and the difference is the whole
+of [#513](https://github.com/WonderForgeLabs/gooey/issues/513). It calls
+`ChildComponents` on every container it descends into, and `ToastHost`
+and `AdornmentLayer` each build a fresh slice per call. Both span the
+page, so bounds never prune them: the unqualified sentence was false
+exactly while a toast is up or a tip is showing.
 
 `DispatchMouse` runs three framework behaviors before the app sees
 anything:
@@ -1142,11 +1173,22 @@ had grown four hand-rolled copies. An *owner* component stays in the
 tree, keeps focus, and decides what the popup shows; the *surface* is a
 leaf child returned last from `ChildComponents`, and — since
 [#430](https://github.com/WonderForgeLabs/gooey/issues/430) — one that
-implements `gooey.Overlay`, whose pre-clear paints exactly the popup
-rectangle. Being last among the owner's children was the whole story
-until it turned out not to be one: it buys being above the owner's
-*other* children, and nothing else. Forcing runs forward only, so a
-component declared after the *owner* painted over an open popup with
+implements `gooey.Overlay`, which lifts it into the paint layer.
+Its opacity is a SEPARATE mechanism and worth keeping apart: `Overlay` is
+a marker with an empty method and clears nothing. The popup covers what is
+beneath it because BOTH paint paths pre-clear every *leaf* to the nearest
+ancestor's background — `Composer.build` on the retained path and
+`paintOne` on the one-shot one — and the surface is a leaf. Reading the
+occlusion as something the marker does is the mistake that let
+`gooey.Compose` ship lifting overlays without clearing behind them —
+position without occlusion, and a see-through popup on that path until
+[#438](https://github.com/WonderForgeLabs/gooey/issues/438), which is
+why naming only the Composer here would re-encode the reading this
+paragraph exists to correct. Being last among the owner's children was
+the whole story until it turned out not to be one: it buys being above
+the owner's *other* children, and nothing else. Forcing runs forward
+only, so a component declared after the *owner* painted over an open
+popup with
 nothing able to put it back — reported as a menu that vanished on a
 design canvas, where a `MenuBar` sits among a `Gauge`, an `ItemsView`
 and a `Border`. The `Overlay` marker is what actually puts the surface

@@ -215,7 +215,13 @@ func (ed *editor) probeUncached(g *components.Grid) [][]gooey.Rect {
 	}
 	scratch := &components.Text{}
 	g.Children = append(g.Children, scratch)
-	defer func() { g.Children = g.Children[:len(g.Children)-1] }()
+	// The pop leaves the scratch Text in the vacated slot of a LIVE
+	// Grid's children, where it outlives the measurement it was made
+	// for. Raised in review of #456.
+	defer func() {
+		g.Children = g.Children[:len(g.Children)-1]
+		clear(g.Children[len(g.Children):cap(g.Children)])
+	}()
 	return ed.cellsThrough(g, scratch)
 }
 
@@ -377,6 +383,20 @@ func (ed *editor) removeTrack() {
 		return
 	}
 	at := ed.cursor.index
+	// NOT THE `retains nothing:` ESCAPE, because specs is a LOCAL and
+	// the guard skips those before it reads an escape at all — a marker
+	// here would be decoration today and pre-armed for the day specs
+	// becomes a field, arriving already-exempt. The prose is the part
+	// worth keeping. specs is not reused: cursorTracks hands every verb
+	// a fresh `append([]string(nil), …)` copy, and writeTracks only reads
+	// it — preview.FormatTracks turns it into one attribute string — so
+	// the whole slice, vacated slot included, is unreachable when this
+	// function returns. A clear here released nothing; it was one, and it
+	// justified itself by the ELEMENT type ("a string is not safe to
+	// keep"), which is the guard's question rather than this escape's.
+	// The escape's question is whether anything reads the slice again.
+	// Raised in review of #456, where the reset matcher learned to read
+	// the splice, and again in review of the answer.
 	specs = append(specs[:at], specs[at+1:]...)
 	ed.writeTracks(n, ed.cursor.axis, specs)
 	if at >= len(specs) {

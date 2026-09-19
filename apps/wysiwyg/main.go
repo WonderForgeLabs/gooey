@@ -721,6 +721,19 @@ func nodeOf(src string) (*node, error) {
 				return nil, fmt.Errorf("seed has an unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
+			// stack is a LOCAL parse stack whose last reference dies
+			// with this function. The high-water mark it leaves behind
+			// is freed with the slice itself at return, so there is
+			// nothing for a clear to release — unlike the reused FIELDS
+			// this guard is about.
+			//
+			// NOT SPELLED AS THE `retains nothing:` ESCAPE: the guard
+			// skips a local before it reads an escape, so the marker
+			// was inert here — measured in review of #456, where
+			// replacing its text left the guard green. An inert marker
+			// with semantics is worse than none, because it arrives
+			// already-exempt the day the slice becomes a field.
+			// Raised in review of #456.
 			stack = stack[:len(stack)-1]
 			// The SAME body rule the loader applies, called through the
 			// package that owns it rather than restated here. A seed's
@@ -1796,6 +1809,9 @@ func (ed *editor) loadPalette() {
 	// not fail, it just started offering a <Menu> that produces markup
 	// refusing to load. The catalog answers this now — see
 	// markup.ElementSpec.Nested — so the second one costs nothing here.
+	// An ElementSpec holds maps and strings, so the tail keeps a whole
+	// catalog's worth of them alive past len. See clearToCap in the
+	// gooey package. Raised in review of #456.
 	ed.palette = ed.palette[:0]
 	ed.pseudo = map[string]bool{}
 	ed.specs = map[string]markup.ElementSpec{}
@@ -1820,6 +1836,9 @@ func (ed *editor) loadPalette() {
 		}
 		ed.palette = append(ed.palette, e)
 	}
+	// AFTER THE REFILL, which costs cap - len rather than cap and never
+	// leaves a live slot holding nil. Corrected in review of #456.
+	clear(ed.palette[len(ed.palette):cap(ed.palette)])
 
 	// THE LOAD-TIME GATE for every icon the palette will draw, in BOTH
 	// tints the theme switches between.
@@ -2431,6 +2450,11 @@ func (ed *editor) addSelected() {
 	if ed.remote == nil && ed.docRoot == nil {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		into.Kids = into.Kids[:len(into.Kids)-1]
+		// THE POP RETAINS, exactly as the delete-splice did: len drops
+		// and the refused subtree stays in the vacated slot, reachable
+		// from a live parent, with nothing that re-inserts it. Raised in
+		// review of #456.
+		clear(into.Kids[len(into.Kids):cap(into.Kids)])
 		ed.sel = prev
 		// BEFORE the rebuild: the refused mutation must not stay on the
 		// undo stack, or one ctrl+z re-enters the docRoot==nil state this

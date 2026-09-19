@@ -3,6 +3,11 @@
 Status: implemented
 Date: 2026-08-30
 Issue: [#430](https://github.com/WonderForgeLabs/gooey/issues/430)
+**Superseded in part by:** `docs/specs/2026-09-05-overlay-ranks.md`
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) — ordering
+*within* the layer is now RANKED, not document order. Everything else
+below still holds. `component.go`'s `Overlay` doc points readers here
+for the hit-testing gap, which is why the pointer has to run both ways.
 
 ## The problem
 
@@ -94,6 +99,14 @@ in the order they were declared rather than the order they were opened. Nothing
 in the tree needs the other answer yet, and the machinery — an open-order stack
 the Composer maintains — is worth writing when something does.
 
+> **Superseded by [#439](https://github.com/WonderForgeLabs/gooey/issues/439).**
+> Ordering within the layer is now by RANK (`gooey.OverlayRanker`); equal ranks
+> keep document order, so the paragraph above is what happens *within one rank*.
+> It stopped being tenable as soon as more than one KIND of overlay existed —
+> whether a toast covered an open menu depended on which an app typed last. See
+> `docs/specs/2026-09-05-overlay-ranks.md`. Two overlapping popups are still
+> declaration-ordered, because they are equal-ranked.
+
 Hit-testing is untouched, and that is a gap rather than a non-event. A popup
 takes held pointer capture while open (`Popup.Open`), which routes presses to it
 regardless of where it sits in any order — so nothing about input needed to
@@ -110,6 +123,11 @@ The interface's own doc comment says so, and `HitTest`'s comment no longer
 claims "later siblings paint on top" as its reason. Closing it properly means
 teaching the hit-test walk the same two layers — worth doing when a
 non-capturing overlay actually exists. Named in review of #437.
+
+`gooey.TestARankOrdersPaintAndNotHitTesting` holds the divergence open, and
+citing it here is what puts this page on the list that test's failure message
+prints — so whoever closes the gap is sent here rather than leaving this
+paragraph asserting a divergence that is gone. Added in review of #456.
 
 ## Damage
 

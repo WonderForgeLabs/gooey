@@ -9,7 +9,8 @@ import (
 )
 
 // A page shaped like an app that hosts free adornments: h rows of filler
-// under a layer declared LAST (document order is z-order). Every filler
+// under a layer declared LAST — by convention now, not because document
+// order decides it: AdornmentLayer is an Overlay and is lifted. Every filler
 // is a Text — no HoverState anywhere — so the damage counts below are
 // the ghost's alone and not some host's hover repaint, the same reason
 // tipPage uses a Text host.

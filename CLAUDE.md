@@ -328,14 +328,14 @@ not a shortcut.
 Inside an evaluating node — a paint node's `Render`, a validator, a style
 computed — `Get` subscribes. Anywhere else — `Measure`/`Arrange`, an event
 handler, a Composer sweep — the identical call is a plain read. Layout runs
-deliberately outside any evaluation context (`composer.go:839`, in
+deliberately outside any evaluation context (`composer.go:1093`, in
 `Composer.Frame`), which is why `MeasureChild` can sync `Layout.Visibility`
 from a bound source without creating a dependency; the Composer arms a
-separate observer for that (`Composer.armVisibility`, `composer.go:551`).
+separate observer for that (`Composer.armVisibility`, `composer.go:805`).
 
 **Every component's `Render` is its own paint node.** `Composer.build`
-(`composer.go:423`) wraps each `Render` in a `prop.NewComputed`
-(`composer.go:454`), so reading a property while painting *is* the damage
+(`composer.go:677`) wraps each `Render` in a `prop.NewComputed`
+(`composer.go:708`), so reading a property while painting *is* the damage
 declaration — there is no `AffectsRender` and no `InvalidateVisual`. A
 change repaints exactly the components that read it.
 
@@ -369,7 +369,7 @@ were eleven sites of one missing idea — the framework has no single
 record is `docs/specs/2026-08-23-layout-cycle-bounds.md`.
 
 Pre-clearing is the subtle half, and it is no longer a two-case rule
-(`composer.go:442-479`; the design record is the container-backgrounds and
+(`composer.go:711-748`; the design record is the container-backgrounds and
 z-order epic [#26](https://github.com/WonderForgeLabs/gooey/issues/26),
 landed in [PR #88](https://github.com/WonderForgeLabs/gooey/pull/88)):
 
@@ -404,6 +404,83 @@ four unbounded `ChildComponents` walks outside this package
 ([#375](https://github.com/WonderForgeLabs/gooey/issues/375)) do not know
 about layers and never needed to — none of them paints.
 
+**Inside that second layer the order is a RANK, not the document**
+([#439](https://github.com/WonderForgeLabs/gooey/issues/439);
+`docs/specs/2026-09-05-overlay-ranks.md`). `gooey.OverlayRanker` is an
+optional companion to the marker — `OverlayRankPopup` 0,
+`OverlayRankToast` 10, `OverlayRankAdornment` 20, spaced so an app can sit
+between two — and `appendByRank` (`composer.go:481`, a package-level
+function, not a method) buckets by it, so equal ranks
+keep document order and nothing else does. An `Overlay` that does not
+implement it is rank 0, and `overlayRank` **clamps**: a negative rank
+reads as the floor, because every doc that named the constant called it
+"the floor" while the comparison was a plain `int` — `overlayRank`'s own
+comment COUNTS them by category (three doc comments, a spec heading, a
+test message) rather than listing them; derive the sites with a grep for
+`floor` rather than expecting a list to be there. Two things make this
+breakable in silence. The rank belongs to the **lifted subtree's root**,
+not to each node, so `overlayOf` (`component.go:281`) answers the parent's
+`parentOverlay` BEFORE testing the marker — reverse those two `if`s and a
+rank-2 container's rank-0 child lands in an earlier bucket, the parent
+paints after it, and a parent that covers its bounds erases the child it
+lifted. And `OverlayRank()` must return a
+**constant**: it is sampled on structural re-sync, not per frame, so a
+rank that changes with state is read once and silently stale — that is
+also why it is a method and not a `Property`, which would need `Frozen`'s
+observer machinery to be honest.
+
+**There are TWO public paint paths and they share BOTH of those rules.**
+`gooey.Compose` — the one-shot path, which builds no App at all and is
+what `cmd/typeahead --dump` and `cmd/pixels` render through —
+lifts through `collectPaint` and orders through the same `appendByRank`
+bucket pass, and both consult one `overlayOf` for membership-and-rank, so
+a fixture asserted through `Compose` and one asserted through
+`Composer.Frame` agree about what is in front. Two implementations was
+the second copy the next change had to find.
+
+What they do NOT share is damage, and the difference is the reason
+`Compose` shipped a bug the retained path never had. `Compose` paints
+everything once, so it has no `covered` pass and no forcing — but it also
+had no equivalent of the LEAF PRE-CLEAR, which is what makes a popup
+opaque. It lifted overlays correctly and let the content beneath show
+through them: position without occlusion, until `collectPaint` was taught
+to carry the nearest ancestor's background down
+([#438](https://github.com/WonderForgeLabs/gooey/issues/438)). Sharing an
+ordering rule is not sharing a picture; if you add a paint path, the
+pre-clear is the half that will be forgotten.
+
+**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:142`;
+the reverse child walk is `mouse.go:158`) knows about neither layer nor
+rank, so the two planes can now disagree: a ranked host declared FIRST
+paints above a button and leaves the click to the button. Under the
+retired "declare it last" rule they agreed, which is why the divergence
+arrives with the ranks. `TestARankOrdersPaintAndNotHitTesting` fails if
+hit-testing ever becomes rank-aware, and its failure message names every
+page carrying the caveat — **this paragraph included** — so none of them
+can outlive the behaviour it describes. The list lives THERE and not
+here: this sentence held a four-file copy of it, missing the two learn
+pages and missing this file, so closing the gap would have reddened the
+test, sent whoever cleared it to six files, and left the invariant record
+asserting a divergence that was gone. `Popup` is
+exempt because it holds pointer capture while open, which routes presses
+before the walk runs — that is Popup's mechanism, not the marker's.
+Closing the gap is
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+
+**"Every page" is a claim the test now DERIVES, and a convention comes
+with it.** That list was a seven-file literal inside the failure message
+until review of #456 grepped for the caveat and found FOUR more pages
+carrying it — `component.go`'s own `Overlay` doc among them — so an
+absolute claim was being made off a hand-maintained list, which is the
+same shape as every count this file refuses to write down. The message
+now walks the tree and prints every page that NAMES the test, so a page
+joins the list by citing it. Cite it when you write the caveat somewhere
+new; a caveat without the citation is invisible to the walk, and that is
+the one gap left. `TestTheDivergenceListIsNotEmpty` guards the derivation
+itself, because an empty list turns the failure message into "delete the
+caveat from these pages:" followed by nothing — advice that reads as
+"nothing to do" at the moment there is most to do.
+
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
 *become* the child context, with them they are type-checked against the
@@ -421,7 +498,7 @@ on click. The `fs.FS` seam is what makes `os.DirFS` + watcher (dev) and
 interleaved on one wire and stay on one ordered stream — ONE channel,
 `evs` (`term/term.go:61`), fed by a single decoder — because two channels
 could reorder them. `FocusManager.Dispatch`
-(`input.go:757`) routes a key in phases, and it **tunnels before it
+(`input.go:787`) routes a key in phases, and it **tunnels before it
 bubbles**: every `PreviewKeyHandler` from the root *down* to the focused
 component is offered the event first, and the first that takes it ends
 dispatch. Then the bubble, focused → ancestors, **three steps per level**
@@ -431,8 +508,8 @@ middle step's position is load-bearing and silently breakable: swapping it
 past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
-arrow fall through to focus navigation (`FocusDir`, `input.go:885`).
-`DispatchMouse` (`mouse.go:209`) bubbles the same way from the
+arrow fall through to focus navigation (`FocusDir`, `input.go:915`).
+`DispatchMouse` (`mouse.go:234`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,
@@ -453,6 +530,86 @@ in the framework will catch a violation.
 `Screen.Restore` (`term/term.go:272`) restores modes, closes the tty, then
 **joins** the decoder while draining its channel, bounded by
 `term.DecoderTimeout`, with `Screen.DecoderLeaked` as the tripwire.
+
+**A REUSED SLICE WHOSE ELEMENTS HOLD REFERENCES IS CLEARED TO CAP, NOT
+TRUNCATED.** `x = x[:0]` moves `len` and leaves the backing array holding
+every element past it, so a list that shrinks — a container that loses a
+child, a computed whose dependency set narrows, a filter that drops an
+adornment — keeps the dropped components, property nodes or closures
+alive for as long as the owner is. **The removal idiom
+`x = append(x[:i], x[i+1:]...)` is the same rule**, and it is the one
+that hides: it reads as "remove", not as "truncate", and it leaves the
+old last element in the vacated slot. Three live sites spelled it that
+way — `ToastHost.Dismiss`, `AdornmentLayer.Remove`, and wysiwyg's
+`unlink` — with the guard reporting a clean tree over all three, until
+review of #456 taught the matcher to read it. Nothing reports it: the tree renders
+correctly, the tests pass, and the only symptom is a heap that does not
+come back down. Write `clearToCap(x)` in the root package, or
+`clear(x[len(x):cap(x)])` **after** the refill elsewhere (the after-the-
+refill form costs `cap - len` rather than `cap`, and never leaves a live
+slot holding nil for a walk that re-enters mid-`range`).
+
+The after-the-refill form needs the refill to be *reachable from the
+reset*, and that is not a formality — `ButtonBar` resets `b.cut` in
+`Measure` and appends to it in `Arrange`, so a clear at the end of
+`Arrange` is undone by the next `Measure`'s truncation
+(`components/buttonbar.go` carries the argument at the reset). Where the two are
+split like that, clear to cap at the reset and say why. The re-entrancy
+half of the rule only has a reader when the slice is one a container
+PUBLISHES — `ChildComponents()`'s return, or `FocusManager.Order()`'s —
+so those are the sites where the after-form is not merely cheaper.
+
+**The POP `x = x[:len(x)-1]` is the third spelling of the same rule**,
+and the paragraph here used to say the opposite. It claimed the
+compaction shapes appeared on no reused field in the tree, and at the
+commit that wrote it four did: two popped a refused markup subtree off a
+live parent's `Kids` in `apps/wysiwyg`, one popped a scratch component
+off a live `Grid`, and `prop.evalStack` popped a `*node` off a
+package-level stack on the hottest path the framework has.
+`apps/wysiwyg/undo.go` was the counter-evidence in the same tree — it
+zeroes the slot before the pop — so the claim was refuted by a file that
+had already got it right. Review of #456 found them.
+
+For a pop the clear is **one slot**, not the whole tail:
+`x[len(x)-1] = nil` before the pop releases exactly what left, and where
+the pop is hot (`prop/prop.go`) clearing to cap instead would be
+O(depth) per pop. The guard reads both spellings **and the order**: it
+records where the zeroing statement is and exempts the pop only when it
+precedes it. That sentence used to end "the guard reads both", meaning
+the two spellings, and a reader took the paragraph whole and concluded
+the placement was checked. It was not, and the shape that slipped
+through was not a near-miss — `x = x[:len(x)-1]` followed by
+`x[len(x)-1] = nil` nils a LIVE element, leaves the released one, and
+was certified as the fix for itself. Also enforced now: the pop's own
+subtrahend and the zeroed index must both be `1`, because the evidence
+is about the ONE slot that left `[0, len)`. Review of #456 measured all
+three.
+
+**"Before" and "after" there mean SOURCE ORDER, not execution order**,
+and the same is true of the after-the-refill requirement two paragraphs
+up. The guard compares positions in the file, so a clear below an early
+`return`, or inside a conditional past the reset, exempts the reset on
+paths where it never runs. Nothing in the tree is shaped that way —
+every reset and the clear or zeroing that covers it are straight-line in
+one block — and making it flow-sensitive is a reaching-definitions pass,
+a different instrument. It is written here because a reader who takes
+the two paragraphs above as execution claims would be over-crediting the
+guard, which is the failure mode this file's own history is about.
+
+`TestEveryReusedSliceThatHoldsAReferenceClearsToCap` is what enforces
+it — over all three spellings above, and not over a general compaction
+`x = x[:n]`. That last one is scope rather than a claim about the tree:
+widening to it collects two dozen LOCAL slices the field lookup cannot
+resolve, which says nothing about a reused field (`isPopOf` carries the
+argument, and fixture arms pin what the matcher can and cannot see). Where that test LIVES is the other half
+worth knowing: it walks every
+non-test Go file in the whole tree, **nested modules included**, from the
+ROOT module's suite. So a reset added in `packs/temporal-workflow` reddens
+`go test ./...` at the repo root while that module's own `go test ./...`
+stays green — the verify loop above will not show it to you, and the
+failure message says so at the point it fires. A `retains nothing:`
+comment above the reset is the documented escape, for elements that
+genuinely cannot hold a reference.
 
 **Heavy dependencies live in nested modules.** The rule is about what an
 SDK drags in, not about the count: a dependency that pulls a client library,
@@ -515,7 +672,7 @@ repo-restructure epic
 relocation and demo-suffix scrub landed in
 [PR #268](https://github.com/WonderForgeLabs/gooey/pull/268).
 
-**`prop.Set` does not compare values** (`prop/prop.go:117`). Setting a
+**`prop.Set` does not compare values** (`prop/prop.go:142`). Setting a
 property to what it already holds still invalidates every dependent and
 still costs a repaint. Guard at the call site if you need idempotence.
 
