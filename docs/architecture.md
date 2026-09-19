@@ -1476,13 +1476,22 @@ The mechanics that keep it inside the framework's constraints:
   namespace URI, which is how a declaration is told apart from a
   component without reserving the name `Property`. It is a SEPARATE
   mechanism from the flat xmlns table the handler-namespace work
-  introduced, and this line said they were one: `ctx.ns` is read by
-  `handlerCommand` and `valueHandle` and nowhere else, while
-  `parse` copies `Element.Space` straight from `encoding/xml`, which has
-  already applied real subtree scoping — and `splitDeclarations`
-  switches on it without consulting `ns` at all. That difference is the
-  whole reason a rebound prefix behaves one way for an expression and
-  another for an element; see `docs/markup-reference.md`.
+  introduced, and this line said they were one. The distinction is about
+  WHAT IS ASKED, not about how many readers there are: **nothing
+  resolves an element name through `ns`.** `parse` copies
+  `Element.Space` straight from `encoding/xml`, which has already
+  applied real subtree scoping, and `splitDeclarations` switches on it
+  without consulting `ns` at all. `ctx.ns` answers the other question —
+  which URI an ATTRIBUTE or expression prefix means — and this sentence
+  named its two readers as "and nowhere else" until review of
+  [#501](https://github.com/WonderForgeLabs/gooey/pull/501) grepped it
+  and found four, `itemsview.go`'s capture-for-a-deferred-row among
+  them. A reader who checks the count then has to decide whether
+  ItemsView is a third dispatch path, which is the question this
+  paragraph exists to settle. The property above does not go stale when
+  a fifth site captures the table. That difference is the whole reason a
+  rebound prefix behaves one way for an expression and another for an
+  element; see `docs/markup-reference.md`.
 - **Declaring anything makes the control strict**: an undeclared
   attribute at an instantiation site is a load error, so a typo is
   caught rather than silently doing nothing. No declarations keeps the

@@ -331,9 +331,21 @@ func (h *history) abort(root *node) {
 // are what must not separate; the envelope moves with the tree because
 // it is part of it.
 //
-// The entries are zeroed rather than dropped, the way pop and the bound
-// do it: a snapshot holds a whole cloned tree, and leaving one reachable
-// from the array's tail keeps it alive for as long as the slice is.
+// RESET RELEASES BY DROPPING THE HEADERS, and it is the one site here
+// that may. This function used to zero all three slices element by
+// element first, citing the rule pop and the bound follow — a snapshot
+// holds a whole cloned tree, so leaving one reachable from the array's
+// tail keeps it alive "for as long as the slice is". That premise is
+// exactly what does not hold here: the assignment below drops all three
+// headers in the same straight-line block, nothing outside h aliases
+// the arrays (h.cleared aliases the old h.redo array, and both fields
+// are nil'd), and h.base takes a struct copy. The loops were O(len) of
+// work that freed nothing, and a reader could have taken the most
+// explicit spelling of the clear-to-cap rule in this file as its worked
+// example. The rule bites where the slice SURVIVES — undoPop, redoPop
+// and bound, which keep theirs — and nothing red would have said so
+// either way, because the guard does not match `x = nil`. Raised in
+// review of #501.
 //
 // THE SELECTION IS PART OF THE BASELINE, and taking root alone was a
 // regression this function introduced. Every other site that establishes
@@ -349,15 +361,6 @@ func (h *history) abort(root *node) {
 // and ed.sel is nil. Raised in review of #501; pinned by
 // TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade.
 func (h *history) reset(root *node, sel []int, hasSel bool) {
-	for i := range h.undo {
-		h.undo[i] = snapshot{}
-	}
-	for i := range h.redo {
-		h.redo[i] = snapshot{}
-	}
-	for i := range h.cleared {
-		h.cleared[i] = snapshot{}
-	}
 	h.undo, h.redo, h.cleared, h.stashed = nil, nil, nil, false
 	h.base = snapshot{root: root.clone(), sel: sel, hasSel: hasSel}
 	h.pending = ""
