@@ -1049,6 +1049,13 @@ func parse(src []byte) (Element, map[string]string, error) {
 			stack = append(stack, &e)
 		case xml.EndElement:
 			e := stack[len(stack)-1]
+			// stack is a LOCAL parse stack whose last reference dies
+			// with this function, so the high-water mark is freed with
+			// the slice itself at return. Not spelled as the
+			// `retains nothing:` escape — the guard skips a local
+			// before it reads one, so the marker was inert here and
+			// pre-armed for the day the slice becomes a field. Raised
+			// in review of #456.
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
 				root = e

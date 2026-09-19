@@ -1,6 +1,9 @@
 package gooey
 
 import (
+	"go/ast"
+	goparser "go/parser"
+	gotoken "go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -968,4 +971,202 @@ func TestTheCitationGuardCatchesWhatItIsFor(t *testing.T) {
 				"can rot with nothing to notice", p)
 		}
 	})
+}
+
+// TestNoDocTeachesTheRetiredContainerTest is the check the `isContainer`
+// extraction shipped without, and the review of #456 found both sites it
+// was missing.
+//
+// The whole stated reason for naming the helper (`component.go`) is that
+// "naming it is what makes the two chains GREPPABLE as one rule". A grep
+// for `isContainer` landed on docs/architecture.md's quoted
+// `Composer.build` block showing the spelling that had just been
+// retired, and on docs/specs/2026-08-23-layout-grants.md telling an
+// implementer of a chrome-only container that the branch turns on
+// "exactly" the old form. A greppable rule whose top grep hit is the
+// retired spelling is not greppable.
+//
+// THE MECHANISM IS ASSERTED FIRST, so this cannot outlive its subject:
+// if composer.go stops calling the helper, the prose rule below is
+// guarding a claim that stopped being wrong and this test says so
+// instead of failing every doc.
+//
+// The ONE exemption is derived, not listed. A record whose own head says
+// it was never implemented is describing code that never shipped, and
+// rewriting its body would falsify the history it exists to keep —
+// docs/specs/2026-08-10-container-backgrounds.md is "deferred —
+// analyzed, not implemented" and its block also shows a `clearRect` that
+// no longer exists. Every other spec here is `executed` or
+// `implemented`, so the discriminator is a status and not a filename.
+func TestNoDocTeachesTheRetiredContainerTest(t *testing.T) {
+	src, err := os.ReadFile("composer.go")
+	if err != nil {
+		t.Fatalf("reading composer.go: %v", err)
+	}
+	if !strings.Contains(string(src), "if !isContainer(w) {") {
+		t.Skipf("composer.go no longer spells the pre-clear branch `if !isContainer(w)`, " +
+			"so the docs below are not being measured against anything. Re-derive " +
+			"this guard from the current spelling or delete it with the paragraphs " +
+			"it polices")
+	}
+
+	const retired = "isContainer := w.(Container)"
+	for _, f := range proseFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		if !strings.Contains(string(body), retired) {
+			continue
+		}
+		if recordsUnshippedCode(string(body)) {
+			continue
+		}
+		t.Errorf("%s shows `%s`, the spelling #456 retired. composer.go now reads "+
+			"`if !isContainer(w)`, and the helper exists so a grep for it finds one "+
+			"rule rather than two chains — which this page defeats by being the top "+
+			"hit. Update it, or, if the page is a record of code that never shipped, "+
+			"say so in its **Status:** head the way "+
+			"docs/specs/2026-08-10-container-backgrounds.md does", f, retired)
+	}
+}
+
+// TestNoDocTeachesTheRetiredSliceReset is its sibling, and it exists
+// because the sibling above did not catch the second retired spelling in
+// the SAME code block it polices.
+//
+// docs/architecture.md quotes Composer.build, and four lines below the
+// `if !isContainer(w) {` the guard above made it update, it went on
+// showing `n.places = n.places[:0]` — the reset clearToCap exists to
+// replace, presented as current source. Nothing saw it:
+// TestEveryReusedSliceInComposerClearsToCap reads composer.go only, and
+// the guard above keys on a different string. A rule this file already
+// states — "a greppable rule whose top grep hit is the retired spelling
+// is not greppable" — with one of its two spellings unguarded. Raised in
+// review of #456, the second time.
+//
+// The subject is `[:0]` on a COMPOSER slice, not on any slice anywhere:
+// `x = x[:0]` is ordinary Go and correct wherever retention does not
+// matter, so the names are the composer's own reused slices — READ OUT
+// OF composer.go, every left-hand side it passes to clearToCap.
+//
+// The comment here said they were read out of
+// TestTheComposerSlicesRetainNothingPastTheirOwnNodes and the code
+// wrote all seven inline. That assertion enumerates FOUR and
+// structurally cannot hold more: its table is typed []*paintNode, so
+// c.startable, n.places and c.frame.placements could never appear in
+// it. A maintainer adding an eighth reused slice would have read the
+// comment, concluded no list needed touching, and left a doc block
+// quoting its retired spelling unguarded — one PR after this file
+// argued that a greppable rule with one spelling unguarded is not
+// greppable. Raised in review of #456.
+//
+// Mechanism first, same as the sibling: if composer.go stops calling
+// clearToCap, the retirement is off and this guard says so rather than
+// failing every page.
+func TestNoDocTeachesTheRetiredSliceReset(t *testing.T) {
+	src, err := os.ReadFile("composer.go")
+	if err != nil {
+		t.Fatalf("reading composer.go: %v", err)
+	}
+	if !strings.Contains(string(src), "func clearToCap[") {
+		t.Skipf("composer.go no longer defines clearToCap, so the reset it retired " +
+			"is not retired any more. Re-derive this guard or delete it with the " +
+			"paragraphs it polices")
+	}
+
+	// The composer's reused slices, spelled as the retired reset would
+	// appear in a quoted block. Every name comes from composer.go
+	// itself: the left-hand side of each `x = clearToCap(x)`.
+	names := clearedInComposer(t, src)
+	// A FLOOR, because a derivation that finds nothing is a guard that
+	// checks nothing — and it would go quiet in exactly the case the
+	// skip above is written for, without the skip's explanation.
+	if len(names) < 4 {
+		t.Fatalf("composer.go yields %d clearToCap assignments (%v), which is fewer "+
+			"than it had when this guard was written — either the reuse was "+
+			"reworked, in which case re-derive this guard, or the scan has stopped "+
+			"matching the spelling", len(names), names)
+	}
+	var retired []string
+	for _, name := range names {
+		retired = append(retired, name+" = "+name+"[:0]")
+	}
+	for _, f := range proseFiles(t) {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		if recordsUnshippedCode(string(body)) {
+			continue
+		}
+		for _, r := range retired {
+			if !strings.Contains(string(body), r) {
+				continue
+			}
+			t.Errorf("%s shows `%s`, the reset #456 retired. That slice is reused "+
+				"across frames, so truncating to [:0] keeps every element past len "+
+				"alive — dead *paintNodes and decoded images — which is why "+
+				"composer.go calls clearToCap instead. A page presenting the old "+
+				"spelling as current source teaches the leak. Update it, or, if the "+
+				"page is a record of code that never shipped, say so in its "+
+				"**Status:** head", f, r)
+		}
+	}
+}
+
+// recordsUnshippedCode reports whether a document's HEAD declares that
+// what it describes was never built. Scoped to the head for the reason
+// every banner check here is: a status buried mid-document does not
+// reach a reader who lands on a section.
+func recordsUnshippedCode(body string) bool {
+	lines := strings.Split(body, "\n")
+	if len(lines) > 20 {
+		lines = lines[:20]
+	}
+	head := strings.ToLower(strings.Join(lines, " "))
+	if !strings.Contains(head, "**status:**") {
+		return false
+	}
+	return strings.Contains(head, "deferred") || strings.Contains(head, "not implemented")
+}
+
+// clearedInComposer is every left-hand side composer.go resets through
+// clearToCap, in source order and deduplicated — the list of slices
+// whose old `x = x[:0]` spelling a doc must not present as current.
+//
+// Over the AST rather than the text, for the reason its sibling guard
+// gives: `s = s[:0]` appears inside clearToCap's own doc comment
+// describing the shape it replaces, and a regexp over the file reports
+// the documentation.
+func clearedInComposer(t *testing.T, src []byte) []string {
+	t.Helper()
+	fset := gotoken.NewFileSet()
+	file, err := goparser.ParseFile(fset, "composer.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing composer.go: %v", err)
+	}
+	seen := map[string]bool{}
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		call, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "clearToCap" {
+			return true
+		}
+		name := string(src[fset.Position(as.Lhs[0].Pos()).Offset:fset.Position(as.Lhs[0].End()).Offset])
+		if seen[name] {
+			return true
+		}
+		seen[name] = true
+		out = append(out, name)
+		return true
+	})
+	return out
 }

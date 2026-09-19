@@ -57,10 +57,33 @@ func (h *HoverState) hover() *prop.Property[bool] {
 // component's own (often invisible) surface, not its subtree.
 //
 // The overlay hosts need this to exist at all: a ToastHost or an
-// AdornmentLayer spans the whole page as the root's last child, which
-// makes it the FIRST thing hit-testing finds — an invisible layer that
-// ate every click and starved every hover beneath it. Non-interactive
-// adornments (a tooltip's popup) are transparent for the same reason.
+// AdornmentLayer spans the whole page, so wherever it is declared the
+// hit-test walk below meets it before anything it covers — an invisible
+// layer that
+// ate every click and starved every hover beneath it. Declared LAST it
+// is the FIRST thing this walk finds, which is the worst case rather
+// than the required one: #437 and #439 made a host's position free for
+// paint (the lift, then the rank), and it was never required for
+// hit-testing. Non-interactive adornments (a tooltip's popup) are
+// transparent for the same reason.
+//
+// What position still decides is WHICH hittable component wins, because
+// this walk knows nothing about the overlay layer or its ranks: it takes
+// later siblings before earlier ones, full stop. So a ranked host
+// declared FIRST paints its toasts above a button and leaves the click
+// to the button. TestARankOrdersPaintAndNotHitTesting pins that
+// divergence, components/toast.go carries the author-facing caveat, and
+// #465 is where making this walk layer-aware is weighed — it runs on
+// every motion report and allocates nothing OF ITS OWN, which is the
+// cost that has to survive. Not nothing: it calls ChildComponents on
+// every container it descends into, and ToastHost and AdornmentLayer
+// each build a fresh slice per call, so a live toast or tip costs one
+// allocation per motion report
+// (https://github.com/WonderForgeLabs/gooey/issues/513). Both hosts
+// span the page, so the bounds check never prunes them — the claim is
+// false exactly while the hosts are doing the thing they exist for,
+// which is why the unqualified spelling had to go. Raised in review of
+// #456.
 type HitTestTransparent interface{ HitTestTransparent() bool }
 
 // PointerFollower is implemented by a component whose arranged position
@@ -94,8 +117,10 @@ type PointerFollower interface{ FollowsPointer() bool }
 // HitTest returns the deepest component whose arranged bounds contain the
 // cell, children before ancestors and later siblings before earlier ones.
 // Collapsed subtrees, zero-size components, and HitTestTransparent
-// components are not hit. The walk allocates nothing — it runs on every
-// motion event.
+// components are not hit. The walk allocates nothing OF ITS OWN — it
+// runs on every motion event. It does allocate whatever ChildComponents
+// allocates, and two shipped hosts build a fresh slice per call
+// (https://github.com/WonderForgeLabs/gooey/issues/513).
 //
 // THIS IS DOCUMENT ORDER, AND SINCE #437 IT IS NO LONGER PAINT ORDER.
 // The reason given here used to be "they paint on top", which an Overlay

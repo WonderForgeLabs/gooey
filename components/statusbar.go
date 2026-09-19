@@ -38,6 +38,14 @@ func StatusText(content *prop.Property[string]) *Text {
 	return &Text{Content: content, Style: Sty(render.Style{Dim: true})}
 }
 
+// ChildComponents is the bar's three sections, nil ones dropped.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT CALL, the same claim
+// FocusManager.Order and AdornmentLayer.Adornments carry and for the
+// same reason: this refills s.kids in place and then clears what the
+// refill did not reach, so a stashed return keeps its OLD length and
+// everything past the new one reads nil. Copy what you need, or call
+// again after the change. Raised in review of #456.
 func (s *StatusBar) ChildComponents() []gooey.Component {
 	s.kids = s.kids[:0]
 	for _, c := range []gooey.Component{s.Left, s.Center, s.Right} {
@@ -45,6 +53,26 @@ func (s *StatusBar) ChildComponents() []gooey.Component {
 			s.kids = append(s.kids, c)
 		}
 	}
+	// Cleared to cap, not truncated: a StatusBar that loses its Right
+	// keeps it reachable in the tail otherwise. See clearToCap in the
+	// root package. Raised in review of #456.
+	//
+	// AFTER THE REFILL, which is the same idiom AdornmentLayer.Arrange
+	// uses one file over (components/adorn.go) and is strictly the
+	// better one. Clearing FIRST — which this did — releases the same
+	// tail, but it costs cap on every call rather than cap minus len
+	// (zero in the steady state), and it leaves a window in which a
+	// live slot holds nil. The framework re-enters ChildComponents on a
+	// container while another walk is mid-range over the same backing
+	// array — hitTest, findAdornmentLayer, AdornmentLayer.Arrange's
+	// reachability walks all start at the ROOT while an ancestor is
+	// iterating its own children — so a shortening rebuild would hand
+	// the outer loop a nil where it used to hand a stale-but-live
+	// component, and ArrangeChild(nil, …) is a panic rather than a
+	// wrong pixel. Nothing shortens today (Left/Center/Right are stable
+	// within a frame), which is the reason to take the free version
+	// rather than to write the hazard down. Raised in review of #456.
+	clear(s.kids[len(s.kids):cap(s.kids)])
 	return s.kids
 }
 

@@ -35,8 +35,11 @@ the *why* — this page is the *how*.
 
 The four lines of wiring:
 
-1. return `pop.Surface()` **last** from `ChildComponents` — document
-   order is z-order, so the last child paints on top;
+1. return `pop.Surface()` **last** from `ChildComponents` — the surface
+   implements `gooey.Overlay`, so `Composer.orderPaint` lifts it out of
+   document order into the ranked overlay layer, and being last only
+   decides the order among overlays of equal rank. Declaring it last
+   costs nothing and keeps the walk reading in the order it paints;
 2. forward `SetFocusManager` (the `gooey.FocusHost` call) to the popup;
 3. call `pop.ArrangeSurface(show, rect)` from your `Arrange`;
 4. end your key and mouse handlers with `pop.HandleKey` /

@@ -78,7 +78,9 @@ func (o *toyOwner) HandleMouse(ev input.MouseEvent) bool {
 }
 
 // toyPage: content under where the popup drops, two buttons elsewhere,
-// the owner declared LAST (document order is z-order).
+// the owner declared LAST — which is the arrangement Popup's doc used to
+// justify with "document order is z-order", and which popupzorder_test.go
+// exists to say is not what keeps the surface on top.
 func toyPage() (*toyOwner, *Button, *Button, gooey.Component) {
 	owner := &toyOwner{}
 	under := gooey.L(&Text{Content: Str(strings.Repeat("#", 20))}, gooey.Layout{Top: 1})

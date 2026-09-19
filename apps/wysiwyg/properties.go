@@ -205,10 +205,19 @@ func newValueEditor(ed *editor, list *components.ItemsView, text *components.Tex
 	}
 	p.cp = &components.ColorPicker{Value: p.col}
 	p.pop = components.NewPopup(p, p.draw)
-	// Document order is z-order, and the list has to be underneath
-	// everything. The surface is LAST of the three overlays only because
-	// the three are never open at once; the ordering that matters is
-	// list first.
+	// The list has to be underneath everything, and it is — it is not an
+	// overlay, and every overlay is lifted above it whatever the order
+	// here. The popup surface being last is arbitrary: the surface lifts
+	// wherever it sits. This reasoned from "document order is z-order"
+	// until review of #456; the conclusion survived the rule being
+	// retired, the premise did not.
+	//
+	// ONLY THE SURFACE LIFTS. components.ColorPicker is a plain leaf —
+	// Base, FocusState, HoverState, no ChildComponents, no OverlaysPage
+	// — so its position among p.kids IS ordinary document order and does
+	// decide what it paints over relative to list and text. The first
+	// version of this correction said cp lifts too, which is the same
+	// class of false z-order claim the sweep exists to delete.
 	p.kids = []gooey.Component{list, text, p.cp, p.pop.Surface()}
 	ed.props = p
 	return p

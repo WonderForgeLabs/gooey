@@ -524,8 +524,20 @@ func (s *addrStrip) popup() *components.Popup {
 	return s.pop
 }
 
+// ChildComponents is the notice, the service chips and the menu surface.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT CALL, the same claim
+// FocusManager.Order and AdornmentLayer.Adornments carry: this refills
+// s.kids in place and then clears what the refill did not reach, so a
+// stashed return keeps its OLD length and everything past the new one
+// reads nil. Copy what you need, or call again after the change. Raised
+// in review of #456.
 func (s *addrStrip) ChildComponents() []gooey.Component {
 	p := s.popup()
+	// Cleared to cap, not truncated: the tail holds components from the
+	// last call. See clearToCap in the gooey package, and
+	// StatusBar.ChildComponents for why the clear goes AFTER the refill
+	// rather than before it. Raised in review of #456.
 	s.kids = s.kids[:0]
 	// The notice first, which is document order and therefore the order
 	// the row reads: clipboard feedback at the far end, then the
@@ -543,6 +555,7 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	// decides what paints over
 	// whatever it covers.
 	s.kids = append(s.kids, p.Surface())
+	clear(s.kids[len(s.kids):cap(s.kids)])
 	return s.kids
 }
 
