@@ -462,9 +462,19 @@ func drainBudget(n int64, every time.Duration) time.Duration {
 // budget, because both were unexercised by anything that runs.
 //
 // The watcher callers pass w.Interval, so which row they take is the
-// watcher's own declaration: an Interval under the 50ms floor takes the
-// floor, one above it scales, and a watcher declaring no Interval takes
-// the zero row through Start's own default. All three are live paths.
+// watcher's own declaration — and TWO OF THE THREE ROWS ARE REACHED
+// ONLY FROM HERE. Measured against this file rather than asserted:
+// every watcher caller (:837, :850, :949) passes an Interval of
+// time.Millisecond, under the 50ms floor, so they all take the floor
+// row; the zero row's one caller is the NO-WATCHER fixture at :610,
+// which passes a literal 0 rather than leaving an Interval unset; and
+// nothing at all reaches `every > per`.
+//
+// That dead above-floor branch is what an earlier round found, and this
+// table is the answer to it. The sentence here used to claim "all three
+// are live paths", which read as caller coverage this table is the
+// substitute for — the unpinned claim stated as fact that the last
+// several rounds have been spent removing.
 //
 // Written as a table rather than as a converted caller because what is
 // under test is arithmetic, and a converted caller would pay two seconds
@@ -587,11 +597,7 @@ func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n in
 // on this value is one-sided. Here the fixture was built so the
 // ordering is forced rather than likely, which makes the honest value
 // deterministically 1: the exact number is knowable, so `>` costs
-// coverage instead of buying robustness. Measured in review of #511:
-// with `>`, mutating drainUntilPosts to `return 0` leaves this file
-// green at -count=3; with `!=` it reports "drainUntilPosts reported 0
-// posts and only 1 closures posted after its baseline ran". Run at
-// -count=200 with `!=`: green, no flake.
+// coverage instead of buying robustness.
 func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	d := gooey.NewDispatcher()
 	c := &countingPost{post: d.Post}
@@ -617,10 +623,20 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 	// got=1 against 1 passes, dishonest got=2 against 1 fails.
 	ranAfterBase := ran - 1
 	if got != int64(ranAfterBase) {
-		t.Errorf("drainUntilPosts reported %d posts and only %d closures posted "+
-			"after its baseline ran; a t.Fatalf quoting that number would claim "+
-			"scans the watcher has not made, which is the overclaim the return "+
-			"value exists to remove", got, ranAfterBase)
+		// BRANCHED ON THE DIRECTION, because the assertion is
+		// two-sided and the two sides break differently. The message
+		// told only the over-report story while `!=` also catches the
+		// degenerate return — and a reader handed "reported 0 and only
+		// 1 ran, which is the overclaim" goes looking for a count that
+		// ran ahead of the queue, when the value never moved at all.
+		why := "which is the overclaim the return value exists to remove"
+		if got < int64(ranAfterBase) {
+			why = "so the value is degenerate and every diagnostic fed " +
+				"from it quotes a number the watcher did not produce"
+		}
+		t.Errorf("drainUntilPosts reported %d posts against %d closures posted "+
+			"after its baseline ran; a t.Fatalf quoting that number would "+
+			"misdescribe what the watcher did, %s", got, ranAfterBase, why)
 	}
 }
 
