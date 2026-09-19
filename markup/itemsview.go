@@ -1,6 +1,7 @@
 package markup
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,11 @@ import (
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/prop"
 )
+
+// errTemplateTooDeep is the depth refusal's identity, so the enclosing
+// templates it passes through can tell it from an ordinary row failure
+// and leave it alone. See MaxTemplateDepth.
+var errTemplateTooDeep = errors.New("markup: <ItemsView.ItemTemplate>: nested item templates too deep")
 
 // buildItemsView is the markup side of DataTemplates, and the one place
 // where a template becomes a factory:
@@ -108,7 +114,37 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// the reply depend on what a caller left on the page's Context.
 	// Raised in review of #459.
 	pagePending := ctx.arms.pending
+	// AND THE DOCUMENT'S FS, captured here for the same reason as ns,
+	// res and pagePending above — read inside the factory it is nil for
+	// every row that matters.
+	//
+	// Load installs ctx.fsys and RESTORES IT IN A DEFER, so the only
+	// factory call that sees it is ItemsView.Validate's
+	// load-time throwaway probe row; the composer realizes every real row
+	// after Load returned. Measured with a probe builder recording
+	// c.fsys != nil per realization, with `fsys: ctx.fsys` read inside
+	// the closure:
+	//
+	//	after Load:            [true]
+	//	after composing rows:  [true false false false]
+	//
+	// So the first round of this fix repaired the one realization nobody
+	// scrolls and left <Image Src="logo.png"> failing on every row a user
+	// sees. Raised in review of #490, against the previous round's own
+	// answer — and the test that was supposed to pin it could not, for
+	// exactly the same reason: it asserted only that Load succeeded, and
+	// the <Image> it exercised was built by the probe row.
+	docFS := ctx.fsys
 	factory := func(values map[string]any) (gooey.Component, error) {
+		// THE ROW SEAM IS COUNTED, not judged by identity. See
+		// MaxTemplateDepth for why a recursive template is a legitimate
+		// shape and the control cycle check is the wrong instrument for
+		// it. Refused HERE rather than inside the row build so the
+		// message names the seam the author has to look at.
+		if ctx.rowDepth >= MaxTemplateDepth {
+			return nil, fmt.Errorf("%w: reached %d levels — a template that instantiates its own control terminates only when the item source does, and this one has not. Check that the projection stops supplying children at the leaves",
+				errTemplateTooDeep, MaxTemplateDepth)
+		}
 		rowPending := &deferredArms{open: true}
 		item := &Context{
 			Values:     values,
@@ -118,6 +154,69 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			Includes:   ctx.Includes,
 			Dispatcher: ctx.Dispatcher,
 			Named:      map[string]gooey.Component{},
+			// A ROW IS NOT A BOUNDARY, and this literal used to behave
+			// like one. It copied ten fields and dropped six, so a row
+			// was a control boundary nobody had declared — with a
+			// different partition from the one control() enforces and no
+			// statement of it anywhere.
+			//
+			// The six below are the drop, and two of them cost more than
+			// a missing convenience:
+			//
+			// Elements is the DECLARED element vocabulary. Without it
+			// <Meter Level="{{.N}}"/> inside an <ItemsView.ItemTemplate>
+			// failed with "unknown element <Meter>" while the same Meter
+			// registered under the undeclared Components spelling worked
+			// — the incentive backwards, which is the whole defect #314
+			// is about, reproduced one seam over from the one it fixed.
+			//
+			// controls is the load-time cycle ancestry, and dropping it
+			// RESET it. A control whose template instantiates the same
+			// control, fed an item source that supplies itself, reached
+			// indexOf(parent.controls, name) with an empty slice and
+			// recursed until `fatal error: stack overflow` — which is
+			// exactly the #216 crash that check exists to turn into a
+			// load error, and a fatal skips Screen.Restore.
+			//
+			// Rules, Dir and Variant are the same class with smaller
+			// symptoms: a validation rule, a resource directory and a
+			// theme variant, all resolvable on the page and silently
+			// absent in a row of it.
+			//
+			// WHAT STAYS ROW-SCOPED, each because a reason says so and
+			// not because nobody looked — rowPartition in
+			// boundaryfields_test.go is the derived form of this list and
+			// fails on a field Context grows:
+			//
+			//   - Named. A row's names are its own; uniqueness is per
+			//     document and a scrolling list would collide with
+			//     itself.
+			//   - arms. Constructed member by member below, four members
+			//     diverging for four different reasons.
+			//   - declared. The dependency properties of the control
+			//     being instantiated, installed for the duration of ONE
+			//     runSetup call. A row is not that call, and runSetup's
+			//     save/restore exists precisely so a nested instantiation
+			//     cannot see the wrong declarations.
+			//   - Declared. This one was propagated in the previous round
+			//     and is TAKEN BACK: a row realization is not a control
+			//     instantiation, and nothing retires a row, so sharing
+			//     the page registry retained one entry and one dead row
+			//     subtree per row ever shown. The full statement is on
+			//     Context.Declared in markup.go, and the gap it leaves —
+			//     a control in a template has no declared surface in the
+			//     MCP snapshot — is issue #512. It is the exact retention
+			//     the arms.sinks comment below reasons through and
+			//     rejects, and it was added above it without the same
+			//     pass. With the field absent, control() lazily gives
+			//     each row its own map, as it did before either round.
+			//
+			// Raised in review of #490, twice — the second time against
+			// the first time's answer.
+			Elements: ctx.Elements,
+			Rules:    ctx.Rules,
+			Dir:      ctx.Dir,
+			Variant:  ctx.Variant,
 			// THE ROW'S ARM SCOPE, CONSTRUCTED rather than inherited,
 			// and this is the only place in the package that does not
 			// simply copy the parent's. Every member diverges from what
@@ -218,6 +317,27 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 			},
 			ns:  ns,
 			res: res,
+			// RESET, and bounded by rowDepth instead. The previous round
+			// inherited the ancestry here so the cycle check could see
+			// across a row, which fixed a self-supplying source that
+			// overflowed the stack and made a terminating tree-view
+			// template a load error — the shape is legitimate and
+			// identity cannot tell it from the shape that is not. See
+			// MaxTemplateDepth, and the refusal at the top of this
+			// factory. Raised in review of #490.
+			controls: nil,
+			rowDepth: ctx.rowDepth + 1,
+			// THE DOCUMENT'S FS, because a row's markup came from the
+			// same document the <ItemsView> did. fsys is what
+			// Context.assets resolves a literal path against, and with it
+			// nil the fallback is Includes — so <Image Src="logo.png">
+			// inside a template failed with "no file system to load from
+			// — this tree was built from bytes; use markup.Load", advice
+			// the author had already taken, while the identical element
+			// one line outside the template worked. <MenuItem Icon> and
+			// <FileWatcher Paths> read the same seam. Raised in review of
+			// #490.
+			fsys: docFS,
 		}
 		w, err := build(row, item)
 		if err != nil {
@@ -289,6 +409,17 @@ func buildItemsView(e Element, ctx *Context) (gooey.Component, error) {
 	// An empty collection has nothing to check against; those errors
 	// surface at first realization and are painted into the view.
 	if err := v.Validate(); err != nil {
+		// ALREADY ATTRIBUTED, and unwrapped once rather than sixty-four
+		// times. The depth refusal is raised at the INNERMOST seam and
+		// passes back out through every enclosing template, so wrapping
+		// it here put "markup: <ItemsView.ItemTemplate>: " in front of
+		// it once per level — a message whose first usable word is 2KB
+		// in. attributedErr does the same job for the control path,
+		// which is why "control node.gooey" appears once. Raised in
+		// review of #490.
+		if errors.Is(err, errTemplateTooDeep) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("markup: <ItemsView.ItemTemplate>: %w", err)
 	}
 	return v, nil
