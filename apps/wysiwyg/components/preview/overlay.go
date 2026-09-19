@@ -427,7 +427,7 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 			if g.Cursor.Axis == AxisCol && g.Cursor.Index == c {
 				st = o.cursorStyle
 			}
-			o.drawText(f, q.X+1, q.Y, fit(spec, q.W-1), st)
+			o.drawText(f, q.X+1, q.Y, fit(spec, q.W-1), st, q.W-1)
 		}
 	}
 	// Row specs on the grid's first column, one row BELOW each track's
@@ -448,7 +448,7 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 		if g.Cursor.Axis == AxisRow && g.Cursor.Index == r {
 			st = o.cursorStyle
 		}
-		o.drawText(f, q.X, q.Y+1, fit(spec, q.W), st)
+		o.drawText(f, q.X, q.Y+1, fit(spec, q.W), st, q.W)
 	}
 }
 
@@ -485,10 +485,28 @@ func fit(s string, w int) string {
 // buffer believing one column where the terminal draws two, and the next
 // rune landed on a cell the previous one already covered. CLAUDE.md
 // names this pair. Raised in review of #524.
-func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style) {
+//
+// IT TAKES THE BUDGET fit APPROVED, because the two disagree about a
+// zero-width cluster and `max(w, 1)` is the right advance. fit budgets
+// with render.StringWidth, which charges a standalone combining mark, a
+// tab or a NUL zero columns; this walk charges each of them one,
+// because advancing 0 would leave the next cluster landing on a cell
+// setCluster has already marked — it would find it non-blank, refuse,
+// and truncate the rest of the label. So the walk stops at the budget
+// instead of trusting that the two counts agree. The overshoot it
+// prevents was one column (only a LEADING combining mark is its own
+// cluster) into a blank cell inside the overlay's own bounds, which is
+// why nothing was visibly wrong; it is the shape this pair was
+// rewritten to retire. Measured in review of #524.
+func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style, cols int) {
+	end := x + cols
 	render.EachCluster(s, func(cluster string, _, _, w int) bool {
+		adv := max(w, 1)
+		if x+adv > end {
+			return false
+		}
 		o.setCluster(f, x, y, cluster, w, st)
-		x += max(w, 1)
+		x += adv
 		return true
 	})
 }
@@ -674,7 +692,19 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 		return
 	}
 	o.marks = append(o.marks, mark{
-		x: x, y: y, wrote: got.Rune, prev: prev, cols: max(got.Width(), 1),
+		// CLAMPED TO WHAT WAS SNAPSHOTTED, not only to the array.
+		// cols above bounds the FILL; this bounds the COUNT
+		// restoreMarks indexes prev by, and the two reach this struct
+		// from different sources — cols from EachCluster, this from
+		// Cell.Width(), which recomputes through StringWidth. A
+		// divergence upward is an index-out-of-range on the paint path
+		// at 3, and at 2-against-1 it writes a zero render.Cell the
+		// snapshot loop never filled over a neighbour's live content.
+		// Neither is reachable today, measured over CJK, ZWJ, both flag
+		// forms, VS16, a combining pair, tab and NUL — the bound
+		// belongs on the value the array is indexed by anyway. Raised
+		// in review of #524.
+		x: x, y: y, wrote: got.Rune, prev: prev, cols: min(max(got.Width(), 1), cols),
 	})
 }
 

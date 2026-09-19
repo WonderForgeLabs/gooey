@@ -76,7 +76,7 @@ func TestFitAnswersInColumns(t *testing.T) {
 func TestAGutterLabelIsWrittenByCluster(t *testing.T) {
 	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
 	o := &Overlay{}
-	o.drawText(f, 0, 0, wideWord+"x", render.Style{})
+	o.drawText(f, 0, 0, wideWord+"x", render.Style{}, 10)
 
 	if got, want := render.RowText(f.Cells, 0), wideWord+"x     "; got != want {
 		t.Errorf("the gutter row reads %q, want %q: a rune index used as a column "+
@@ -136,7 +136,7 @@ func TestTheOverlayTakesBackAWideMark(t *testing.T) {
 	// A STYLE WITH A BACKGROUND, because that is what makes the
 	// style half observable at all: restoring a cell to the wrong
 	// style is invisible when the wrong style is the zero one.
-	o.drawText(f, 0, 0, wideWord, render.Style{Bg: render.RGB(190, 180, 90)})
+	o.drawText(f, 0, 0, wideWord, render.Style{Bg: render.RGB(190, 180, 90)}, 10)
 	if slices.Equal(row(), before) {
 		t.Fatal("nothing was drawn, so the restore below would pass vacuously")
 	}
@@ -209,6 +209,41 @@ func TestAMarkAtTheClipEdgeClaimsOnlyTheColumnItGot(t *testing.T) {
 			"never wrote — the clip it painted under stopped at column 3, so "+
 			"prev[1] is a snapshot of somebody else's cell. A mark may only "+
 			"name the columns that landed", got)
+	}
+}
+
+// TestAZeroWidthClusterDoesNotOverrunTheBudget is the disagreement
+// between the two halves of this pair, measured.
+//
+// fit budgets with render.StringWidth, which charges a standalone
+// combining mark, a tab and a NUL zero columns. drawText advances
+// max(w, 1) for each, and that advance is right: advancing 0 leaves the
+// next cluster landing where setCluster has already written, where it
+// finds the cell non-blank, refuses, and truncates the rest of the
+// label. So the walk has to stop at the budget rather than trust that
+// the two counts agree.
+//
+// Measured: render.EachCluster("\u0301ab") yields w=0, 1, 1 while
+// render.StringWidth answers 2 — so fit approves a two-column spec and
+// the walk would write three cells. The overshoot is one column, into a
+// blank cell inside the overlay's own bounds, which is why nothing
+// looked wrong; it is still the rune-versus-column shape this pair was
+// rewritten to retire. Raised in review of #524.
+func TestAZeroWidthClusterDoesNotOverrunTheBudget(t *testing.T) {
+	const s = "\u0301ab" // a LEADING combining mark is its own cluster
+	if got := render.StringWidth(s); got != 2 {
+		t.Fatalf("the fixture measures %d columns, not the 2 this test is "+
+			"about — the disagreement it exercises is gone or moved", got)
+	}
+
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	o := &Overlay{}
+	o.drawText(f, 0, 0, s, render.Style{}, render.StringWidth(s))
+
+	if got := f.Cells.At(2, 0).Rune; got != 0 && got != ' ' {
+		t.Errorf("column 2 holds %q after a two-column budget: the walk "+
+			"charged the zero-width cluster one column and wrote past what "+
+			"fit approved", got)
 	}
 }
 
