@@ -1097,20 +1097,6 @@ func clusterCols(runes []rune) int {
 // TestTheWindowFloorIsTheLeftmostFittingClusterBoundary is a grid
 // against the definition rather than a fixture against a symptom.
 //
-// windowFloor answers "the leftmost index a window of avail columns can
-// start at and still show runes[:end] with reserve to spare", and that
-// sentence is checkable directly: walk every grapheme boundary of the
-// span from the left and take the first whose remaining text fits. The
-// implementation may not do it that way — an O(len) walk on the paint
-// path is the 1.4 s freeze this PR exists to have removed — but it has
-// to AGREE with it.
-//
-// A grid rather than examples because the three defects found in review
-// of #521 were each one example away from each other: a rune-width sum
-// that stopped too far right on a ZWJ family, a candidate returned
-// without snapping to its cluster's start, and an expansion that never
-// looked left of a candidate that had already overshot. All three are
-// invisible to a fixture chosen for any one of them.
 // TestAClickAnswersTheClusterItsColumnPaints is the paint/click
 // agreement, asserted column by column against this file's own oracle
 // rather than against either walk.
@@ -1136,6 +1122,27 @@ func clusterCols(runes []rune) int {
 // whole value from rune 0 and know nothing about either bound. Deriving
 // the expected column map from spanForCols would pin the walk against
 // itself.
+//
+// BOTH HALVES ARE COMPARED TO IT, and for a while only one was. The
+// name promises an AGREEMENT and the doc above argues it from two
+// walks, but the loop asserted indexAt alone and used the frame only to
+// print a row in the failure message — so a Render that stopped short
+// of the oracle was invisible here, which is the state review of #521
+// round 10 measured. The two halves catch different mutations and that
+// is the reason to keep both:
+//
+//	indexAt half — catches a span bound sized by the CLICKED column
+//	               (the cap defect above: column 13 answered 808).
+//	paint  half — catches spanForCols' adaptive reach. Replacing the
+//	               `if reach := spanReach(cols, widest)` branch with
+//	               `_ = widest` leaves the whole components suite green
+//	               without it: the field paints 14 of 20 columns and
+//	               truncates the thirteenth cluster to 95 runes, a glyph
+//	               the value does not contain. Measured both ways.
+//
+// A continuation column is skipped rather than asserted empty on its
+// own: Cell.Text() answers "" for one, so folding it into the same
+// comparison would make every wide cluster's tail look like a hole.
 func TestAClickAnswersTheClusterItsColumnPaints(t *testing.T) {
 	const cols = 20
 	v := strings.Repeat("a"+strings.Repeat("\u0301", 100), 40)
@@ -1166,6 +1173,12 @@ func TestAClickAnswersTheClusterItsColumnPaints(t *testing.T) {
 		t.Fatalf("the oracle filled only %d of %d columns from scroll %d — the "+
 			"fixture is not wide enough to ask the question", len(owner), cols, tb.scroll)
 	}
+	// The oracle's cluster TEXT, so the paint half compares what the
+	// cell holds rather than an index derived from it.
+	next := map[int]int{}
+	for k := 0; k+1 < len(bs); k++ {
+		next[bs[k]] = bs[k+1]
+	}
 	for c := 0; c < cols; c++ {
 		if got := tb.indexAt(b.X + c); got != owner[c] {
 			t.Errorf("a click on column %d answered rune %d, but that column "+
@@ -1174,6 +1187,18 @@ func TestAClickAnswersTheClusterItsColumnPaints(t *testing.T) {
 				"short of the other: the click lands on a character that is "+
 				"not under the pointer. Row: %q",
 				c, got, owner[c], render.RowText(f.Cells, 0))
+		}
+		if c > 0 && owner[c] == owner[c-1] {
+			continue // a continuation column of a wide cluster
+		}
+		want := string(runes[owner[c]:next[owner[c]]])
+		if got := f.Cells.At(b.X+c, 0).Text(); got != want {
+			t.Errorf("column %d paints %q (%d runes), but the oracle says that "+
+				"column holds the cluster at rune %d, which is %d runes. Render "+
+				"stopped short of the boundary the value actually has, so the "+
+				"field shows a glyph the text does not contain. Row: %q",
+				c, got, len([]rune(got)), owner[c], len([]rune(want)),
+				render.RowText(f.Cells, 0))
 		}
 	}
 }
@@ -1239,6 +1264,20 @@ func TestTheWindowOpensOnTheStartOfALongCluster(t *testing.T) {
 	}
 }
 
+// windowFloor answers "the leftmost index a window of avail columns can
+// start at and still show runes[:end] with reserve to spare", and that
+// sentence is checkable directly: walk every grapheme boundary of the
+// span from the left and take the first whose remaining text fits. The
+// implementation may not do it that way — an O(len) walk on the paint
+// path is the 1.4 s freeze this PR exists to have removed — but it has
+// to AGREE with it.
+//
+// A grid rather than examples because the three defects found in review
+// of #521 were each one example away from each other: a rune-width sum
+// that stopped too far right on a ZWJ family, a candidate returned
+// without snapping to its cluster's start, and an expansion that never
+// looked left of a candidate that had already overshot. All three are
+// invisible to a fixture chosen for any one of them.
 func TestTheWindowFloorIsTheLeftmostFittingClusterBoundary(t *testing.T) {
 	for vi, v := range longClusterVocabulary() {
 		runes := []rune(v)

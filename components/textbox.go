@@ -518,30 +518,6 @@ const clusterSlack = 64
 // of #521.
 func regionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
 
-// spanForCols is an index `to` such that runes[start:to] holds at least
-// cols columns, or len(runes) if the value has no more to give.
-//
-// IT IS THE BOUND Render's doc used to say could not be computed. The
-// question is "how many runes can fill cols columns", and no arithmetic
-// over rune widths answers it — but a WALK does, and the walk need not
-// know the answer in advance: double the span until the clusters in it
-// have passed the column asked for. indexAt's forward walk is the same
-// shape for the same reason; it is not shared because that one needs the
-// cluster it stopped on as it goes, and this one needs only the index.
-//
-// FLOORED AT ONE PER CLUSTER, matching Render's own max(w, 1) — a span
-// measured with zero-width clusters counted as zero is short by one
-// column per leading mark, which is the defect this round's finding 1 is
-// about, one level up.
-//
-// THE MARGIN IS WHY IT DOES NOT RETURN `end`. eachClusterFrom segments a
-// TRUNCATED string, so the last cluster it reports may itself be a
-// truncation of a longer one — returning the index the count reached
-// would hand Render a cluster cut in half. Requiring clusterSlack runes
-// of slack past it is the same assumption the lookback already makes,
-// and it degrades safely: a cluster longer than clusterSlack keeps the
-// loop doubling until the span reaches the end of the value, which is
-// exactly the unbounded behaviour this replaces.
 // spanReach is how many runes a walk for cols columns may need: every
 // cluster is at least one column (the max(w, 1) every walk here
 // applies), so cols+1 clusters carry any answer, and the trailing
@@ -587,6 +563,30 @@ func spanReach(cols, widest int) int {
 	return (cols+1)*max(widest, clusterSlack) + clusterSlack
 }
 
+// spanForCols is an index `to` such that runes[start:to] holds at least
+// cols columns, or len(runes) if the value has no more to give.
+//
+// IT IS THE BOUND Render's doc used to say could not be computed. The
+// question is "how many runes can fill cols columns", and no arithmetic
+// over rune widths answers it — but a WALK does, and the walk need not
+// know the answer in advance: double the span until the clusters in it
+// have passed the column asked for. indexAt's forward walk is the same
+// shape for the same reason; it is not shared because that one needs the
+// cluster it stopped on as it goes, and this one needs only the index.
+//
+// FLOORED AT ONE PER CLUSTER, matching Render's own max(w, 1) — a span
+// measured with zero-width clusters counted as zero is short by one
+// column per leading mark, which is the defect this round's finding 1 is
+// about, one level up.
+//
+// THE MARGIN IS WHY IT DOES NOT RETURN `end`. eachClusterFrom segments a
+// TRUNCATED string, so the last cluster it reports may itself be a
+// truncation of a longer one — returning the index the count reached
+// would hand Render a cluster cut in half. Requiring clusterSlack runes
+// of slack past it is the same assumption the lookback already makes,
+// and it degrades safely: a cluster longer than clusterSlack keeps the
+// loop doubling until the span reaches the end of the value, which is
+// exactly the unbounded behaviour this replaces.
 func spanForCols(runes []rune, start, cols int) int {
 	if start >= len(runes) {
 		return len(runes)
@@ -622,13 +622,31 @@ func spanForCols(runes []rune, start, cols int) int {
 	// TestARepaintDoesNotWalkAZeroWidthRun runs both carets for that
 	// reason and says so.
 	//
-	// THE CAP IS TWO STATEMENTS, and a mutation that removes only the
-	// `min` below does not disable it: the doubling starts at
-	// cols+clusterSlack and maxSpan is (cols+1)*clusterSlack, so for a
-	// field whose width makes the second a power-of-two multiple of the
-	// first — 20 columns gives 84 and 1344, exactly 16x — the sequence
-	// lands on maxSpan anyway and the equality exit at the bottom still
-	// fires. Neuter `maxSpan` itself to test this.
+	// THE CAP IS TWO STATEMENTS AND THE `min` IS THE LOAD-BEARING ONE.
+	// This paragraph said the opposite for two rounds — that removing
+	// only the `min` lands on maxSpan anyway because the doubling from
+	// cols+clusterSlack reaches it exactly, "20 columns gives 84 and
+	// 1344, exactly 16x" — and BOTH halves of that were wrong. maxSpan
+	// is spanReach(cols, 0), which is (cols+1)*clusterSlack +
+	// clusterSlack: at 20 columns 22*64 = 1408, not 1344, so the
+	// sequence 84, 168, 336, 672, 1344, 2688 steps straight over it and
+	// the equality exit never fires. Re-measured with only line 641
+	// removed:
+	//
+	//	--- FAIL: TestARepaintDoesNotWalkAZeroWidthRun
+	//	  caret at the end:   16.2ms over 50,000 against 645µs over 1,000 — 25.1x
+	//	  caret at the start: 14.8ms over 50,000 against 447µs over 1,000 — 33.0x
+	//
+	// against a 4x budget. The mutation this called silent is the
+	// loudest one there is, and the advice to "neuter maxSpan itself"
+	// sent the next reader past the line that actually holds.
+	//
+	// The copy of this paragraph in indexAt is NOT the same fact any
+	// more and the two have been separated. Its min-only mutation IS
+	// silent — measured, the whole components suite green — because its
+	// doubling starts at off+clusterSlack and off varies per click, so
+	// no fixture pins that one line. See indexAt. Corrected in review of
+	// #521 round 10.
 	//
 	// The comment at the doubling's other end claimed the work stays
 	// "proportional to the runes the window ENDS UP SHOWING rather than
@@ -1621,15 +1639,23 @@ func (t *TextBox) indexAt(x int) int {
 	// goroutine, so 32.6ms here is a third of a second of input latency
 	// over ten reports.
 	//
-	// THE CAP IS TWO STATEMENTS, spanForCols' warning word for word and
-	// for the same arithmetic: the doubling starts at off+clusterSlack
-	// and maxSpan is (off+1)*clusterSlack, so at column 20 that is 84
-	// and 1344 — exactly 16x — and the sequence lands on maxSpan anyway.
-	// Removing only the `min` below leaves the equality exit firing and
-	// is green. Neuter `maxSpan` itself to test this; measured,
-	// `maxSpan := len(runes) + 1` takes TestADragDoesNotWalkAZeroWidthRun
-	// red and removing the `min` alone does not.
-	// Raised in review of #521.
+	// THE CAP IS TWO STATEMENTS, AND HERE THE `min` REALLY IS THE
+	// SILENT ONE — which is no longer true of spanForCols' copy of this
+	// paragraph, so the two have stopped being word for word. Removing
+	// only the `min` below leaves the whole components suite green;
+	// measured, as is `maxSpan := len(runes) + 1` taking
+	// TestADragDoesNotWalkAZeroWidthRun red. So the cap is pinned and
+	// this one line of it is not.
+	//
+	// The REASON is the budget, not arithmetic, and the arithmetic this
+	// paragraph used to give was wrong anyway: maxSpan is
+	// spanReach(budget, 0) = (budget+1)*clusterSlack + clusterSlack,
+	// which is 1408 at 20 columns rather than 1344, and the doubling
+	// sequence steps over it rather than landing on it. What makes the
+	// mutation silent here is that `off` varies per click while
+	// spanForCols' `cols` is the field width — so no fixture holds this
+	// walk at one span long enough to pin the line. Corrected in review
+	// of #521 round 10.
 	// THE BUDGET IS THE FIELD'S, NOT THE CLICKED COLUMN'S, and that is
 	// finding 2 of the same round. `off` is where the pointer is and
 	// `reach` is how far the walk may go to get there; sizing the reach
