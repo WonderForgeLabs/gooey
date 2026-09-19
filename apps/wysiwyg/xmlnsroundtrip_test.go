@@ -1570,9 +1570,11 @@ func TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen(t *testing.T) {
 // One that merely DECLARES xmlns:x has one kid and opens normally.
 // Corrected in review of #501.
 //
-// The rule: an ATTRIBUTE prefix may come down onto the content root,
-// because markup.parse resolves one through a flat document-wide table
-// and any element's declaration reaches any expression. An ELEMENT prefix
+// The rule: a prefix used inside an attribute VALUE — a handler or value
+// expression — may come down onto the content root, because markup.parse
+// resolves one through a flat document-wide table and any element's
+// declaration reaches any expression. (A prefix on an attribute NAME is
+// refused outright and reaches no table at all.) An ELEMENT prefix
 // may not, because encoding/xml resolved it with real subtree scoping and
 // <x:Property> is a SIBLING of the content root, not a descendant — a
 // declaration moved onto the root is out of scope at the very element it

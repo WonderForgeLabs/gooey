@@ -1481,8 +1481,10 @@ The mechanics that keep it inside the framework's constraints:
   resolves an element name through `ns`.** `parse` copies
   `Element.Space` straight from `encoding/xml`, which has already
   applied real subtree scoping, and `splitDeclarations` switches on it
-  without consulting `ns` at all. `ctx.ns` answers the other question —
-  which URI an ATTRIBUTE or expression prefix means — and this sentence
+  without consulting `ns` at all. `ctx.ns` answers a different
+  question — which URI a prefix inside an attribute VALUE means, the
+  `t:` of `Click="{{t:Fire}}"`; a prefix on an attribute NAME is refused
+  outright (`markup.namespacedAttrError`) and reaches no table — and this sentence
   named its two readers as "and nowhere else" until review of
   [#501](https://github.com/WonderForgeLabs/gooey/pull/501) grepped it
   and found four, `itemsview.go`'s capture-for-a-deferred-row among

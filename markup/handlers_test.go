@@ -447,9 +447,9 @@ func TestAPrefixDeclaredBelowTheRootIsDocumentWide(t *testing.T) {
 // a message is free to describe a behaviour wrongly.
 //
 // THE SIBLING PLACEMENT IS THE DISCRIMINATING ONE, and it is where this
-// rule and <x:Property>'s part company. An ATTRIBUTE prefix resolves
-// through the flat, document-wide table parse builds, so a declaration on
-// a sibling of the expression's element reaches it. An ELEMENT prefix
+// rule and <x:Property>'s part company. A prefix inside an attribute
+// VALUE resolves through the flat, document-wide table parse builds, so a
+// declaration on a sibling of the expression's element reaches it. An ELEMENT prefix
 // resolves through encoding/xml's real subtree scoping, so the same
 // placement is refused — TestTheXPropertyRefusalNamesTheRoot (property_test.go)
 // is the other half. Two rules that sound alike and are not.

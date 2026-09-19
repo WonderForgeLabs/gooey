@@ -342,10 +342,14 @@ func (h *history) abort(root *node) {
 // are nil'd), and h.base takes a struct copy. The loops were O(len) of
 // work that freed nothing, and a reader could have taken the most
 // explicit spelling of the clear-to-cap rule in this file as its worked
-// example. The rule bites where the slice SURVIVES — undoPop, redoPop
-// and bound, which keep theirs — and nothing red would have said so
-// either way, because the guard does not match `x = nil`. Raised in
-// review of #501.
+// example. The rule bites where the slice SURVIVES, and every other pop
+// in this file does keep its slice — so each zeroes the vacated slot
+// before the truncation, which is the shape the guard checks at each
+// site. Stated as a property rather than a roster: the round that wrote
+// this sentence named three symbols, two of which do not exist and the
+// third of which is spelled evict, and the roster was short by two
+// besides. Nothing red would have said so either way, because the guard
+// does not match `x = nil`. Raised in review of #501, twice.
 //
 // THE SELECTION IS PART OF THE BASELINE, and taking root alone was a
 // regression this function introduced. Every other site that establishes

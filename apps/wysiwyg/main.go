@@ -741,8 +741,8 @@ func (n *node) markup(indent string) string {
 // kid. encoding/xml resolved that prefix with real subtree scoping before
 // markup saw it, so moving the declaration onto the content root puts it
 // out of scope at its own sibling and the saved file stops loading. The
-// flat-table reasoning above is an ATTRIBUTE prefix's and does not reach
-// here.
+// flat-table reasoning above belongs to a prefix inside an attribute
+// VALUE — a handler or value expression — and does not reach here.
 //
 // THIS ARM IS LIVE ON BOTH UNWRAPS, and the round that added it said the
 // opposite: that openWorkspaceFile refuses such a document as a second

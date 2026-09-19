@@ -488,10 +488,10 @@ func TestDeclaredRegistryRecordsInstances(t *testing.T) {
 // both reach. Review of #501 reworded all three to "an element of this
 // document" and this one regressed, silently.
 //
-// AN ELEMENT PREFIX IS NOT AN ATTRIBUTE PREFIX, which is why the three
-// do not share a wording. handlers.go and values.go resolve an
-// ATTRIBUTE prefix through ctx.ns — flat and document-wide, so any
-// element may carry the declaration, which is what
+// AN ELEMENT PREFIX IS NOT A VALUE-EXPRESSION PREFIX, which is why the
+// three do not share a wording. handlers.go and values.go resolve a
+// prefix inside an attribute VALUE through ctx.ns — flat and
+// document-wide, so any element may carry the declaration, which is what
 // TestAPrefixDeclaredBelowTheRootIsDocumentWide measures. `x:` prefixes
 // an ELEMENT, resolved by encoding/xml with real subtree scoping before
 // this package sees it, and <x:Property> must be a direct child of the

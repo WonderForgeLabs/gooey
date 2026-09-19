@@ -333,14 +333,25 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 			// <Text> is refused with this very message again, so the
 			// author lands where they started.
 			//
-			// AN ELEMENT PREFIX IS NOT AN ATTRIBUTE PREFIX. handlers.go
-			// and values.go resolve an ATTRIBUTE prefix through ctx.ns,
-			// which parse builds flat and document-wide — there, any
-			// element may carry the declaration. `x:` prefixes an
-			// ELEMENT, and splitDeclarations reads c.Space, which
-			// encoding/xml resolved with real XML subtree scoping before
-			// this package saw it. So the declaration must be IN SCOPE AT
-			// THE <x:Property>, which a sibling's copy never is.
+			// AN ELEMENT PREFIX IS NOT A VALUE-EXPRESSION PREFIX, and
+			// the axis is three-way rather than two. handlers.go and
+			// values.go resolve a prefix inside an attribute VALUE —
+			// the `t:` of Click="{{t:Fire}}" — through ctx.ns, which
+			// parse builds flat and document-wide, so there any element
+			// may carry the declaration. A prefix on an attribute NAME
+			// never reaches ctx.ns at all: parse refuses it outright
+			// with namespacedAttrError, so <Button t:Click="Fire"/> is
+			// a load error rather than a flat resolution. This
+			// paragraph said "an ATTRIBUTE prefix" for both until
+			// review of #501 read it literally, which collapses the
+			// refused case into the resolved one on the very axis it is
+			// drawing.
+			//
+			// `x:` prefixes an ELEMENT, and splitDeclarations reads
+			// c.Space, which encoding/xml resolved with real XML
+			// subtree scoping before this package saw it. So the
+			// declaration must be IN SCOPE AT THE <x:Property>, which a
+			// sibling's copy never is.
 			//
 			// TWO PLACES SATISFY THAT, not one, and the round that wrote
 			// this comment measured only the sibling case and concluded
