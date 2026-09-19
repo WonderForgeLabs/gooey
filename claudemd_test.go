@@ -1975,6 +1975,19 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 	}
 }
 
+// ONCE PER BINARY, not once per caller. Two tests ask for each of these
+// indexes and each walk parses the whole tree (vendor/ included), which
+// put a substantial slice of pure duplicate work in the root suite. The
+// memo changes nothing either test asserts: the walk is over files on
+// disk, which no test here writes. Raised in review of #490.
+//
+// The memo stays even though buildDeclaredByPackage now delegates to a
+// memoized index of its own: this one is the SEAM, and a caller should
+// not have to know that the two indexes share a walk. Collapsing it
+// would make the sharing load-bearing for correctness rather than for
+// cost.
+var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
+
 // declaredByPackage maps a package NAME to every identifier declared at
 // the top level of one of its files, tests included: a doc may cite a
 // guard's table, and rowPartition lives in a _test.go file.
@@ -1996,19 +2009,6 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 // package name union their symbols, which is the only imprecision here
 // and a safe one: it can accept a citation that resolves in the wrong
 // copy, never reject one that resolves in the right one.
-// ONCE PER BINARY, not once per caller. Two tests ask for each of these
-// indexes and each walk parses the whole tree (vendor/ included), which
-// put a substantial slice of pure duplicate work in the root suite. The
-// memo changes nothing either test asserts: the walk is over files on
-// disk, which no test here writes. Raised in review of #490.
-//
-// The memo stays even though buildDeclaredByPackage now delegates to a
-// memoized index of its own: this one is the SEAM, and a caller should
-// not have to know that the two indexes share a walk. Collapsing it
-// would make the sharing load-bearing for correctness rather than for
-// cost.
-var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
-
 func declaredByPackage(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	out, err := declaredIndex()
@@ -2276,7 +2276,43 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 	}
 }
 
-// vendoredByPackage indexes the EXPORTED declarations of vendored
+// Memoized for the reason declaredIndex gives. The parameter is not part
+// of the key because there is only one possible argument — declaredIndex
+// is itself memoized, so every caller passes the same map.
+var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
+	declared, err := declaredIndex()
+	if err != nil {
+		return nil, err
+	}
+	return buildVendoredByPackage(declared)
+})
+
+// The bool is whether there IS an index, and it is what the callers
+// branch on — this function no longer decides for them.
+//
+// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
+// condition justifies. t.Skip from a helper stops the caller, so a
+// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
+// whole — every one of the hundred-plus citations its own floor insists
+// on, silenced by a two-citation problem in this file's doc comment. The
+// skip replaced a silent empty map, which was worse in the other
+// direction (the empty map turned those two citations into errors about
+// the wrong thing); the answer to both is to report the condition and
+// let each caller narrow. Raised in review of #490, twice.
+func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
+	t.Helper()
+	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
+		return nil, false
+	}
+	out, err := vendoredIndex()
+	if err != nil {
+		t.Fatalf("walking vendor for declarations: %v", err)
+	}
+	return out, true
+}
+
+// buildVendoredByPackage indexes the EXPORTED declarations of vendored
+// (the map vendoredByPackage hands its callers).
 // packages whose short name collides with one of ours, which is the only
 // way a citation of `pkg.Name` can be read two ways.
 //
@@ -2338,41 +2374,6 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // price is a page citing a vendored METHOD as `pkg.Name`, which would
 // still error and would have to be spelled with more of its import path
 // — and no page does today. Raised in review of #490.
-// Memoized for the reason declaredIndex gives. The parameter is not part
-// of the key because there is only one possible argument — declaredIndex
-// is itself memoized, so every caller passes the same map.
-var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
-	declared, err := declaredIndex()
-	if err != nil {
-		return nil, err
-	}
-	return buildVendoredByPackage(declared)
-})
-
-// The bool is whether there IS an index, and it is what the callers
-// branch on — this function no longer decides for them.
-//
-// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
-// condition justifies. t.Skip from a helper stops the caller, so a
-// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
-// whole — every one of the hundred-plus citations its own floor insists
-// on, silenced by a two-citation problem in this file's doc comment. The
-// skip replaced a silent empty map, which was worse in the other
-// direction (the empty map turned those two citations into errors about
-// the wrong thing); the answer to both is to report the condition and
-// let each caller narrow. Raised in review of #490, twice.
-func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
-	t.Helper()
-	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
-		return nil, false
-	}
-	out, err := vendoredIndex()
-	if err != nil {
-		t.Fatalf("walking vendor for declarations: %v", err)
-	}
-	return out, true
-}
-
 func buildVendoredByPackage(collidesWith map[string]map[string]bool) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	err := filepath.WalkDir("vendor", func(p string, d fs.DirEntry, err error) error {
