@@ -26,8 +26,8 @@ import (
 // one-shot path.
 //
 // That is worse than a stale path. Compose is what cmd/pixels,
-// cmd/typeahead --dump and around nineteen test helpers across
-// components/, markup/ and the root compose with, so any future
+// cmd/typeahead --dump and the test helpers across components/,
+// markup/ and the root compose with, so any future
 // overlay-bearing fixture asserted through it would look green while
 // encoding the bug.
 //

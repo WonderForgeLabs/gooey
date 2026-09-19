@@ -15,8 +15,8 @@ overlay-layer spec quotes as the failure.
 
 The reach is what makes it more than a stale path. `Compose` is exported,
 is the documented one-shot path, and is what `cmd/pixels`,
-`cmd/typeahead --dump` and roughly nineteen test helpers across
-`components/`, `markup/` and the root compose with. **Any future
+`cmd/typeahead --dump` and the test helpers across `components/`,
+`markup/` and the root compose with. **Any future
 overlay-bearing fixture asserted through `Compose` would look green while
 encoding the bug.**
 

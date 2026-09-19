@@ -558,8 +558,8 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // all this used to say, which reads as the same picture and was not:
 // renderTree walked document order and never consulted Overlay, so #430
 // reproduced here verbatim long after Composer was fixed — on the path
-// that cmd/pixels, cmd/typeahead --dump and around nineteen test helpers
-// use. A fixture asserted through it would have looked green while
+// that cmd/pixels, cmd/typeahead --dump and the test helpers across
+// components/, markup/ and the root use. A fixture asserted through it would have looked green while
 // encoding the bug. Both paths now order through the one overlayOf rule
 // (#438) and through the one appendByRank bucket pass, and
 // TestBothPaintPathsAgree compares them rather than pinning each to a

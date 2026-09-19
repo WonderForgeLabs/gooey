@@ -1132,7 +1132,7 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // branch adds two to is main's, not the one it forked from. Stating
 // the delta rather than the arithmetic is what survives the next such
 // merge.
-const wantIdentChecked = 23
+const wantIdentChecked = 24
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.

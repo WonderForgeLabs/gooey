@@ -379,7 +379,7 @@ comment COUNTS them by category (three doc comments, a spec heading, a
 test message) rather than listing them; derive the sites with a grep for
 `floor` rather than expecting a list to be there. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
-not to each node, so `overlayOf` (`component.go`) answers the parent's
+not to each node, so `overlayOf` (`component.go:281`) answers the parent's
 `parentOverlay` BEFORE testing the marker — reverse those two `if`s and a
 rank-2 container's rank-0 child lands in an earlier bucket, the parent
 paints after it, and a parent that covers its bounds erases the child it
