@@ -266,6 +266,24 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		return
 	}
 	into := plan.into
+	// NAMESPACES FIRST, BEFORE THE TWO RENAMES, and the order is the
+	// fix rather than a tidy-up.
+	//
+	// rebindInto writes ed.ctx.Values[key], and nothing ever
+	// unregisters one — deliberately, so an undone paste can be redone
+	// onto the values the user had set. renameInto counts a name owning
+	// live handles as taken. So a paste refused AFTER them has already
+	// burned the names it would have used: the user fixes the prefix
+	// clash the message asked them to fix, pastes again, and gets T3
+	// where they would have got T2, with T2's handles registered to
+	// nothing. A corrigible error must not cost anything.
+	//
+	// Nothing here depends on the renames: this reads xmlns attributes
+	// and the renames read Name and bindings. Raised in review of #501.
+	if err := ed.reconcileNamespaces(n); err != nil {
+		ed.status.Set("✗ " + err.Error())
+		return
+	}
 	renamed := ed.renameInto(n)
 	if err := ed.rebindInto(n, renamed); err != nil {
 		ed.status.Set("✗ " + err.Error())
@@ -339,7 +357,45 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		// revert exists to prevent (#454 review).
 		ed.abortHistory()
 		ed.rebuild()
-		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + into.Elem +
+		// IT DOES NOT SAY WHY, and that is the point. This read
+		// "<X> does not go inside <Y>: …", a cause this backstop has
+		// not established. What it knows is that a rebuild failed; it
+		// knows nothing about whose fault that is. Three different
+		// causes reach this line:
+		//
+		//   - THE PARENTING, despite canHold. `canHold` answers false
+		//     only where the catalog KNOWS the child is refused —
+		//     ModeUnknown and ModeOne both answer true and let the
+		//     insert be tried, which addplan.go argues for on the
+		//     grounds that the revert message names both elements. A
+		//     second child pasted into a ModeOne <Border> is a real
+		//     parenting fault arriving here.
+		//   - THE PASTED NODE'S OWN CONTENT, which is what the
+		//     namespace work made common: paste a subtree that USES a
+		//     prefix without its declaration — the ordinary result of
+		//     copying one element out of a document — and the editor
+		//     answered "✗ <Button> does not go inside <Canvas>: markup:
+		//     … undeclared namespace prefix \"t\"". <Button> goes
+		//     inside <Canvas> perfectly well.
+		//   - A FAULT ALREADY IN THE DOCUMENT, because docRoot is the
+		//     signal and nothing resets it. The properties pane has no
+		//     revert of its own, so a value it refuses leaves the build
+		//     failed and the next paste is reverted and blamed for it.
+		//     That is #531, filed rather than left here: six mutators
+		//     share this revert and commitEdit is the seventh with none,
+		//     and a live defect recorded only in a comment dies with the
+		//     comment. Raised in review of #501.
+		//
+		// The neutral verb is the only clause true of all three, and it
+		// still names both elements so an author with several panes
+		// open knows which paste failed. An earlier draft of this
+		// comment justified the reword with "canHold already refused
+		// every parenting fault before the append": canHold's
+		// "Permissive where the catalog is silent, because the build is
+		// the gate" says the opposite in its own words, and
+		// TestCanHoldIsPermissiveWhereTheCatalogIsSilent pins it.
+		// Corrected in review of #501.
+		ed.status.Set("✗ <" + n.Elem + "> was not pasted into <" + into.Elem +
 			">: " + refused)
 		return
 	}
@@ -668,12 +724,12 @@ func (ed *editor) pasteMarkup(src string) {
 		}
 	}
 	if err != nil {
-		// nodeOf's messages are written for SEEDS, which is this repo's
-		// own markup, so they say "seed" where a user needs "pasted
-		// markup". Re-labelled here rather than by adding a noun
-		// parameter to nodeOf, whose other caller genuinely is a seed.
-		ed.status.Set("✗ pasted text is not markup: " +
-			strings.Replace(err.Error(), "seed ", "pasted markup ", 1))
+		// The NOUN IS THIS CALLER'S, and it used to be patched into
+		// nodeOf's message with a strings.Replace of "seed " — which
+		// silently did nothing to the one refusal that never said it.
+		// nodeOf's messages name what is wrong and leave the noun here
+		// (review of #501).
+		ed.status.Set("✗ pasted text is not markup: " + err.Error())
 		return
 	}
 	ed.insertSubtree(n, "pasted markup:")
@@ -693,11 +749,402 @@ func (ed *editor) pasteMarkup(src string) {
 // (mutation-checked). The reason is narrower and real: the round trip is
 // a second parse that can FAIL, and a failure there would report a paste
 // as unparseable after it had already parsed once.
+//
+// THE ENVELOPE'S DECLARATIONS COME WITH IT. <Gooey> is where a
+// hand-written document puts its xmlns — it is where markup's own error
+// tells the author to put it — and where every file saved before this
+// change has it, so dropping the envelope dropped the declarations and
+// #472's own bug survived through paste while the open path had been
+// fixed. The rule lives in carryDeclarations (main.go) because
+// openWorkspaceFile does the same unwrap.
+//
+// NOT because the CODE tab emits that shape: it no longer does. This
+// branch moves the declaration down onto the user's root, and
+// TestReopeningTheRebuiltSourceIsStable asserts the root carries it. A
+// paste of this editor's own output therefore arrives with the
+// declaration already on the child and nothing to carry — the carry is
+// for the documents the editor did not write. Raised in review of #501.
+//
+// `xmlns:x` IS DROPPED HERE, DELIBERATELY, and this is the one place
+// that is true. carryDeclarations skips markup.XNamespace because moving
+// an ELEMENT prefix down changes its scope — its own comment argues the
+// case, and calls deleting the guard a fidelity loss on every
+// `<Gooey xmlns:x>` file on disk. That argument is openWorkspaceFile's,
+// where the envelope survives in ed.envAttrs and "stays on the envelope"
+// means kept. HERE THE ENVELOPE IS THROWN AWAY two lines down, so the
+// same skip means discarded — silently, with no message. Measured:
+// pasting `<Gooey xmlns:x="…/x" xmlns:t="urn:t" Graphics="halfblock">`
+// over a Canvas carries xmlns:t onto the content root and drops
+// xmlns:x, leaving envAttrs empty.
+//
+// Dropping is CORRECT for a fragment and carrying would be wrong. x:
+// names elements, the `<x:Property>` elements it exists for are siblings
+// of the content root, and a fragment is a content subtree — so a
+// carried declaration would land on the root scoping nothing, which is
+// precisely the scope change the skip exists to prevent. Graphics goes
+// for the neighbouring reason fragmentFor argues: a fragment must not
+// carry the source document's envelope.
+//
+// WHAT HOLDS IT UP IS ANOTHER FUNCTION, which is the part worth writing
+// down rather than leaving to be rediscovered. It is harmless only
+// because nodeOf refuses a prefixed element (main.go), so nothing the
+// model can hold uses `x:` and no dropped declaration can strand a
+// prefix that is still in use. Relax that refusal — #522's
+// markup.XNamespace exemption is the live proposal — and this drop stops
+// being free in the same commit, with nothing here to notice.
+// TestAPastedEnvelopesXDeclarationIsDropped pins the behaviour so the
+// change has to be deliberate. Raised in review of #501.
 func unwrapGooey(n *node) (*node, bool) {
 	if n.Elem != "Gooey" || len(n.Kids) != 1 || len(n.Slots) != 0 {
 		return nil, false
 	}
+	carryDeclarations(n, n.Kids[0])
 	return n.Kids[0], true
+}
+
+// reconcileNamespaces settles a pasted subtree's namespace declarations
+// against the document it is landing in, and it is the step
+// carryDeclarations needs on THIS side of the seam.
+//
+// The open path can carry a declaration down blind: the <Gooey>
+// envelope is the outermost element, so whether the loader reads
+// "child wins" or "last in document order wins" it gets the same
+// answer. A paste has neither property. It puts the pasted envelope's
+// declaration on a node INSIDE the open document — later in document
+// order than the root's own — and markup.parse keeps ONE FLAT,
+// document-wide prefix map in which the last declaration wins
+// (markup.parse). So a pasted xmlns:t binding t to a different URI
+// rebinds t for every expression in the document, including the ones
+// the user never touched, and saveOpenFile writes it to disk. Nothing
+// reports it, because nothing is wrong as far as the loader is
+// concerned: the document is well-formed and every prefix resolves.
+//
+// Newly reachable with the carry, too — before it the editor could not
+// hold two declarations of one prefix at all — which is why this lands
+// in the same branch. Raised in review of #501.
+//
+// Two answers, and the difference is whether the author loses
+// anything:
+//
+//   - the SAME URI: drop the declaration. It says what the document
+//     already says, and keeping it leaves a redundant xmlns on every
+//     node ever pasted out of the CODE tab.
+//   - a DIFFERENT URI: refuse the paste and name both URIs. Rebinding
+//     is a decision about expressions the pasted markup does not
+//     contain, so it is not one this editor can take on the author's
+//     behalf.
+//
+// ed.doc(), NOT ed.root. ed.root is the design SURFACE, and
+// saveOpenFile serialises ed.doc() inside a literal <Gooey> envelope —
+// so a declaration held by the surface is one the saved file does not
+// carry. Collecting it would make a pasted duplicate look redundant,
+// delete it, and write a document whose expressions have no binding.
+// No surface declares anything today, so this is the latent half rather
+// than a live bug; the two scopes are one level apart and the choice
+// belongs written down. Raised in review of #501.
+//
+// AND ed.envAttrs, WHICH IS A THIRD SCOPE AND NOT A SECOND. The
+// paragraph above enumerated two and there are three, which is the
+// shape a future reader trusts: ed.root is excluded because it is NOT
+// in the save, and ed.envAttrs is included for the mirror-image reason
+// — it is what the saved <Gooey> carries and it is not reachable from
+// ed.doc(). Open a document whose envelope keeps xmlns:x (an element
+// prefix stays there through an open, which
+// TestAnElementPrefixStaysOnTheEnvelopeThroughAnOpen measures), paste a
+// fragment binding x to something else, and with only ed.doc()
+// collected there is no conflict to report: the second binding lands
+// inside the document and is written to disk. Small blast radius today
+// — x: is an element prefix and the <x:Property> elements it exists for
+// are siblings of the content root — but the enumeration was one scope
+// short, not the reach. Raised in review of #501.
+//
+// SEEDED FIRST, then overwritten by the document's own. The envelope is
+// the outermost element, so if a prefix is declared in both, the
+// document's declaration is the later one and markup.parse's
+// last-wins is what this has to agree with.
+func (ed *editor) reconcileNamespaces(n *node) error {
+	doc := map[string]string{}
+	for k, v := range ed.envAttrs {
+		if isNamespaceAttr(k) {
+			doc[k] = v
+		}
+	}
+	collectNamespaces(ed.doc(), doc)
+	return reconcileNamespacesInto(n, doc, map[string]string{})
+}
+
+// SORTED for the same reason collectNamespaces is, and for a different
+// consequence: any conflict anywhere refuses, so accept-vs-refuse does
+// not depend on the order, but WHICH conflict the message names does —
+// and the suite matches on that text. Raised in review of #501.
+func reconcileNamespacesInto(n *node, doc, own map[string]string) error {
+	for _, k := range sortedKeys(n.Attrs) {
+		v := n.Attrs[k]
+		// THE DEFAULT DECLARATION IS NOT A PREFIX BINDING, and this is
+		// the skip that says so: isNamespaceAttr matches `xmlns:`+local
+		// only, so a plain xmlns leaves here. Neither half of what
+		// follows applies to it — it is not compared, because
+		// markup.parse skips a plain xmlns outright ("the default
+		// namespace is decorative versioning"), so it never enters the
+		// flat prefix map and there is nothing for a later one to
+		// re-point; and it is not deleted, because XML scoping confines
+		// it to the subtree that declares it, which is where it stays.
+		//
+		// This was a SECOND skip below, `if k == "xmlns"`, with
+		// isNamespaceAttr matching the plain form so that it could be
+		// reached — an arm whose two paths converged on the same
+		// continue, so neither predicate could be observed to disagree
+		// with the other. Raised in review of #501.
+		//
+		// Before that it sat INSIDE the inequality, which left an EQUAL
+		// default declaration falling through to the delete below — so
+		// pasting <Button xmlns="theirs"/> into a document whose root
+		// says xmlns="ours" kept the declaration the first time and
+		// stripped it the second, from byte-identical input. The first
+		// version refused it outright, which blocked a paste between two
+		// documents on different version strings and built its message
+		// with TrimPrefix(k, "xmlns:"), asking the author to rename a
+		// prefix that does not exist.
+		if !isNamespaceAttr(k) {
+			continue
+		}
+		bound, fromDoc := doc[k]
+		ok := fromDoc
+		if !ok {
+			bound, ok = own[k]
+		}
+		if !ok {
+			// RECORDED, so the REST OF THE FRAGMENT is compared against
+			// it. Without this line the walk only ever compares a
+			// declaration against the DOCUMENT's, so a fragment holding
+			// two bindings of one prefix — an outer xmlns:t="urn:A" and
+			// an inner xmlns:t="urn:B", or two siblings — sailed
+			// through and landed both in the file. Measured before the
+			// fix: reconcileNamespacesInto returned nil for
+			// `<Canvas xmlns:t="urn:A"><Button xmlns:t="urn:B"/></Canvas>`
+			// and for the sibling spelling of it. That is the exact
+			// rebind this function exists to refuse, caught when the
+			// second binding is the document's and missed when both are
+			// the paste's, and newly reachable for the same reason the
+			// document-vs-paste case is: before this branch the editor
+			// dropped declarations on the read, so it could not hold two
+			// bindings of one prefix at all.
+			//
+			// ONE MAP, NOT A COPY PER SUBTREE, because markup.parse
+			// keeps ONE FLAT ns map for the whole document
+			// (markup.parse's `a.Name.Space == "xmlns"` arm — every
+			// xmlns: attribute at any
+			// depth, no scoping, last wins). A per-subtree copy would
+			// fix the nesting case and leave the sibling one, where the
+			// loader's table conflicts just as hard.
+			own[k] = v
+			continue
+		}
+		if bound != v {
+			// NO DIRECTION IS CLAIMED, because none holds. markup.parse
+			// merges every declaration into one flat map in document
+			// order, so the winner is whichever is parsed LAST — and
+			// where the paste lands decides that. Pasted after the
+			// document's own declaration it re-points every existing
+			// expression; pasted before one, the document's wins and the
+			// PASTED expressions silently mean something else. The old
+			// message asserted the first case as the outcome, which is
+			// wrong half the time and reads as a promise about which
+			// meaning survives. Raised in review of #501.
+			//
+			// AND THE MECHANISM IS NOT ONE MECHANISM, which is why this
+			// branches. The sentence above is true of a prefix that names
+			// EXPRESSIONS — a handler or value namespace, resolved
+			// through markup.parse's flat ns table. It is not how the x
+			// namespace resolves: x: names ELEMENTS, and encoding/xml
+			// has already applied real XML subtree scoping to
+			// t.Name.Space before markup sees the token, which is the
+			// distinction carryDeclarations refuses to move
+			// markup.XNamespace on and TestTheXPropertyRefusalNamesTheRoot
+			// is about. Two bindings of x: do not merge and one does not
+			// win: both stand, and which one an element means depends on
+			// where it sits.
+			//
+			// The refusal is the same either way, and deliberately so —
+			// parse's flat table takes EVERY xmlns attribute at any
+			// depth, x: included, so the second binding still re-points
+			// any expression under that prefix even where the elements
+			// scope. What changes is only what the author is told, and a
+			// message that tells them why is making a claim this repo
+			// holds under test like any other. The one end-to-end
+			// exercise of this refusal,
+			// TestAPasteCannotRebindAPrefixTheEnvelopeHolds, rebinds x:
+			// — so the arm that reached it was the arm whose explanation
+			// was wrong. That test asserts this text now. Raised in
+			// review of #501.
+			// THE CLOSING CLAUSE IS PER-BRANCH, because the two
+			// refusals below do not share its fact. "which one depends
+			// on where this lands" is the DOCUMENT-vs-paste mechanism:
+			// there the winner genuinely turns on whether the fragment
+			// is inserted before or after the document's own
+			// declaration. On the fragment-internal branch both
+			// bindings are inside the clipboard, their relative
+			// document order is fixed by the fragment itself, and
+			// markup.parse's flat last-wins table therefore always
+			// hands the prefix to the later declaration IN THE
+			// FRAGMENT, wherever it lands.
+			//
+			// Shared, it told an author the outcome was
+			// position-dependent while the second half of the same
+			// sentence correctly told them the conflict was entirely
+			// inside what they copied — two clauses of one message
+			// contradicting each other. Same class as the party clause
+			// the round before removed: a clause asserting something
+			// the code has not established. Pinned now by
+			// TestAPasteCannotRebindAPrefixAgainstITSELF, which
+			// asserted the party and the remedy and nothing about the
+			// mechanism, so this wording was free to drift. Raised in
+			// review of #501.
+			tail := " — the later of the two in what you pasted wins, " +
+				"wherever it lands"
+			if fromDoc {
+				tail = " — which one depends on where this lands"
+			}
+			mech := "One flat prefix map covers the whole document and the last " +
+				"declaration parsed wins, so one of the two meanings of " +
+				strings.TrimPrefix(k, "xmlns:") + " would silently become the " +
+				"other" + tail
+			if bound == markup.XNamespace || v == markup.XNamespace {
+				mech = "Expressions under " + strings.TrimPrefix(k, "xmlns:") +
+					" read one flat document-wide table that this second " +
+					"declaration re-points, so one of their two meanings would " +
+					"silently become the other. This prefix also names " +
+					"ELEMENTS, which XML scopes to the subtree that declares " +
+					"them — so in the saved file, once it leaves the designer, " +
+					"both bindings would stand and what an element means would " +
+					"depend on where it sits"
+			}
+			// WHICH PARTY HOLDS THE OTHER BINDING IS TRACKED, NOT
+			// ASSUMED. `own` above records a declaration the FRAGMENT
+			// made, so that the rest of the fragment is compared against
+			// it — which means a conflict here can be entirely inside
+			// the clipboard, with the document declaring nothing at all.
+			// The single message this used to have asserted the document
+			// as the other party regardless, and sent the author to look
+			// for a declaration that is not in their file: measured into
+			// the default page, whose source is a <Gooey> over a bare
+			// <Canvas Name="Root"> and which declares nothing, pasting
+			// `<Canvas xmlns:t="urn:A"><Button xmlns:t="urn:B"/></Canvas>`
+			// said `this document already declares it as "urn:A"`. The
+			// sibling and cousin spellings said the same. That is the
+			// misattribution class this branch spent round 14 removing
+			// from three backstop seams — a clause before the colon
+			// naming a party the code has not established — arriving at
+			// the message the round before had just added a branch to.
+			//
+			// The REMEDY is the half that actually cost the author
+			// something: "change the document's own declaration" is not
+			// available when both bindings are in the clipboard, and the
+			// one they can fix — the outer declaration in what they are
+			// pasting — was the one being named as the document's.
+			// Raised in review of #501.
+			if !fromDoc {
+				return fmt.Errorf("the pasted markup declares %s twice, as %q "+
+					"and as %q. %s. Rename one of the two in what you are "+
+					"pasting — this conflict is entirely inside what you "+
+					"copied, so the open document has nothing to change",
+					k, bound, v, mech)
+			}
+			return fmt.Errorf("the pasted markup declares %s=%q and this document "+
+				"already declares it as %q. %s. Rename the prefix in what you are "+
+				"pasting, or change the document's own declaration deliberately",
+				k, v, bound, mech)
+		}
+		delete(n.Attrs, k)
+	}
+	for _, name := range sortedKeys(n.Slots) {
+		if err := reconcileNamespacesInto(n.Slots[name], doc, own); err != nil {
+			return err
+		}
+	}
+	for _, k := range n.Kids {
+		if err := reconcileNamespacesInto(k, doc, own); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectNamespaces records every declaration in a subtree. A prefix
+// declared twice in one document is already last-wins to the loader, so
+// recording the last one here is agreeing with it rather than choosing.
+//
+// SORTED ON BOTH WALKS, the way node.markup sorts when it writes
+// attributes AND slot names back out — and only ONE of those two sorts
+// is load-bearing, which the round that added them got wrong in the
+// comment. "Last wins" is a claim about ORDER, and ranging a map has
+// none, so the SLOTS walk was a real defect: four slots declaring
+// xmlns:t to four different URIs resolved to all four over 500 runs,
+// and the same document accepted a paste on one run and refused it on
+// the next. The ATTRIBUTES walk cannot hold that bug at all. n.Attrs is
+// a map keyed by attribute name, so one element declaring a prefix
+// twice is not a state this model can represent — the second spelling
+// overwrote the first long before this walk — and sorting distinct keys
+// cannot change which URI a prefix ends up with. That sort is here for
+// agreement with node.markup, not for correctness, and saying otherwise
+// credited a guard with catching something it never could. Corrected in
+// review of #501.
+//
+// PREFIXED DECLARATIONS ONLY, because that is what the decision reads.
+// This recorded the plain "xmlns" too, and reconcileNamespacesInto
+// SKIPPED k == "xmlns" above the doc[k] lookup at the time, so the entry
+// was unreachable — two functions disagreeing about what counts as a
+// declaration, which is how the default-namespace bug that skip records
+// got in. PAST TENSE, because that skip is gone: the predicate there is
+// `!isNamespaceAttr(k)` now, and isNamespaceAttr's own doc carries why.
+// Written in the present it made two comments in one file disagree about
+// what the code does, which is the class this branch spends its rounds
+// deleting. Raised in review of #501, both halves.
+func collectNamespaces(n *node, into map[string]string) {
+	for _, k := range sortedKeys(n.Attrs) {
+		if isNamespaceAttr(k) {
+			into[k] = n.Attrs[k]
+		}
+	}
+	for _, name := range sortedKeys(n.Slots) {
+		collectNamespaces(n.Slots[name], into)
+	}
+	for _, k := range n.Kids {
+		collectNamespaces(k, into)
+	}
+}
+
+// isNamespaceAttr matches a PREFIXED declaration — "xmlns:"+local — and
+// nothing else; HasPrefix(k, "xmlns") would also match a plain attribute
+// spelled xmlnsFoo, and the plain "xmlns" is not one of these.
+//
+// IT MATCHED THE PLAIN FORM TOO, AND THE ARM WAS UNOBSERVABLE. Its only
+// caller then, reconcileNamespacesInto, skipped `k == "xmlns"` two lines
+// later, so returning false here produced the identical result at the
+// first continue — a predicate with no behaviour, which two functions
+// can then disagree about with nothing red. That is the same class as
+// the unreachable plain-xmlns entry already removed from
+// collectNamespaces, on the other side of the same pair. The
+// default-namespace reasoning moved onto the skip in
+// reconcileNamespacesInto, where it is the only thing deciding anything.
+//
+// AND IT IS SHARED NOW, which is the other half of that round's finding.
+// While this matched the plain form it could not be: every caller that
+// must NOT move a plain xmlns spelled the prefixed test inline, and the
+// comment here recorded that as the reason. The narrowing made the reason
+// moot and left identical predicates scattered with nothing explaining
+// why; they call this instead.
+//
+// NO COUNT OF THEM HERE. This said "FOUR CALLERS NOW" and named three,
+// and the very commit that wrote it added a fifth — which is the
+// hand-maintained count this branch had already removed from gooeyOpen's
+// doc two commits earlier, and the one CLAUDE.md's Verify section refuses
+// in prose: a number in a comment is a sample taken once. The reason the
+// predicate is shared is the paragraph's point and it survives without an
+// arithmetic claim; `grep -n 'isNamespaceAttr(' apps/wysiwyg/*.go` is the
+// current answer. Raised in review of #501, twice.
+func isNamespaceAttr(k string) bool {
+	return strings.HasPrefix(k, "xmlns:")
 }
 
 // ---- shared ----

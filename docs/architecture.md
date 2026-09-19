@@ -1516,8 +1516,15 @@ The mechanics that keep it inside the framework's constraints:
   everywhere.
 - **`Element.Space`** — the parser keeps each element name's resolved
   namespace URI, which is how a declaration is told apart from a
-  component without reserving the name `Property`. The xmlns table the
-  handler-namespace work introduced now carries element dispatch too.
+  component without reserving the name `Property`. It is a SEPARATE
+  mechanism from the flat xmlns table the handler-namespace work
+  introduced, and this line said they were one: `ctx.ns` is read by
+  `handlerCommand` and `valueHandle` and nowhere else, while
+  `parse` copies `Element.Space` straight from `encoding/xml`, which has
+  already applied real subtree scoping — and `splitDeclarations`
+  switches on it without consulting `ns` at all. That difference is the
+  whole reason a rebound prefix behaves one way for an expression and
+  another for an element; see `docs/markup-reference.md`.
 - **Declaring anything makes the control strict**: an undeclared
   attribute at an instantiation site is a load error, so a typo is
   caught rather than silently doing nothing. No declarations keeps the

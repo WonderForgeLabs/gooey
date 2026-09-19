@@ -1086,6 +1086,20 @@ func parse(src []byte) (Element, map[string]string, error) {
 	return *root, ns, nil
 }
 
+// namespacedAttrError refuses a prefixed attribute, and the two
+// spellings it names the attribute with are a CONTRACT rather than
+// formatting: xml:local for the XML namespace, {uri}local for anything
+// else.
+//
+// apps/wysiwyg keeps a second copy of exactly this rule
+// (namespacedAttrName, main.go), because markup does not export it and
+// the editor is a nested module that cannot reach in. The copy is
+// downstream: markup can change its spelling and every check stays
+// green, since CI vets the app modules without running their suites. So the
+// tripwire has to be in this module, and it is
+// TestNamespacedAttributesAreLoadErrors — whose arms spell out both
+// forms. Changing either one means changing the copy in the same
+// commit. Raised in review of #501.
 func namespacedAttrError(element string, attr xml.Attr) error {
 	name := attr.Name.Local
 	if attr.Name.Space == "http://www.w3.org/XML/1998/namespace" {

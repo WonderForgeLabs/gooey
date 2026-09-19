@@ -312,6 +312,57 @@ func (h *history) abort(root *node) {
 	h.base = snapshot{root: root.clone(), sel: h.base.sel, hasSel: h.base.hasSel}
 }
 
+// reset drops the whole history and re-baselines on root. Opening a
+// file is the one caller: a new document starts with no past.
+//
+// UNDO MUST NOT CROSS AN OPEN, and it did. Review of #501 found that
+// opening a second file left the first file's snapshots in the stack, so
+// ctrl+z put the FIRST document's tree back under the SECOND document's
+// envelope — measured: open one carrying Graphics="halfblock", open a
+// plain one, undo, and the CODE tab reads <Gooey> with no Graphics over
+// Content="first". The envelope is the visible half and the smaller
+// half: openPath still names the second file, so a save would write one
+// document's content into the other's path.
+//
+// Carrying envAttrs in the snapshot would have fixed the envelope and
+// made the rest worse — undo would then restore the first file's
+// envelope too, and the mismatch between what is on screen and what
+// openPath names would be complete and invisible. The tree and the file
+// are what must not separate; the envelope moves with the tree because
+// it is part of it.
+//
+// The entries are zeroed rather than dropped, the way pop and the bound
+// do it: a snapshot holds a whole cloned tree, and leaving one reachable
+// from the array's tail keeps it alive for as long as the slice is.
+//
+// THE SELECTION IS PART OF THE BASELINE, and taking root alone was a
+// regression this function introduced. Every other site that establishes
+// a baseline carries sel/hasSel — record's !started branch, abort, and
+// restore — and the reason is record's sel-refresh two screens down: it
+// is guarded on the path still RESOLVING in the state being left, so
+// after an ADD it does not fire and the pushed snapshot keeps whatever
+// selection the base already had. Baseline with none and the first undo
+// after an open pushes hasSel:false, which restore turns into
+// `ed.sel = nil` unconditionally — the node goes away as it should and
+// the properties pane empties with it, so the user has to ctrl+n back to
+// where they were. Measured before the fix: open, paste a <Button>, undo,
+// and ed.sel is nil. Raised in review of #501; pinned by
+// TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade.
+func (h *history) reset(root *node, sel []int, hasSel bool) {
+	for i := range h.undo {
+		h.undo[i] = snapshot{}
+	}
+	for i := range h.redo {
+		h.redo[i] = snapshot{}
+	}
+	for i := range h.cleared {
+		h.cleared[i] = snapshot{}
+	}
+	h.undo, h.redo, h.cleared, h.stashed = nil, nil, nil, false
+	h.base = snapshot{root: root.clone(), sel: sel, hasSel: hasSel}
+	h.pending = ""
+}
+
 // recordHistory is the hook, and it runs at the TOP of rebuild.
 //
 // The top rather than the bottom, for two reasons that are both about
