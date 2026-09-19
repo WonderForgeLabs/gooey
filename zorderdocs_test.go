@@ -1,6 +1,7 @@
 package gooey
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -1631,6 +1632,15 @@ func spanWindow(lines []string, first, last, before, after int) string {
 // is somebody else's prose entirely.
 func docFiles(t *testing.T) []string { return docFilesIn(t, ".") }
 
+// errGitUnavailable is what walkDocFiles returns when it cannot ask git
+// which files are in the repo. It is a sentinel rather than a bare error
+// because docFilesIn answers it with a SKIP and answers every other walk
+// failure with a fatal: a tree where git cannot run is not this guard's
+// business, and a tree it cannot walk is.
+var errGitUnavailable = errors.New("git ls-files is unavailable, so these " +
+	"guards cannot tell a repository file from a scratch one and would " +
+	"report paths that are not in the repo")
+
 // walkDocFiles is docFilesIn without a *testing.T, so the shared corpus
 // below can build itself off any goroutine. The floor and the failure
 // reporting stay with the caller, which is the half that needs the T.
@@ -1644,17 +1654,27 @@ func walkDocFiles(root string) ([]string, error) {
 	// accident with one scratch file.
 	//
 	// git, not .gitignore parsing: the question is exactly "is this file
-	// part of the repo", and git is the authority on it. A tree where
-	// the command cannot run is not one of these guards' business, so a
-	// failure to list falls back to walking everything rather than to
-	// reporting an empty repo — the floor below would then say so.
+	// part of the repo", and git is the authority on it.
+	//
+	// A FAILURE TO LIST IS RETURNED, not swallowed, and the caller turns
+	// it into a visible skip. This fell back to walking everything, with
+	// "the floor below would then say so" as the argument, and the
+	// sibling walk in components/ inherited the same sentence — until
+	// review of #458 round 13 measured it. The floor catches a walk that
+	// found too FEW files, while the failure mode being guarded —
+	// untracked scratch files reaching the corpus — makes the walk
+	// BIGGER and sails past it. So on a machine where git cannot run,
+	// these guards were back to failing while naming paths that are not
+	// in the repository, and the floor said nothing.
 	tracked := map[string]bool{}
 	if root == "." {
-		if out, err := exec.Command("git", "ls-files", "-z").Output(); err == nil {
-			for _, p := range strings.Split(string(out), "\x00") {
-				if p != "" {
-					tracked[filepath.ToSlash(p)] = true
-				}
+		listed, err := exec.Command("git", "ls-files", "-z").Output()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", errGitUnavailable, err)
+		}
+		for _, p := range strings.Split(string(listed), "\x00") {
+			if p != "" {
+				tracked[filepath.ToSlash(p)] = true
 			}
 		}
 	}
@@ -1769,6 +1789,9 @@ func docFilesIn(t *testing.T, root string) []string {
 	t.Helper()
 
 	out, err := walkDocFiles(root)
+	if errors.Is(err, errGitUnavailable) {
+		t.Skip(err.Error())
+	}
 	if err != nil {
 		t.Fatalf("walking the tree: %v", err)
 	}
@@ -1839,6 +1862,24 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 		"// A MenuBar belongs at the end of its container so the dropdown paints on top.",
 		"// Put it at the bottom of the markup and it will paint over everything.",
 		"// THE ORDER IS THE Z-ORDER and may not be swapped.",
+		// ONE PER QUALIFIER, and they are here rather than in `removed`
+		// for the reason that list's own doc gives: they are invented,
+		// and `removed` carries a factual claim about what the sweep
+		// deleted. Each states the retired rule AND carries exactly one
+		// qualifier's phrase, which is the two-condition shape the cost
+		// arm already had and the other three planes did not —
+		// eachQualifierClearsASampleAlone is what now requires it of all
+		// four. Before these, this arm reached one of nine entries.
+		// Raised in review of #458 round 13.
+		"// document order is z-order, tracked in #430.",
+		"// document order is z-order, and that is no longer the rule.",
+		"// document order is z-order, then ranked above by the bucket pass.",
+		"// document order is z-order is what this used to say.",
+		"// document order is z-order — do not go looking for it.",
+		"// document order is z-order until the subtree is lifted.",
+		"// document order is z-order unless it is a gooey.Overlay.",
+		"// document order is z-order across two layers.",
+		"// document order is z-order by convention, not by rule.",
 	}
 	for _, line := range removed {
 		if !statesTheRetiredRule(line) {
@@ -1929,6 +1970,7 @@ func TestTheRetiredRuleGuardCanActuallyFire(t *testing.T) {
 				"it noise rather than a check:\n\t%s", line)
 		}
 	}
+	eachQualifierClearsASampleAlone(t, "qualifierRes", qualifierRes, samples)
 }
 
 // TestEveryStatementOfTheHitContractNamesTheAncestorClause is the prose
@@ -2335,6 +2377,21 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 		"// HitTest knows nothing about ranks.",
 		"// hit-testing takes the last sibling first, whatever paints on top.",
 		"// The marker moves paint, not the clicks.",
+		// ONE PER QUALIFIER — see the z-order arm's block for why they
+		// live in neverShipped. This arm was the worst of the four: none
+		// of its four `kept` sentences answers statesTheRetiredInputRule
+		// true, so the qualifiedIn call under that guard never ran and
+		// all nine inputQualifierRes entries were unexercised. Measured
+		// in review of #458 round 13.
+		"// Hit-testing still walks plain document order, which #465 tracks.",
+		"// Hit-testing still walks plain document order — no longer true.",
+		"// Hit-testing still walks plain document order is what this used to say.",
+		"// Hit-testing still walks plain document order, so position is free.",
+		"// Hit-testing still walks plain document order, and overlayOf is not asked.",
+		"// Hit-testing is layer-aware now, and still walks plain document order.",
+		"// Hit-testing still walks plain document order; the click agrees anyway.",
+		"// Hit-testing still walks plain document order, membership-and-rank aside.",
+		"// Hit-testing still walks plain document order by convention, not by rule.",
 	}
 	// THE RESIDUE OF A CORRECTION is its own family and its own arm,
 	// because it is scanned with a stricter qualifier set —
@@ -2426,6 +2483,7 @@ func TestTheRetiredInputRuleGuardCanActuallyFire(t *testing.T) {
 				"rather than a check:\n\t%s", line)
 		}
 	}
+	eachQualifierClearsASampleAlone(t, "inputQualifierRes", inputQualifierRes, samples)
 }
 
 // TestThePaintCorrectionDoesNotExemptTheInputClaim is the finding that
@@ -3139,6 +3197,21 @@ func TestTheRetiredHiddenGuardCanActuallyFire(t *testing.T) {
 				tc.name, tc.line, got, tc.want)
 		}
 	}
+
+	// AND THE QUALIFIERS, which this arm exercised two of four of. Each
+	// line states the retired wording AND carries exactly one
+	// qualifier's phrase — the two-condition shape the table above
+	// cannot express, because every row there is want:true or want:false
+	// on `states` alone and never reaches qualifiedIn. See
+	// eachQualifierClearsASampleAlone for why all four planes have this
+	// now and only the cost plane had it before. Raised in review of
+	// #458 round 13.
+	eachQualifierClearsASampleAlone(t, "hiddenQualifierRes", hiddenQualifierRes, []string{
+		"Hidden occupies space, does not paint, which is no longer true.",
+		"Hidden occupies space, does not paint is what this used to say.",
+		"Hidden occupies space, does not paint, so position is free.",
+		"Hidden occupies space, does not paint, by convention rather than by rule.",
+	})
 }
 
 // TestAReportNamesThePlaneItFound pins the plane name in the failure,
@@ -3664,21 +3737,42 @@ func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
 		}
 	}
 
-	// EVERY QUALIFIER NEEDS A SAMPLE NO OTHER ONE CLEARS, which is the
-	// loop the qualifier lists did not have. `(?i)uncaptured` lived here
-	// until review of #458 and changed no outcome, because `(?i)captured`
-	// is an unanchored substring match and matches UNCAPTURED as well —
-	// deleting it reddened nothing, including the row written for it.
-	// This is the qualifier-side twin of the retiredRule loop that
-	// already errors on a pattern no sample reaches.
-	for _, re := range costQualifierRes {
+	eachQualifierClearsASampleAlone(t, "costQualifierRes", costQualifierRes, samples)
+}
+
+// eachQualifierClearsASampleAlone is EVERY QUALIFIER NEEDS A SAMPLE NO
+// OTHER ONE CLEARS, and it is a helper rather than a loop because it
+// landed on ONE PLANE OF FOUR and stayed there.
+//
+// `(?i)uncaptured` lived in costQualifierRes until review of #458 and
+// changed no outcome, because `(?i)captured` is an unanchored substring
+// match and matches UNCAPTURED as well — deleting it reddened nothing,
+// including the row written for it. The loop written to close that was
+// inlined in the cost arm, so `grep -n "clears no sample"` returned
+// exactly one line while the three sibling planes had no equivalent:
+// the z-order arm reached one of its nine entries, the visibility arm
+// two of four, and the INPUT arm reached none at all — every one of its
+// four `kept` sentences answers statesTheRetiredInputRule false, so the
+// qualifiedIn call under that guard never ran. Measured in review of
+// #458 round 13, which also deleted each qualifier against the tree and
+// found fourteen entries across the four lists that changed no outcome
+// when removed.
+//
+// That is the same shape as the defect it was written for, one plane
+// over — a lesson learned in one place not protecting its sibling,
+// which this file has now been on both sides of. This is the
+// qualifier-side twin of the retiredRule loop that already errors on a
+// pattern no sample reaches.
+func eachQualifierClearsASampleAlone(t *testing.T, name string, list []*regexp.Regexp, samples []string) {
+	t.Helper()
+	for _, re := range list {
 		alone := false
 		for _, line := range samples {
 			if !re.MatchString(line) {
 				continue
 			}
 			others := 0
-			for _, other := range costQualifierRes {
+			for _, other := range list {
 				if other != re && other.MatchString(line) {
 					others++
 				}
@@ -3689,10 +3783,10 @@ func TestTheRetiredCostGuardCanActuallyFire(t *testing.T) {
 			}
 		}
 		if !alone {
-			t.Errorf("costQualifierRes entry %v clears no sample that another "+
-				"entry does not also clear: it is either dead or subsumed, and "+
-				"deleting it would redden nothing. Add the sentence it exists "+
-				"to exempt.", re)
+			t.Errorf("%s entry %v clears no sample that another entry does not "+
+				"also clear: it is either dead or subsumed, and deleting it "+
+				"would redden nothing. Add the sentence it exists to exempt.",
+				name, re)
 		}
 	}
 }

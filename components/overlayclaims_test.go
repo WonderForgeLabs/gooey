@@ -334,20 +334,34 @@ func overlayProseFiles(t *testing.T, root string) []string {
 	// git, not .gitignore parsing: the question is exactly "is this
 	// file part of the repo", and git is the authority on it. `-C root`
 	// rather than a prefix dance, so the listing comes back relative to
-	// the same directory this walk reports against. A tree where the
-	// command cannot run is not this guard's business, so a failure to
-	// list falls back to walking everything — the floor below would
-	// then be what speaks. Raised in review of #458.
+	// the same directory this walk reports against.
+	//
+	// A FAILURE TO LIST SKIPS, and the first version of this fell back
+	// to walking everything with the floor named as the backstop. That
+	// reasoning was wrong in the direction that matters: the floor
+	// catches a walk that found too FEW files, and the failure mode
+	// being guarded — untracked scratch files reaching the corpus —
+	// makes the walk BIGGER, so it sails past a >= 300 check. On a
+	// machine without git the guard would have been back to failing
+	// while naming a path that is not in the repository, which is the
+	// exact state this filter was added to remove. Skipping keeps "a
+	// tree where the command cannot run is not this guard's business"
+	// true while making it visible instead of silent. Raised in review
+	// of #458, twice — the fallback was the second round's own answer.
 	tracked := map[string]bool{}
-	if out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output(); err == nil {
-		for _, rel := range strings.Split(string(out), "\x00") {
-			if rel != "" {
-				tracked[filepath.ToSlash(filepath.Join(root, rel))] = true
-			}
+	listed, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	if err != nil {
+		t.Skipf("git ls-files is unavailable under %s (%v), so this guard "+
+			"cannot tell a repository file from a scratch one and would "+
+			"report paths that are not in the repo", root, err)
+	}
+	for _, rel := range strings.Split(string(listed), "\x00") {
+		if rel != "" {
+			tracked[filepath.ToSlash(filepath.Join(root, rel))] = true
 		}
 	}
 	var out []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -360,7 +374,7 @@ func overlayProseFiles(t *testing.T, root string) []string {
 			}
 			return nil
 		}
-		if len(tracked) > 0 && !tracked[filepath.ToSlash(p)] {
+		if !tracked[filepath.ToSlash(p)] {
 			return nil
 		}
 		switch filepath.Ext(p) {
