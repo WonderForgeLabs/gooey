@@ -1014,13 +1014,14 @@ func envelopeNamespaces(attrs map[string]string, decls []*node, into map[string]
 // if some declaration does not carry that same one — which is the only
 // case where writing the prefix alone would save a file markup refuses.
 func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
-	// ONE SCAN OF attrs, READ TWICE. declBinding answers both questions
-	// in one pass — the prefix the envelope binds, or, when it binds
-	// none, the spelling a mint would use with the envelope's own
-	// prefixes avoided — and this used to call it a second time in the
-	// mint branch only because p was scoped to the if. Two calls on one
-	// unchanged map cannot disagree, but a reader has to prove that
-	// before moving on. Raised in review of #522.
+	// ONE SCAN OF attrs FOR THE BINDING. declBinding answers the
+	// envelope's own question here — which prefix, if any, it binds to
+	// markup.XNamespace. The mint below calls declBindingAvoiding
+	// instead, because the spelling to mint depends on what the
+	// DECLARATIONS have spent as well, which this call cannot see.
+	// Raised in review of #522, twice: the first round collapsed two
+	// calls into one on the grounds that they could not disagree, and
+	// they were not asking the same question.
 	envPrefix, envBound := declBinding(attrs)
 	if envBound {
 		return envPrefix, true
@@ -1033,7 +1034,17 @@ func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 		}
 	}
 	if prefix == "" {
-		return envPrefix, false // the minted spelling, collisions avoided
+		// MINTED AGAINST THE DECLARATIONS TOO, not just the envelope —
+		// the second call is what the paragraph above used to say was
+		// unnecessary, and it is necessary for a different question:
+		// this one avoids prefixes the DECLARATIONS have spent, which
+		// declBinding(attrs) above cannot see. Raised in review of #522.
+		also := make([]map[string]string, 0, len(decls))
+		for _, d := range decls {
+			also = append(also, d.Attrs)
+		}
+		minted, _ := declBindingAvoiding(attrs, also)
+		return minted, false
 	}
 	for _, d := range decls {
 		if p, ok := declBinding(d.Attrs); !ok || p != prefix {
@@ -1133,13 +1144,46 @@ func declAttrs(attrs map[string]string, prefix string) map[string]string {
 // are the way out of the case where the document binds x to something
 // else — legal, strange, and not worth clobbering the author over.
 func declBinding(attrs map[string]string) (string, bool) {
+	return declBindingAvoiding(attrs, nil)
+}
+
+// declBindingAvoiding is declBinding with more maps the MINT must not
+// collide with, and the extra argument exists because avoiding the
+// envelope alone was not enough.
+//
+// markup's namespace table for value expressions is ONE FLAT
+// DOCUMENT-WIDE MAP, so a prefix spent anywhere in the file is spent.
+// The mint checked `attrs` — the envelope's own attributes — and
+// declAttrs then drops `xmlns:<minted>` off the declaration whatever it
+// used to say, so a document whose <Property> carried
+// xmlns:x="urn:probe:handlers" was rewritten with that binding GONE and
+// <Gooey xmlns:x="…/gooey/x"> in its place. Measured in review of #522:
+// the editor reports the load error, ctrl+s is not gated on the build,
+// and the file it writes no longer loads.
+//
+// The declarations' own attrs are the set that has to be added, and
+// only them: a binding on the content root or below comes later in
+// document order, so last-wins keeps it, and XML scoping keeps
+// <x:Property> resolving against the envelope.
+func declBindingAvoiding(attrs map[string]string, also []map[string]string) (string, bool) {
 	for _, k := range sortedKeys(attrs) {
 		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
 			return strings.TrimPrefix(k, "xmlns:"), true
 		}
 	}
+	taken := func(p string) bool {
+		if attrs["xmlns:"+p] != "" {
+			return true
+		}
+		for _, m := range also {
+			if m["xmlns:"+p] != "" {
+				return true
+			}
+		}
+		return false
+	}
 	p := "x"
-	for i := 2; attrs["xmlns:"+p] != ""; i++ {
+	for i := 2; taken(p); i++ {
 		p = "x" + strconv.Itoa(i)
 	}
 	return p, false

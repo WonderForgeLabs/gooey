@@ -452,6 +452,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// and one inside a <Gooey> by splitDecls' bare arm — which is what
 	// made this the odd path out rather than a gap in the idea. Raised in
 	// review of #522.
+	//
 	// IT DESCRIBES RATHER THAN PRESCRIBES, which is what separates this
 	// arm from bareDeclMsg and is why it no longer calls it.
 	// bareDeclMsg is markup's sentence for a declaration found AMONG AN
@@ -538,6 +539,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// the reader looking for elements their file does not
 				// contain. n.Attrs is in hand, which is where the
 				// binding lives. Raised in review of #522.
+				//
 				// THE WHOLE TAIL AGREES, not just the verb. It read
 				// "its 1 <p:Property> declaration is not root elements"
 				// — the noun carried the verb and the trailing literal
@@ -553,14 +555,6 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// author looking for an element they never wrote.
 				// Raised in review of #522.
 				//
-				// AND THE NAME COMES FROM THE ELEMENT, not from the
-				// word "Property". It was spelled literally here while
-				// splitDecls files every x-namespaced child into decls,
-				// so <x:Foo> was reported as <x:Property>. The alien arm
-				// above now returns before this line, which is what
-				// makes every remaining decl a Property — this reads
-				// decls[0].Elem anyway, so the two cannot drift apart
-				// again. Raised in review of #522.
 				// EVERY ONE OF THEM IS SPELLED FROM ITS OWN BINDING,
 				// through declElemName, because a document may bind
 				// more than one prefix to the x namespace and XML

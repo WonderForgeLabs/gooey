@@ -133,7 +133,7 @@ func TestASavedPropertyDocumentStillDeclaresItsProperty(t *testing.T) {
 // "x:Property" under the bug too — the string is not the claim, the
 // loader is.
 func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
-	for _, tc := range []struct{ name, prefix, doc string }{
+	for _, tc := range []struct{ name, prefix, doc, keeps string }{
 		{
 			// envelopeAttrs drops the envelope's xmlns:x because the
 			// content root repeats it. Redundant for MEANING, and the
@@ -145,6 +145,7 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 				`  <Canvas Name="Root" xmlns:x="` + markup.XNamespace + `">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
+			"",
 		},
 		{
 			// No prefix anywhere: the declaration names itself with a
@@ -156,6 +157,7 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
+			"",
 		},
 		{
 			// The author's own prefix survives, which is what declBinding
@@ -167,6 +169,7 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
+			"",
 		},
 		{
 			// AND THE SECOND LEGAL PLACEMENT. XML scoping lets the
@@ -186,6 +189,7 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
+			"",
 		},
 		{
 			// AND A BINDING OF THE SAVE PREFIX TO SOMETHING ELSE, which
@@ -203,22 +207,32 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
+			"",
 		},
 		{
 			// THE SAME LOSS WITH NO ENVELOPE BINDING AT ALL, reached the
-			// other way: declPrefix MINTS a prefix, and declBinding's
-			// collision loop reads only the envelope's attrs — so it
-			// mints x while the declaration itself binds x to something
-			// else, and the inner binding wins at the element. The mint
-			// is left alone deliberately; declAttrs' third clause is
-			// what closes both routes. Raised in review of #522.
+			// other way: declPrefix MINTS a prefix, and the collision
+			// loop read only the envelope's attrs — so it minted x
+			// while the declaration itself bound x to something else.
+			//
+			// THE MINT AVOIDS IT NOW, and this arm expected "x" until
+			// review of #522 measured what that cost. markup's table
+			// for value expressions is one flat document-wide map, so
+			// declAttrs' third clause dropping the declaration's own
+			// xmlns:x does not merely remove a residue — it removes a
+			// binding the rest of the document may be USING, and the
+			// saved file stops loading under "✓ saved". Minting x2
+			// keeps the author's binding and names the declaration, so
+			// both survive; `keeps` is what asserts the half the
+			// generic assertions below cannot see.
 			"a minted prefix the declaration itself binds elsewhere",
-			"x",
+			"x2",
 			`<Gooey>` + "\n" +
 				`  <Property xmlns="` + markup.XNamespace + `" xmlns:x="urn:other" Name="Title" Type="string" Default="hi"/>` + "\n" +
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
+			`xmlns:x="urn:other"`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -269,6 +283,17 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			if !strings.Contains(head, "<"+tc.prefix+":Property") {
 				t.Errorf("the declaration is written under a prefix other than the "+
 					"%q this document binds:\n%s", tc.prefix, src)
+			}
+			// AND A BINDING THE DOCUMENT WAS USING IS STILL THERE. The
+			// prefix the declaration spends on something else is not
+			// this editor's to reclaim: markup resolves value
+			// expressions through one flat document-wide table, so
+			// dropping it changes what {{x:Fire}} means anywhere in the
+			// file. Raised in review of #522.
+			if tc.keeps != "" && !strings.Contains(src, tc.keeps) {
+				t.Errorf("the save dropped %s, which the document binds and may "+
+					"be using — the minted prefix took a name that was already "+
+					"spent:\n%s", tc.keeps, src)
 			}
 			// AND NO BINDING IS LEFT NAMING NOTHING. The dead xmlns:p a
 			// re-prefixing leaves behind is the same residue as the
