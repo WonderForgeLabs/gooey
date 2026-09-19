@@ -140,8 +140,25 @@ the screen edge:
   <ValidationMarker/>
 </TextBox>
 …
-<AdornmentLayer/>   <!-- anywhere: it lifts out of document order -->
+<AdornmentLayer/>   <!-- anywhere spanning the page; the Arrange caveat is below -->
 ```
+
+The layer ranks itself on top for **paint**, but it re-anchors during its
+own `Arrange` by reading each anchor's current bounds — and layout walks
+children in document order, which the overlay lift does not change. So a
+layer declared before the fields it marks reads their bounds as absent on
+the first frame, which it cannot tell apart from an anchor that is gone
+([#514](https://github.com/WonderForgeLabs/gooey/issues/514)).
+
+**A validation marker is exempt, and this is the reason the exemption
+exists.** Its popup is a `components.PersistentAdornment`: an anchor that
+is still in the tree but has no bounds parks it for that frame instead of
+dropping it, and the next frame places it properly, so declaring the layer
+early costs one frame and nothing else
+(`components.TestAPersistentAdornmentSurvivesALayerDeclaredFirst`). What
+the ordering does drop permanently is a **custom** adornment that neither
+persists nor follows the pointer — see `docs/markup-reference.md`'s
+`AdornmentLayer` entry if you are writing one.
 
 The marker adopts its host's `Error` handle (bind `Error="…"` on the
 marker to override), never intercepts the pointer, and a page without a

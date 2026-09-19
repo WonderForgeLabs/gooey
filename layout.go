@@ -31,10 +31,29 @@ const (
 
 type Visibility uint8
 
+// Visible, Hidden and Collapsed are the three ways a component can
+// occupy the tree: painted and hittable, present but neither, or absent
+// entirely. The per-value comments below are the contract.
 const (
-	Visible   Visibility = iota
-	Hidden               // occupies space, does not paint
-	Collapsed            // occupies nothing
+	Visible Visibility = iota
+	// Hidden's wording travels, so changing it is not a local edit:
+	// docs/architecture.md restates it, and apps/wysiwyg's dock.go
+	// quotes THAT file by name and in quotation marks. The prose this
+	// replaced said dock.go quotes this declaration; it does not — it
+	// cites docs/architecture.md, which is the sentence to keep in
+	// step.
+	//
+	// Hidden renders no content and is NOT HIT-TESTED, rather than
+	// "does not paint", which is what this said and is wrong in both
+	// halves. A hidden LEAF still pre-clears its own bounds, so it
+	// erases a visible sibling it overlaps (#508); and since #465
+	// FocusManager.HitTest skips a
+	// hidden NODE, so a press over a hidden button lands on whatever
+	// is beneath it. Only the node — a Visible child of a Hidden
+	// parent is still hittable.
+	Hidden
+	// Collapsed occupies nothing and the subtree is skipped entirely.
+	Collapsed
 )
 
 // Layout is the per-element layout state — the XAML FrameworkElement

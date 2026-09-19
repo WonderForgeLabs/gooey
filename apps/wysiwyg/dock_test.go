@@ -64,7 +64,9 @@ func TestHideIsNotCollapse(t *testing.T) {
 
 	// HIDE: the pane keeps its bounds. That is the user's rule ("it keeps
 	// its state and its size") and it is gooey.Hidden's definition —
-	// occupies space, does not paint.
+	// occupies space, renders no content, and is not hit-tested. This
+	// said "does not paint", the same retired wording dock.go quoted;
+	// raised in review of #458.
 	ed.dock.ToggleHidden(props)
 	settle(t, c)
 	if got := props.Bounds(); got != before {

@@ -1,3 +1,15 @@
+<!--
+SUPERSEDED, IN PART, BY #465: the "Too permissive" bullet below says
+`HitTest` returns the deepest component. Since #465 the hit walk asks
+overlayOf and answers by the overlay layer first, then rank, then
+document order, so the raw hit is the one that PAINTS last rather than
+the deepest. The argument the bullet makes — that a check on the raw hit
+clears an event whose delivery lands elsewhere — is unaffected: it turns
+on the retarget, not on which component the query returns. The body is
+left as written because a dated decision record is a record of what was
+decided on its date.
+-->
+
 # Island grants: the subtree contract, enforced host-side
 
 Landed in [PR #250](https://github.com/WonderForgeLabs/gooey/pull/250).

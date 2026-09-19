@@ -25,7 +25,14 @@ package main
 //
 //   - HIDDEN — the pane is not showing AND KEEPS ITS SLOT SPACE. This is
 //     the user's explicit rule, and it maps exactly onto gooey.Hidden,
-//     which the framework defines as "occupies space, does not paint".
+//     which the framework defines as "occupies space, renders no content
+//     and is not hit-tested" (docs/architecture.md). This quoted the
+//     older "occupies space, does not paint", which is now wrong on both
+//     halves, and it is in quotation marks and attributed to the
+//     framework, so it reads as the authority. Raised in review of #458.
+//     The not-hit-tested half is about the NODE only, which is why the
+//     "one sharp edge" paragraph below still holds and why it is the
+//     pane's CONTENT going Collapsed that takes it out of input.
 //     The subtree stays alive: a TextBox in a hidden pane keeps its
 //     caret, a Startable in one keeps running, and revealing it shows the
 //     pane exactly as it was. That is the whole reason to prefer it over

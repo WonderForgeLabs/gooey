@@ -27,8 +27,9 @@ func pickerSources() []source {
 }
 
 // pickerPage is the standard test page: the demo list (the focus stop
-// the browser really has) and the picker declared last, exactly as
-// browser.gooey declares them.
+// the browser really has) and the picker last, exactly as browser.gooey
+// declares them — which no longer decides z-order (the popup surface
+// lifts), only that this page matches the shipped one.
 func pickerPage(chosen *source) (*sourcePicker, *demoList, gooey.Component) {
 	demos := prop.NewComputed(func() []demo {
 		return []demo{{name: "a", dir: "cmd/a"}, {name: "b", dir: "cmd/b"}}

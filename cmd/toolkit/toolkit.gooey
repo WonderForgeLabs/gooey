@@ -139,7 +139,7 @@
             <ColorPicker Value="{{.Accent}}" Canvas.Left="1" Canvas.Top="1"/>
             <Text Canvas.Left="1" Canvas.Top="8" Style="{{.AccentStyle}}">████████  one property, read by all of this</Text>
             <Text Canvas.Left="1" Canvas.Top="10" Style="dim">Canvas — placed by Canvas.Left/Canvas.Top,</Text>
-            <Text Canvas.Left="1" Canvas.Top="11" Style="dim">and tree order is z-order where they overlap</Text>
+            <Text Canvas.Left="1" Canvas.Top="11" Style="dim">and a later sibling paints on top where they overlap</Text>
 
             <Text Canvas.Left="56" Canvas.Top="0" Style="dim">Image — Src is a computed</Text>
             <Image Src="{{.Gradient}}" Cols="24" Rows="10" Canvas.Left="56" Canvas.Top="1"/>
@@ -204,18 +204,14 @@
               <Button Content="sticky toast" Click="{{.Sticky}}" Tooltip="ShowFor with a negative duration never expires"/>
               <Button Content="clear toasts" Click="{{.ClearToasts}}" Tooltip="takes the sticky one back down"/>
             </ButtonBar>
-            <Text Grid.Row="2" Style="dim">Tooltip — the child form carries a gesture hint; the Tooltip="…" shorthand works on any element</Text>
+            <Text Grid.Row="2" Style="dim">Tooltip — the child form carries a gesture hint; Tooltip="…" is the shorthand, on any element</Text>
 
-            <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a surface that is its last child, and a dismissal grammar: esc or an outside press</Text>
+            <Text Grid.Row="3" Style="dim" Margin="0,1,0,0">Popup — an owner, a lifted surface, and a dismissal grammar: esc or an outside press</Text>
             <Text Grid.Row="4" Style="dim">picking one sets the same property the ColorPicker on the visual tab edits</Text>
-            <!-- Declared last here as HOUSE STYLE, not for z-order. A
-                 ColorPreset drops a Popup, and a Popup's surface is the
-                 one type in the framework implementing gooey.Overlay —
-                 so it is lifted out of document order into the paint
-                 layer and paints above the rows it covers wherever it
-                 is declared. This comment used to say the opposite,
-                 which is the strongest form of the mistake: position
-                 decides less here than anywhere else in the file. -->
+            <!-- The preset's dropped list paints above the rows it
+                 covers because the Popup surface is a gooey.Overlay,
+                 lifted out of document order. This HStack is last only
+                 because it reads last. -->
             <HStack Grid.Row="5" Gap="3" VAlign="Start">
               <Text Style="dim" VAlign="Center">accent preset</Text>
               <ColorPreset Name="Presets" Selected="{{.Preset}}" Changed="{{.PresetChanged}}"/>
@@ -247,15 +243,14 @@
         </StatusBar.Right>
       </StatusBar>
 
-      <!-- Overlays, and the two halves are no longer the same rule.
-           The MenuBar's DROPDOWN is a Popup surface, so it implements
-           gooey.Overlay and is lifted out of document order — it paints
-           above the rows it covers from wherever the bar is declared,
-           which is what #430 established when a bar declared early had
-           its menu painted over. The bar itself, and the toast layer,
-           are ordinary components that still paint in document order,
-           so THEY are what being last is for. Grid.Row places the bar
-           on the top row either way. -->
+      <!-- Overlays. The dropdown and the toasts paint above the rows
+           they cover because each is lifted into the overlay layer —
+           the ToastHost on its own account, the dropdown through the
+           popup surface the MenuBar hosts. The BAR itself is not
+           lifted, which is the same fact as Grid.Row still placing it
+           on the top row. The toasts paint above an open dropdown
+           because ToastHost outranks a popup there (#439). Neither
+           depends on these two being declared last. -->
       <MenuBar Grid.Row="0" Style="accent">
         <Menu Title="Job">
           <MenuItem Text="Start" IconRune="▶" Gesture="ctrl+s" Command="{{.Start}}"/>
@@ -270,8 +265,13 @@
       </MenuBar>
       <ToastHost Name="Toasts" Grid.Row="0" Grid.RowSpan="5" Duration="2500ms"/>
       <!-- The adornment layer hosts tooltips and the forms tab's
-           ValidationMarker: declared very last, so both paint above even
-           the toasts. -->
+           ValidationMarker. It paints above even the toasts because
+           OverlayRankAdornment (20) outranks OverlayRankToast (10) —
+           the same rank rule the MenuBar's own comment above cites, and
+           nothing to do with where this element sits in the file. The
+           count that used to stand here ("sixteen lines up") was three
+           out by the time anyone read it; a distance in prose is a line
+           number wearing a disguise. -->
       <AdornmentLayer Grid.Row="0" Grid.RowSpan="5"/>
     </Grid>
   </Border>
