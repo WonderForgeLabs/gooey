@@ -91,7 +91,7 @@ func (s *Service) Tree(depth int) (*Node, error) {
 	if s.scoped() {
 		root = s.islandRoot()
 		if root == nil {
-			return nil, deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
+			return nil, s.islandGone()
 		}
 	}
 	return s.walk(root, treeNames(s.bind), c.Focus(), depth, 1), nil
@@ -243,6 +243,105 @@ func declaredValues(ds markup.DeclaredSurface) []DeclaredValue {
 	return out
 }
 
+// islandGoneFmt is the denial every island-addressed call gives when the
+// grant names an element the running tree no longer has.
+//
+// A shared FORMAT rather than five copies of one sentence: it was written
+// out at each site and had begun to drift, and one site appends a clause
+// — which stays a deliberate difference only while the shared half is
+// literally shared. It is a format string and not a constructor because
+// deniedf returns *Error, whose Kind callers switch on; wrapping it would
+// change the type for the sake of tidiness.
+//
+// The two blocks this one was merged with are now where they belong. A
+// doc comment that grows a second subject documents whichever declaration
+// happens to follow it, silently: go doc rendered this paragraph for the
+// const and left islandRect with none. Raised in review of #504.
+const islandGoneFmt = "this session is scoped to island %q, which names no element in the running tree"
+
+// islandGone is islandGoneFmt applied to this session's grant — the one
+// form every caller wants, since the island name is never anything else.
+func (s *Service) islandGone() *Error { return deniedf(islandGoneFmt, s.grant.Island) }
+
+// islandBounds is islandRect without the error: the rect, and whether it
+// could be resolved at all. It exists because VisibleDamage wants exactly
+// that and nothing more — it filters a slice rather than returning a
+// result, and it runs once per composed frame on the UI goroutine, so it
+// must not format a denial it is going to drop.
+//
+// Splitting it out is what keeps ONE statement of "a missing island means
+// no damage". The first version of the allocation fix put an islandRoot()
+// nil check in VisibleDamage ahead of islandRect, which resolved the
+// island twice per frame and asserted the rule in two places — the same
+// drift islandRect was extracted to remove from five hand-copied denial
+// messages. Raised in review of #504.
+func (s *Service) islandBounds() (gooey.Rect, bool) {
+	root := s.islandRoot()
+	if root == nil {
+		return gooey.Rect{}, false
+	}
+	b, ok := root.(gooey.Bounded)
+	if !ok {
+		return gooey.Rect{}, false
+	}
+	return b.Bounds(), true
+}
+
+// islandRect resolves a scoped session's island to its bounds, in
+// ABSOLUTE screen cells.
+//
+// Callers wanted the same four steps — islandRoot, the nil check, the
+// gooey.Bounded assertion, Bounds() — and wrote them out separately,
+// with denial messages that had already drifted apart ("its screen region
+// cannot be read" against "its size cannot be read") for what is one
+// rule. The duplication is the reason the rule could drift: there was no
+// single place for "what does this island occupy" to be answered. (This
+// said "three callers" until review of #504; the islandBounds split took
+// one of them, and a count written in prose is a sample taken once.)
+//
+// A RESOLVED ISLAND MAY STILL BE DEGENERATE, and neither this nor
+// islandBounds tests W/H. A collapsed or not-yet-arranged island resolves
+// successfully to a zero-size rect, so Screen crops to nothing and
+// ScreenSize answers 0x0 with no error. That is deliberate — the island
+// is not GONE, and islandGone would be a lie about it — but it means a
+// caller needing a DRAWABLE rect must say so itself. VisibleDamage's
+// W<=0 test (grant.go:182) is that, not a second copy of this rule, and
+// screenSizeSchema documents the 0x0 answer for clients. Raised in review
+// of #504.
+//
+// THE preconditionf ARM IS UNREACHABLE for any component in this repo,
+// and is kept rather than dropped. gooey.Bounded is satisfied by the
+// Bounds() method gooey.Base carries (base.go:13), and every component
+// here embeds Base — but gooey.Component does not REQUIRE Bounds: the
+// interface is Measure/Arrange/Render and nothing else (component.go:26).
+// A component that does not embed Base is therefore a legal Component
+// and not Bounded, and an island grant naming one would reach the type
+// assertion. That is why the comma-ok is here and not a bare assertion.
+//
+// IT IS ALSO TESTED, and this paragraph used to say it could not be:
+// "a fixture would have to declare a type this tree cannot hold". The
+// tree cannot hold one; a _test.go can, and it is ten lines —
+// control_test.go's `boundless` has the three methods and embeds
+// nothing. TestIslandRectAnswersGoneCollapsedAndBoundless drives all
+// three outcomes. An arm argued to be untestable and then tested is the
+// same shape as the "no cheap observable" claims this branch has been
+// retiring, so it is recorded rather than quietly replaced. If Component
+// ever grows Bounds, the arm, the fixture and this paragraph go
+// together. Raised in review of #504.
+//
+// THE REASON IS RE-DERIVED rather than carried out of islandBounds: that
+// costs a second lookup only on the path already building an error, and
+// it keeps the resolution itself written once.
+func (s *Service) islandRect() (gooey.Rect, error) {
+	if r, ok := s.islandBounds(); ok {
+		return r, nil
+	}
+	if s.islandRoot() == nil {
+		return gooey.Rect{}, s.islandGone()
+	}
+	return gooey.Rect{}, preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+}
+
 // Screen reads the retained cell plane as of the last composed frame.
 // It NEVER composes a frame of its own: doing so would mark dirty nodes
 // clean and steal the repaint from the app's own next frame — the
@@ -267,18 +366,14 @@ func (s *Service) Screen(styled bool) (string, error) {
 		return "", err
 	}
 	if s.scoped() {
-		root := s.islandRoot()
-		if root == nil {
-			return "", deniedf("this session is scoped to island %q, which names no element in the running tree", s.grant.Island)
-		}
-		b, ok := root.(gooey.Bounded)
-		if !ok {
-			return "", preconditionf("element %q exposes no bounds, so its screen region cannot be read", s.grant.Island)
+		r, err := s.islandRect()
+		if err != nil {
+			return "", err
 		}
 		if styled {
-			return croppedStyled(c.Cells(), b.Bounds(), c.Caps().Color)
+			return croppedStyled(c.Cells(), r, c.Caps().Color)
 		}
-		return cropped(c.Cells(), b.Bounds()), nil
+		return cropped(c.Cells(), r), nil
 	}
 	if styled {
 		var sb strings.Builder
@@ -337,9 +432,20 @@ func cropped(buf *render.Buffer, r gooey.Rect) string {
 //
 // It copies into a fresh Buffer rather than teaching the encoder about
 // rectangles, because a sub-buffer IS the right model here: the guest's
-// screen is its island, so the stream it gets should be homed at 0,0 and
-// as wide as the island, not a set of absolute cursor moves that betray
-// where on the host's page the island sits.
+// screen is its island, so the stream it gets is homed at 0,0 and is as
+// wide as the island rather than being a set of absolute cursor moves
+// into somebody else's page.
+//
+// THE REASON IS THE COORDINATE SPACE, NOT CONFIDENTIALITY, and this
+// paragraph used to say the opposite — that homing here kept the guest
+// from learning where on the host's page its island sat. screen_size
+// hands a scoped guest that island's absolute x and y outright, so the
+// origin is told rather than withheld and the old reason was retired by
+// the same change that wrote it down (docs/specs/2026-08-14-island-grants.md,
+// "A guest is TOLD where it sits"). What survives is structural: a fresh
+// buffer of the island's size is a screen, and 0,0 is where a screen
+// starts — which is exactly why x and y are the conversion a client
+// applies to a position read off this stream. Raised in review of #504.
 func croppedStyled(buf *render.Buffer, r gooey.Rect, depth render.ColorDepth) (string, error) {
 	if r.W <= 0 || r.H <= 0 {
 		return "", nil
@@ -397,4 +503,152 @@ func str(p *prop.Property[string]) string {
 		return ""
 	}
 	return p.Get()
+}
+
+// ScreenSize is the size of the surface this session may see, in cells,
+// plus where that surface sits and the terminal's cell metrics in
+// pixels.
+//
+// CELLS AND PIXELS BOTH, because the two callers are different and
+// neither can derive the other: coordinates for SendPointer are cells,
+// and the graphics layer sizes a picture in pixels
+// (term.Caps.CellW/CellH).
+// A client that had to ask twice would ask once and guess the rest.
+//
+// The ORIGIN is the half a Go caller meets here first — the method doc
+// below is a separate declaration, and the type is what `go doc
+// control.ScreenSize` prints. It is the half this type exists for, and
+// naming only four of these six fields is how it came to be described
+// nowhere on its own surface. The account of what these comments used to
+// say, and what measurement retired, is in
+// docs/specs/2026-08-10-mcp-server.md.
+type ScreenSize struct {
+	// Cols, Rows is the extent of the surface in cells: the terminal for
+	// an unscoped session, the island's arranged rect for a scoped one.
+	Cols, Rows int
+	// X, Y is that surface's ABSOLUTE top-left on the host's page: the
+	// frame SendPointer (control/input.go) takes its coordinates in. It
+	// is (0, 0) for an unscoped session, and for a scoped one it is the
+	// island's own origin — so a guest that never asks lands every click
+	// Y rows too high.
+	//
+	// It does NOT apply to every coordinate a session can read. Bounds
+	// from a tree snapshot are already absolute; a position read off
+	// screen text is homed at (0, 0) and is the one that needs this
+	// added. See the ScreenSize method below.
+	X, Y int
+	// CellW, CellH is the terminal's cell size in pixels, for sizing a
+	// picture rather than for placing one.
+	CellW, CellH int
+}
+
+// ScreenSize reports the screen this session is allowed to see: the
+// visible surface's extent in cells, its absolute origin, and the
+// terminal's cell metrics in pixels.
+//
+// It exists because the only ways to learn the screen were to infer it
+// from the root component's arranged bounds (issue #204) or to read it
+// off screen_text, and each costs a whole tree or a whole screen to
+// learn two integers. screen_text's lines are trailing-trimmed, so the
+// width it implies is the longest PAINTED line rather than the
+// terminal's; neither workaround carries the cell metrics at all.
+//
+// The reason that survives measurement is a CONTRACT rather than a
+// number: the result IS this session's visible surface, whatever its
+// scope, so a client never has to work out which surface it has. The
+// root-bounds inference does not disagree about the numbers — Service.Tree
+// roots a scoped snapshot at the island and walk emits bounds from the
+// same gooey.Bounded.Bounds() call islandBounds makes, which
+// TestATreeSnapshotBoundIsAlreadyAbsolute asserts.
+//
+// A SCOPED SESSION IS TOLD ITS ISLAND'S SIZE, which is the same fiction
+// Screen maintains by cropping to the island: a guest's whole screen is
+// its island. Answering with the terminal would break it in the
+// direction that costs something — a guest told the screen is 60x14 when
+// it may only touch a 60x3 border computes coordinates for cells it
+// cannot reach, and every one is REFUSED rather than silently dropped:
+// mayPoint (control/input.go) denies both arms, a coordinate outside the
+// terminal because nothing would receive it and one inside the terminal
+// but outside the island because the target is not in islandSet.
+//
+// X and Y carry the island's ORIGIN, and they are what make that fiction
+// usable rather than merely comfortable. SendPointer (control/input.go)
+// takes ABSOLUTE screen cells, so size alone is not enough to act: an
+// island at y=1 h=3 is told rows=3, and a guest that believes its rows
+// run 0..2 has one refused row and one unreachable one. The size says
+// how big the region is; the origin is how a guest turns a position
+// inside it into the coordinate SendPointer accepts. Disclosing it costs
+// nothing that is not already disclosed — a scoped tree_snapshot returns
+// the island root's bounds in absolute coordinates — and the residual
+// "a guest can infer host geometry" is booked in
+// docs/specs/2026-08-14-island-grants.md.
+//
+// For an UNSCOPED session the origin is (0,0): the screen is the region.
+// x/y therefore do NOT tell the two apart — a session scoped to an
+// island arranged at the origin reports (0,0) too.
+//
+// The CELL METRICS are not scoped, because they are a property of the
+// terminal rather than of the region: a pixel is the same size inside an
+// island as outside it.
+//
+// They are ZERO when nobody has measured them, and a client must branch
+// on that rather than divide by it. The converse does NOT hold, at two
+// substitution sites: term.Screen.Detect substitutes DefaultCellW/H on
+// `caps.CellW == 0` alone with NO plane test (term/term.go), so a probed
+// app reports non-zero however it paints; App's backfill (app.go,
+// `c.CellW <= 0 && a.pixelPlane(c)`) is the second and can only fire
+// where the first did not — capabilities pinned with WithCaps, or no
+// probe at all. So 0 means "certainly unmeasured"; non-zero means
+// "usable", not "measured". Reporting which would need a provenance bit
+// the caps struct does not carry, and substituting the defaults here
+// would answer a question nobody asked the terminal — the same
+// make-it-up-so-the-field-is-populated move this tool exists to replace.
+//
+// Five claims this comment used to make have been retired by
+// measurement, and the account of each is in
+// docs/specs/2026-08-10-mcp-server.md rather than here: `go doc` output
+// is what a package consumer reads, and a reader looking for the
+// contract should not have to walk past the history of what it is not.
+func (s *Service) ScreenSize() (ScreenSize, error) {
+	c, err := s.composer()
+	if err != nil {
+		return ScreenSize{}, err
+	}
+	caps := c.Caps()
+	size := ScreenSize{CellW: caps.CellW, CellH: caps.CellH}
+	if s.scoped() {
+		r, err := s.islandRect()
+		if err != nil {
+			return ScreenSize{}, err
+		}
+		size.Cols, size.Rows = r.W, r.H
+		size.X, size.Y = r.X, r.Y
+		return size, nil
+	}
+	// c.Cells(), NOT Composer.Size() — and NOT because the two can
+	// differ. They cannot.
+	//
+	// c.cols/c.rows are written in exactly two places and each replaces
+	// the buffer in the same breath: NewComposer (composer.go:187) builds
+	// a render.Buffer of the dimensions it was handed, and Composer.Resize
+	// (composer.go:1043) assigns the pair and swaps in a new buffer of
+	// exactly those dimensions. Resize runs on the UI goroutine, and so
+	// does every tool body (through control.Bridge), so Size() and
+	// Cells().W/H are equal at every point this function can observe
+	// them.
+	//
+	// The reason to read the buffer is that screen_text renders THAT
+	// buffer: one source that cannot drift by construction, rather than
+	// two that are kept equal. Either would be correct today; this one
+	// stays correct if the pair ever stops being swapped together.
+	//
+	// The sentence this replaces said they "differ across a pending
+	// resize", and there is no such window. It was written to decline a
+	// review asking for Size(), and declining on the merits is fine —
+	// inventing a mechanism to do it with is not, least of all in the
+	// change whose other commits exist to retire exactly that. Raised in
+	// review of #504.
+	buf := c.Cells()
+	size.Cols, size.Rows = buf.W, buf.H
+	return size, nil
 }

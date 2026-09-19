@@ -279,6 +279,17 @@ deployment-wide without touching the app.
 | `Error` | Optional binding to a `*prop.Property[string]`. Set to a `*gooey.CompanionError`'s message when the child fails to start or exits unbidden; cleared to `""` on a successful start. |
 | `Exited` | Optional command, run on the UI goroutine when the child is gone for a reason nobody asked for — including never having started. `Exited="{{.Quit}}"` reproduces the app tier's "a dead service takes the app with it". |
 
+**Superseded 2026-09-17 ([#314](https://github.com/WonderForgeLabs/gooey/issues/314)):
+the `Path`, `Dir` and `Log` rows say "the document's directory", and the
+resolution base is the PAGE's.** A companion inside an `Include` or a
+UserControl resolves against the page that instantiated it, not against the
+file the `<Companion>` element is written in — `Context.Dir` is what the
+loader reads, and `Dir` now INHERITS across a control boundary when the
+child leaves it empty (`markup/usercontrol.go`). The current wording is
+`docs/markup-reference.md`'s `<Companion>` table and the doc comments on
+`companionPath` / `companionDir` / `companionLog`; these rows are kept as
+written because a decision record is what was decided, not what is true now.
+
 **Superseded 2026-09-09 ([#460](https://github.com/WonderForgeLabs/gooey/issues/460)):
 `CleanEnv` used to read through `strconv.ParseBool`,** so `"1"`, `"t"`, `"T"`,
 `"TRUE"` and `"On"`-adjacent spellings all loaded. It reads the house literal
