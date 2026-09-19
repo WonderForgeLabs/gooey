@@ -899,7 +899,15 @@ func TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved(t *testing.T)
 			// of #522.
 			name: "an alien element as the whole file",
 			doc:  `<p:Foo xmlns:p="` + markup.XNamespace + `" Name="T"/>` + "\n",
-			want: "<p:Foo> is an unknown language element",
+			// THE TAIL IS PART OF THE WANT, and it is the half that was
+			// unpinned: matching only the "unknown language element"
+			// clause let the file-level sentence be added or removed
+			// with nothing red, which is how this arm came to differ
+			// from its two whole-file siblings. Raised in review of
+			// #522.
+			want: "<p:Foo> is an unknown language element; the " +
+				markup.XNamespace + " namespace declares <p:Property> only. " +
+				"A file whose whole content is one has no document to show",
 		},
 		{
 			// THE UNPREFIXED SPELLING, and it is the typo the whole
@@ -1242,5 +1250,49 @@ func TestPastingABareDeclarationSaysWhatItIs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDeclAttrsNeverHandsBackTheEditorsOwnMap pins the sentence
+// declAttrs' doc makes, which nothing else can see.
+//
+// THE CALLERS ONLY READ IT, which is exactly why this exists. The map
+// declAttrs is handed is ed.envDecls[i].Attrs — the editor's document
+// state — and while it returned that map unchanged on the no-drop path,
+// the doc's claim that the result is a copy was false and no test in
+// the package could tell: envelopeHead assigns it to a throwaway and
+// envelopeNamespaces ranges it. The cost is deferred rather than
+// absent, and withDeclBinding's doc names it: a write through the
+// shared map makes the next save look as though the file had always
+// carried the attribute.
+//
+// SO THE ASSERTION IS IDENTITY, NOT CONTENT. Content is equal either
+// way — that is the whole difficulty — so this mutates the returned map
+// and asks whether the input moved. Measured: with the no-drop fast
+// path restored this fails, and the whole apps/wysiwyg suite is
+// otherwise green, which is what an unpinned invariant looks like.
+// Raised in review of #522.
+func TestDeclAttrsNeverHandsBackTheEditorsOwnMap(t *testing.T) {
+	// NOTHING DEAD IN IT, which is the path that aliased: xmlns:x names
+	// the emitted element and is bound to the x namespace, so no
+	// attribute is dropped and the copy is the only difference.
+	attrs := map[string]string{
+		"xmlns:x": markup.XNamespace,
+		"Name":    "T",
+		"Type":    "string",
+	}
+	got := declAttrs(attrs, "x")
+	if len(got) != len(attrs) {
+		t.Fatalf("declAttrs dropped something from a declaration with nothing "+
+			"dead in it: got %v, want %v — the arm below measures the COPY, so "+
+			"it says nothing if the contents already differ", got, attrs)
+	}
+	got["Name"] = "mutated"
+	if attrs["Name"] != "T" {
+		t.Errorf("writing to declAttrs' result changed the caller's map: "+
+			"Name is now %q. That map is the editor's own node attrs, so a "+
+			"future caller that writes a binding into the result would make "+
+			"the next save look as though the file had always carried one",
+			attrs["Name"])
 	}
 }

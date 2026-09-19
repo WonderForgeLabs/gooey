@@ -1059,6 +1059,23 @@ func withDeclBinding(attrs map[string]string, prefix string) map[string]string {
 //
 // Returned as a copy for the same reason as withDeclBinding: these
 // attrs belong to the editor's node, not to this write.
+//
+// UNCONDITIONALLY, which it was not. The fast path returned the
+// caller's map whenever nothing needed dropping — and the caller's map
+// is ed.envDecls[i].Attrs, the editor's own document state. Both
+// callers only read it today, so nothing was broken; what made it worth
+// closing rather than tolerating is that the sentence above asserts the
+// copy, and withDeclBinding's doc — the one it points at — spells out
+// what sharing costs: writing into it would make the next save look as
+// though the file had always carried the attribute. An invariant
+// asserted in prose and not provided by the code is the shape this
+// branch keeps removing. The maps are four entries at most and this
+// runs once per save, so there is no path worth branching for.
+//
+// envelopeHead's `q := *d` aliases d.Kids and d.Slots the same way and
+// is inert for the same reason — nothing writes through it. Stated here
+// because that is the other place a future caller would assume a copy.
+// Raised in review of #522.
 func declAttrs(attrs map[string]string, prefix string) map[string]string {
 	dead := func(k, v string) bool {
 		if k == "xmlns:"+prefix {
@@ -1071,22 +1088,11 @@ func declAttrs(attrs map[string]string, prefix string) map[string]string {
 		}
 		return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
 	}
-	keep := true
-	for k, v := range attrs {
-		if dead(k, v) {
-			keep = false
-			break
-		}
-	}
-	if keep {
-		return attrs
-	}
 	out := make(map[string]string, len(attrs))
 	for k, v := range attrs {
-		if dead(k, v) {
-			continue
+		if !dead(k, v) {
+			out[k] = v
 		}
-		out[k] = v
 	}
 	return out
 }
