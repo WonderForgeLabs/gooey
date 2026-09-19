@@ -65,9 +65,13 @@ func TestBothEntryPointsRefuseAMismatchedElementName(t *testing.T) {
 	// AND IT STANDS DOWN when they agree, which is what stops the check
 	// from being a ban on registering elements at all.
 	// A key the document does not use, because the point is the check
-	// and not the builder: a def registered with Known and no Build is
-	// a nil deref the moment an element resolves to it, which says
-	// nothing about key-versus-Name.
+	// and not the builder: a def registered with Known and no Build
+	// fails the load the moment an element resolves to it, which says
+	// nothing about key-versus-Name. It said "is a nil deref", which
+	// stopped being true in this same change — noBuild turned it into
+	// "markup: <Table> builds no component of its own —
+	// Context.Elements[\"Table\"] declares no Build". Raised in review
+	// of #486.
 	agreeing := &Context{Elements: map[string]*ElementDef{
 		"Table": {Name: "Table", Known: true},
 	}}
@@ -79,10 +83,19 @@ func TestBothEntryPointsRefuseAMismatchedElementName(t *testing.T) {
 // TestTheElementNameCheckSkipsWhatItCannotRead covers the two shapes the
 // loop deliberately lets through, so neither becomes an accident later.
 //
-// A nil def is a host clearing a key, and an empty Name is a def that
-// never declared one — neither is the key-versus-Name disagreement the
-// check is about, and refusing them would turn a pre-parse guard on the
-// grant vocabulary into a validator of registration hygiene. Raised in
+// A nil def and an empty Name are both outside what this check is for:
+// neither is the key-versus-Name disagreement it exists to catch, and
+// refusing them here would turn a pre-parse guard on the grant
+// vocabulary into a validator of registration hygiene.
+//
+// SKIPPED IS NOT SANCTIONED, and a nil def in particular is not a
+// supported state — this called it "a host clearing a key", which reads
+// as one. Measured when it did: Build and Catalog both panicked on
+// Context{Elements: {"Leafy": nil}}, two calls past this check. The
+// panic is gone — Context.spec treats a nil def as unregistered, so the
+// load fails with an unknown element, and Catalog skips it — but what
+// this arm asserts is only that the NAME CHECK stands down, which is a
+// statement about scope and not about the shape being usable. Raised in
 // review of #486.
 func TestTheElementNameCheckSkipsWhatItCannotRead(t *testing.T) {
 	for _, tc := range []struct {
@@ -97,5 +110,45 @@ func TestTheElementNameCheckSkipsWhatItCannotRead(t *testing.T) {
 			t.Errorf("%s is refused with %v; the check is about a key and a Name "+
 				"that DISAGREE, and neither of these states one", tc.name, err)
 		}
+	}
+}
+
+// TestANilElementDefIsRefusedRatherThanDereferenced is the other half of
+// the arm above, and without it that arm reads as a licence.
+//
+// checkElementNames lets a nil def through on purpose — refusing it
+// there would make a pre-parse guard on the grant vocabulary into a
+// validator of registration hygiene — so the shape reaches the loader,
+// and the loader used to take the process down on it. Measured before:
+// both Build and Catalog panicked with a nil pointer dereference,
+// because buildComponent read d.Build and Context.spec and
+// Context.catalog called d.specAs, all on the nil.
+//
+// A nil def declares nothing, so "unregistered" is the honest answer and
+// the element is unknown. That is the same treatment noBuild gave the
+// nil Build FIELD in this change — a sentence instead of a SEGV — and
+// the reason this is a test rather than a comment is that the panic was
+// reachable from a public entry point with a one-key Context. Raised in
+// review of #486.
+func TestANilElementDefIsRefusedRatherThanDereferenced(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{"Leafy": nil}}
+
+	_, err := Build([]byte(`<Gooey><VStack><Leafy/></VStack></Gooey>`), ctx)
+	if err == nil {
+		t.Fatal("a document using a nil-def key loaded, so the key declares " +
+			"something after all and the rest of this test is about the wrong " +
+			"shape")
+	}
+	if !strings.Contains(err.Error(), "Leafy") {
+		t.Errorf("the refusal does not name the element: %v", err)
+	}
+
+	// CATALOG TOO, and separately: it is a read-only enumeration a
+	// designer calls without loading anything, so it reaches specAs by
+	// its own path and panicked by its own path.
+	if got := len(ctx.Catalog()); got == 0 {
+		t.Error("Catalog() is empty with one nil def registered — the builtins " +
+			"are gone, so the nil is being handled by abandoning the walk " +
+			"rather than by skipping the entry")
 	}
 }

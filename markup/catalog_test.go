@@ -347,3 +347,77 @@ func keys(m map[string]ElementSpec) []string {
 	}
 	return out
 }
+
+// TestTheCatalogMemoDoesNotOutliveItsBuild is the staleness half of the
+// per-build memo, and it is the half that can break in silence.
+//
+// The speed-up is observable by timing and nothing else; a wrong answer
+// is observable here. Two properties, because the memo has exactly two
+// ways to go wrong: surviving past the build that filled it, so a host
+// that registers an element between loads gets the previous load's
+// vocabulary, and leaking out of a NESTED load, so a UserControl
+// assembled against a different Context.Elements hands its answer back
+// to the page that instantiated it.
+//
+// Context.catalog memoizes only the withIncludes=false form — the one
+// the load path asks for per element — so Catalog() is checked here too
+// rather than assumed unaffected. Raised in review of #486.
+func TestTheCatalogMemoDoesNotOutliveItsBuild(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{}}
+	doc := []byte(`<Gooey><VStack><Text>x</Text></VStack></Gooey>`)
+
+	if _, err := Build(doc, ctx); err != nil {
+		t.Fatalf("the fixture does not load, so nothing below is about the memo: %v", err)
+	}
+	if ctx.catalogNoIncludes != nil {
+		t.Error("the memo survived the build that armed it, so the next load " +
+			"against this Context answers from a catalog assembled before the " +
+			"host could change Context.Elements")
+	}
+
+	// AND IT IS ACTUALLY A MEMO, asserted by identity rather than by
+	// timing. Without this the restore check above passes against a
+	// field that is never filled — a cache that caches nothing restores
+	// correctly every time, and the 15x this exists for would be gone
+	// with nothing red.
+	//
+	// ARMED BY HAND, because arming is what document.build does and
+	// there is no seam to reach in from outside one. That is the
+	// mechanism under test, not a shortcut around it: the nil case
+	// below is the same function asked the same question unarmed.
+	ctx.catalogNoIncludes = new([]ElementSpec)
+	first := ctx.catalog(false)
+	if second := ctx.catalog(false); &first[0] != &second[0] {
+		t.Error("two catalog(false) calls inside one build returned different " +
+			"backing arrays, so the assembly is running per call — which is " +
+			"one full BuiltinElements plus markNested per element on the " +
+			"load path")
+	}
+	ctx.catalogNoIncludes = nil
+
+	// A REGISTRATION BETWEEN LOADS, which is the state the arming
+	// exists for: it must be in the second load's vocabulary.
+	ctx.Elements["Späth"] = &ElementDef{Name: "Späth", Known: true}
+	found := false
+	for _, sp := range ctx.catalog(false) {
+		if sp.Name == "Späth" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("an element registered after a build is missing from the next " +
+			"catalog, so the memo is answering from before it was registered")
+	}
+	// Catalog() is the withIncludes form and is not memoized; it must
+	// see the same registration.
+	found = false
+	for _, sp := range ctx.Catalog() {
+		if sp.Name == "Späth" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Catalog() does not see an element the unexported catalog does, " +
+			"so the memo has reached the form it was not meant to cover")
+	}
+}

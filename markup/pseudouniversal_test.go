@@ -2359,6 +2359,43 @@ func TestAShadowingHostDefStillRefusesNameWhereItsReaderTakesOver(t *testing.T) 
 				t.Errorf("the near-miss advice still advertises Name on the element "+
 					"that has just refused it: %v", err)
 			}
+
+			// AND BOTH PROPERTY-ELEMENT SPELLINGS, which is the half
+			// that was still silently dropped after the attribute half
+			// was closed. A shadowing def carries a Proto, so Pseudo is
+			// false, and the gate read `spec.Pseudo && asData` — the
+			// attribute spelling was refused here by the exhaustive
+			// vocabulary check (with the "no such attribute; this
+			// element takes …" wording refuseComponentAttr's doc calls
+			// a lie), and <Tab.Name> and <Tab.Behaviors> reached
+			// nothing at all. Measured before the gate lost its spec
+			// half: err=nil and ctx.Named empty for both. Raised in
+			// review of #486.
+			for _, spelling := range []struct{ what, doc string }{
+				{"Name", `<Gooey><Tabs><Tab Header="a"><Tab.Name>zonk</Tab.Name>` +
+					`<Text>y</Text></Tab></Tabs></Gooey>`},
+				{"Behaviors", `<Gooey><Tabs><Tab Header="a"><Tab.Behaviors>` +
+					`<Tooltip Text="x"/></Tab.Behaviors><Text>y</Text></Tab></Tabs></Gooey>`},
+			} {
+				pe := ctx()
+				_, err := Build([]byte(spelling.doc), pe)
+				if err == nil {
+					t.Errorf("<Tab.%s> loaded under <Tabs>, which reads <Tab> as "+
+						"data and builds no component for it to apply to — "+
+						"accepted, dropped, reported nowhere (ctx.Named holds %d). "+
+						"This is the #461 silent drop in its property-element "+
+						"spelling", spelling.what, len(pe.Named))
+					continue
+				}
+				// THE SHARED SENTENCE, not the vocabulary one: the
+				// point of the gate is that all three spellings give
+				// the reader the same true reason.
+				if !strings.Contains(err.Error(), "reads <Tab> as data") {
+					t.Errorf("<Tab.%s> is refused with %q, which is not the "+
+						"reads-as-data sentence the attribute spelling gives",
+						spelling.what, err)
+				}
+			}
 		})
 	}
 

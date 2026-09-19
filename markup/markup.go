@@ -79,6 +79,10 @@ type Context struct {
 	// textBindableTypes, not string alone; attributes that REQUIRE a
 	// binding are narrower and say so at their own call sites.
 	Values map[string]any
+	// catalogNoIncludes memoizes catalog(false) for the duration of one
+	// document.build, which clears and restores it. Not a cache across
+	// builds: Context.Elements is the host's to change between them.
+	catalogNoIncludes *[]ElementSpec
 	// Styles resolves Style="name" attributes.
 	Styles map[string]render.Style
 	// Components adds custom element builders (e.g. LogPane).
@@ -812,6 +816,29 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	prev := ctx.ns
 	ctx.ns = d.ns
 	defer func() { ctx.ns = prev }()
+
+	// The catalog memo has the SAME lifetime and the same reason. It is
+	// an assembly of ctx.Elements, ctx.Components and the builtins, so
+	// it is stable for one build and not across two — and a nested Load
+	// may carry a different Context.Elements entirely. Re-armed on the
+	// way in and restored on the way out, so the outer build's answer
+	// survives the inner one.
+	//
+	// A POINTER, AND THE INDIRECTION IS THE ARMING. Non-nil means "a
+	// build is running, fill me"; nil means there is no build and
+	// catalog assembles fresh every time. A plain slice could not say
+	// that — filling it lazily from a call made OUTSIDE any build left
+	// a memo nothing would ever clear, so an element registered
+	// afterwards was missing from the next answer. Found by
+	// TestTheCatalogMemoDoesNotOutliveItsBuild, which was written for
+	// the restore and caught this instead. Empty-but-armed is the
+	// unfilled state, so the first asker inside a build still pays one
+	// assembly and a build that never asks pays none. See
+	// Context.catalog for what it costs without this. Raised in review
+	// of #486.
+	prevCat := ctx.catalogNoIncludes
+	ctx.catalogNoIncludes = new([]ElementSpec)
+	defer func() { ctx.catalogNoIncludes = prevCat }()
 
 	// THE WHOLE ARM SCOPE, saved and restored as ONE VALUE. It is
 	// page-wide and per top-level build: a nil sinks map means this is
@@ -1630,7 +1657,14 @@ func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 	// means one of them is unreachable, and which one wins would depend
 	// on the order these ifs happen to be written in — the same reason
 	// registerElements panics on a duplicate builtin.
-	if d, ok := ctx.Elements[e.Name]; ok {
+	// NIL IS NOT REGISTERED, the same answer Context.spec gives. A nil
+	// *ElementDef declares nothing — no Build to call and no duplicate
+	// to report — and reading d.Build off it is a nil dereference
+	// INSIDE A LOAD. Measured before: Context{Elements: {"Leafy": nil}}
+	// took the process down from here. Falling through leaves the
+	// element unknown, which is what a key declaring nothing amounts
+	// to, and the load fails by name. Raised in review of #486.
+	if d, ok := ctx.Elements[e.Name]; ok && d != nil {
 		if _, dup := ctx.Components[e.Name]; dup {
 			return nil, fmt.Errorf("markup: <%s> is registered in both Context.Elements and Context.Components; one of them is unreachable, so declare it once", e.Name)
 		}

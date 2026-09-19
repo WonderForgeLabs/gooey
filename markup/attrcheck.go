@@ -56,7 +56,9 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 	// is what keeps them sharing it.
 	//
 	// PSEUDO IS NOT "BUILDS NO COMPONENT", and the two refusals below
-	// rest on that claim, so they run only where it is true. Pseudo is
+	// rest on that claim — but asData is the whole of what establishes
+	// it, and `spec.Pseudo &&` stood here too until #486's round 9.
+	// Pseudo is
 	// derived as `Proto == nil && (Opaque != "" || ParsedBy != "")`
 	// (elementdef.go) and says NOTHING about Build — a host
 	// Context.Elements def may carry ParsedBy and a real Build at once,
@@ -82,7 +84,34 @@ func checkAttrs(e Element, ctx *Context, asData bool) error {
 	// the refusal rests on. An element reaching build() is about to be
 	// built, whatever the catalog says about who declared it. Raised in
 	// review of #486.
-	if ok && spec.Pseudo && asData {
+	//
+	// SO THE SPEC HALF IS GONE, and it was not redundant — it was a
+	// hole. Pseudo is derived from the def, and a HOST def that
+	// SHADOWS a builtin reader's child carries a Proto, which makes
+	// Pseudo false while <Tabs> still reads it as data. Measured on
+	// Elements["Tab"] = {Known, Proto: &components.Text{},
+	// Attrs: [Header]}, before:
+	//
+	//	<Tab Header="a" Name="zonk">      no such attribute; this
+	//	                                  element takes HAlign, Header…
+	//	<Tab.Name>zonk</Tab.Name>         err=nil, Named empty
+	//	<Tab.Behaviors><Tooltip…>         err=nil, Named empty
+	//
+	// The second and third are the #461 silent drop this change exists
+	// to close, surviving in the property-element spelling; the first
+	// answered with the wording refuseComponentAttr's own doc calls a
+	// lie about a name that exists on every other element. After, all
+	// three share the reads-as-data sentence.
+	//
+	// AND THE MEASUREMENT ABOVE DOES NOT RECUR, which is the thing to
+	// check before reading this as a revert of it. The <Deck><Panel>
+	// case is a def with ParsedBy AND a real Build: Pseudo is true
+	// there, but its child reaches build() through BuildChildren, so
+	// asData is FALSE and this gate does not fire either way. Measured
+	// with the token dropped: that fixture still loads, err=nil. The
+	// call site was already the discriminator; the spec test was
+	// shadowing a case it could not see. Raised in review of #486.
+	if ok && asData {
 		if err := refuseComponentAttr(e, spec, ctx); err != nil {
 			return err
 		}
@@ -1118,7 +1147,19 @@ func (ctx *Context) spec(name string) (ElementSpec, bool) {
 	// This is the half of Context.Elements that matters most — an
 	// unknown attribute on a registered component used to be ignored
 	// forever, and the near-miss suggestion works here for free.
-	if d, ok := ctx.Elements[name]; ok {
+	// AND NIL IS NOT REGISTERED. A nil *ElementDef declares nothing, so
+	// there is no spec to answer with — and specAs on it is a nil
+	// dereference INSIDE A LOAD, which is what this used to be.
+	// Measured before: Context{Elements: {"Leafy": nil}} panicked from
+	// both Build and Catalog. checkElementNames lets a nil through
+	// deliberately (refusing it would make a pre-parse guard on the
+	// grant vocabulary into a validator of registration hygiene, which
+	// its own doc argues), so the shape reaches here and has to be
+	// survivable rather than sanctioned: treating it as unregistered
+	// makes the element unknown and the load fails by name. Same class
+	// as the d.Build == nil dereference noBuild turned into a sentence.
+	// Raised in review of #486.
+	if d, ok := ctx.Elements[name]; ok && d != nil {
 		sp := d.specAs(OriginRegistered)
 		// THE REGISTRY KEY IS THE ELEMENT'S NAME WHEN THE DEF DOES NOT
 		// CARRY ONE, and checkElementNames explicitly permits that: its

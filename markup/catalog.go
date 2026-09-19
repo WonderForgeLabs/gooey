@@ -598,6 +598,31 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // margin honoured, and this offers no row for it. Measured both ways in
 // TestTheDesignerOffersNoLayoutRowWhereTheLoaderHonoursOne, which is
 // also what will go red if somebody closes it. Raised in review of #486.
+//
+// AND THE PARENT IS THE OTHER THING THIS CANNOT SEE, which is a second
+// unguarded direction rather than a restatement of the first. Whether
+// the loader honours Name turns on whether the element is read AS DATA,
+// and that is a fact about its PARENT — Context.vocabulary gets it from
+// checkAttrs' asData, and this function is handed a spec and nothing
+// else. A HOST def that SHADOWS a builtin reader's child is where the
+// two come apart, because a shadowing def carries a Proto, so Pseudo is
+// false and TakesLayout is true and the universalAttrs branch below
+// adds Name. Measured on Elements["Tab"] = {Known, Proto:
+// &components.Text{}, Attrs: [Header]}:
+//
+//	AttrsFor(that <Tab>)  -> [HAlign Header Height Margin Name
+//	                          Tooltip VAlign Visibility Width]
+//	Build(<Tabs><Tab Header="a" Name="zonk">…)
+//	                      -> markup: <Tab Name="zonk">: <Tabs> reads
+//	                         <Tab> as data, so it builds no component
+//	                         for Name to apply to
+//
+// So the grid offers a row that fails to load, which is the direction
+// the sentence below calls the one that must agree. It cannot be closed
+// from here without the parent, and adding a parent parameter would
+// make a catalog query depend on where the element is about to be put —
+// so it is STATED, the way the layout direction above is. Raised in
+// review of #486.
 func (g Grant) AttrsFor(e ElementSpec) []AttrSpec {
 	out := append([]AttrSpec(nil), e.Attrs...)
 	if TakesLayout(e) {
@@ -896,6 +921,35 @@ func (ctx *Context) Catalog() []ElementSpec { return ctx.catalog(true) }
 // Everything else about the assembly, the collision order included, is
 // identical, so the two cannot disagree about which element wins a name.
 func (ctx *Context) catalog(withIncludes bool) []ElementSpec {
+	// MEMOIZED FOR THE DURATION OF ONE BUILD, and only the
+	// withIncludes=false form, which is the one the load path asks for
+	// repeatedly. document.build clears and restores the field the same
+	// way it does ctx.ns, so a nested Load (a UserControl mid-build)
+	// cannot hand its parent a catalog assembled against a different
+	// Context.Elements, and a later rebuild against the same Context
+	// re-assembles.
+	//
+	// THE COST IS PER ELEMENT, which is what makes this worth a field.
+	// misplaced -> declaredHome -> namingParent asks for this catalog,
+	// and misplaced's first line short-circuits only when the PARENT
+	// NAMES the child — so a ModeRestricted container costs nothing,
+	// and an Opaque pseudo-element under a plain BuildChildren
+	// container pays a full assembly (BuiltinElements plus markNested)
+	// for every child. Measured on that shape before the memo, a
+	// document of N such rows:
+	//
+	//	rows    assemblies    load before    load after
+	//	   1              1        0.08ms        0.08ms
+	//	  50             50        3.4ms         0.28ms
+	//	 200            200        13.4ms        0.91ms
+	//
+	// Linear in rows times the whole catalog, against one assembly per
+	// load now. For scale, the same 200-row document where declaredHome
+	// short-circuits on ParsedBy — and so never asks — is 0.6ms.
+	// Raised in review of #486.
+	if !withIncludes && ctx.catalogNoIncludes != nil && *ctx.catalogNoIncludes != nil {
+		return *ctx.catalogNoIncludes
+	}
 	builtins := BuiltinElements()
 	out := make([]ElementSpec, 0, len(builtins)+len(ctx.Elements)+len(ctx.Components))
 	seen := make(map[string]bool, len(builtins))
@@ -917,6 +971,16 @@ func (ctx *Context) catalog(withIncludes bool) []ElementSpec {
 	// information rather than correct it. That asymmetry is the point of
 	// declaring.
 	for name, d := range ctx.Elements {
+		if d == nil {
+			// A nil def declares nothing to enumerate, and specAs on it
+			// is a nil dereference — measured, Catalog() panicked on
+			// Context{Elements: {"Leafy": nil}}. This is a read-only
+			// enumeration a designer calls without loading anything, so
+			// it skips rather than reporting; Context.spec is where the
+			// same shape turns into a named load error. Raised in
+			// review of #486.
+			continue
+		}
 		seen[name] = true
 		out = append(out, d.specAs(OriginRegistered))
 	}
@@ -951,6 +1015,9 @@ func (ctx *Context) catalog(withIncludes bool) []ElementSpec {
 	// container marks its own pseudo-children too.
 	markNested(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if !withIncludes && ctx.catalogNoIncludes != nil {
+		*ctx.catalogNoIncludes = out
+	}
 	return out
 }
 
