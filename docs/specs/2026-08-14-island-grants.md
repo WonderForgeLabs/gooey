@@ -94,7 +94,8 @@ hide, and hiding is the stronger option wherever it is available.
 | `ListValues` | **narrow**: granted values, and the `Name=` table filtered to the island |
 | `GetProperty(name)` | **refuse** unless granted |
 | `ScreenText(styled=false)` | **narrow**: cropped to the island's arranged rect |
-| `ScreenText(styled=true)` | **narrow**: the island's cells copied into a fresh `render.Buffer` of the island's size and encoded by the ordinary one-shot `Flush`, so the stream is homed at 0,0 and does not betray where on the host's page the island sits |
+| `ScreenText(styled=true)` | **narrow**: the island's cells copied into a fresh `render.Buffer` of the island's size and encoded by the ordinary one-shot `Flush`, so the stream is homed at 0,0 rather than being a set of absolute cursor moves into somebody else's page. The reason is the COORDINATE SPACE, not confidentiality: a fresh buffer of the island's size is a screen, and a screen starts at its own origin — which is why `ScreenSize`'s `x`/`y` are the conversion a client applies to a position read off this stream. This row said the homing kept the guest from learning where its island sat, which `ScreenSize` retired by handing that over outright ([#504](https://github.com/WonderForgeLabs/gooey/pull/504)) |
+| `ScreenSize` | **both, and it is the only row that is.** `cols`/`rows`/`x`/`y` **narrow** to the island's arranged rect, and `x`/`y` are ABSOLUTE — that is the point of them, since `SendPointer` takes absolute screen cells and refuses anything outside the island, so a size without an origin hands a guest coordinates its own pointer call rejects. `cellWidth`/`cellHeight` are **exposed**: a pixel is the same size inside an island as outside it, and the graphics tiers need the figure. A collapsed or not-yet-arranged island answers `0x0` with no error rather than the `islandGone` denial, because "the island has no cells right now" is an answer and not a refusal |
 | `ValidateMarkup` | pruned build context (below). A denial is an **error**, not a `valid=false` answer |
 | `ListStyles` | **exposed**. Styles are already a host registration, and markup cannot be authored without them |
 | `FrameDelta` property changes | **narrow** — the broadcaster diffs `Service.Values()`, so scoping the service scopes the deltas with no extra code |
@@ -234,8 +235,17 @@ all.
 
 ## Residual gaps
 
-- **A guest can still infer host geometry** from its own island's bounds
-  moving when the host's layout changes.
+- **A guest is TOLD where it sits, and can still infer more.** Since
+  [#204](https://github.com/WonderForgeLabs/gooey/issues/204) the
+  `screen_size` tool hands a scoped session its island's absolute origin
+  outright — it has to, because `send_mouse` takes absolute screen cells
+  and refuses anything outside the island, so a size without an origin
+  would hand a guest coordinates its own pointer call rejects. This
+  bullet said the origin was only *inferable* from the island's bounds
+  moving, which stopped being true when the tool started stating it.
+  What remains inferable is the rest of the host's layout: the origin
+  moving under a guest still reports that something above it changed
+  size.
 - **No per-guest component vocabulary.** A guest may patch in any
   registered `Component`, `Handler` or `Rule`. That is the capability
   handshake, not this.

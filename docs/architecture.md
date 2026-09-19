@@ -1535,12 +1535,27 @@ the bindable values (`Values`/`Value`/`Set`), commands (`Invoke`),
 input injection (`SendKeys`/`SendPointer` — into the one ordered
 stream, routed via the composition so the app's quit key is out of a
 remote client's reach), focus (`Focus`), the viewport (`Resize` —
-advisory on a tty, where the next SIGWINCH overrides it), and the markup
-operations (`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`,
+advisory on a tty, where the next SIGWINCH overrides it), the visible
+surface's extent, absolute origin and the terminal's cell metrics
+(`ScreenSize` — narrowed to the island for a scoped session, so a guest
+reads the rect its own pointer calls are measured against), and the
+markup operations (`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`,
 `DeclaredSchema`, `Register`/`Unregister`). Failures are classified
 (`KindInvalidArgument`, `KindNotFound`, `KindFailedPrecondition`,
 `KindPermissionDenied`) so a transport maps them without parsing text —
 gRPC into status codes, MCP into tool errors.
+
+That enumeration is PROSE, and nothing checks it. The guards over the
+tool surface all derive from `v1Tools()` — MCP *tool* names —
+while this list is Go *method* names, so a verb added to `Service` and
+not added here goes unnoticed; `ScreenSize` did exactly that, and the
+sibling row in `docs/specs/2026-08-14-island-grants.md` was updated by
+hand in the same change while this one was not.
+[#532](https://github.com/WonderForgeLabs/gooey/issues/532) is the
+missing instrument and says why it is not a one-liner: three exported
+methods (`Grant`, `Bind`, `VisibleDamage`) are deliberately not remote
+verbs, so the guard needs a derived rule for what belongs rather than an
+exemption list.
 
 The snapshot serializes the tree without reflection, from the same
 interfaces the Composer and the FocusManager already walk —
