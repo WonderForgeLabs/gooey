@@ -542,6 +542,51 @@ func regionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
 // and it degrades safely: a cluster longer than clusterSlack keeps the
 // loop doubling until the span reaches the end of the value, which is
 // exactly the unbounded behaviour this replaces.
+// spanReach is how many runes a walk for cols columns may need: every
+// cluster is at least one column (the max(w, 1) every walk here
+// applies), so cols+1 clusters carry any answer, and the trailing
+// clusterSlack is the margin eachClusterFrom's truncation needs — the
+// last cluster of a truncated span may itself be a fragment.
+//
+// `widest` IS MEASURED, NOT ASSUMED, and that is the whole point of
+// this function. Both of these bounds were (cols+1)*clusterSlack until
+// review of #521 round 8, on the argument that "a cluster longer than
+// clusterSlack is already outside what this file promises to segment".
+// That is true of clusterStartAt and clusterEndAt, whose fixed ±64
+// lookback genuinely cannot find a long cluster's edges. It is FALSE of
+// eachClusterFrom, which segments a 101-rune cluster perfectly well
+// when it is not re-synchronising into one — and both of these walks
+// start from a known boundary, so they never are.
+//
+// So a value whose AVERAGE cluster ran past 64 runes had both bounds
+// stop short of what the window needs. Measured on
+// ("a" + U+0301 x 100) x 40 — 4040 runes, 40 clusters, one column each
+// — focused, caret at the end, against this file's own oracle
+// (clusterBoundaries + clusterCols):
+//
+//	field   windowFloor   the leftmost fitting boundary
+//	    3   3838          3838
+//	    5   0             3535
+//	   20   0             2020
+//
+// At five columns the field painted from rune 0 and put the caret block
+// at column 4 while the caret was at rune 4040 — a caret in the WRONG
+// PLACE, which is worse than the missing one the round before fixed.
+// spanForCols had the same arithmetic from the other side: at 20
+// columns it stopped after 1344 runes and painted 13 glyphs, 7 blank
+// columns, and a 14th cluster TRUNCATED to 30 marks where the value's
+// has 100 — a glyph the value does not contain.
+//
+// Passing the longest whole cluster the walk has actually seen makes
+// the bound a function of the value's own segmentation rather than of a
+// constant, and leaves the cost flat for the one shape that defeats it:
+// a value that is ONE cluster reports no whole cluster at all, so
+// `widest` stays at clusterSlack and the walk stops where it always
+// did. Raised in review of #521.
+func spanReach(cols, widest int) int {
+	return (cols+1)*max(widest, clusterSlack) + clusterSlack
+}
+
 func spanForCols(runes []rune, start, cols int) int {
 	if start >= len(runes) {
 		return len(runes)
@@ -591,21 +636,29 @@ func spanForCols(runes []rune, start, cols int) int {
 	// the cap is what makes it true of this one too. On the UI goroutine
 	// inside a paint node, and reachable by paste. Raised in review of
 	// #521.
-	maxSpan := (cols + 1) * clusterSlack
+	maxSpan := spanReach(cols, 0)
 	for span := cols + clusterSlack; ; span *= 2 {
 		span = min(span, maxSpan)
 		to := start + span
 		if to >= len(runes) {
 			return len(runes)
 		}
-		got, end := 0, start
+		// widest TRAILS BY ONE, because the last cluster a truncated
+		// span reports may be a fragment of a longer one — counting it
+		// would let a truncation raise the bound that produced it.
+		got, end, widest, prev := 0, start, 0, 0
 		eachClusterFrom(runes, start, to, func(at, n, w int) bool {
 			got += max(w, 1)
 			end = at + n
+			widest, prev = max(widest, prev), n
 			return got <= cols
 		})
 		if got > cols && end+clusterSlack <= to {
 			return to
+		}
+		if reach := spanReach(cols, widest); reach > maxSpan {
+			maxSpan = reach
+			continue
 		}
 		if span == maxSpan {
 			// A cluster this file does not promise to segment is open
@@ -706,16 +759,35 @@ func clusterEndAt(runes []rune, i int) int {
 	if i >= len(runes) {
 		return len(runes)
 	}
+	// THE SPAN RETRIES, for clusterStartAt's reason mirrored: a fixed
+	// at+clusterSlack window cannot hold a cluster longer than
+	// clusterSlack, so the walk never reported one containing `i` and
+	// this answered the arithmetic i+1. Measured on six clusters of 101
+	// runes: clusterEndAt(65) was 66, where the cluster ends at 101.
+	//
+	// AN END FOUND INSIDE THE SPAN IS THE ONLY ONE TO TRUST — a cluster
+	// that ends exactly at `to` may be a truncation of a longer one, the
+	// same margin spanForCols requires — and the retry stops on
+	// spanReach for the same reason clusterStartAt's does: a value this
+	// file cannot segment must not turn a lookup into an O(len) walk.
+	// Raised in review of #521.
 	at := clusterStartAt(runes, i)
 	end := i + 1
-	eachClusterFrom(runes, at, at+clusterSlack, func(a, n, _ int) bool {
-		if i >= a && i < a+n {
-			end = a + n
-			return false
+	for span := clusterSlack; ; span *= 2 {
+		to := at + span
+		found, widest, prev := false, 0, 0
+		eachClusterFrom(runes, at, to, func(a, n, _ int) bool {
+			widest, prev = max(widest, prev), n
+			if i >= a && i < a+n {
+				end, found = a+n, a+n < to
+				return false
+			}
+			return true
+		})
+		if found || to >= len(runes) || span >= spanReach(1, widest) {
+			return end
 		}
-		return true
-	})
-	return end
+	}
 }
 
 // clusterStartAt is the index the cluster containing i begins at.
@@ -735,15 +807,60 @@ func clusterStartAt(runes []rune, i int) int {
 	if i <= 0 || i >= len(runes) {
 		return i
 	}
+	// THE LOOKBACK RETRIES, because one pass cannot tell a boundary from
+	// a re-synchronisation. eachClusterFrom segments from clusterSlack
+	// runes before `from`, so the FIRST cluster it reports starts at
+	// that origin and is a fragment whenever the origin landed inside
+	// one. Answering with it returns an arithmetic index wearing a
+	// boundary's name — and a single pass did exactly that for every
+	// cluster longer than the lookback.
+	//
+	// `at > origin` is the test: the containing cluster starting
+	// strictly right of the origin means at least one whole cluster was
+	// walked before it, which is the assumption the re-sync rests on.
+	// Found by the vocabulary entry #521's round-8 finding 3 asked for:
+	// six clusters of 101 runes reddened
+	// TestTheScrollWindowAlwaysOpensOnAClusterBoundary at caret 65,
+	// where this answered 1 — the origin — and the window opened inside
+	// the glyph.
+	//
+	// AND IT STOPS, which is the half that keeps the round's cost work
+	// intact. Doubling the lookback until it finds a boundary is O(i) on
+	// a value that is one cluster, which is the O(len) walk this whole
+	// round removed from the other three walks. spanReach reads "no
+	// whole cluster seen" as no evidence and floors at clusterSlack, so
+	// a run this file cannot segment gives up after 192 runes and
+	// returns the fragment start — the documented degradation, now
+	// reached only where it is the real answer.
 	at := i
-	eachClusterFrom(runes, i, i+clusterSlack, func(a, n, _ int) bool {
-		if i >= a && i < a+n {
-			at = a
-			return false
+	for back := clusterSlack; ; back *= 2 {
+		// eachClusterFrom takes the span; the origin is clusterSlack
+		// before it, and the origin is what has to move.
+		from := max(i-back+clusterSlack, 0)
+		origin := max(from-clusterSlack, 0)
+		at = i
+		found := false
+		widest, prev := 0, 0
+		eachClusterFrom(runes, from, i+1, func(a, n, _ int) bool {
+			widest, prev = max(widest, prev), n
+			if i >= a && i < a+n {
+				at, found = a, true
+				return false
+			}
+			return true
+		})
+		// `found` IS NOT REDUNDANT WITH `at > origin`. eachClusterFrom
+		// drops its own first cluster whenever it re-synchronised, so a
+		// span that is ONE such fragment reports nothing at all — and
+		// `at` is still the untouched `i`, which is right of the origin
+		// and passed the test. That is the exact arm this retry exists
+		// for, so writing it without the flag made the whole loop a
+		// no-op: measured, clusterStartAt(65) of six 101-rune clusters
+		// answered 65 again.
+		if (found && at > origin) || origin == 0 || back >= spanReach(1, widest) {
+			return at
 		}
-		return true
-	})
-	return at
+	}
 }
 
 // caretCols is how many columns the caret needs at index i.
@@ -864,7 +981,6 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 	// the fragment into a glyph the value does not contain, while
 	// indexAt still segments from 0 — so the paint and the click stop
 	// agreeing about what is in the first column.
-	type seg struct{ at, n, w int }
 	var segs []seg
 	total := 0
 	collect := func(from int) {
@@ -940,12 +1056,27 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 	// what these two bounds buy is that the figure stops growing.
 	//
 	// Raised in review of #521.
-	floor := max(end-(avail+1)*clusterSlack, 0)
-	for back := clusterSlack; total <= avail && i > floor; back *= 2 {
-		i -= back
-		if i < floor {
-			i = floor
+	// THE REACH IS MEASURED, NOT A CONSTANT — see spanReach, which
+	// carries the measurement and the defect a fixed (avail+1)*
+	// clusterSlack floor produced here. Only segs[1:] count towards it:
+	// segs[0] starts at `from`, which is wherever the arithmetic landed,
+	// so its length says nothing about a cluster.
+	//
+	// GIVING UP IS A SEPARATE ANSWER FROM RUNNING OUT OF VALUE, which is
+	// what `gaveUp` carries. The loop stops early only when the reach it
+	// has already spanned covers what the widest whole cluster it found
+	// says any answer needs — i.e. the span is essentially one
+	// unfinished cluster, the one shape neither this walk nor
+	// clusterStartAt can find the edges of.
+	spanned, gaveUp := end-i, false
+	for total <= avail && i > 0 {
+		reach := spanReach(avail, widestWhole(segs))
+		if spanned >= reach {
+			gaveUp = true
+			break
 		}
+		spanned = min(max(2*spanned, clusterSlack), reach)
+		i = max(end-spanned, 0)
 		collect(i)
 	}
 	// The loop below is what lands the answer: it leaves i at a cluster
@@ -989,20 +1120,19 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 	// Render's own walk from 0 is capped by spanForCols. Raised in
 	// review of #521, on the floor added the round before.
 	//
-	// `i == floor` IS THE WHOLE TEST, and the two narrower ones tried
-	// first are both wrong. "The drop loop did not run" also covers the
-	// case where NOTHING fits — reserve 2 in a 1-column window, where
-	// the collect finds no cluster it can keep and `end` is the right
-	// answer — and returning 0 there moved the window to the start of
-	// the value on every too-narrow field
+	// `gaveUp` IS THE WHOLE TEST, and the two narrower ones tried first
+	// are both wrong. "The drop loop did not run" also covers the case
+	// where NOTHING fits — reserve 2 in a 1-column window, where the
+	// collect finds no cluster it can keep and `end` is the right answer
+	// — and returning 0 there moved the window to the start of the value
+	// on every too-narrow field
 	// (TestTheWindowFloorIsTheLeftmostFittingClusterBoundary catches it
-	// at value 0, end=1). Adding `floor > 0` to this one is redundant
-	// rather than wrong: at floor 0 the index IS 0, so both arms agree,
-	// and a conjunct that cannot change an answer is a conjunct no
-	// mutation can be caught removing. The drop loop leaves i at
-	// `segs[k].at + segs[k].n`, which is strictly right of the span it
-	// collected from, so it can never land on the floor itself.
-	if i == floor {
+	// at value 0, end=1). `i == floor` was the second, and it was right
+	// only while the floor was a constant: it also fires wherever the
+	// arithmetic happens to land on the reach, including on values whose
+	// real boundary is further left and findable, which is exactly the
+	// defect the adaptive reach removes.
+	if gaveUp {
 		return 0
 	}
 	return i
@@ -1476,8 +1606,17 @@ func (t *TextBox) indexAt(x int) int {
 	//	200,000   11.3µs    32.6ms      8.3µs
 	//
 	// This is the FOURTH walk of this shape on this path and the last
-	// one left uncapped; spanForCols:586 and windowFloor:935 are the
-	// other two bounds, and clusterStartAt's lookback the third. It
+	// one left uncapped; spanForCols' cap and windowFloor's reach are
+	// the other two bounds, and clusterStartAt's lookback the third.
+	//
+	// NAMED, NOT NUMBERED. This cited spanForCols:586 and
+	// windowFloor:935 until review of #521 round 8, and both were
+	// already off in the commit that wrote them — :586 was a line of
+	// that comment's own prose and :935 a row of a measurement table.
+	// Nothing in this tree resolves a line number written in a comment
+	// (TestEveryCitedTestNameResolves covers test NAMES cited in
+	// CLAUDE.md, which is a different claim), so they drift in silence;
+	// a symbol cannot. It
 	// runs once per MOUSE MOTION REPORT while a drag is live, on the UI
 	// goroutine, so 32.6ms here is a third of a second of input latency
 	// over ten reports.
@@ -1491,9 +1630,46 @@ func (t *TextBox) indexAt(x int) int {
 	// `maxSpan := len(runes) + 1` takes TestADragDoesNotWalkAZeroWidthRun
 	// red and removing the `min` alone does not.
 	// Raised in review of #521.
+	// THE BUDGET IS THE FIELD'S, NOT THE CLICKED COLUMN'S, and that is
+	// finding 2 of the same round. `off` is where the pointer is and
+	// `reach` is how far the walk may go to get there; sizing the reach
+	// by `off` made this walk's span STRICTLY NARROWER than the one
+	// Render painted from — off < avail for every click inside the
+	// field — so at the cap the two answered different clusters for the
+	// same column. Measured on ("a" + U+0301 x 100) x 40 in a
+	// 20-column field at scroll 0:
+	//
+	//	column 13 painted the cluster at rune 1313, indexAt said 808
+	//	column 10 painted the cluster at rune 1010, indexAt said 606
+	//	column  5 painted the cluster at rune  505, indexAt said 303
+	//
+	// That is the paint/click disagreement
+	// TestTheScrollWindowAlwaysOpensOnAClusterBoundary's doc calls the
+	// thing the whole cluster-boundary design exists to prevent,
+	// reached through the cap rather than through a mid-cluster
+	// t.scroll, so no grid over scrollFor could see it. max(off, avail)
+	// rather than avail because a DRAG can be right of the field.
+	//
+	// AND NOTHING PINS THIS LINE, which is worth writing down rather
+	// than leaving for the next reader to discover. The table above was
+	// measured against the FIXED cap, and spanReach's adaptive one
+	// closes the gap on its own: this walk stops on `col > off` long
+	// before any cap whenever the clusters are findable at all, and
+	// where they are not — one cluster wider than the reach — both
+	// walks see that one cluster and answer its start either way.
+	// Measured: reverting this to `off` leaves
+	// TestAClickAnswersTheClusterItsColumnPaints green. It stays
+	// because the guarantee it makes is STRUCTURAL — the click walk may
+	// not be given a smaller budget than the paint walk — where the
+	// other is contingent on two adaptations agreeing, and because a
+	// future bound that is not adaptive would reintroduce the defect
+	// with nothing red. Raised in review of #521.
+	avail := t.Bounds().W - promptW
+	budget := max(off, avail)
+
 	col, last := 0, start
 	capped := false
-	maxSpan := (off + 1) * clusterSlack
+	maxSpan := spanReach(budget, 0)
 	for span := off + clusterSlack; ; span *= 2 {
 		span = min(span, maxSpan)
 		to := start + span
@@ -1501,11 +1677,13 @@ func (t *TextBox) indexAt(x int) int {
 			to = len(runes)
 		}
 		col, last = 0, start
+		widest, prev := 0, 0
 		eachClusterFrom(runes, start, to, func(at, n, w int) bool {
 			if col > off {
 				return false
 			}
 			last = at
+			widest, prev = max(widest, prev), n
 			// FLOORED, for Render's reason and windowFloor's — and note
 			// the BACKWARD walk three lines up already floors, because
 			// it goes through caretCols. This one did not, so indexAt
@@ -1517,6 +1695,10 @@ func (t *TextBox) indexAt(x int) int {
 		})
 		if col > off || to == len(runes) {
 			break
+		}
+		if reach := spanReach(budget, widest); reach > maxSpan {
+			maxSpan = reach
+			continue
 		}
 		if span == maxSpan {
 			// A cluster this file does not promise to segment is open
@@ -1688,4 +1870,25 @@ func wordRight(runes []rune, i int) int {
 		i++
 	}
 	return snapOut(runes, i, true)
+}
+
+// seg is one cluster of a collected span: where it starts, how many
+// runes it holds, and how many columns it takes with the one-column
+// floor Render applies already in it.
+//
+// PACKAGE SCOPE, not windowFloor's local, only so widestWhole can take
+// it — the reach that reads it has to be a function the comment can
+// explain once rather than three lines inlined in a loop.
+type seg struct{ at, n, w int }
+
+// widestWhole is the longest cluster in segs whose LEFT EDGE is a real
+// boundary — every one but the first, which starts wherever the caller
+// sliced. Zero when there is no such cluster, which spanReach reads as
+// "no evidence" and floors at clusterSlack.
+func widestWhole(segs []seg) int {
+	w := 0
+	for _, s := range segs[min(1, len(segs)):] {
+		w = max(w, s.n)
+	}
+	return w
 }
