@@ -479,8 +479,20 @@ layout exists and wedges the heap rather than the stack — so capping
 here alone would have turned the original crash into a hang. Compose and
 Focus detect the repeat by identity (they already key a map by
 component); Measure, Arrange, HitTest, Focusable and Render count depth.
-A control that includes itself is caught earlier still, as a load error
-naming the loop. Nothing panics: read the report with
+A control that includes itself is usually caught earlier still, as a load
+error naming the loop — but not through a row seam.
+`<ItemsView.ItemTemplate>` RESETS the cycle ancestry
+(`markup/itemsview.go`), because a tree-view template instantiating its
+own control is the legitimate shape and identity cannot tell it from the
+one that never terminates. What bounds that seam is
+`markup.MaxTemplateDepth` (64), counted per row rather than recognised,
+exactly as this paragraph's own two walks count depth; a self-supplying
+source is a load error naming the TEMPLATE, 64 levels down, rather than
+one naming the loop. The two numbers are deliberately different
+quantities — 512 bounds a visual tree walked every frame, 64 bounds
+nested document loads — and `MaxTemplateDepth`'s doc comment says why
+reusing one for the other would make a change to either look safe for
+both. Nothing panics: read the report with
 `Composer.LayoutFault()`, `App.LayoutFault()`, or `Frame.LayoutFault()`
 on the one-shot path. The record is
 [`docs/specs/2026-08-23-layout-cycle-bounds.md`](specs/2026-08-23-layout-cycle-bounds.md),
@@ -835,15 +847,37 @@ that reach the app as real commands. Its tri-state return (`ok`, consumed count)
 distinguishes "incomplete, feed me more bytes" from "complete but
 unmapped, skip it". The third state is the one whose violation is
 silent: under `idle` there are no more bytes to feed, so `Decode`
-guarantees it never answers "incomplete" then — it always consumes a
-byte or produces an event. A decoder that broke that guarantee would
-strand its buffer and go permanently deaf while still painting, which
-is the failure `App.Run`'s decoder-death watch cannot see, because the
-goroutine never returns. `term.DecodeEvents` adds the only two things that
+answers "incomplete" only where a byte could still resolve it — which is
+not the same as one arriving, and for the first of the two below it may
+never. That list is two entries long and shrinking, not empty. A decoder that
+answered it anywhere else would strand its buffer and go permanently
+deaf while still painting, which is the failure `App.Run`'s
+decoder-death watch cannot see, because the goroutine never returns.
+Read the list as a list: this paragraph said "it always consumes a byte
+or produces an event" while `decodePaste` had already departed from it,
+and an absolute nobody can check is how the departure went unnoticed.
+The two are an **open bracketed paste** (payload's end marker not yet
+arrived — deliberate, because delivering the prefix truncates the paste
+silently) and a **split paste marker** (`ESC [ 2` and its siblings,
+which are also three keys a person can type). The second is bounded by
+`input.DecodeFinal`, the last-chance pass
+([#440](https://github.com/WonderForgeLabs/gooey/issues/440),
+[spec](specs/2026-09-01-paste-marker-grace.md)); the first is not, by
+design. `term.DecodeEvents` adds the only two things that
 are genuinely I/O: reading the tty in a goroutine, and the 40 ms
 `EscTimeout` that settles the classic ambiguity — a lone ESC and the
 first byte of an escape sequence are the same byte, and only the absence
-of a follow-up within the timeout proves the user meant the Esc key.
+of a follow-up within the timeout proves the user meant the Esc key. It
+counts those timeouts: the `term.PasteMarkerGrace`'th consecutive one
+drains through `DecodeFinal` instead of `Decode`, so the buffer survives
+every timeout before that one and is resolved on it — which is what keeps
+a typed `ESC [ 2` from deafening the app forever. The constant names
+*which* timeout resolves the buffer, not how many the buffer survives.
+It is named rather than sampled on purpose; `term.TestPasteMarkerGraceHasAFloor`
+pins its FLOOR and not its value — it asserts `PasteMarkerGrace >= 2`, so
+raising the constant leaves it green, which is deliberate (the spec argues
+raising it is a trade rather than a defect). A number written here would be
+a copy nothing checks.
 `input.ParseGesture` is the third leg: it parses the markup gesture
 syntax (`"ctrl+s"`, `"shift+tab"`, `"j"`, `"esc"`) into a `KeyEvent`,
 and because `KeyEvent` is comparable, gesture matching is `==`.
@@ -1285,10 +1319,25 @@ story:
 
 ### The binding DSL and lvalue semantics
 
-`Context` is the binding environment: `Values` (what `{{.Name}}` roots
-resolve against), `Styles`, `Components` (custom builders), `Handlers`
-(code-behind commands), `Named` (components collected by `Name="..."`, read
-back via the generic `markup.Find[T]`), and `Includes` (see below).
+`Context` is the binding environment. `Values` is what `{{.Name}}` roots
+resolve against; `Named` collects components by `Name="..."`, read back
+via the generic `markup.Find[T]`; `Includes` is below. The whole field
+set, and which half of it crosses a control boundary, is
+`markup.boundaryPartition` (`markup/boundaryfields_test.go`) — a row per
+field with its reason, checked against `Context` in both directions. This
+paragraph named six of them and called that the environment, which is
+[#314](https://github.com/WonderForgeLabs/gooey/issues/314) in the file
+the fix for #314 edited 110 lines further down: the six it left out —
+`Elements`, `Rules`, `Declared`, `Dispatcher`, `Dir`, `Variant` — are six
+the partition accounts for and this sentence did not. Two of them,
+`Rules` and `Dir`, are the ones that report named; `Declared` and
+`Dispatcher` already crossed correctly before the fix, and #314 argues
+explicitly that `Variant` does not break. (An earlier draft of this
+sentence said all six "are the six that report was about", which is a
+hand-written claim about an issue's scope — the same shape as the list
+it replaced, and wrong in four places. Corrected in review of
+[#490](https://github.com/WonderForgeLabs/gooey/pull/490).) A list is not
+the shape of this answer.
 
 `bindText` turns mixed content like `count: {{.Count}}` into a
 `prop.NewComputed[string]` that concatenates literal parts and property
@@ -1400,9 +1449,17 @@ element attributes, resolved in the *parent* context via
 a `*prop.Property[T]` handle — that setup wires into its own context or
 components. This is XAML's DataContext-plus-dependency-property hand-off,
 done with explicit handles instead of an ambient inherited value.
-`Styles`, `Components`, `Handlers`, and `Includes` inherit from the parent
-when the child leaves them nil; `Named` is scoped per instance, like
-`x:Name` inside a template.
+Everything a page *registers* inherits from the parent context when the
+child leaves it unset; what does not cross is `Values` — values arrive only
+through the declared surface — and `Named`, which is scoped per instance
+like `x:Name` inside a template. This sentence used to name four fields and
+the real set was ten, which is
+[#314](https://github.com/WonderForgeLabs/gooey/issues/314); the
+partition is `markup.boundaryPartition`
+(`markup/boundaryfields_test.go`), a row per field with its reason,
+checked against `Context` in both directions.
+"Unset" rather than "nil" because two of those fields are strings the
+loader tests with `== ""`.
 
 ### Include: markup-only controls
 
@@ -1514,12 +1571,27 @@ the bindable values (`Values`/`Value`/`Set`), commands (`Invoke`),
 input injection (`SendKeys`/`SendPointer` — into the one ordered
 stream, routed via the composition so the app's quit key is out of a
 remote client's reach), focus (`Focus`), the viewport (`Resize` —
-advisory on a tty, where the next SIGWINCH overrides it), and the markup
-operations (`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`,
+advisory on a tty, where the next SIGWINCH overrides it), the visible
+surface's extent, absolute origin and the terminal's cell metrics
+(`ScreenSize` — narrowed to the island for a scoped session, so a guest
+reads the rect its own pointer calls are measured against), and the
+markup operations (`SwapMarkup`, `PatchMarkup`, `Validate`, `Styles`,
 `DeclaredSchema`, `Register`/`Unregister`). Failures are classified
 (`KindInvalidArgument`, `KindNotFound`, `KindFailedPrecondition`,
 `KindPermissionDenied`) so a transport maps them without parsing text —
 gRPC into status codes, MCP into tool errors.
+
+That enumeration is PROSE, and nothing checks it. The guards over the
+tool surface all derive from `v1Tools()` — MCP *tool* names —
+while this list is Go *method* names, so a verb added to `Service` and
+not added here goes unnoticed; `ScreenSize` did exactly that, and the
+sibling row in `docs/specs/2026-08-14-island-grants.md` was updated by
+hand in the same change while this one was not.
+[#532](https://github.com/WonderForgeLabs/gooey/issues/532) is the
+missing instrument and says why it is not a one-liner: three exported
+methods (`Grant`, `Bind`, `VisibleDamage`) are deliberately not remote
+verbs, so the guard needs a derived rule for what belongs rather than an
+exemption list.
 
 The snapshot serializes the tree without reflection, from the same
 interfaces the Composer and the FocusManager already walk —

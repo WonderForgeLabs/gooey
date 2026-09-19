@@ -237,7 +237,9 @@ func TestCompanionDeliversArgsEnvAndDir(t *testing.T) {
 	if lines[1] != "http://127.0.0.1:9/mcp" {
 		t.Errorf("env value = %q, want the bound endpoint", lines[1])
 	}
-	// The child's cwd is the resolved Dir, and Dir was document-relative.
+	// The child's cwd is the resolved Dir, which is relative to the PAGE
+	// — the document the Companion was loaded from, not whatever control
+	// is in scope. Raised in review of #490.
 	if resolved, err := filepath.EvalSymlinks(sub); err == nil {
 		if actual, err := filepath.EvalSymlinks(lines[2]); err == nil && actual != resolved {
 			t.Errorf("child cwd = %q, want %q", lines[2], resolved)
