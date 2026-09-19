@@ -656,6 +656,23 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 	}
 	f.Cells.SetCell(x, y, cell)
 	got := f.Cells.At(x, y)
+	// A WRITE THE CLIP DROPPED WHOLE LEAVES NO MARK, which is the other
+	// half of "only name what landed". Buffer.At is buffer-scoped and
+	// Buffer.SetCell is clip-scoped, so a lead column outside the clip
+	// comes back unchanged: the mark would claim a cell this overlay
+	// never wrote and does not own, and a later frame with a wider clip
+	// restores that snapshot over live content. blank() does not close
+	// it — a leaf pre-clear writes a STYLED SPACE, whose rune is blank,
+	// so the mark is taken and restoreMarks' `Rune != m.wrote` guard
+	// passes. Measured in review of #524: the overlay reverted a
+	// neighbour's background on a cell it never touched.
+	//
+	// The comparison is exact rather than conservative because Cell is
+	// comparable and a write that produced an identical cell has
+	// nothing to put back either.
+	if got == prev[0] {
+		return
+	}
 	o.marks = append(o.marks, mark{
 		x: x, y: y, wrote: got.Rune, prev: prev, cols: max(got.Width(), 1),
 	})

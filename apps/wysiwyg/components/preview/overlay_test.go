@@ -212,6 +212,47 @@ func TestAMarkAtTheClipEdgeClaimsOnlyTheColumnItGot(t *testing.T) {
 	}
 }
 
+// TestAFullyClippedWriteLeavesNoMark is the other half of the clip
+// rule, and the arm the test above could not be: there, the LEAD column
+// landed and only the tail was clipped away. Here nothing lands.
+//
+// Buffer.At is buffer-scoped and Buffer.SetCell is clip-scoped, so a
+// write outside the clip reads back unchanged. A mark taken then names
+// a cell this overlay never wrote, and a later frame with a wider clip
+// puts that snapshot back over whatever the real owner has painted
+// since. blank() does not catch it: a leaf pre-clear writes a STYLED
+// SPACE, so prev[0].Rune is blank and the guard lets the write through.
+//
+// The assertion is on the STYLE, not the rune, because that is what
+// survives: both cells hold a space, and only the background says who
+// owns the cell. Raised in review of #524, which measured the overlay
+// reverting a neighbour's background on a cell it never touched.
+func TestAFullyClippedWriteLeavesNoMark(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	full := f.Cells.Clip(render.Rect{X: 0, Y: 0, W: 3, H: 1})
+
+	o := &Overlay{}
+	o.setCluster(f, 5, 0, " ", 1, render.Style{Bg: render.RGB(190, 180, 90)})
+	if len(o.marks) != 0 {
+		t.Fatalf("setCluster left %d marks for a write the clip dropped "+
+			"whole: column 5 is outside the clip, so nothing landed and "+
+			"there is nothing to put back. mark=%+v", len(o.marks), o.marks[0])
+	}
+
+	// The next frame: the overlay's bounds grew, and the neighbour who
+	// does own that cell has painted it.
+	f.Cells.Unclip(full)
+	f.Cells.Clip(render.Rect{X: 0, Y: 0, W: 10, H: 1})
+	owner := render.Style{Bg: render.RGB(9, 9, 9)}
+	f.Cells.SetCell(5, 0, render.Cell{Rune: ' ', Style: owner})
+	o.restoreMarks(f)
+	if got := f.Cells.At(5, 0).Style; got != owner {
+		t.Errorf("restoring put %+v into column 5, where the owner had "+
+			"painted %+v. The overlay never wrote that cell — the clip "+
+			"stopped at column 3 — so its snapshot is somebody else's", got, owner)
+	}
+}
+
 // TestSetClusterAllocatesNothing is the paint-path pin: the guide writes
 // one of these per cell it draws, every frame it paints.
 //
