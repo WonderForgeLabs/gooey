@@ -542,48 +542,38 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				// makes every remaining decl a Property — this reads
 				// decls[0].Elem anyway, so the two cannot drift apart
 				// again. Raised in review of #522.
-				// AND THE BINDING IS NOT ONLY THE ENVELOPE'S.
-				// declBinding reads n.Attrs, which is the envelope; XML
-				// scoping lets the binding sit on the <x:Property>
-				// element itself. Reading the envelope alone reported a
-				// correctly namespaced <p:Property> document as
-				// containing <Property>, which bareDeclMsg in this same
-				// editor defines as the missing-namespace typo: an
-				// author acting on it would have edited a namespace that
-				// was already right. Raised in review of #522.
-				//
-				// ASKED OF THE ELEMENT IN HAND, NOT BORROWED FROM THE
-				// SAVE PATH. The first repair used declPrefix, which
-				// answers a different question — which prefix will the
-				// SAVE write, and does the document already bind it
-				// somewhere the saved file keeps. Its bound=false means
-				// "the envelope needs a binding added at write time",
-				// not "the file writes <Property> unprefixed", and the
-				// two part company on exactly the arm declPrefix was
-				// added for: two declarations carrying their own,
-				// DIFFERENT bindings. Measured — a file with
-				// <p:Property> and <q:Property> and no content root was
-				// told it held 2 <Property> declarations. And even where
-				// bound is true, declPrefix's prefix is the first
-				// binding-carrying declaration's rather than decls[0]'s,
-				// so a document mixing a default-xmlns declaration with
-				// a p:-bound one could name <p:Property> for an
-				// unprefixed element. The message is about ONE element,
-				// so it asks about that element: its own binding first,
-				// then the envelope's. Raised in review of #522.
-				prefix, bound := declBinding(decls[0].Attrs)
-				if !bound {
-					prefix, bound = declBinding(n.Attrs)
-				}
-				elem := "<" + decls[0].Elem + ">"
-				if bound {
-					elem = "<" + prefix + ":" + decls[0].Elem + ">"
+				// EVERY ONE OF THEM IS SPELLED FROM ITS OWN BINDING,
+				// through declElemName, because a document may bind
+				// more than one prefix to the x namespace and XML
+				// scoping puts the binding wherever the author wrote
+				// it. This read decls[0] and printed that spelling with
+				// len(decls), so a file holding one <p:Property> and
+				// one <q:Property> was told it held "2 <p:Property>
+				// declarations" — a count of elements it does not
+				// contain, in the branch whose own comment claimed to
+				// be about one element. The rounds that got here are in
+				// docs/specs/2026-08-10-markup-declared-properties.md.
+				// Raised in review of #522.
+				elems := make([]string, len(decls))
+				same := true
+				for i, d := range decls {
+					elems[i] = declElemName(d, n.Attrs)
+					same = same && elems[i] == elems[0]
 				}
 				noun := " declarations are not root elements"
 				if len(decls) == 1 {
 					noun = " declaration is not a root element"
 				}
-				msg += " (its " + strconv.Itoa(len(decls)) + " " + elem + noun + ")"
+				if same {
+					msg += " (its " + strconv.Itoa(len(decls)) + " " + elems[0] + noun + ")"
+				} else {
+					// THE COUNT STAYS, and the list is what it counted.
+					// Dropping the prefix on disagreement was the other
+					// candidate and names <Property>, which bareDeclMsg
+					// defines as the missing-namespace typo.
+					msg += " (its " + strconv.Itoa(len(decls)) + " declarations — " +
+						strings.Join(elems, ", ") + " — are not root elements)"
+				}
 			}
 			ed.status.Set(msg)
 			return

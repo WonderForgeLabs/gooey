@@ -524,8 +524,29 @@ func encoderNamed(name string) (graphics.Encoder, error) {
 // derived from it.
 type node struct {
 	Elem string
-	// Space is the element's resolved XML NAMESPACE, empty for the
-	// ordinary components this editor is mostly made of.
+	// Space is the element's resolved XML NAMESPACE — the default
+	// xmlns in scope for an unprefixed element, the prefix's binding
+	// for a prefixed one.
+	//
+	// IT IS NOT EMPTY FOR ORDINARY COMPONENTS, which is what this said
+	// until review of #522 and is wrong about every file the editor
+	// opens. nodeOf tracks the inherited default xmlns in its
+	// `defaults` stack precisely so it can resolve them. Measured on
+	// the shape every in-tree .gooey uses — all 16 of the apps/ ones
+	// declare a default xmlns:
+	//
+	//	<Gooey xmlns="wonderforge.io/gooey/2026">   Gooey  Space="wonderforge.io/gooey/2026"
+	//	  <Canvas Name="Root">                      Canvas Space="wonderforge.io/gooey/2026"
+	//	    <Button Name="B"/>                      Button Space="wonderforge.io/gooey/2026"
+	//
+	// Space is empty only for a document with no default xmlns at all —
+	// palette seed strings and hand-written fixtures. So `n.Space == ""`
+	// does not mean "not namespaced"; it is true of a fixture and false
+	// of every real document, and this paragraph is the one place a
+	// reader learns what the field holds. Nothing is broken by the old
+	// sentence today because splitDecls keys on k.Elem == "Property"
+	// (matching markup's own c.Name == "Property") rather than on
+	// Space == "".
 	//
 	// It is kept because one partition depends on it and cannot be made
 	// from Elem: <x:Property> is a language declaration and <Property>
@@ -1034,48 +1055,33 @@ func withDeclBinding(attrs map[string]string, prefix string) map[string]string {
 // default namespace for the declaration's own attributes, which is a
 // different document from the one that was opened.
 //
-// THE PREFIXED CASE IS THE SAME SENTENCE, and it was missing: when the
-// envelope binds q: and the element carried its own xmlns:p, the copy
-// went out as <q:Property … xmlns:p="…"> with p: naming nothing. That
-// is the residue declPrefix's doc describes, and dropping it here is
-// what makes the two halves one rule rather than a special case for
-// the default binding. Raised in review of #522.
+// The same sentence covers a PREFIXED binding other than the one being
+// written: left in place it goes out as <q:Property … xmlns:p="…"> with
+// p: naming nothing.
 //
-// AND THE SENTENCE HAS A THIRD CLAUSE, which is the one that was a bug
-// rather than a residue: on the copy, xmlns:<prefix> must be ABSENT OR
-// EQUAL to markup.XNamespace, whatever it used to say. The predicate
-// asked first whether the value WAS the x namespace, so a declaration
-// carrying xmlns:<prefix> bound to something else survived onto the very
-// element envelopeHead emits as <prefix:Property> — and that prefix then
-// resolved to the something else, so the declaration stopped being one.
-// Measured end to end through openWorkspaceFile and saveOpenFile: the
-// editor reported the author's valid file as the missing-namespace typo,
-// then wrote "✓ saved" over the good bytes with a file markup.Build
-// refuses. Two shapes reach it, an envelope that binds the prefix and
-// one that does not — in the second, declPrefix MINTS the prefix and
-// declBinding's collision loop only reads the envelope's attrs, so the
-// mint can collide with a declaration's own binding. This clause closes
-// both, which is why the mint is left alone. Raised in review of #522.
+// AND THE THIRD CLAUSE IS DIFFERENT IN KIND. On the copy,
+// xmlns:<prefix> must be ABSENT OR EQUAL to markup.XNamespace, whatever
+// it used to say — not "dropped if it names the x namespace", which is
+// the predicate that let a declaration carrying xmlns:<prefix> bound to
+// something ELSE survive onto the element envelopeHead emits as
+// <prefix:Property>, so the prefix resolved to the something else and
+// the declaration stopped being one. That was a bug rather than a
+// residue, and it is why the prefix mint in declPrefix is left alone:
+// this clause closes both shapes that reach it.
 //
-// Returned as a copy for the same reason as withDeclBinding: these
-// attrs belong to the editor's node, not to this write.
+// Returned as a copy, UNCONDITIONALLY, for the same reason as
+// withDeclBinding: these attrs are ed.envDecls[i].Attrs, the editor's
+// own document state, and a fast path that returned the caller's map
+// when nothing needed dropping made the asserted copy conditional on
+// the input. envelopeHead's `q := *d` aliases d.Kids and d.Slots the
+// same way and is inert for the same reason — nothing writes through
+// it. Stated here because that is the other place a future caller
+// would assume a copy.
 //
-// UNCONDITIONALLY, which it was not. The fast path returned the
-// caller's map whenever nothing needed dropping — and the caller's map
-// is ed.envDecls[i].Attrs, the editor's own document state. Both
-// callers only read it today, so nothing was broken; what made it worth
-// closing rather than tolerating is that the sentence above asserts the
-// copy, and withDeclBinding's doc — the one it points at — spells out
-// what sharing costs: writing into it would make the next save look as
-// though the file had always carried the attribute. An invariant
-// asserted in prose and not provided by the code is the shape this
-// branch keeps removing. The maps are four entries at most and this
-// runs once per save, so there is no path worth branching for.
-//
-// envelopeHead's `q := *d` aliases d.Kids and d.Slots the same way and
-// is inert for the same reason — nothing writes through it. Stated here
-// because that is the other place a future caller would assume a copy.
-// Raised in review of #522.
+// The rounds that got to this shape, and what each earlier predicate
+// did wrong, are in
+// docs/specs/2026-08-10-markup-declared-properties.md. Raised in
+// review of #522.
 func declAttrs(attrs map[string]string, prefix string) map[string]string {
 	dead := func(k, v string) bool {
 		if k == "xmlns:"+prefix {
@@ -1275,6 +1281,35 @@ func alienDecls(decls []*node) []*node {
 // namespace offers, not about what this element is called, and the
 // spelling an author would write a Property under is the document's
 // binding rather than the alien element's.
+// declElemName is how one declaration is SPELLED in a message: its own
+// xmlns binding if it carries one, otherwise the envelope's, otherwise
+// bare.
+//
+// PER ELEMENT, because a document may bind more than one prefix to
+// markup.XNamespace and XML scoping puts the binding wherever the author
+// wrote it. alienDeclMsg has asked per element since review of #522;
+// browser.go's root-count refusal read decls[0] and printed that
+// spelling with len(decls), so a file holding one <p:Property> and one
+// <q:Property> was told it held "2 <p:Property> declarations". This is
+// that question asked once, in one place, so the two messages cannot
+// drift again.
+//
+// NOT declBinding'S FALLBACK, which is a SAVE-path answer: its
+// bound=false means "the envelope needs a binding added at write time",
+// not "this element is written unprefixed". Spelling an element from it
+// names one the file does not contain — and a bare <Property> is what
+// bareDeclMsg in this same editor defines as the missing-namespace
+// typo, so it is not a neutral guess. Raised in review of #522.
+func declElemName(d *node, envelope map[string]string) string {
+	if p, ok := declBinding(d.Attrs); ok {
+		return "<" + p + ":" + d.Elem + ">"
+	}
+	if p, ok := declBinding(envelope); ok {
+		return "<" + p + ":" + d.Elem + ">"
+	}
+	return "<" + d.Elem + ">"
+}
+
 func alienDeclMsg(alien []*node, prefix string, bound bool) string {
 	if !bound {
 		prefix = "x"

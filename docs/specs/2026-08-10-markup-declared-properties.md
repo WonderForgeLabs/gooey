@@ -173,3 +173,69 @@ declaring document is open, and a client's `set_value` against one is
 discarded on the next rebuild.
 `TestASeededNameIsVisibleToTheControlPlaneAndIsTransient` measures both
 halves.
+
+## What the editor's namespace handling got wrong, and in which order (2026-09-19)
+
+The editor side of the fourth case took six review rounds, and the
+reasoning for each repair was kept inline beside the code it repaired.
+Review of [#522](https://github.com/WonderForgeLabs/gooey/pull/522)
+observed the cost: `browser.go`'s root-count branch carried ~60 lines of
+comment inside one `if` body, four paragraphs of which described what
+earlier rounds of the same PR got wrong, and the defect that round found
+was in the branch whose own comment stated the rule the code did not
+implement. At that density it is hard to see which paragraph describes
+the code in front of you. The invariants stay at the code; the rounds
+are here.
+
+**One question, asked in four places, answered differently each time.**
+"How is this declaration spelled?" has one correct answer — its own
+xmlns binding if it carries one, else the envelope's, else bare — and
+the editor arrived at it four times:
+
+1. **The envelope only.** `declBinding(n.Attrs)` reads the envelope, and
+   XML scoping lets the binding sit on the `<x:Property>` element
+   itself. A correctly namespaced `<p:Property>` document was reported
+   as containing `<Property>` — which `bareDeclMsg` in this same editor
+   defines as the missing-namespace typo, so an author acting on it
+   would have edited a namespace that was already right.
+2. **`declPrefix`, which answers a different question.** It is a SAVE
+   decision: *which prefix will the save write, and does the document
+   already bind it.* Its `bound=false` means "the envelope needs a
+   binding added at write time", not "the file writes `<Property>`
+   unprefixed". Read as the second, a file holding `<p:Property>` and
+   `<q:Property>` was told it held 2 `<Property>` declarations.
+3. **`decls[0]`'s binding, printed with `len(decls)`.** Correct for one
+   declaration and for any number that agree; a count of elements the
+   file does not contain as soon as two bindings are in play. This is
+   the one that survived five rounds of work on that exact message,
+   because no arm of `TestTheRootCountRefusalSaysWhatItCounted` mixed
+   prefixes.
+4. **Per element, through `declElemName`.** `alienDeclMsg` had already
+   arrived here one arm over; the count branch now asks the same
+   function, so the two cannot drift again.
+
+**`declAttrs`' third clause was the bug, not a residue.** The first two
+clauses remove bindings that no longer NAME the declaration — a default
+`xmlns` and any prefixed binding other than the one being written. The
+third is different in kind: on the copy, `xmlns:<prefix>` must be absent
+or equal to `markup.XNamespace`, *whatever it used to say*. The
+predicate asked first whether the value WAS the x namespace, so a
+declaration carrying `xmlns:<prefix>` bound to something else survived
+onto the element `envelopeHead` emits as `<prefix:Property>` — and the
+prefix then resolved to the something else, so the declaration stopped
+being one. Measured end to end: the editor reported a valid file as the
+missing-namespace typo, then wrote "✓ saved" over the good bytes with a
+file `markup.Build` refuses. Two shapes reach it, an envelope that binds
+the prefix and one that does not; in the second `declPrefix` MINTS the
+prefix and `declBinding`'s collision loop reads the envelope only, so
+the mint can collide with a declaration's own binding. The clause closes
+both, which is why the mint is left alone.
+
+**`node.Space` is not empty for ordinary components.** Its field doc
+said so for two rounds. `nodeOf` tracks the inherited default `xmlns`
+specifically so it can resolve them, every in-tree `apps/*.gooey`
+declares one, and `Space` is empty only for palette seed strings and
+hand-written fixtures. Nothing was broken by it — `splitDecls` keys on
+`k.Elem == "Property"`, matching markup's own `c.Name == "Property"` —
+but the sentence invites `n.Space == ""` for "not namespaced", which is
+true of a fixture and false of every real document.
