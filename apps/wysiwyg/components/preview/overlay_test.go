@@ -16,6 +16,14 @@ import (
 // it left — a fifth "fit into N cells" helper and the module's only
 // per-rune write loop. Raised in review of #524.
 //
+// IT IS AN ABSOLUTE CLAIM AND IT HAD ONE UNRECORDED EXCEPTION.
+// mirror.go sized its centred label with len() of a byte string, twice
+// — once as a fit test and once as a centering offset — and it was
+// correct only because the constant is ASCII in Go source, which is the
+// same argument this PR already had to retract about surfaceSize. It
+// measures with render.StringWidth now, so the claim needs no
+// exception rather than carrying one. Raised in review of #524.
+//
 // WHAT IS NOT CLAIMED HERE IS END-TO-END REACHABILITY. A track spec is
 // authored text, but a spec holding a wide glyph never reaches these
 // two: components.ParseGridLens rejects it first, the build fails, and
@@ -209,6 +217,57 @@ func TestAMarkAtTheClipEdgeClaimsOnlyTheColumnItGot(t *testing.T) {
 			"never wrote — the clip it painted under stopped at column 3, so "+
 			"prev[1] is a snapshot of somebody else's cell. A mark may only "+
 			"name the columns that landed", got)
+	}
+}
+
+// TestAWideMarkIsNotHalfLiftedWhenTheClipNARROWS is the other direction
+// of the test above, and the file argued only one of them.
+//
+// setCluster reasons about the clip WIDENING — a column it could not
+// reach at write time holding somebody else's content later. This is
+// the clip NARROWING between the write and the lift, which is the
+// overlay's bounds shrinking at a frame boundary, and a partial lift
+// there is worse than none: Buffer.SetCell is clip-scoped, so prev[0]
+// lands, healSeam repairs the now-orphaned continuation WITH THE STYLE
+// THAT CELL HOLDS — the overlay's — and the follow-up SetCell of
+// prev[1] is dropped. The result was a blank carrying the guide's
+// background on a cell the guide no longer owns.
+//
+// ASSERTED ON Style, for the third time in this file and the same
+// reason: the rune is a space either way. Raised in review of #524.
+func TestAWideMarkIsNotHalfLiftedWhenTheClipNARROWS(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	pre := render.Style{Bg: render.RGB(1, 2, 3)}
+	f.Cells.SetCell(0, 0, render.Cell{Rune: ' ', Style: pre})
+	f.Cells.SetCell(1, 0, render.Cell{Rune: ' ', Style: pre})
+
+	wide := f.Cells.Clip(render.Rect{X: 0, Y: 0, W: 10, H: 1})
+	o := &Overlay{}
+	o.setCluster(f, 0, 0, wideCell, 2, render.Style{Bg: render.RGB(9, 9, 9)})
+	if len(o.marks) != 1 || o.marks[0].cols != 2 {
+		t.Fatalf("the fixture is not a two-column mark (%d marks), so the "+
+			"half-lift this test is about cannot arise", len(o.marks))
+	}
+
+	snap := o.marks[0].prev
+
+	// The next frame: the overlay's bounds shrank to one column.
+	f.Cells.Unclip(wide)
+	f.Cells.Clip(render.Rect{X: 0, Y: 0, W: 1, H: 1})
+	o.restoreMarks(f)
+
+	// ALL OR NOTHING IS THE CLAIM, not a particular cell value, because
+	// the skipped case leaves the overlay's own glyph in both columns —
+	// which is in the overlay's style, exactly like the smear. What
+	// separates the two worlds is whether the pair AGREES: a lead put
+	// back while its tail could not be is the half-lift.
+	if f.Cells.At(0, 0) == snap[0] && f.Cells.At(1, 0) != snap[1] {
+		t.Errorf("the lead was restored to %+v and column 1 came back %+v "+
+			"instead of %+v: the continuation is outside the clip, so "+
+			"healSeam repaired it with the style that cell held — the "+
+			"guide's — and the write that would have put the snapshot back "+
+			"was dropped. A mark may only be lifted where every column of "+
+			"it can be reached", snap[0], f.Cells.At(1, 0), snap[1])
 	}
 }
 

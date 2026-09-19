@@ -88,7 +88,14 @@ func (m *Mirror) Render(f *gooey.Frame) {
 	// A label in the middle, so the joke lands rather than looking like
 	// a rendering fault.
 	const label = " preview of the preview "
-	if b.W > len(label)+2 && b.H > 2 {
-		f.Cells.SetString(b.X+(b.W-len(label))/2, b.Y+b.H/2, label, m.style)
+	// IN COLUMNS, not in bytes. len() is right for this constant today
+	// — it is ASCII in Go source, so bytes, runes and columns agree —
+	// and that is exactly the argument this PR already had to retract
+	// once. It is also the last exception to overlay_test.go's
+	// package-wide claim, so measuring it is cheaper than recording it.
+	// Raised in review of #524.
+	lw := render.StringWidth(label)
+	if b.W > lw+2 && b.H > 2 {
+		f.Cells.SetString(b.X+(b.W-lw)/2, b.Y+b.H/2, label, m.style)
 	}
 }

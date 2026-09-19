@@ -316,13 +316,6 @@ func (o *Overlay) extent(slot gooey.Rect) gooey.Rect {
 	return gooey.Rect{X: x, Y: y, W: right - x, H: bottom - y}
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // Render draws the guide.
 //
 // THE DEPENDENCY IS READ FIRST, above every early return, and that is
@@ -558,14 +551,39 @@ type mark struct {
 // restoreMarks puts back what the last frame's guide covered up.
 //
 // A mark is only lifted if the cell STILL HOLDS THE CELL THE OVERLAY
-// PUT THERE — rune, cluster and style. Anything else means the document repainted that cell in the
-// meantime and now owns it — the overlay paints after the tree, so by
-// the time this runs that repaint has already happened — and writing the
-// saved content back would be restoring a stale copy over live content.
+// PUT THERE — rune, cluster and style. Anything else means the
+// document repainted that cell in the meantime and now owns it — the
+// overlay paints after the tree, so by the time this runs that repaint
+// has already happened — and writing the saved content back would be
+// restoring a stale copy over live content.
+//
+// AND ONLY IF EVERY COLUMN OF IT IS STILL REACHABLE, which is the same
+// "only touch what you can reach" rule setCluster applies to the write
+// and the direction this file did not argue. setCluster reasons about
+// the clip WIDENING; a clip that NARROWS between the write and the lift
+// — the overlay's bounds shrank at a frame boundary — leaves the tail
+// of a wide mark outside it, and a partial lift is worse than none.
+// Buffer.SetCell is clip-scoped, so writing prev[0] back lands, healSeam
+// repairs the now-orphaned continuation WITH THE STYLE THAT CELL HOLDS
+// (the overlay's), and the follow-up SetCell of prev[1] is dropped: a
+// blank carrying the guide's background on a cell the guide no longer
+// owns, on a node that will not repaint.
+//
+// Measured in review of #524 — `世` at column 0 under Clip{W:10}, then
+// Clip{W:1}, then restoreMarks: column 1 came back Bg{9,9,9} where the
+// pre-clear had left Bg{1,2,3}. Skipping leaves the previous frame's
+// own writes in place, which is what the composer's bounds sweep
+// repaints over (see Arrange's doc); the half-lift leaves a cell
+// neither side agrees about.
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
+	clip := f.Cells.ClipRect()
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
 		if f.Cells.At(m.x, m.y) != m.wrote {
+			continue
+		}
+		if m.y < clip.Y || m.y >= clip.Y+clip.H ||
+			m.x < clip.X || m.x+m.cols > clip.X+clip.W {
 			continue
 		}
 		// THE LEAD FIRST, THEN THE REST, and the order is the whole of
@@ -680,8 +698,12 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 			return
 		}
 	}
-	cell := render.Cell{Rune: []rune(cluster)[0], Style: st}
-	if len([]rune(cluster)) > 1 {
+	// ONE CONVERSION, because this runs per cell per glyph per frame on
+	// the paint path and []rune(cluster) allocates. Raised in review of
+	// #524.
+	runes := []rune(cluster)
+	cell := render.Cell{Rune: runes[0], Style: st}
+	if len(runes) > 1 {
 		cell.Cluster = cluster
 	}
 	f.Cells.SetCell(x, y, cell)
