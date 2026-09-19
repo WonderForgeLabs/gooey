@@ -13,7 +13,7 @@ import (
 //
 // defVStack and defHStack each carried `if e.Name == "VStack"`, constructing an
 // HStack first and swapping it for a VStack when the name matched. Build is
-// reached only through elementDefs[e.Name] (markup.go:802), and
+// reached only through build's elementDefs[e.Name] lookup, and
 // registerElements panics on a duplicate name, so e.Name inside a definition is
 // that definition's own name and nothing else: the test was ALWAYS TRUE in
 // defVStack — where the HStack it built first was allocated and thrown away
