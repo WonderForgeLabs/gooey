@@ -360,7 +360,7 @@ func shapeMsg(shape requireShape, r ownRequire) string {
 	// Measured on this tree, revisionOf("v0.0.0-20260913132232-
 	// e5cdb56") = ("", false) with stampOf = "20260913132232".
 	// Raised in review of #497.
-	case shapeMalformed:
+	case shapeMalformedRevision:
 		return fmt.Sprintf("%s requires %s %q, which carries a pseudo-version's "+
 			"14-digit stamp and NOT its twelve-hex-character revision — so "+
 			"it is a malformed pseudo-version, not a plain tag, and no "+
@@ -372,6 +372,27 @@ func shapeMsg(shape requireShape, r ownRequire) string {
 			"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
 			"origin/main`. A `sed` across the tree that clips one character "+
 			"lands here too", dir, r.path, r.version)
+	// THE OTHER HALF, and it names the STAMP because that is the half
+	// that is broken here. The revision is well-formed twelve hex, so
+	// every sentence the arm above prints is false of these — including
+	// its remedy, which points at an abbreviation flag governing the
+	// half that is already right. Go's form wants exactly fourteen
+	// DIGITS, so one short, one long, none at all and fourteen
+	// characters that are not all digits each read as an ordinary
+	// prerelease and the proxy is asked for a tag of that name. Raised
+	// in review of #497.
+	case shapeMalformedStamp:
+		return fmt.Sprintf("%s requires %s %q, whose twelve-hex-character "+
+			"revision is well-formed and whose STAMP is not — Go's "+
+			"pseudo-version form wants exactly fourteen digits there, so "+
+			"this reads as an ordinary prerelease tag and no proxy can "+
+			"serve it: Go asks for a tag of that name and gets \"unknown "+
+			"revision\". Do not reach for `core.abbrev`; it governs the "+
+			"revision, which is already right. Re-derive the whole string: "+
+			"`TZ=UTC git -c core.abbrev=12 log -1 "+
+			"--date=format-local:%%Y%%m%%d%%H%%M%%S --format='v0.0.0-%%cd-%%h' "+
+			"origin/main`. A `sed` across the tree that lands on the stamp "+
+			"rather than the revision arrives here", dir, r.path, r.version)
 	}
 	return ""
 }
@@ -397,7 +418,20 @@ const (
 	shapePin         requireShape = iota // a version a proxy could be asked for
 	shapeSentinel                        // v0.0.0, or the canonical zero pseudo-version
 	shapeNotAVersion                     // no leading "v"
-	shapeMalformed                       // a pseudo-version's stamp without its revision
+	// TWO MALFORMED SHAPES, NOT ONE, because malformedPseudo returns
+	// true down two branches that are not the same fault and the single
+	// message written for the first was FALSE of the second in both
+	// halves. `v0.0.0-2026091313223-e5cdb56ececd` carries a well-formed
+	// twelve-hex revision and a thirteen-digit stamp; it was told it
+	// "carries a pseudo-version's 14-digit stamp and NOT its
+	// twelve-hex-character revision", and sent to a `core.abbrev=12`
+	// flag that governs the revision it already has right. A reader who
+	// checks that explanation against their own version string finds it
+	// describes something else, and stops trusting the diagnosis — the
+	// remedy-that-does-not-work defect two earlier rounds of this same
+	// review each caught one site over. Raised in review of #497.
+	shapeMalformedRevision // a 14-digit stamp without a twelve-hex revision
+	shapeMalformedStamp    // a twelve-hex revision without a 14-digit stamp
 )
 
 func (s requireShape) String() string {
@@ -408,8 +442,10 @@ func (s requireShape) String() string {
 		return "sentinel"
 	case shapeNotAVersion:
 		return "not-a-version"
-	case shapeMalformed:
-		return "malformed-pseudo"
+	case shapeMalformedRevision:
+		return "malformed-pseudo-revision"
+	case shapeMalformedStamp:
+		return "malformed-pseudo-stamp"
 	}
 	return "unknown"
 }
@@ -426,7 +462,15 @@ func classifyRequire(version string) requireShape {
 	case !strings.HasPrefix(version, "v"):
 		return shapeNotAVersion
 	case malformedPseudo(version):
-		return shapeMalformed
+		// WHICH HALF IS BROKEN IS THE ANSWER, not a detail of it: the
+		// two remedies point at different flags, so a message that
+		// cannot tell them apart sends half its readers to the wrong
+		// one. stampOf is the discriminator malformedPseudo itself
+		// uses — a good stamp there means the REVISION is what failed.
+		if stampOf(version) != "" {
+			return shapeMalformedRevision
+		}
+		return shapeMalformedStamp
 	}
 	return shapePin
 }
@@ -1495,7 +1539,7 @@ func hasRevisionTail(v string) bool {
 // is read as an ordinary prerelease and the proxy is asked for a tag of
 // that name — the same unresolvable require as the clipped revision,
 // with shapeMsg silent and skewFrom filing it under `tagged`, which is
-// the mis-filing shapeMalformed's own comment calls "what let it past
+// the mis-filing shapeMalformedRevision's own comment calls "what let it past
 // every check in this file".
 //
 // THE DISCRIMINATOR IS THE TAIL, asked directly rather than through
@@ -2036,7 +2080,7 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 				"wearing a pseudo-version's shape — and it carries a stamp, so " +
 				"asking malformedPseudo first would file it under the wrong remedy"},
 		{"e5cdb56ececd", shapeNotAVersion, "`go mod edit -require` writes literally what it is handed"},
-		{"v0.0.0-20260913132232-e5cdb56", shapeMalformed,
+		{"v0.0.0-20260913132232-e5cdb56", shapeMalformedRevision,
 			"git's default abbreviation is seven, which is this file's own " +
 				"offline remedy with `-c core.abbrev=12` dropped"},
 		// THE OTHER WAY revisionOf SAYS NO, and the four rows below are
@@ -2047,15 +2091,15 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 		// is read as an ordinary prerelease and the proxy is asked for a
 		// tag of that name — the same unresolvable require as the
 		// clipped revision above, with nothing saying so.
-		{"v0.0.0-2026091313223-e5cdb56ececd", shapeMalformed,
+		{"v0.0.0-2026091313223-e5cdb56ececd", shapeMalformedStamp,
 			"one digit short: the `sed` across the tree this file's own hazard " +
 				"note names, landing on the stamp instead of the revision"},
-		{"v0.0.0-202609131322321-e5cdb56ececd", shapeMalformed,
+		{"v0.0.0-202609131322321-e5cdb56ececd", shapeMalformedStamp,
 			"one digit long, which no length check that only looks for `short` " +
 				"would catch"},
-		{"v0.0.0--e5cdb56ececd", shapeMalformed,
+		{"v0.0.0--e5cdb56ececd", shapeMalformedStamp,
 			"no stamp at all, which is the degenerate case of both rows above"},
-		{"v0.0.0-2026091x132232-e5cdb56ececd", shapeMalformed,
+		{"v0.0.0-2026091x132232-e5cdb56ececd", shapeMalformedStamp,
 			"fourteen characters and not fourteen DIGITS — the shape stampOf " +
 				"rejects for a reason revisionOf cannot report"},
 		// AND THE DISCRIMINATING PAIR, which is what keeps the new arm
@@ -2074,24 +2118,40 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 	// THE RENDERER. A remedy per shape, and "" for a pin — asserted by a
 	// string only that shape's message carries, so two arms cannot
 	// collapse into one without this noticing.
+	//
+	// EACH SHAPE RENDERS ITS OWN VERSION, and it did not: this loop
+	// built one ownRequire from a shared literal, so every row was
+	// handed `v0.0.0-20260913132232-e5cdb56` whatever shape it named.
+	// The four stamp shapes were pinned in classifyRequire and reached
+	// shapeMsg in no test at all — the rule pinned and the renderer not,
+	// which is how one message came to be printed for two faults with
+	// the suite green. `v` is per row now. Raised in review of #497.
 	for _, tc := range []struct {
 		shape requireShape
+		v     string
 		carry string
 		why   string
 	}{
-		{shapePin, "", "a pin is not wrong about anything, so it has nothing to say"},
-		{shapeSentinel, "GOWORK=off go list -m",
+		{shapePin, "v1.2.3", "", "a pin is not wrong about anything, so it has nothing to say"},
+		{shapeSentinel, "v0.0.0", "GOWORK=off go list -m",
 			"the sentinel's remedy is to go and get a real pseudo-version"},
-		{shapeNotAVersion, "GOWORK=off go list -m",
+		{shapeNotAVersion, "e5cdb56ececd", "GOWORK=off go list -m",
 			"a bare hash is repaired exactly as the sentinel is — by going and " +
 				"getting a real pseudo-version — and it is the shape the " +
 				"sentinel's own remedy warns you into, since `go mod edit " +
 				"-require` writes literally what it is handed"},
-		{shapeMalformed, "core.abbrev=12",
-			"the malformed one is this file's own offline remedy with a flag " +
+		{shapeMalformedRevision, "v0.0.0-20260913132232-e5cdb56", "core.abbrev=12",
+			"the clipped revision is this file's own offline remedy with a flag " +
 				"dropped, so naming the flag IS the fix"},
+		{shapeMalformedStamp, "v0.0.0-2026091313223-e5cdb56ececd", "STAMP is not",
+			"the revision here is well-formed and the stamp is not, so the arm " +
+				"above's sentence is false of it in both halves"},
+		{shapeMalformedStamp, "v0.0.0-2026091313223-e5cdb56ececd",
+			"Do not reach for `core.abbrev`",
+			"pointing at the abbreviation flag is the misdiagnosis this shape " +
+				"was split out to stop, so the message says not to"},
 	} {
-		msg := shapeMsg(tc.shape, ownRequire{"mcp", coreModule, "v0.0.0-20260913132232-e5cdb56"})
+		msg := shapeMsg(tc.shape, ownRequire{"mcp", coreModule, tc.v})
 		if tc.carry == "" {
 			if msg != "" {
 				t.Errorf("shapeMsg(%s) = %q, want the empty string — %s", tc.shape, msg, tc.why)
