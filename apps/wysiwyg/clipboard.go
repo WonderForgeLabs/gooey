@@ -972,10 +972,38 @@ func reconcileNamespacesInto(n *node, doc, own map[string]string) error {
 			// — so the arm that reached it was the arm whose explanation
 			// was wrong. That test asserts this text now. Raised in
 			// review of #501.
+			// THE CLOSING CLAUSE IS PER-BRANCH, because the two
+			// refusals below do not share its fact. "which one depends
+			// on where this lands" is the DOCUMENT-vs-paste mechanism:
+			// there the winner genuinely turns on whether the fragment
+			// is inserted before or after the document's own
+			// declaration. On the fragment-internal branch both
+			// bindings are inside the clipboard, their relative
+			// document order is fixed by the fragment itself, and
+			// markup.parse's flat last-wins table therefore always
+			// hands the prefix to the later declaration IN THE
+			// FRAGMENT, wherever it lands.
+			//
+			// Shared, it told an author the outcome was
+			// position-dependent while the second half of the same
+			// sentence correctly told them the conflict was entirely
+			// inside what they copied — two clauses of one message
+			// contradicting each other. Same class as the party clause
+			// the round before removed: a clause asserting something
+			// the code has not established. Pinned now by
+			// TestAPasteCannotRebindAPrefixAgainstITSELF, which
+			// asserted the party and the remedy and nothing about the
+			// mechanism, so this wording was free to drift. Raised in
+			// review of #501.
+			tail := " — the later of the two in what you pasted wins, " +
+				"wherever it lands"
+			if fromDoc {
+				tail = " — which one depends on where this lands"
+			}
 			mech := "One flat prefix map covers the whole document and the last " +
 				"declaration parsed wins, so one of the two meanings of " +
 				strings.TrimPrefix(k, "xmlns:") + " would silently become the " +
-				"other — which one depends on where this lands"
+				"other" + tail
 			if bound == markup.XNamespace || v == markup.XNamespace {
 				mech = "Expressions under " + strings.TrimPrefix(k, "xmlns:") +
 					" read one flat document-wide table that this second " +

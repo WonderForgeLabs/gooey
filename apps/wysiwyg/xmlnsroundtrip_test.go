@@ -2289,6 +2289,29 @@ func TestAPasteCannotRebindAPrefixAgainstITSELF(t *testing.T) {
 						"prefix twice, which is the one fact that locates the "+
 						"conflict for the author: %v", err)
 				}
+				// AND THE MECHANISM, which nothing asserted at all.
+				// `mech` was built once above the fromDoc split and
+				// interpolated into both refusals, so the
+				// fragment-internal message carried the document-vs-
+				// paste clause "which one depends on where this lands"
+				// — false on every arm here, where both bindings are in
+				// the clipboard and their order is fixed by the
+				// fragment, and contradicted by the very next clause of
+				// the same sentence. An unasserted string is one nobody
+				// is stopping from saying that. Raised in review of
+				// #501.
+				if strings.Contains(err.Error(), "depends on where this lands") {
+					t.Errorf("the refusal tells the author the winner is "+
+						"position-dependent, but both bindings are in the paste "+
+						"and their relative order is fixed by the fragment — the "+
+						"later one wins wherever it lands, which the rest of the "+
+						"same message already says: %v", err)
+				}
+				if !strings.Contains(err.Error(), "wherever it lands") {
+					t.Errorf("the refusal does not say which of the two wins, "+
+						"which is the fact an author needs to pick one to "+
+						"rename: %v", err)
+				}
 				return
 			}
 			if err != nil {
