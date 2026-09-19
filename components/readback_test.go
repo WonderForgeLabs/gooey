@@ -121,7 +121,23 @@ func screen(c *gooey.Composer) string { return render.BufferText(c.Cells()) }
 // about, and a read wider than the buffer is phantom blanks rather than
 // an error. There are no reversed cells in phantom blanks, so the
 // failure would have been a SILENTLY shorter answer.
-func reversedText(f *gooey.Frame) string {
+func reversedText(t *testing.T, f *gooey.Frame) string {
+	t.Helper()
+	// THE ROW IS ASSERTED, NOT ASSUMED, and it is the same defect the
+	// width had one round earlier: a written-down constant that some
+	// caller's frame will not match, answering "" — which every
+	// assertion through here reads as "no caret". Taking a y would push
+	// the same guess onto eight call sites; the shape this helper is
+	// for is a single field composed alone, so a multi-row frame is a
+	// caller using the wrong tool and says so here rather than
+	// returning an empty string. Raised in review of #521.
+	if f.Cells.H != 1 {
+		t.Fatalf("reversedText got a %d-row frame and reads row 0 only. An "+
+			"empty answer from the wrong row is indistinguishable from no "+
+			"reversed cells, which is what every caller of this asserts on — "+
+			"read the row you mean with render.RowText and scan it yourself",
+			f.Cells.H)
+	}
 	var b strings.Builder
 	for x := 0; x < f.Cells.W; x++ {
 		if c := f.Cells.At(x, 0); c.Style.Reverse {

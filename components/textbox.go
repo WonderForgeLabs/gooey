@@ -294,6 +294,11 @@ func (t *TextBox) Render(f *gooey.Frame) {
 	// TestTheScrollWindowAlwaysOpensOnAClusterBoundary pins over a grid
 	// rather than a fixture. Setting t.scroll by hand still can. Raised
 	// in the review of #521, which found the click half of it.
+	// PAST THE LAST CLUSTER THIS LOOP PAINTED, which is not always
+	// len(runes): the full-width stop below refuses a cluster that would
+	// overrun, so the loop can end with value left. The trailing caret
+	// arm needs the distinction — see it for why.
+	painted := t.scroll
 	eachClusterFrom(runes, t.scroll, spanForCols(runes, t.scroll, avail), func(i, n, w int) bool {
 		cluster := string(runes[i : i+n])
 		// A ZERO-WIDTH CLUSTER TAKES A COLUMN, which is what SetString
@@ -350,9 +355,33 @@ func (t *TextBox) Render(f *gooey.Frame) {
 		}
 		f.Cells.SetCell(x, b.Y, c)
 		x += cols
+		painted = i + n
 		return true
 	})
-	if t.IsFocused() && !selected && caret >= len(runes) && x < b.X+b.W {
+	// THE CARET'S CLUSTER WAS NOT PAINTED, which is a wider condition
+	// than "the caret is past the end" and was written as the narrow
+	// one. The full-width stop above refuses a cluster that would
+	// overrun the field — correctly, half a glyph is not drawable — and
+	// when the refused cluster is the CARET'S the loop leaves nothing
+	// reversed, so a focused field shows no caret at all. Measured on
+	// this head, "東西南北" focused with the caret on 西:
+	//
+	//	avail 1                  row " "    reversed ""
+	//	width 3, Prompt "> "     row ">  "  reversed ""
+	//
+	// The second is the one that matters: avail == 1 is reachable at an
+	// ordinary field width through a two-column prompt, not only at a
+	// one-column field. The per-rune loop this PR replaced wrote a
+	// reversed cell here — mangled, but visible — so the narrow
+	// condition made it a regression, and it falsifies
+	// docs/markup-reference.md's "scrolls horizontally to keep the caret
+	// visible in either direction".
+	//
+	// `caret >= painted` covers both: with the whole value shown,
+	// painted == len(runes) and this is the old test; with the loop
+	// stopped early it fires for the caret the stop just hid. Raised in
+	// review of #521.
+	if t.IsFocused() && !selected && caret >= painted && x < b.X+b.W {
 		f.Cells.Set(x, b.Y, '█', accent)
 	}
 }
@@ -565,6 +594,24 @@ func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 	// bounded by clusterSlack. Finding the run's start still walks it,
 	// but that walk is a rune comparison per step and segments nothing.
 	// Raised in review of #521, both halves.
+	//
+	// WHAT THAT SCAN COSTS ON A VALUE THAT IS ALL FLAGS, because the
+	// sentence above says what it is not and the one at clusterSlack
+	// said the cost is nothing "on values with no flags" — which is the
+	// case it is not about. The scan is unbounded IN THE RUN, and Render
+	// plus scrollFor make roughly half a dozen lookbacks per frame.
+	// Measured, 100,000 runes in a 40-column focused field with the
+	// caret mid-value:
+	//
+	//	                  repaint/frame   100 drag-left events
+	//	all flags            1.75 ms            74.8 ms
+	//	ASCII, same runes    0.153 ms           24.1 ms
+	//
+	// 11.4x, and not a freeze on a value no user types. Recorded rather
+	// than closed: the run's start is a pure function of the value, so
+	// it could be memoised beside the cached runes, and that is a
+	// change to the paint path's state rather than to this arithmetic.
+	// Raised in review of #521.
 	if lo > 0 && regionalIndicator(runes[lo]) {
 		runStart := lo
 		for runStart > 0 && regionalIndicator(runes[runStart-1]) {
@@ -601,6 +648,27 @@ func eachClusterFrom(runes []rune, from, to int, fn func(at, n, w int) bool) {
 // the same reason and with the same residual: a cluster longer than it
 // is reported short, which its own doc records. Raised in review of
 // #521.
+// clusterEndAt is the first cluster boundary strictly after i — the
+// right arrow's destination, and clusterStartAt's mirror.
+func clusterEndAt(runes []rune, i int) int {
+	if i < 0 {
+		return 0
+	}
+	if i >= len(runes) {
+		return len(runes)
+	}
+	at := clusterStartAt(runes, i)
+	end := i + 1
+	eachClusterFrom(runes, at, at+clusterSlack, func(a, n, _ int) bool {
+		if i >= a && i < a+n {
+			end = a + n
+			return false
+		}
+		return true
+	})
+	return end
+}
+
 func clusterStartAt(runes []rune, i int) int {
 	if i <= 0 || i >= len(runes) {
 		return i
@@ -796,6 +864,34 @@ func (t *TextBox) HandleKey(ev input.KeyEvent) bool {
 
 // moveKey handles everything that only moves the caret or the selection.
 // Shift extends from the anchor, ctrl moves by word, and the two compose.
+// AN ARROW STEPS BY CLUSTER, NOT BY RUNE, and that is the fourth site
+// the three above have to agree with. indexAt quantises a click to a
+// cluster boundary and Render reverses the whole cluster, so a caret
+// between a rune and its accent is a position the screen cannot show
+// and the mouse cannot reach — but the keyboard reached it, and the
+// consequence is not cosmetic. Measured on decomposed "éx", focused:
+//
+//	caret 0 -> row "éx", reversed "é"
+//	caret 1 -> row "éx", reversed "é"   <- pixel-identical; the keypress
+//	                                       did nothing a user can see
+//	typing 'Z' at caret 1   -> "eŹx"    (the accent moved onto the typed rune)
+//	backspace at caret 1    -> "́x"      (an orphan mark leads the value)
+//
+// This PR made it worse before it made it better: widening the caret
+// arm from caret == i to caret >= i && caret < i+n removed the one cue
+// there was, so a reachable destructive position became identical to a
+// safe one. A ZWJ family is the loud version — four of five presses do
+// nothing visible.
+//
+// THE COST, STATED: a stray combining mark can no longer be deleted by
+// arrowing between it and its base. It is still deletable — select it,
+// or delete the whole cluster and retype the base — and the trade is
+// the right way round, because reaching the split position by accident
+// is what a user does and reaching it on purpose is not.
+//
+// Home and End are already boundaries; word motion goes through
+// wordLeft/wordRight, which move between runs of non-word runes and
+// cannot stop inside one. Raised in review of #521.
 func (t *TextBox) moveKey(ev input.KeyEvent) bool {
 	// Anything carrying a modifier the box does not use — alt+left, say —
 	// is somebody else's gesture and must keep bubbling.
@@ -815,7 +911,7 @@ func (t *TextBox) moveKey(ev input.KeyEvent) bool {
 		} else if lo, _, ok := t.Selection(); ok && !shift {
 			to = lo // an unshifted arrow collapses a selection to its edge
 		} else {
-			to = caret - 1
+			to = clusterStartAt(runes, caret-1)
 		}
 	case input.KeyRight:
 		if word {
@@ -823,7 +919,7 @@ func (t *TextBox) moveKey(ev input.KeyEvent) bool {
 		} else if _, hi, ok := t.Selection(); ok && !shift {
 			to = hi
 		} else {
-			to = caret + 1
+			to = clusterEndAt(runes, caret)
 		}
 	case input.KeyHome:
 		to = 0
