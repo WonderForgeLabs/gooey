@@ -225,9 +225,19 @@ superseded does not:
    whether the next directory's wrapper is worth keeping. A wrapper that
    earns its keep has to be USED, though: five sites in the same package
    went on calling `SpanText(f.Cells, 0, 0, n)` beside it, so the rule
-   and the package disagreed in the commit that stated the rule. They go
-   through `rowText` now — either the mapping is worth a wrapper
-   everywhere or it is worth one nowhere.
+   and the package disagreed in the commit that stated the rule.
+
+   **What item 5 and this item jointly decided**, which this paragraph
+   read as "either the mapping is worth a wrapper everywhere or it is
+   worth one nowhere" until review of #520 — a conclusion item 5 exists
+   to refute, and one the branch's own later rounds reversed: a whole
+   row is `render.RowText`, a caller-chosen region is `rowText`, and the
+   wrapper is worth keeping only for the `*gooey.Frame` → `f.Cells`
+   mapping that `render` cannot make for it. Four of those five sites
+   were whole-row reads and went to `RowText`; that is item 5 applying,
+   not the rule failing. "They go through `rowText` now" was left
+   standing after it, false for four of the five, in the document the
+   remaining directories of #516 read.
 7. **A whole-BUFFER read is `render.BufferText`, and it had no name.**
    Removing the width parameters in item 5 left `components`' `dump`,
    `menuRows` and `screen` as byte-identical eight-line loops, each under
@@ -292,6 +302,23 @@ superseded does not:
    that adding one does not falsify a list written elsewhere — with the
    continuation-marker reasoning stated once at the top, so the next
    directory of the sweep copies a file rather than a loop.
+
+   **That header's own window paragraph decayed twice, one round
+   apart**, which is the account this item holds rather than the file.
+   It opened as "for `frameText` and `screen`, which is the pair this
+   paragraph is about"; `75ee14b` widened the opening clause to "every
+   reader whose extent is the FRAME's" and left the closing clause
+   reading "neither of those two now takes a width", so a paragraph
+   whose point is that counts decay closed on a count, two sentences
+   later, already wrong by one. The same commit's "Each took its extent
+   as parameters" was wrong in the other direction: `frameRows` is one
+   of the readers the widened clause covers and arrived in `4f0b381`
+   with the signature it has, never having taken an extent. Both are
+   stated by property now. The rule that survives is the one-line one —
+   a reader whose window is the buffer's own takes no width it was not
+   given by the thing it is reading — and the history of how it was got
+   wrong belongs here, where a reader of the file cannot mistake it for
+   a claim about the code in front of them.
 
    **The last one out had the most call sites.** `row(b, y)` — a whole
    row of a `*render.Buffer` with trailing blanks trimmed — stayed in

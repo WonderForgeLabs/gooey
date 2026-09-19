@@ -569,12 +569,14 @@ sweep, MANY readers across the tree still build a row or a screen from
 the root suite reddens when a new one appears. Named by PROPERTY rather
 than by module and symbol, for two reasons: a single example read as
 *the* live exception where the real population is an order of magnitude
-larger, and a name like `apps/scene`'s `containsRow` is one nothing
-checks — `TestCLAUDEMDNamesNoDeletedModule` reads only its own
+larger, and a module-and-symbol name here is one nothing checks —
+`TestCLAUDEMDNamesNoDeletedModule` reads only its own
 `moduleNamespaces` list, which predates the `apps/` move
 ([#316](https://github.com/WonderForgeLabs/gooey/issues/316)), and no
-guard resolves a symbol at all. The derivation is in item 7 of
-`docs/specs/2026-08-27-display-width.md`. That is the same silent
+guard resolves a symbol at all. Naming one anyway inside the sentence
+that says so leaves it exactly as unchecked as the sentence claims,
+which is where a stale citation starts; the derivation and its examples
+are in item 7 of `docs/specs/2026-08-27-display-width.md`. That is the same silent
 shape this paragraph opens by describing, which is why the rule is
 written with its exception rather than as an absolute: an unqualified
 "never" here would be a hand-maintained claim of exactly the kind the
