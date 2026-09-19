@@ -343,8 +343,11 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 			// with namespacedAttrError, so <Button t:Click="Fire"/> is
 			// a load error rather than a flat resolution. The reserved
 			// xmlns: declarations are not an exception to that rule but
-			// the other side of it — parse consumes them three arms
-			// earlier, and they are what BUILDS the table. This
+			// the other side of it — parse's own
+			// `a.Name.Space == "xmlns"` arm consumes them, ahead of
+			// the refusal, and they are what BUILDS the table. (Named
+			// rather than counted: this said "three arms earlier" and
+			// one arm separates them. Raised in review of #501.) This
 			// paragraph said "an ATTRIBUTE prefix" for both until
 			// review of #501 read it literally, which collapses the
 			// refused case into the resolved one on the very axis it is

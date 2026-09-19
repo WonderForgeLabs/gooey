@@ -1486,8 +1486,9 @@ The mechanics that keep it inside the framework's constraints:
   `t:` of `Click="{{t:Fire}}"`; a prefix on an attribute NAME is never
   looked up there, because `parse` refuses it outright
   (`markup.namespacedAttrError`); the reserved `xmlns:` declarations are
-  the other side of that rule rather than an exception to it, consumed
-  three arms earlier and the thing that BUILDS the table — and this sentence
+  the other side of that rule rather than an exception to it, consumed by
+  `parse`'s own `a.Name.Space == "xmlns"` arm ahead of the refusal and
+  the thing that BUILDS the table — and this sentence
   named its two readers as "and nowhere else" until review of
   [#501](https://github.com/WonderForgeLabs/gooey/pull/501) grepped it
   and found four, `itemsview.go`'s capture-for-a-deferred-row among

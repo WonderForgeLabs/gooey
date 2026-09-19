@@ -910,14 +910,19 @@ func gooeyOpen(attrs map[string]string) string {
 // an error the palette can show — not as a node tree that quietly
 // dropped half of it, which is the failure mode the whole catalog
 // effort exists to delete. The strictness is right for a user's file
-// too; only the WORDING had to change. Five of the six refusals below
-// began "seed …", which is this repo's word for its own palette markup
+// too; only the WORDING had to change. EVERY refusal this function had
+// began "seed …" — which is this repo's word for its own palette markup
 // and means nothing to someone who just opened a document — "seed does
 // not parse" for a file the user wrote. They now name the thing that is
 // wrong and leave the noun to the caller, which already supplies one:
 // the browser prefixes the path, paste prefixes "pasted text is not
-// markup", and the palette prefixes "<Button>". Raised in review of
-// #501.
+// markup", and the palette prefixes "<Button>". The prefixed-element
+// refusal below is new on this branch and never carried the word.
+//
+// Stated as a property rather than counted: this said "five of the six
+// refusals below", and `git show origin/main:apps/wysiwyg/main.go |
+// grep -c 'fmt.Errorf("seed'` answers six, while the set below is now
+// seven. Raised in review of #501, twice.
 func nodeOf(src string) (*node, error) {
 	dec := xml.NewDecoder(strings.NewReader(src))
 	var stack []*node
