@@ -633,7 +633,7 @@ func TestTheCaretIsVisibleOnAWideGlyphAtTheWindowsEdge(t *testing.T) {
 	tb.setCaret(2) // on 西, reachable with Home then two rights
 	f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
 
-	if got := reversedText(f); got != "西" {
+	if got := reversedText(t, f); got != "西" {
 		t.Errorf("the reversed cells of %q hold %q, want 西 — the caret sits ON "+
 			"the character it precedes, and an empty answer means nothing on "+
 			"screen says where it is", render.RowText(f.Cells, 0), got)
@@ -715,7 +715,7 @@ func TestTheCaretIsVisibleOnAnEmojiPresentationSequenceAtTheWindowsEdge(t *testi
 			tb.setCaret(1) // on the wide glyph, one Right from Home
 			f := gooey.Compose(tb, term.Caps{Cols: 2, Rows: 1}, nil)
 
-			if got := reversedText(f); got != tc.want {
+			if got := reversedText(t, f); got != tc.want {
 				t.Errorf("the reversed cells spell %q, want %q; the row reads %q. "+
 					"The caret is on the second character of %q in a field two "+
 					"columns wide, so that character is the whole field and it "+
@@ -810,7 +810,7 @@ func TestASelectionOverHalfAClusterHighlightsTheWholeGlyph(t *testing.T) {
 			tb.setAnchor(tc.anchor)
 			f := gooey.Compose(tb, term.Caps{Cols: 4, Rows: 1}, nil)
 
-			if got := reversedText(f); got != tc.want {
+			if got := reversedText(t, f); got != tc.want {
 				t.Errorf("selection [%d,%d) over %q reverses %q, want %q; the row "+
 					"reads %q. A selection the user made and cannot see is worse "+
 					"than no selection: the caret arm is suppressed while one is "+
@@ -1122,7 +1122,7 @@ func TestACombiningMarkSurvivesTheRuneItDecorates(t *testing.T) {
 	// THE WHOLE CLUSTER, spelled with the escape rather than the glyph:
 	// the fixture is DECOMPOSED and a precomposed literal here would look
 	// identical in the source and compare unequal.
-	if want, got := "e\u0301", reversedText(f); got != want {
+	if want, got := "e\u0301", reversedText(t, f); got != want {
 		t.Errorf("the caret is on the combining mark and the reversed cells "+
 			"hold %q, want the whole cluster %q: the caret belongs to the one "+
 			"glyph on screen, and nothing reversed means nothing on screen says "+
@@ -1317,7 +1317,7 @@ func TestTheCaretSurvivesAWindowThatOpensOnACombiningMark(t *testing.T) {
 	tb.setCaret(11) // the mark itself, with the window well to its right
 	f := gooey.Compose(tb, term.Caps{Cols: 6, Rows: 1}, nil)
 
-	if reversedText(f) == "" {
+	if reversedText(t, f) == "" {
 		t.Errorf("no cell in the field is reversed with the caret at 11 of %q: "+
 			"the user is typing into a field whose caret is nowhere on screen. "+
 			"Row: %q", value, render.RowText(f.Cells, 0))
@@ -1423,7 +1423,7 @@ func TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets(t *testing.T) {
 			"the defect #519 is about", got, w)
 	}
 
-	if got := reversedText(f); got != "\u0301" {
+	if got := reversedText(t, f); got != "\u0301" {
 		t.Errorf("the reversed cells hold %q with the caret at 0 of %q, want the "+
 			"mark itself: an empty answer is a user typing into a focused field "+
 			"whose caret is nowhere on screen, and any other answer is the caret "+
@@ -1555,5 +1555,97 @@ func TestAClickAfterTheValueShrankDoesNotPanic(t *testing.T) {
 
 	if got := tb.Caret(); got < 0 || got > 2 {
 		t.Errorf("caret %d is outside the new value", got)
+	}
+}
+
+// TestAFieldWithOneUsableColumnStillShowsItsCaret is the avail == 1
+// corner the three other caret-visibility pins do not reach.
+//
+// The full-width stop refuses a two-column cluster when one column is
+// left, which is right — half a glyph is not drawable. What was wrong
+// is what happens next: the trailing block caret only fired when the
+// caret was past the LAST RUNE, so when the refused cluster was the
+// caret's own, a focused field showed no caret anywhere.
+//
+// THE PROMPT ARM IS THE ONE THAT MATTERS. A one-column field is a
+// curiosity; a three-column field with a "> " prompt is an ordinary
+// shape and reaches the same avail == 1. Both are here because the
+// first is the minimal case and the second is the reachable one — and
+// an assertion that only had the first would read as being about a
+// degenerate width. Raised in review of #521.
+func TestAFieldWithOneUsableColumnStillShowsItsCaret(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cols   int
+		prompt string
+		want   string
+	}{
+		{"a one-column field", 1, "", "█"},
+		{"a two-column prompt in three columns", 3, "> ", "> █"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := &TextBox{
+				Text:   prop.NewSource("東西南北"),
+				Prompt: prop.NewSource(tc.prompt),
+			}
+			tb.SetFocused(true)
+			tb.setCaret(1) // on 西, a two-column cluster
+			f := gooey.Compose(tb, term.Caps{Cols: tc.cols, Rows: 1}, nil)
+			if got := render.RowText(f.Cells, 0); got != tc.want {
+				t.Errorf("row = %q, want %q — the refused cluster is the "+
+					"caret's own, so with no block caret the field shows a "+
+					"focused user nothing at all", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnArrowKeyStepsByClusterNotByRune is the fourth site: indexAt
+// quantises a click to a cluster boundary and Render reverses the whole
+// cluster, so a caret between a rune and its accent is a position the
+// screen cannot show and the mouse cannot reach.
+//
+// THE ASSERTION IS THE POSITION, NOT THE PIXELS, and that is the whole
+// difficulty — caret 0 and caret 1 render IDENTICALLY, which is why
+// this went five rounds unnoticed. So it reads the caret directly, and
+// the frame assertion beside it only confirms that the two positions
+// were indistinguishable on screen.
+//
+// The destructive half is what makes it a defect rather than a nicety:
+// at caret 1, typing put the typed rune between "e" and its accent and
+// backspace left an orphan mark leading the value.
+func TestAnArrowKeyStepsByClusterNotByRune(t *testing.T) {
+	const decomposed = "éx" // é as e + U+0301, then x
+
+	tb := &TextBox{Text: prop.NewSource(decomposed)}
+	tb.SetFocused(true)
+	tb.setCaret(0)
+
+	tb.HandleKey(input.Named(input.KeyRight))
+	if got := tb.Caret(); got != 2 {
+		t.Errorf("one right arrow from 0 put the caret at %d, want 2 — 1 is "+
+			"between the e and its accent, which no click can reach and no "+
+			"cell can show", got)
+	}
+	tb.HandleKey(input.Named(input.KeyLeft))
+	if got := tb.Caret(); got != 0 {
+		t.Errorf("a left arrow back put the caret at %d, want 0 — the two "+
+			"directions have to agree or the caret drifts into the cluster "+
+			"from the right instead", got)
+	}
+
+	// AND THE REASON IT IS INVISIBLE, measured rather than asserted from
+	// the model: the two positions paint the same row with the same
+	// reversed cell, so nothing on screen distinguishes the safe caret
+	// from the destructive one.
+	tb.setCaret(0)
+	at0 := render.RowText(gooey.Compose(tb, term.Caps{Cols: 8, Rows: 1}, nil).Cells, 0)
+	tb.setCaret(1)
+	at1 := render.RowText(gooey.Compose(tb, term.Caps{Cols: 8, Rows: 1}, nil).Cells, 0)
+	if at0 != at1 {
+		t.Fatalf("caret 0 paints %q and caret 1 paints %q — they differ, so "+
+			"the mid-cluster position is visible after all and the argument "+
+			"above for skipping it is not the one this test is making",
+			at0, at1)
 	}
 }
