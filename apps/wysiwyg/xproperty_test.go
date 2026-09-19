@@ -135,9 +135,21 @@ func TestASavedPropertyDocumentStillDeclaresItsProperty(t *testing.T) {
 func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 	for _, tc := range []struct{ name, prefix, doc, keeps string }{
 		{
-			// envelopeAttrs drops the envelope's xmlns:x because the
-			// content root repeats it. Redundant for MEANING, and the
-			// one thing envelopeHead cannot do without.
+			// A ROUND-TRIP PIN, AND NOT A PIN ON THE BINDING WRITE,
+			// which is what this comment used to claim: "envelopeAttrs
+			// drops the envelope's xmlns:x because the content root
+			// repeats it". That was true when it was written and
+			// stopped being true at a base merge — carryDeclarations
+			// skips v == markup.XNamespace, so the binding is never in
+			// the moved set and envelopeAttrs keeps it. This document
+			// therefore takes bound == true and never reaches
+			// withDeclBinding; disabling that write leaves this arm
+			// green. The two arms that DO reach it are "bound as the
+			// declaration's own default xmlns" and "a minted prefix the
+			// declaration itself binds elsewhere" — measured by
+			// mutation in review of #522, which is also where the stale
+			// reason was found. What this arm is worth keeping for is
+			// the duplicate binding surviving the round trip at all.
 			"bound on both the envelope and the content root",
 			"x",
 			`<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +

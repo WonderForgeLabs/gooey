@@ -947,11 +947,24 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 // THE PREFIX AND THE BINDING TRAVEL TOGETHER. Writing x: without an
 // xmlns:x on the tag saves a file markup.Build refuses, and
 // saveOpenFile is not gated on the build, so the editor reported
-// "✓ saved" over it. Two documents reached it, both legal and both
-// measured: one binding the same prefix on <Gooey> AND on the content
-// root (envelopeAttrs drops the envelope's copy as redundant, which it
-// is for MEANING and is not for this), and one whose declaration binds
-// the namespace as its own default xmlns. Raised in review of #522.
+// "✓ saved" over it.
+//
+// ONE DOCUMENT REACHES IT, and this paragraph named two until review of
+// #522 measured them. The one that does: a declaration binding the
+// namespace as its own default xmlns, so the envelope carries no
+// binding at all. The one that does NOT, and the correction is the
+// interesting half — a document binding the same prefix on <Gooey> AND
+// on the content root. That was true when this was written and stopped
+// being true at the base merge: carryDeclarations skips
+// v == markup.XNamespace, so the envelope's xmlns:x is never in the
+// moved SET, and envelopeAttrs — which since #501 takes that set rather
+// than re-deriving the answer — keeps it. Measured through
+// openWorkspaceFile: envAttrs holds xmlns:x, bound is true, and
+// withDeclBinding is not called.
+//
+// Nothing went red, because the behaviour is still pinned by two other
+// arms; what rotted was the reason, in the one file whose other arms
+// reason from these comments.
 func envelopeParts(attrs map[string]string, decls []*node) (map[string]string, string) {
 	prefix, bound := declPrefix(attrs, decls)
 	if len(decls) > 0 && !bound {
@@ -1140,11 +1153,41 @@ func declAttrs(attrs map[string]string, prefix string) map[string]string {
 // one namespace is legal and rare, and picking whichever the map handed
 // back first would rewrite the file differently on different runs.
 //
-// "x" is the unbound spelling, because every example uses it. x2, x3 …
-// are the way out of the case where the document binds x to something
-// else — legal, strange, and not worth clobbering the author over.
+// IT RETURNS NO PREFIX WHEN IT FINDS NONE, and the minted spelling it
+// used to hand back was observed by nobody. Since minting moved into
+// declBindingAvoiding, declPrefix takes the mint from there; every
+// other caller either checks the bool or replaces the prefix with a
+// hand-spelled "x". Measured in review of #522: returning "ZZZDEAD"
+// when unbound left the whole apps/wysiwyg suite green, so this
+// function's doc was where a reader learned a mint rule no caller here
+// could reach. The rule is on declBindingAvoiding now, where it lives,
+// and the three hand-spelled fallbacks are declFallbackPrefix.
 func declBinding(attrs map[string]string) (string, bool) {
-	return declBindingAvoiding(attrs, nil)
+	if p, ok := declBindingAvoiding(attrs, nil); ok {
+		return p, true
+	}
+	return "", false
+}
+
+// declFallbackPrefix is what a MESSAGE says when the document binds the
+// namespace nowhere: markup's own literal, which every example uses and
+// which markup/property.go's <x:%s> refusal is spelled with.
+//
+// It is not a save-path answer and must not become one — declPrefix
+// mints against what the document has already spent, and a message that
+// named the mint would name a prefix the file does not contain.
+const declFallbackPrefix = "x"
+
+// declBindingOr is declBinding for the message sites: the document's own
+// prefix where there is one, and fallback where there is not. Three
+// sites spelled that `if !bound { prefix = "x" }` by hand, which is the
+// one-question-N-answers shape the declared-properties spec catalogues.
+// Raised in review of #522.
+func declBindingOr(attrs map[string]string, fallback string) string {
+	if p, ok := declBinding(attrs); ok {
+		return p
+	}
+	return fallback
 }
 
 // declBindingAvoiding is declBinding with more maps the MINT must not
@@ -1165,6 +1208,13 @@ func declBinding(attrs map[string]string) (string, bool) {
 // only them: a binding on the content root or below comes later in
 // document order, so last-wins keeps it, and XML scoping keeps
 // <x:Property> resolving against the envelope.
+//
+// "x" IS THE MINTED SPELLING, because every example uses it. x2, x3 …
+// are the way out of the case where the document binds x to something
+// else — legal, strange, and not worth clobbering the author over.
+// This paragraph was on declBinding, whose unbound return no caller
+// observed; it belongs here, on the function that does the minting.
+// Raised in review of #522.
 func declBindingAvoiding(attrs map[string]string, also []map[string]string) (string, bool) {
 	for _, k := range sortedKeys(attrs) {
 		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
@@ -1330,6 +1380,14 @@ func declElemName(d *node, envelope map[string]string) string {
 // TestAnEnvelopeInTheXNamespaceGetsTheAlienRefusal pins. Both answer
 // the same question; they differ only in what to say when nothing
 // answers it. Raised in review of #522.
+//
+// AND THE PARAMETER WAS DEAD WHILE THAT PARAGRAPH STOOD. Both callers
+// passed "", and alienDeclMsg got its <x:Foo> by normalising its own
+// prefix to "x" and then telling this function envBound was true — so
+// the arm below was statically unreachable and the difference was
+// preserved somewhere other than where it was documented. alienDeclMsg
+// now threads its real bool and names declFallbackPrefix here. Raised
+// in review of #522, again.
 func declSpelling(d *node, envPrefix string, envBound bool, unbound string) string {
 	if p, ok := declBinding(d.Attrs); ok {
 		return "<" + p + ":" + d.Elem + ">"
@@ -1383,12 +1441,12 @@ func declSpelling(d *node, envPrefix string, envBound bool, unbound string) stri
 // spelling an author would write a Property under is the document's
 // binding rather than the alien element's.
 func alienDeclMsg(alien []*node, prefix string, bound bool) string {
-	if !bound {
-		prefix = "x"
-	}
 	elems := make([]string, len(alien))
 	for i, d := range alien {
-		elems[i] = declSpelling(d, prefix, true, "")
+		elems[i] = declSpelling(d, prefix, bound, declFallbackPrefix)
+	}
+	if !bound {
+		prefix = declFallbackPrefix
 	}
 	verb := "is an unknown language element"
 	if len(elems) > 1 {

@@ -423,9 +423,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 				". A file whose whole content is one has no document to show")
 			return
 		}
-		if !bound {
-			prefix = "x"
-		}
+		prefix = declBindingOr(n.Attrs, declFallbackPrefix)
 		ed.status.Set("✗ " + rel + ": <" + prefix + ":" + n.Elem + "> is a " +
 			"dependency property declaration, not a document. A declaration " +
 			"belongs among the children of a <Gooey> root, where it defines " +

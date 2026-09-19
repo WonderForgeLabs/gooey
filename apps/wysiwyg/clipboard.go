@@ -786,10 +786,7 @@ func bareDeclWhy(n *node) string {
 		// something else. Unbound falls back to markup's own literal,
 		// which is what the "unprefixed" case below tells the author to
 		// write. Raised in review of #522.
-		prefix, bound := declBinding(n.Attrs)
-		if !bound {
-			prefix = "x"
-		}
+		prefix := declBindingOr(n.Attrs, declFallbackPrefix)
 		return "<" + prefix + ":Property> is a dependency property declaration, not an " +
 			"element: it belongs on a document's <Gooey> root, where it " +
 			"defines that control's public surface, and a paste inserts one " +
