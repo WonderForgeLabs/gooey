@@ -69,7 +69,7 @@ func TestTooltipHoverOutRestoresWhatWasBeneath(t *testing.T) {
 	tip, _, _, page := tipPage(30)
 	c := gooey.NewComposer(page, 30, 4)
 	c.Frame()
-	before := screen(c, 30, 4)
+	before := screen(c)
 
 	hoverAt(c, 3, 0)
 	c.Frame()
@@ -81,7 +81,7 @@ func TestTooltipHoverOutRestoresWhatWasBeneath(t *testing.T) {
 	if painted != 1 {
 		t.Fatalf("dismissing painted %d components, want 1 (the restored leaf; the cell-less Canvas and layer are not swept)", painted)
 	}
-	if got := screen(c, 30, 4); got != before {
+	if got := screen(c); got != before {
 		t.Fatalf("hover-out left a scar.\nbefore:\n%s\nafter:\n%s", before, got)
 	}
 	if _, painted := c.Frame(); painted != 0 {
@@ -95,7 +95,7 @@ func TestTooltipKeyDismissesWithoutConsuming(t *testing.T) {
 	tip, _, _, page := tipPage(30)
 	c := gooey.NewComposer(page, 30, 4)
 	c.Frame()
-	before := screen(c, 30, 4)
+	before := screen(c)
 
 	hoverAt(c, 3, 0)
 	c.Frame()
@@ -104,7 +104,7 @@ func TestTooltipKeyDismissesWithoutConsuming(t *testing.T) {
 	if tip.IsShown() {
 		t.Fatal("a keypress did not dismiss the tooltip")
 	}
-	if got := screen(c, 30, 4); got != before {
+	if got := screen(c); got != before {
 		t.Fatal("the key dismissal left a scar")
 	}
 
@@ -395,15 +395,4 @@ func TestTooltipWithoutALayerShowsNothing(t *testing.T) {
 	if tip.IsShown() {
 		t.Fatal("the tooltip claims to be shown with no layer to show in")
 	}
-}
-
-func screen(c *gooey.Composer, w, h int) string {
-	var sb strings.Builder
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			sb.WriteRune(c.Cells().At(x, y).Rune)
-		}
-		sb.WriteByte('\n')
-	}
-	return sb.String()
 }

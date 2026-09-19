@@ -204,3 +204,302 @@ func TestClipColsAlwaysFitsItsBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestSpanTextReadsAWideGlyphInTheMiddleOfASpan is the readback the
+// twelve packages of #516 each hand-rolled and each got wrong the same
+// way: writing Cell.Rune builds "世�界�" for a row a terminal
+// draws as "世界", so no fixture in those packages could hold a wide
+// glyph and be asserted on.
+//
+// THE FIXTURE IS THE POINT, not the helper. Converting a reader and
+// asserting on ASCII changes no claim — an ASCII row reads the same
+// under either rule. The row below is two glyphs of four COLUMNS and two
+// runes, which is the shape CLAUDE.md prescribes for pinning one of
+// these.
+func TestSpanTextReadsAWideGlyphInTheMiddleOfASpan(t *testing.T) {
+	b := NewBuffer(10, 1)
+	b.SetString(0, 0, "ab世界cd", Style{})
+
+	// THE OLD READER, spelled out here so the difference is measured
+	// rather than asserted about. This is the body every one of those
+	// helpers had.
+	var old []rune
+	for x := 0; x < 8; x++ {
+		old = append(old, b.At(x, 0).Rune)
+	}
+	if string(old) == "ab世界cd" {
+		t.Fatal("a rune-per-cell read already returns the row, so this test " +
+			"measures nothing — either SetString stopped laying continuation " +
+			"markers or Continuation stopped being a rune")
+	}
+
+	if got, want := SpanText(b, 0, 0, 8), "ab世界cd"; got != want {
+		t.Errorf("SpanText over the whole span = %q, want %q (the rune-per-cell "+
+			"read gives %q)", got, want, string(old))
+	}
+	if got, want := SpanText(b, 2, 0, 4), "世界"; got != want {
+		t.Errorf("SpanText over the two glyphs = %q, want %q", got, want)
+	}
+	if got, want := SpanText(b, 0, 0, 2), "ab"; got != want {
+		t.Errorf("SpanText over the ascii head = %q, want %q", got, want)
+	}
+}
+
+// TestSpanTextCutThroughAGlyphReadsShortOrLong pins the two edges
+// SpanText's doc names, because a caller that trusts w to be the width
+// of the result is wrong at both of them and the failure is a fixture
+// that never matches.
+func TestSpanTextCutThroughAGlyphReadsShortOrLong(t *testing.T) {
+	b := NewBuffer(10, 1)
+	b.SetString(0, 0, "a世b", Style{})
+
+	// Starting ON the continuation: the glyph's own cell is outside the
+	// span, and a continuation carries no text.
+	if got, want := SpanText(b, 2, 0, 2), "b"; got != want {
+		t.Errorf("a span starting on a continuation cell = %q, want %q — the "+
+			"glyph before it is outside the span and half a glyph is not "+
+			"drawable", got, want)
+	}
+	// Ending on the glyph's FIRST cell: that cell holds the whole glyph.
+	got := SpanText(b, 0, 0, 2)
+	if got != "a世" {
+		t.Errorf("a span ending on a glyph's first cell = %q, want %q", got, "a世")
+	}
+	if w := StringWidth(got); w != 3 {
+		t.Errorf("that span asked for 2 columns and reads %d wide (%q); a caller "+
+			"measuring the result must use StringWidth rather than assume w",
+			w, got)
+	}
+}
+
+// TestSpanTextTakesXBeforeY is the order pin, and it exists because the
+// signature is four ints: a transposed call compiles, and by the padding
+// rule below it returns spaces rather than panicking, so the only thing
+// that fails is a fixture somewhere else with a message blaming the
+// component it was reading.
+//
+// The fixture makes the two answers DIFFERENT strings rather than
+// asserting one: row 0 and row 1 hold different text, so reading
+// (x=1, y=0) and (x=0, y=1) cannot agree.
+func TestSpanTextTakesXBeforeY(t *testing.T) {
+	b := NewBuffer(4, 2)
+	b.SetString(0, 0, "abcd", Style{})
+	b.SetString(0, 1, "efgh", Style{})
+
+	if got, want := SpanText(b, 1, 0, 2), "bc"; got != want {
+		t.Errorf("SpanText(b, 1, 0, 2) = %q, want %q. The arguments are (x, y, w), "+
+			"matching Buffer.At(x, y) and Buffer.SetString(x, y, …); reading %q "+
+			"means they were taken as (y, x, w).", got, want, "ef")
+	}
+	if got := RowText(b, 1); got != "efgh" {
+		t.Errorf("RowText(b, 1) = %q, want %q — RowText is the whole span of its "+
+			"row and must pass its y through in the same position", got, "efgh")
+	}
+}
+
+// TestSpanTextPadsWhereTheBufferIsNot pins the third edge, which the doc
+// used to leave to Buffer.At.
+//
+// It is not a curiosity: every reader #516 converts reads a FIXED extent
+// — 40 columns of a dropdown, the caller's cols × rows — so a surface
+// that moves, or a composer resized in a later edit, silently turns the
+// tail of one of those reads into blanks. An assertion shaped
+// `!strings.Contains(got, …)` passes on blank input, which is the class
+// CLAUDE.md calls a check that can quietly report the wrong answer. The
+// contract is padding; this is what says so.
+func TestSpanTextPadsWhereTheBufferIsNot(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
+	// THE OVERSHOOT IS DERIVED, not written down beside the fixture that
+	// produces it: x+w-b.W is 6 today and stays right when the fixture
+	// moves, which is the difference CLAUDE.md draws between a number
+	// and a sample of one. "ENDS past" rather than "runs past", too —
+	// the span's head is inside the buffer and only its tail is not,
+	// which is what makes the first two columns blanks-from-the-buffer
+	// and the rest blanks-from-the-rule.
+	const x, w = 2, 8
+	if got, want := SpanText(b, x, 0, w), "        "; got != want {
+		t.Errorf("a span ending %d columns past the buffer = %q, want %q",
+			x+w-b.W, got, want)
+	}
+	if got, want := SpanText(b, -2, 0, 4), "  ab"; got != want {
+		t.Errorf("a span starting left of column 0 = %q, want %q", got, want)
+	}
+	if got, want := SpanText(b, 0, 9, 4), "    "; got != want {
+		t.Errorf("a span on row 9 of a one-row buffer = %q, want %q", got, want)
+	}
+}
+
+// TestBufferTextIsEveryRowNewlineTerminated pins the two things a
+// caller of a whole-buffer read depends on and cannot see from the
+// signature: that it reads EVERY row, and that the last one carries its
+// newline like the rest.
+//
+// THE LAST NEWLINE IS THE HALF WORTH PINNING. Without it a dump missing
+// its final row is a PREFIX of the correct one, and every
+// strings.Contains assertion over such a dump passes — which is the
+// class CLAUDE.md calls a check that can quietly report the wrong
+// answer. With it the two strings simply differ.
+//
+// A WIDE GLYPH IN THE FIXTURE, because a buffer reader that walked cells
+// instead of delegating to RowText would put render.Continuation in the
+// middle of row 1 and still pass an ASCII-only test — the defect #516
+// exists for, one level up.
+func TestBufferTextIsEveryRowNewlineTerminated(t *testing.T) {
+	b := NewBuffer(4, 3)
+	b.SetString(0, 0, "ab", Style{})
+	b.SetString(0, 1, "世界", Style{})
+
+	const want = "ab  \n世界\n    \n"
+	if got := BufferText(b); got != want {
+		t.Errorf("BufferText = %q, want %q: every row, each ending in a newline, "+
+			"and a wide glyph read as itself rather than as a rune and a "+
+			"continuation marker", got, want)
+	}
+	if got := BufferText(nil); got != "" {
+		t.Errorf("BufferText(nil) = %q, want the empty string — RowText answers a "+
+			"nil buffer the same way and this is the loop over it", got)
+	}
+}
+
+// TestANonPositiveWidthIsTheEmptyStringNotBlanks is the shape the
+// off-buffer enumeration went past: three out-of-range shapes, then nil,
+// and never `w <= 0`.
+//
+// SPLIT OUT FROM THE PADDING TEST, because most of the ways it can go
+// red are about NOT padding, and the first line CI prints is the test's
+// name. Folded in with five other contracts, a failure here reports the
+// padding contract breaking.
+//
+// A width can ARRIVE as a difference — an extent minus an origin, a
+// remaining budget — so a negative one is a value a caller produces
+// rather than a caller error. And the hazard is the padding
+// paragraph's, at the other end: "" passes `!strings.Contains(got, …)`
+// and "the row is empty" exactly as blanks do, so a span that silently
+// collapsed to nothing reads as a component that drew nothing.
+func TestANonPositiveWidthIsTheEmptyStringNotBlanks(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
+	// AGAINST A LIVE BUFFER, which is what these two add. The only
+	// assertion that existed was SpanText(nil, 0, 0, 0), and since the
+	// width guard runs BEFORE the nil guard it never reached a buffer.
+	if got := SpanText(b, 0, 0, 0); got != "" {
+		t.Errorf("a zero-width span of a LIVE buffer = %q, want empty — zero "+
+			"columns of a terminal is nothing, not one blank, which is the "+
+			"answer ClipCols gives the same question", got)
+	}
+	if got := SpanText(b, 0, 0, -1); got != "" {
+		t.Errorf("a negative-width span of a LIVE buffer = %q, want empty", got)
+	}
+	// THE ONE ARRANGEMENT WHERE THE GUARD CHANGES AN ANSWER rather than
+	// restating what the loop already does. For a live buffer
+	// `for i := 0; i < w` with w <= 0 returns "" on its own, so removing
+	// the guard leaves the two assertions above green — measured, which
+	// is why this third one is here. Nil is different: the guard below
+	// would hand strings.Repeat a count of -1, and that PANICS. The
+	// order of the two guards is therefore load-bearing, not incidental.
+	if got := SpanText(nil, 0, 0, -1); got != "" {
+		t.Errorf("a negative-width span of a nil buffer = %q, want empty — "+
+			"without the width guard ahead of the nil guard this is a panic "+
+			"in strings.Repeat, inside render with the caller off the stack", got)
+	}
+	// Nil AND zero-width at once, which the width guard answers first —
+	// asserted so the two rules cannot disagree about their overlap.
+	if got := SpanText(nil, 0, 0, 0); got != "" {
+		t.Errorf("a zero-width span of a nil buffer = %q, want empty", got)
+	}
+}
+
+// TestAnAbsentBufferIsAnsweredThreeDifferentWays holds the disagreement,
+// which is a claim of its own rather than a corollary of padding.
+//
+// SpanText pads — a nil buffer is the most out of range a span can be,
+// and Buffer.At dereferences b.W, so without the guard it panicked
+// inside render with At on the stack rather than the caller. RowText
+// answers EMPTY, because a row of no buffer has no width to pad to, and
+// the guard has to live in RowText since `b.W` is evaluated in the
+// argument list before SpanText is entered. TerminalColumns answers
+// nothing at all, because a per-cell map has no blank cell to report.
+//
+// Three functions, three answers, one input: asserted together so the
+// asymmetry is chosen rather than noticed later.
+func TestAnAbsentBufferIsAnsweredThreeDifferentWays(t *testing.T) {
+	if got, want := SpanText(nil, 0, 0, 3), "   "; got != want {
+		t.Errorf("a span of a nil buffer = %q, want %q — the out-of-range "+
+			"contract is blanks, and a nil buffer is the most out of range a "+
+			"span can be", got, want)
+	}
+	if got := RowText(nil, 0); got != "" {
+		t.Errorf("RowText of a nil buffer = %q, want empty — the guard has to be "+
+			"in RowText, since b.W is read before SpanText is entered", got)
+	}
+	if got := TerminalColumns(nil, 0); len(got) != 0 {
+		t.Errorf("TerminalColumns of a nil buffer = %v, want empty", got)
+	}
+}
+
+// TestAnOutOfRangeRowOfALiveBufferIsPaddedNotEmpty is the other half of
+// the disagreement above, split out because it is not about an absent
+// buffer and was failing under a name that says it is.
+//
+// A nil buffer is empty and an out-of-range row of a REAL one is padded;
+// those are different answers to "there is nothing here", so both are
+// chosen rather than one being read off the delegation. This PR split
+// TestANonPositiveWidthIsTheEmptyStringNotBlanks out of the padding test
+// for exactly this reason and wrote the reason down — most of the ways
+// it can go red are about NOT padding, and the first line CI prints is
+// the test's name. These two arms were left behind by that split.
+//
+// The RowText arm is the one that carries weight: it is the pin for the
+// padding contract that makes components' absence assertions honest, and
+// under the old name a failure sent the reader to nil handling. Raised
+// in review of #520.
+func TestAnOutOfRangeRowOfALiveBufferIsPaddedNotEmpty(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.SetString(0, 0, "ab", Style{})
+
+	// The same question about a row rather than a buffer, because that is
+	// where SpanText and TerminalColumns visibly disagree on live input.
+	if got := TerminalColumns(b, 9); len(got) != 0 {
+		t.Errorf("TerminalColumns on row 9 of a one-row buffer = %v, want empty — "+
+			"the two functions answer an out-of-range row differently and that is "+
+			"the point", got)
+	}
+	// AND RowText ON THE SAME ROW, which was only INHERITED from
+	// SpanText and is the answer the converted sites actually meet:
+	// components' TestColorPickerReadoutIsTierSpecific reads
+	// RowText(f.Cells, 4) and asserts !strings.Contains(row, "xterm"),
+	// so a readout that stopped painting — or a fixture one row shorter
+	// — hands it blanks rather than an error, and an absence assertion
+	// over blanks cannot fail.
+	//
+	// THE FIRST CITATION HERE WAS A COUNTER-EXAMPLE. It named
+	// components/menuicon_test.go, where every RowText off a bounds
+	// rect is immediately guarded by a PRESENCE assertion that fatals
+	// on blanks — TestAnIconItemPlacesItsImageWhenPixelsExist,
+	// TestAWideIconRuneDoesNotOverrunItsGutter and
+	// TestAZeroWidthIconRuneDoesNotStealACell, each checked in review
+	// of #520. That file catches the padding rather than hiding it, so
+	// a reader who followed the citation — which is the whole reason
+	// this file writes citations — found the rule refuted by its own
+	// example.
+	//
+	// NAMES, NOT LINE NUMBERS, and here that is not a preference. These
+	// point OUT of render into components, which render cannot import,
+	// so no compiler, test or guard in this tree can see them go stale —
+	// one inserted line in menuicon_test.go would have falsified three
+	// of them in silence. A test name is greppable; :410 is not. Raised
+	// in review of #520, which is also where the citations above were
+	// first written as line numbers. A nil buffer is empty and an out-of-range row of a
+	// REAL one is padded; those are different answers to "there is
+	// nothing here", so both are chosen here rather than one of them
+	// being read off the delegation.
+	if got, want := RowText(b, 9), "    "; got != want {
+		t.Errorf("RowText on row 9 of a one-row buffer = %q, want %q — blanks of "+
+			"the buffer's width, not empty. A reader that drifted off the surface "+
+			"pads, which is exactly why an absence assertion over one cannot "+
+			"fail", got, want)
+	}
+}
