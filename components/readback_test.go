@@ -22,16 +22,26 @@ import (
 //
 // THE WINDOW COMES FROM WHAT WAS PAINTED — for every reader below whose
 // extent is the FRAME's rather than a caller's, which is what this
-// paragraph is about. Each took its extent as
-// parameters, written down beside a composer that had already said the
-// same numbers — and a read wider than the buffer is phantom blanks
-// rather than an error (render.SpanText's own doc says so), so widening
-// a composer in a later edit turns the tail of every read into blanks.
-// Several call sites here compare two screens for equality, where blanks
-// on both sides agree, and one is `!strings.Contains(got, "gone")`,
-// which passes on blank input outright. Deriving the extent from the
-// frame is what removes that class, and neither of those two now takes a
-// width it was not given by the thing it is reading.
+// paragraph is about. The shape that class replaces is an extent passed
+// in as parameters, written down beside a composer that had already
+// said the same numbers — and a read wider than the buffer is phantom
+// blanks rather than an error (render.SpanText's own doc says so), so
+// widening a composer in a later edit turns the tail of every read into
+// blanks. Several call sites here compare two screens for equality,
+// where blanks on both sides agree, and one is
+// `!strings.Contains(got, "gone")`, which passes on blank input
+// outright. Deriving the extent from the frame is what removes that
+// class: none of these readers takes a width it was not given by the
+// thing it is reading.
+//
+// "NEITHER OF THOSE TWO" is what that last clause said until review of
+// #520, and the opening clause had been widened from "frameText and
+// screen, which is the pair" in the same commit — so a paragraph whose
+// point is that counts decay closed on a count, two sentences later,
+// already wrong by one. "Each took its extent as parameters" was wrong
+// in the other direction: frameRows is one of the readers the widened
+// clause covers and arrived in 4f0b381 with the signature it has, never
+// having taken an extent at all.
 //
 // rowText IS THE EXCEPTION, AND IT IS THE RULE ITSELF THAT MOVES. It
 // exists to read a caller-chosen REGION, so its window cannot come from
@@ -58,10 +68,6 @@ import (
 // sentence said FOUR and listed four, and the first reader added after
 // it made both wrong at once with nothing to go red. The declarations
 // are the inventory.
-//
-// `row` was the last one out, and it was the one with the most call
-// sites — which is the shape to distrust: the helper everyone uses is
-// the one nobody notices is somewhere odd.
 //
 // [#358]: https://github.com/WonderForgeLabs/gooey/issues/358
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
@@ -215,19 +221,34 @@ func onlyMatch(t *testing.T, rows []string, needle, ifNone string) rowMatch {
 // paragraph on frameRows is a statement about this package rather than
 // about render.BufferText's contract in the abstract.
 func TestFrameRowsIsTheFrameHeight(t *testing.T) {
-	// A TABLE OF HEIGHTS, because one fixture pins the contract at the
-	// one height where it was never in doubt. The claim is len(rows) ==
-	// H for every H, and it was false at H == 0 — where TrimSuffix has
-	// nothing to trim and Split answers one element for no rows — while
-	// a single 6x4 fixture reported green. Zero is the row that needed
-	// the guard; one is the row where the trailing newline is the whole
-	// of the string; four is the ordinary case.
-	for _, h := range []int{0, 1, 4} {
-		f := &gooey.Frame{Cells: render.NewBuffer(6, h)}
+	// A TABLE OF SHAPES, because one fixture pins the contract at the
+	// one shape where it was never in doubt. The claim is len(rows) ==
+	// H for every W and H, and it was false at H == 0 — where TrimSuffix
+	// has nothing to trim and Split answers one element for no rows —
+	// while a single 6x4 fixture reported green. Zero height is the row
+	// that needed the guard; one is where the trailing newline is the
+	// whole of the string; four is the ordinary case.
+	//
+	// AND W IS A SEPARATE AXIS, which three heights at one width do not
+	// reach. frameRows' doc is about the TrimSuffix, and the obvious
+	// mutation of it is silent at every non-zero width:
+	//
+	//	helper body                     W=6,H=4    W=0,H=4
+	//	TrimSuffix(text, "\n")           4 rows     4 rows
+	//	TrimRight(text, "\n")            4 rows     1 row
+	//
+	// At W == 0 every row is the empty string, so frameText is "\n\n\n\n"
+	// and TrimRight eats all four — the same phantom-element class the
+	// helper exists to remove, reached from the other axis. Measured in
+	// review of #520; W == 0 is not live in components today, which is
+	// the argument this test already makes for H == 0.
+	for _, tc := range []struct{ w, h int }{{6, 0}, {6, 1}, {6, 4}, {0, 4}} {
+		w, h := tc.w, tc.h
+		f := &gooey.Frame{Cells: render.NewBuffer(w, h)}
 		if got := len(frameRows(f)); got != h {
-			t.Errorf("frameRows returned %d rows for a %d-row frame, want %d — a "+
+			t.Errorf("frameRows returned %d rows for a %dx%d frame, want %d — a "+
 				"caller reading len() as the frame height is off by the phantom "+
-				"element BufferText's trailing newline leaves", got, h, h)
+				"element BufferText's trailing newline leaves", got, w, h, h)
 		}
 		if h == 0 {
 			// THE A/B BELOW DOES NOT APPLY AT ZERO. frameText is "" for
@@ -237,10 +258,10 @@ func TestFrameRowsIsTheFrameHeight(t *testing.T) {
 			continue
 		}
 		if got, want := len(strings.Split(frameText(f), "\n")), h+1; got != want {
-			t.Fatalf("splitting frameText gave %d elements for a %d-row frame, want "+
+			t.Fatalf("splitting frameText gave %d elements for a %dx%d frame, want "+
 				"%d — if this is no longer height+1 then BufferText stopped "+
 				"terminating the last row and frameRows' TrimSuffix is now wrong",
-				got, h, want)
+				got, w, h, want)
 		}
 	}
 	// A NIL Cells IS THE SAME ROW OF THE TABLE reached another way:

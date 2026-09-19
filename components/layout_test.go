@@ -202,11 +202,11 @@ func TestCollapsedGridZeroesItsSubtree(t *testing.T) {
 		t.Errorf("the intermediate container kept its cells: %+v", b)
 	}
 	// render.RowText, NOT rowText(f, 0, live.Y, 20). This is a whole-row
-	// read and the 20 was the composer's width, declared 46 lines up —
-	// so widening that composer to 30 would have left this reading 20
-	// columns of a 30-column row, with a collapsed subtree repainting at
-	// column 25 invisible and the assertion still green. An ABSENCE
-	// assertion has no other way to fail.
+	// read and the 20 was the composer's width, declared at the top of
+	// this test — so widening that composer to 30 would have left this
+	// reading 20 columns of a 30-column row, with a collapsed subtree
+	// repainting at column 25 invisible and the assertion still green.
+	// An ABSENCE assertion has no other way to fail.
 	if row := render.RowText(f.Cells, live.Y); strings.TrimSpace(row) != "" {
 		t.Errorf("the collapsed subtree is still on screen: row %d = %q", live.Y, row)
 	}

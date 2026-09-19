@@ -212,7 +212,7 @@ func TestColorPickerReadoutIsTierSpecific(t *testing.T) {
 		t.Run(tc.depth.String(), func(t *testing.T) {
 			_, _, f := pickerAt(tc.depth, render.RGB(255, 170, 60))
 			// render.RowText, NOT rowText(f, 0, 4, 30): the readout is
-			// a whole row and the 30 was pickerAt's Cols, 197 lines up.
+			// a whole row and the 30 was pickerAt's own Caps.Cols.
 			// The bar read at :175 is a genuine span and stays one.
 			row := render.RowText(f.Cells, 4)
 			if !strings.Contains(row, tc.want) {
