@@ -430,7 +430,7 @@ func TestTheScrollWindowIsWalkedNotResummed(t *testing.T) {
 // trivially met — the exact hazard spanForCols introduces, since a span
 // guessed short paints a short row rather than failing.
 func TestARepaintDoesNotWalkTheWholeValue(t *testing.T) {
-	cost := func(n int) (time.Duration, string, int) {
+	cost := func(n int) (time.Duration, string, string) {
 		v := prop.NewSource(strings.Repeat("a", n))
 		st := prop.NewSource(render.Style{})
 		tb := &TextBox{Text: v, Style: st}
@@ -439,12 +439,15 @@ func TestARepaintDoesNotWalkTheWholeValue(t *testing.T) {
 		c := gooey.NewComposer(tb, 40, 1)
 		f, _ := c.Frame()
 		row := render.RowText(f.Cells, 0)
-		caret := 0
-		for x := range 40 {
-			if f.Cells.At(x, 0).Style.Reverse {
-				caret++
-			}
-		}
+		// THROUGH THE HELPER, which is the file's one inventory of
+		// this scan: the hand-rolled version here re-wrote the
+		// composer's own 40, and a frame widened later grows a tail of
+		// phantom blanks that hold no reversed cell — so the count
+		// came back SHORT rather than erroring. Counting cells also
+		// says "one reversed cell" where the question is which glyph
+		// the caret is on, and a wide one occupies two. Raised in
+		// review of #521.
+		caret := reversedText(t, f)
 		const frames = 100
 		start := time.Now()
 		for i := range frames {
@@ -465,11 +468,15 @@ func TestARepaintDoesNotWalkTheWholeValue(t *testing.T) {
 			"%q for both — a span walked short paints a short row, so a cost "+
 			"assertion over it would be met by painting less", shortRow, longRow, want)
 	}
-	if shortCaret != 1 || longCaret != 1 {
-		t.Fatalf("%d reversed cells at 1,000 runes and %d at 200,000, want 1 "+
-			"each: the caret is mid-value, so a window that stopped short of it "+
-			"would paint a full row with the caret nowhere on screen — which "+
-			"the row assertion above cannot see", shortCaret, longCaret)
+	// ONE SPELLING OF THE ANSWER, compared and printed, so the message
+	// cannot outlive the comparison: the value is a run of "a", so the
+	// caret is on one of them wherever in the value it sits.
+	const onCaret = "a"
+	if shortCaret != onCaret || longCaret != onCaret {
+		t.Fatalf("the caret is on %q at 1,000 runes and %q at 200,000, want the "+
+			"one glyph %q each: the caret is mid-value, so a window that stopped "+
+			"short of it would paint a full row with the caret nowhere on screen "+
+			"— which the row assertion above cannot see", shortCaret, longCaret, onCaret)
 	}
 	if long > 4*short {
 		t.Errorf("a repaint costs %v at 200,000 runes against %v at 1,000 — "+
