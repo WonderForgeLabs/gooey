@@ -3,6 +3,9 @@ package gooey
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os/exec"
 	"sort"
 	"strings"
@@ -2073,6 +2076,52 @@ func ownModule(path string) bool {
 	return path == coreModule || strings.HasPrefix(path, coreModule+"/")
 }
 
+// requireShapesInSource reads the requireShape constants out of this
+// file's own const block, so the test below checks its two tables
+// against the enum rather than against a third list written beside
+// them.
+//
+// The block is plain `iota` with no skips and no explicit values, so
+// declaration order IS the value. That assumption is not taken on
+// trust: the caller asserts String() answers for every index this
+// returns, and a renumbering shows up there.
+func requireShapesInSource(t *testing.T) []string {
+	t.Helper()
+	const file = "nestedrequires_test.go"
+	f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", file, err)
+	}
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST || len(gd.Specs) == 0 {
+			continue
+		}
+		first, ok := gd.Specs[0].(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		if id, ok := first.Type.(*ast.Ident); !ok || id.Name != "requireShape" {
+			continue
+		}
+		var names []string
+		for _, sp := range gd.Specs {
+			vs, ok := sp.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, n := range vs.Names {
+				names = append(names, n.Name)
+			}
+		}
+		return names
+	}
+	t.Fatalf("no `const (… requireShape = iota …)` block found in %s, so the "+
+		"tables below have nothing to be checked against and would pass "+
+		"having checked their own contents", file)
+	return nil
+}
+
 // TestEveryRequireShapeReachesItsOwnArm is the DISPATCH's fixture, and
 // it is the half the tree cannot supply: the real tree holds 36 correct
 // pins, so every gate could be deleted from the caller with the whole
@@ -2098,6 +2147,8 @@ func ownModule(path string) bool {
 // #497.
 func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 	const good = "v0.0.0-20260913132232-e5cdb56ececd"
+	classified := map[requireShape]bool{}
+	rendered := map[requireShape]bool{}
 	for _, tc := range []struct {
 		v    string
 		want requireShape
@@ -2141,6 +2192,7 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 			"a legitimate prerelease tag whose tail IS twelve hex characters; " +
 				"the row above it differs only by carrying a second dash-part"},
 	} {
+		classified[tc.want] = true
 		if got := classifyRequire(tc.v); got != tc.want {
 			t.Errorf("classifyRequire(%q) = %s, want %s — %s", tc.v, got, tc.want, tc.why)
 		}
@@ -2171,9 +2223,15 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 				"getting a real pseudo-version — and it is the shape the " +
 				"sentinel's own remedy warns you into, since `go mod edit " +
 				"-require` writes literally what it is handed"},
-		{shapeMalformedRevision, "v0.0.0-20260913132232-e5cdb56", "core.abbrev=12",
+		{shapeMalformedRevision, "v0.0.0-20260913132232-e5cdb56",
+			"NOT its twelve-hex-character revision",
 			"the clipped revision is this file's own offline remedy with a flag " +
-				"dropped, so naming the flag IS the fix"},
+				"dropped, and `core.abbrev=12` is NOT the string that says so — " +
+				"the stamp arm prints the same flag inside its own re-derive " +
+				"command, so a carry of it survives collapsing this arm onto " +
+				"that one and the clipped revision is told its revision is the " +
+				"half that is right. Measured: with that carry, deleting this " +
+				"case from shapeMsg left the root suite green"},
 		{shapeMalformedStamp, "v0.0.0-2026091313223-e5cdb56ececd", "STAMP is not",
 			"the revision here is well-formed and the stamp is not, so the arm " +
 				"above's sentence is false of it in both halves"},
@@ -2182,6 +2240,7 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 			"pointing at the abbreviation flag is the misdiagnosis this shape " +
 				"was split out to stop, so the message says not to"},
 	} {
+		rendered[tc.shape] = true
 		msg := shapeMsg(tc.shape, ownRequire{"mcp", coreModule, tc.v})
 		if tc.carry == "" {
 			if msg != "" {
@@ -2193,6 +2252,34 @@ func TestEveryRequireShapeReachesItsOwnArm(t *testing.T) {
 			t.Errorf("shapeMsg(%s) does not carry %q, so this shape cannot be told "+
 				"from the others by what it tells the reader to do — %s. Got: %q",
 				tc.shape, tc.carry, tc.why, msg)
+		}
+	}
+
+	// AND EVERY SHAPE THE CONST BLOCK DECLARES REACHED BOTH TABLES.
+	// The two tables above are hand-written enumerations of the enum,
+	// which is the shape CLAUDE.md's Verify section refuses in prose for
+	// the reason that applies here: a sixth shape added to the const
+	// block and forgotten in either one is silent in BOTH directions —
+	// shapeMsg falls through to "" and String() to "unknown", so the
+	// require is reported with no remedy under a name that says nothing,
+	// and the suite is green. That is round sixteen's own finding, one
+	// constant on. The universe is read out of the const block rather
+	// than listed here, because a list beside the tables would be
+	// checked against itself.
+	for i, name := range requireShapesInSource(t) {
+		s := requireShape(i)
+		if s.String() == "unknown" {
+			t.Errorf("%s (requireShape(%d)) reaches no arm of String(), so every "+
+				"failure naming this shape names \"unknown\" instead", name, i)
+		}
+		if !classified[s] {
+			t.Errorf("%s reaches no row of the classifyRequire table above, so "+
+				"nothing says which version strings the rule files under it", name)
+		}
+		if !rendered[s] {
+			t.Errorf("%s reaches no row of the shapeMsg table above, so a missing "+
+				"arm returns the empty string and a require of this shape is "+
+				"reported with no remedy at all — with this suite green", name)
 		}
 	}
 
