@@ -5,32 +5,21 @@ Date: 2026-08-30
 Issue: [#430](https://github.com/WonderForgeLabs/gooey/issues/430)
 **Superseded in part by:** `docs/specs/2026-09-05-overlay-ranks.md`
 ([#439](https://github.com/WonderForgeLabs/gooey/issues/439)) — ordering
-*within* the layer is now RANKED, not document order. `component.go`'s
-`Overlay` doc points readers here for the hit-testing gap, which is why
-the pointer has to run both ways.
+*within* the layer is now RANKED, not document order.
 
-**And the hit-testing section below is written as a NOT-YET.** It said
-"everything else below still holds", which was wrong about the very
-paragraphs a reader arriving from `component.go` comes for: they gate
-the work on "a non-capturing overlay actually exists", and two now do.
-[#456](https://github.com/WonderForgeLabs/gooey/pull/456) (`6fbb935`)
-is the commit; [#439](https://github.com/WonderForgeLabs/gooey/issues/439)
-is the issue it closes, which this sentence called the commit. Three
-types carry the marker and only two of them are non-capturing:
-[`ToastHost`](../markup-reference.md#toasthost) and `AdornmentLayer` are
-container overlays that take no pointer capture, so the gap is LIVE and
-tracked in
-[#465](https://github.com/WonderForgeLabs/gooey/issues/465), which is
-how every other site that describes it now reads
-(`components/toast.go`'s `HitTestTransparent` doc, `mouse.go`,
-`docs/architecture.md`, `docs/markup-reference.md`'s ToastHost section,
-`docs/learn/07-app-chrome.md`). The section's own wording is left as it
-was written, because this file is a dated record; read it against this
-note. Nothing goes red on the drift —
-`gooey.TestARankOrdersPaintAndNotHitTesting` fires only if hit-testing
-BECOMES rank-aware, and the polarity guard keys on position rules and
-lift denials, not on "this does not exist yet". Raised in review of
-#456.
+**And the hit-testing gap this spec records as open is superseded by
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465)** — the hit
+walk asks `overlayOf` now, so "the marker moves paint, not input" is
+history. That sentence is marked as such where it appears below rather
+than deleted, because this is a dated record of what was decided on
+2026-08-30.
+
+The head used to add "Everything else below still holds" and
+"`component.go`'s `Overlay` doc points readers here for the hit-testing
+gap". Both stopped being true in #465 — the second doubly so, since that
+PR rewrote the doc comment being cited — and a banner that vouches for a
+body it no longer matches is worse than no banner. Raised in review of
+#478.
 
 ## The problem
 
@@ -149,17 +138,13 @@ the Composer maintains — is worth writing when something does.
 > `docs/specs/2026-09-05-overlay-ranks.md`. Two overlapping popups are still
 > declaration-ordered, because they are equal-ranked.
 
-> **Written as a not-yet, and it is now.** The three paragraphs below
-> gate the work on a non-capturing overlay existing; two do. See the
-> supersession note at the top of this file — the gap is live and
-> tracked in [#465](https://github.com/WonderForgeLabs/gooey/issues/465).
-> The dated wording is kept because a decision record describes its own
-> date.
-
-Hit-testing is untouched, and that is a gap rather than a non-event. A popup
-takes held pointer capture while open (`Popup.Open`), which routes presses to it
-regardless of where it sits in any order — so nothing about input needed to
-change *for the overlay this framework ships*.
+**Everything in this section was true on 2026-08-30 and is superseded by
+[#465](https://github.com/WonderForgeLabs/gooey/issues/465).** It is
+quoted rather than deleted, because the gap it records is why #465
+exists. The hit walk asks `overlayOf` now: it is lifted, it does know
+about the marker, and a later ordinary sibling does not take the press
+from an overlay. Read the paragraph below as the state of the tree on
+this spec's date.
 
 > Hit-testing is untouched, and that is a gap rather than a non-event. A popup
 > takes held pointer capture while open (`Popup.Open`), which routes presses to it

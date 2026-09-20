@@ -439,9 +439,12 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		{"the toolkit's on-screen caption", zzFixturePath,
 			`<Text Grid.Row="0" Style="dim">MenuBar dropdowns and Popups lift ` +
 				`out of document order; ToastHost and AdornmentLayer do not</Text>`},
+		// Both fixtures quote sentences RETIRED by #437 and #439; they are
+		// specimens the matcher must catch, not rules this file states.
 		{"README's adornment row — the prescriptive spelling", zzFixturePath,
 			"WPF's adorner plane: an `AdornmentLayer` (last child of the root) " +
 				"hosts components positioned against a *target's* arranged bounds."},
+		// Retired likewise (#437): quoted so the arm cannot pass vacuously.
 		{"howto-forms' markup comment — the prescriptive spelling", zzFixturePath,
 			"<AdornmentLayer/>   <!-- last child of the root -->"},
 	} {
