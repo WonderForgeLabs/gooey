@@ -256,29 +256,79 @@ func TestPastingCRLFDoesNotDoubleSpaceTheLineBreaks(t *testing.T) {
 // the glyphs it overwrote are gone — the row read "  █" until #519 was
 // fixed, and this test carried a t.Skip citing it until then.
 func TestTextBoxRendersAWideGlyphInItsOwnColumns(t *testing.T) {
-	v := prop.NewSource("世界")
-	tb := &TextBox{Text: v}
-	tb.SetFocused(true)
-	f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-	tb.setCaret(len([]rune("世界")))
-	f = gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
-
-	if got, want := render.SpanText(f.Cells, 0, 0, 10), "世界█     "; got != want {
-		t.Errorf("rendered %q, want %q — the two glyphs occupy FOUR columns, so "+
-			"the caret belongs in column 4", got, want)
+	// THE SKIP RETIRED HERE, which is what it was built to do. The base
+	// branch (#520) carried a t.Skip citing #519 behind a condition that
+	// stopped firing the moment all three rows read correctly, so the
+	// claim could not outlive the fix even if the fixer never opened
+	// this file. THIS is the commit that fixes it: all three rows read
+	// correctly, the skip's condition is false, and it comes out rather
+	// than sitting here as a branch that can no longer be taken.
+	//
+	// THE THREE SHAPES STAY. They are the base branch's, not this
+	// branch's — #520 widened the fixture from the focused caret row to
+	// all three after review pointed out that a fix correcting the
+	// unfocused path and leaving the caret column wrong would have kept
+	// the file dark behind a green check. Merging the skip away must not
+	// merge the coverage away with it, which is what taking this side of
+	// the conflict wholesale would have done.
+	const (
+		wantCaret = "世界█     "
+		wantPlain = "世界      "
+		wantMixed = "a世b      "
+	)
+	compose := func(text string, focused bool) string {
+		tb := &TextBox{Text: prop.NewSource(text)}
+		tb.SetFocused(focused)
+		if focused {
+			tb.setCaret(len([]rune(text)))
+		}
+		f := gooey.Compose(tb, term.Caps{Cols: 10, Rows: 1}, nil)
+		return render.RowText(f.Cells, 0)
 	}
-	// AND THE COLUMN MODEL AGREES WITH THE ROW, which the string alone
-	// cannot say: a buffer column must be a terminal column, or
-	// everything right of the glyph is drawn one column off and the
-	// displaced cells are CLEAN, so nothing repaints over them.
+	caret := compose("世界", true)
+	plain := compose("世界", false)
+	mixed := compose("a世b", false)
+	// ONE TABLE, AND NO SKIP. The table is the base branch's (#520) and
+	// stays: `want` used to be set three times and read nowhere while
+	// three bespoke t.Errorf blocks re-spelled the constants by hand, so
+	// a fourth shape could get a tripwire and no assertion, or the
+	// reverse, with nothing red. The `why` column is the only part of
+	// those three blocks that differed.
+	//
+	// THE SKIP LOOP IS WHAT DOES NOT SURVIVE THE MERGE, and deleting it
+	// is this commit's job rather than an accident of resolving a
+	// conflict. #520 wrote it to retire by CONDITION — it fired only
+	// while a row still read the documented buggy render — and said in
+	// its own comment that #519's fixing commit deletes the whole loop
+	// rather than leaving a branch that can no longer be taken. This is
+	// that commit: all three rows read correctly here, so the condition
+	// is false and the loop is gone. Taking either side of the first
+	// conflict wholesale would have been wrong — this branch's side lost
+	// the two shapes #520 added after review, and the base's side
+	// reinstated a skip citing an issue this branch closes. The
+	// resolution is settled here; a later merge of the same base is the
+	// same decision again, and the only thing the base has changed in
+	// this function since is dropping a provenance marker.
+	shapes := []struct{ got, want, shape, why string }{
+		{caret, wantCaret, "the focused row with the caret after both glyphs",
+			"the two glyphs occupy FOUR columns, so the caret belongs in column 4"},
+		{plain, wantPlain, "the unfocused row",
+			"the glyphs occupy their own columns with no caret to make room for"},
+		{mixed, wantMixed, "the unfocused mixed-width row",
+			"a narrow glyph either side of a wide one is the arrangement a " +
+				"per-rune advance loses in the middle rather than at the end"},
+	}
+
+	// THE STRING IS THE ONLY PIN HERE, and the two assertions that used
+	// to stand beside it are gone for opposite reasons.
 	//
 	// A loop over TerminalColumns asserting col == i was false of a
 	// CORRECT wide row — a continuation cell's recorded column is where
 	// the cursor sits mid-glyph, which is legitimately not its index —
-	// so it could not run. render.Displaced replaced it and cannot
-	// FAIL: #519 blanked the orphaned lead through healSeam, so the row
-	// was wrong without being displaced. Measured against the render
-	// this commit fixes, all three cases of this fixture:
+	// so it could not run. render.Displaced replaced it and cannot FAIL:
+	// #519 blanked the orphaned lead through healSeam, so the row was
+	// wrong WITHOUT being displaced. Measured against the render this
+	// commit fixes, all three cases of this fixture:
 	//
 	//	"世界" unfocused -> " 界       "  displaced=false
 	//	"世界" focused   -> "  █       "  displaced=false

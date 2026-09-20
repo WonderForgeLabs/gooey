@@ -55,20 +55,20 @@ import (
 // many test files, and each lived in the first file that happened to
 // want it — under a doc block about dropdowns, or about a colour picker,
 // or about the Composer — so the explanation was retold in each
-// consumer's comments and the copies went stale independently. FOUR
-// readers, distinguished by what they read rather than by who asked: a
-// region of a row, a whole row of a buffer, a whole frame, a whole
-// composition. Plus reversedText, which reads a STYLE rather than text
-// and so answers a different question, and the one row search every
-// positional assertion in this package needs.
+// consumer's comments and the copies went stale independently. The
+// readers below are distinguished by what they READ rather than by who
+// asked for them: each one is named for its receiver and its extent, so
+// the name answers "which of these do I want" without a list to consult.
 //
 // NO COUNT AND NO LIST, and that is the point rather than terseness.
 // The sentence said FOUR and listed four, and the first reader added
-// after it made both wrong at once with nothing to go red. Removing the
-// number and leaving the list it counted — which is what the round
-// before this one did — buys nothing: a list decays exactly the way a
-// count does, silently, on the sixth reader. The declarations are the
-// inventory.
+// after it made both wrong at once with nothing to go red — and it was
+// wrong TWICE over by the time it was removed, because frameRows and
+// reversedText arrived on two different branches and neither knew about
+// the other. Removing the number and leaving the list it counted —
+// which is what the round before this one did — buys nothing: a list
+// decays exactly the way a count does, silently, on the sixth reader.
+// The declarations are the inventory.
 //
 // [#358]: https://github.com/WonderForgeLabs/gooey/issues/358
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
