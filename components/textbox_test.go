@@ -1,6 +1,7 @@
 package components
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2122,5 +2123,67 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 				"the UI goroutine; this arm is the one %s bounds",
 				tc.name, long, short, float64(long)/float64(short), tc.bound)
 		}
+	}
+}
+
+// TestADeleteNeverLeavesTheCaretInsideACluster is the edit path's half
+// of the rule moveKey's doc states, and it was missing.
+//
+// The arrows were changed to step by cluster because a mid-cluster
+// caret is a position from which typing moves an accent onto the typed
+// rune and backspace reattaches an orphan mark to its neighbour.
+// backspace and delete splice ONE RUNE out and set the caret from the
+// OLD index, so both reach exactly that position on a value where the
+// removed rune was the base of a cluster that is not at the end.
+// Measured on this branch before the fix: "ab" + U+0301, caret 1,
+// delete gives "á" with the caret at 1, and typing Z then gives "aŹ" —
+// the accent migrated onto the typed rune, which is the first harm
+// moveKey's doc enumerates.
+//
+// snapOut's doc exempts setText, and that exemption is about INSERTION:
+// a pasted rune joining the PRECEDING cluster would be pulled backwards
+// by a snap. These two arms insert nothing, so the argument does not
+// reach them. Raised in review of #521.
+//
+// The second assertion is the one that matters to a user. The caret
+// arm was widened from `caret == i` to containment in this same branch,
+// so a mid-cluster caret and a boundary caret now paint IDENTICALLY —
+// asserting the index alone would pin a rule whose violation has no
+// visible symptom.
+func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start string
+		caret int
+		key   input.KeyEvent
+		want  string // after the delete, then typing Z
+	}{
+		{"delete takes the base out from under a following mark",
+			"ab́", 1, input.Named(input.KeyDelete), "Zá"},
+		{"backspace takes the base out from under a following mark",
+			"ab́", 2, input.Named(input.KeyBackspace), "Zá"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := prop.NewSource(tc.start)
+			tb := &TextBox{Text: v}
+			tb.SetFocused(true)
+			tb.setCaret(tc.caret)
+			tb.HandleKey(tc.key)
+
+			runes := []rune(v.Get())
+			if !slices.Contains(clusterBoundaries(runes, len(runes)), tb.Caret()) &&
+				tb.Caret() != len(runes) {
+				t.Errorf("the caret is at %d in %q, whose cluster boundaries are "+
+					"%v — inside a cluster, which is the position the arrows "+
+					"were changed to stop reaching", tb.Caret(), v.Get(),
+					clusterBoundaries(runes, len(runes)))
+			}
+			tb.HandleKey(input.Rune('Z'))
+			if v.Get() != tc.want {
+				t.Errorf("typing after the delete gave %q, want %q — a mark that "+
+					"lands on the typed rune instead of its own base is what a "+
+					"mid-cluster caret does", v.Get(), tc.want)
+			}
+		})
 	}
 }

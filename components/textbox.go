@@ -630,8 +630,9 @@ func spanForCols(runes []rune, start, cols int) int {
 	// is spanReach(cols, 0), which is (cols+1)*clusterSlack +
 	// clusterSlack: at 20 columns 22*64 = 1408, not 1344, so the
 	// sequence 84, 168, 336, 672, 1344, 2688 steps straight over it and
-	// the equality exit never fires. Re-measured with only line 641
-	// removed:
+	// the equality exit never fires. Re-measured with only
+	// `span = min(span, maxSpan)` removed — NAMED, NOT NUMBERED, which
+	// this said as "line 641", a line of this comment's own prose:
 	//
 	//	--- FAIL: TestARepaintDoesNotWalkAZeroWidthRun
 	//	  caret at the end:   16.2ms over 50,000 against 645µs over 1,000 — 25.1x
@@ -1131,12 +1132,48 @@ func windowFloor(runes []rune, end, reserve, avail int) int {
 	// edges, and both would hand back another arithmetic index wearing a
 	// boundary's name.
 	//
-	// Opening at 0 is the honest degradation and is what the same value
-	// does at every length the floor does not reach: the glyph is
-	// painted from its start, the caret is where a caret past a
-	// single-cluster value can be. It costs nothing unbounded, because
-	// Render's own walk from 0 is capped by spanForCols. Raised in
-	// review of #521, on the floor added the round before.
+	// Opening at 0 is the honest degradation FOR A VALUE THAT IS ONE
+	// CLUSTER, which is the shape both sentences above are about: the
+	// glyph is painted from its start, the caret is where a caret past
+	// a single-cluster value can be, and it is what the same value does
+	// at every length the floor does not reach. It costs nothing
+	// unbounded, because Render's own walk from 0 is capped by
+	// spanForCols. Raised in review of #521, on the floor added the
+	// round before.
+	//
+	// IT IS THE WRONG ANSWER FOR A VALUE THAT MERELY ENDS IN ONE, and
+	// this paragraph claimed both until review of #521 measured it. The
+	// answer goes off a cliff rather than degrading — 20 columns,
+	// caret at the end, on "x"x100 + "a" + U+0301 x n, where 102
+	// cluster boundaries are findable at every n:
+	//
+	//	n        floor
+	//	   100   81
+	//	 1,000   81
+	//	 2,000   0     <- the caret is no longer on screen
+	//	 5,000   0
+	//
+	// and the symptom — a focused field showing its value with no caret
+	// — is the one TestAValueThatOpensWithACombiningMarkIsPaintedAndCarets
+	// exists for, one shape over. The input is reachable by paste;
+	// oneLine strips control characters and not combining marks.
+	//
+	// Nothing better is available from inside this function. The walk
+	// expands leftward from `end` and the trailing cluster is what it
+	// is inside, so it gives up before reaching the first whole
+	// cluster and there is no boundary in `segs` to fall back to
+	// either. Fixing it means letting the reach grow with the value,
+	// which is the cost bound the floor exists to impose — a trade to
+	// make on purpose rather than here. Tracked in #555.
+	//
+	// The coverage gap is the same finding's other half, and it is why
+	// this went unnoticed: replacing `gaveUp = true` with a panic
+	// reaches only TestADragDoesNotWalkAZeroWidthRun and
+	// TestARepaintDoesNotWalkAZeroWidthRun, whose value IS a single
+	// cluster — the one shape where 0 is right. No vocabulary entry has
+	// a cluster longer than spanReach, so
+	// TestTheWindowFloorIsTheLeftmostFittingClusterBoundary never sees
+	// this branch either.
 	//
 	// `gaveUp` IS THE WHOLE TEST, and the two narrower ones tried first
 	// are both wrong. "The drop loop did not run" also covers the case
@@ -1271,7 +1308,20 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 			return true // consumed: backspace at the start is a no-op, not a page gesture
 		}
 		runes := t.value()
-		t.setText(append(append([]rune{}, runes[:caret-1]...), runes[caret:]...), caret-1)
+		// SNAPPED ON THE NEW VALUE, because a splice can leave the
+		// caret inside a cluster that did not exist before it. "ab" +
+		// U+0301 with the caret at 2 loses its `b` and becomes "á"
+		// with the caret at 1 — mid-cluster, which is every outcome
+		// moveKey's doc enumerates, reached through the edit path
+		// instead of the arrow. snapOut's own doc exempts setText, and
+		// that argument is about INSERTION: a pasted rune joining the
+		// PRECEDING cluster would be pulled backwards by a snap. These
+		// two arms insert nothing. Leftward, to the boundary before
+		// the glyph the splice left the caret inside, which is the
+		// position both further deletes and further typing behave
+		// from. Raised in review of #521.
+		next := append(append([]rune{}, runes[:caret-1]...), runes[caret:]...)
+		t.setText(next, snapOut(next, caret-1, false))
 	case ev == input.Named(input.KeyDelete):
 		if _, _, ok := t.Selection(); ok {
 			t.deleteSelection()
@@ -1281,7 +1331,9 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		if caret >= len(runes) {
 			return true
 		}
-		t.setText(append(append([]rune{}, runes[:caret]...), runes[caret+1:]...), caret)
+		// Snapped for the reason the backspace arm above gives.
+		next := append(append([]rune{}, runes[:caret]...), runes[caret+1:]...)
+		t.setText(next, snapOut(next, caret, false))
 	case ev == ctrlRune('x'):
 		if !t.copySelection() {
 			return true

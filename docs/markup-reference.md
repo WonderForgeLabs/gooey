@@ -811,11 +811,20 @@ Keys:
 | Key | Effect |
 |---|---|
 | printable rune | insert at the caret, replacing the selection if there is one |
-| `backspace` / `delete` | remove the selection, or the character on either side of the caret |
-| `←` / `→` | move the caret one character, or collapse a selection to that edge |
+| `backspace` / `delete` | remove the selection, or one **rune** on either side of the caret |
+| `←` / `→` | move the caret one **grapheme cluster**, or collapse a selection to that edge |
 | `ctrl+←` / `ctrl+→` | move by word — words, punctuation runs and whitespace runs are separate |
 | `home` / `end` | jump to either end |
 | `shift+` any of the above | extend the selection from its anchor instead of moving |
+
+The two units in that table are deliberate and they differ. An arrow
+steps over a whole `é` — base and combining mark together, so the caret
+never lands inside a glyph — while `backspace` and `delete` still remove
+one rune, so they can take the mark off a base and leave the base. The
+cost is that a stray combining mark can no longer be deleted by arrowing
+between it and its base; the caret is placed with the arrow and the mark
+is removed with `backspace`, which removes the rune immediately before
+the caret whatever cluster it belongs to.
 | `ctrl+x` / `ctrl+c` | cut / copy the selection to the process-local kill buffer |
 | `ctrl+v` | paste the kill buffer at the caret |
 
