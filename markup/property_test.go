@@ -683,11 +683,11 @@ func TestSeedingDeclaredDefaultsBuildsTheDefiningDocument(t *testing.T) {
 	if _, err := Build([]byte(src), &Context{}); err == nil {
 		t.Fatal("a defining document built without its declarations seeded; " +
 			"if top-level Build now instantiates declarations, this test and AbsentValue's reason for existing both need revisiting")
-		// The MESSAGE, not just "an error": a fixture that fails to
-		// build for an unrelated reason — a misspelled attribute, say —
-		// would satisfy a bare err != nil and prove nothing about
-		// declarations at all.
 	} else if !strings.Contains(err.Error(), `"Title" not found in context`) {
+		// THE MESSAGE, not just "an error", which is what this arm is
+		// for: a fixture that fails to build for an unrelated reason —
+		// a misspelled attribute, say — would satisfy a bare err != nil
+		// and prove nothing about declarations at all.
 		t.Fatalf("unseeded build failed with %v, want the unresolved binding", err)
 	}
 

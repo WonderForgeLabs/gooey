@@ -1413,3 +1413,41 @@ func TestDeclAttrsNeverHandsBackTheEditorsOwnMap(t *testing.T) {
 			attrs["Name"])
 	}
 }
+
+// TestEnvelopePartsNeverHandsBackTheEditorsOwnMap is the same sentence
+// one function over, and envelopeParts was the one place in this
+// cluster still making it conditionally.
+//
+// Its no-change path — the envelope already binds the prefix, so no
+// mint, and no second binding of the declaration namespace to strip —
+// returned `attrs` exactly as received, and for both callers that is
+// ed.envAttrs, the editor's live document state. Inert today because
+// envelopeHead and envelopeNamespaces only read the result; that is
+// the same "inert for the same reason" the declAttrs round above
+// declined to rely on, and the fast path is what made the guarantee
+// depend on which document the caller happened to hold. Raised in
+// review of #522.
+func TestEnvelopePartsNeverHandsBackTheEditorsOwnMap(t *testing.T) {
+	// THE NO-CHANGE PATH, which is the one that aliased: the envelope
+	// already binds the prefix, so declPrefix reports it bound and no
+	// mint runs, and it binds the declaration namespace once, so the
+	// strip loop rebuilds nothing.
+	attrs := map[string]string{
+		"xmlns:x": markup.XNamespace,
+		"Title":   "t",
+	}
+	decls := []*node{{Elem: "Property", Attrs: map[string]string{"Name": "T"}}}
+	got, prefix := envelopeParts(attrs, decls)
+	if prefix != "x" || len(got) != len(attrs) {
+		t.Fatalf("envelopeParts(%v) = %v, %q — want the envelope's own prefix "+
+			"and nothing added or dropped; the arm below measures the COPY, so "+
+			"it says nothing if this path already rebuilt the map", attrs, got, prefix)
+	}
+	got["Title"] = "mutated"
+	if attrs["Title"] != "t" {
+		t.Errorf("writing to envelopeParts' result changed the caller's map: "+
+			"Title is now %q. That map is ed.envAttrs, so a future caller "+
+			"writing a binding into the result would make the next save look "+
+			"as though the file had always carried one", attrs["Title"])
+	}
+}

@@ -969,6 +969,22 @@ func envelopeParts(attrs map[string]string, decls []*node) (map[string]string, s
 	prefix, bound := declPrefix(attrs, decls)
 	if len(decls) > 0 && !bound {
 		attrs = withDeclBinding(attrs, prefix)
+	} else {
+		// A COPY ON THIS PATH TOO, for the reason declAttrs' doc gives
+		// about its own: both callers hand this ed.envAttrs, the
+		// editor's live document state, and a fast path that returns
+		// the caller's map when nothing needs changing makes the copy
+		// conditional on the input — so the guarantee holds for
+		// whichever document the test picked and not for the one a
+		// future caller writes through. Inert today (envelopeHead and
+		// envelopeNamespaces only read it), which is the same "inert
+		// for the same reason" the declAttrs round declined to rely
+		// on. Raised in review of #522.
+		out := make(map[string]string, len(attrs))
+		for k, v := range attrs {
+			out[k] = v
+		}
+		attrs = out
 	}
 	// AND NO OTHER BINDING OF THE DECLARATION NAMESPACE SURVIVES ON
 	// <Gooey>. Only declarations use that namespace and every one of
@@ -1055,7 +1071,7 @@ func envelopeNamespaces(attrs map[string]string, decls []*node, into map[string]
 func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 	// ONE SCAN OF attrs FOR THE BINDING. declBinding answers the
 	// envelope's own question here — which prefix, if any, it binds to
-	// markup.XNamespace. The mint below calls declBindingAvoiding
+	// markup.XNamespace. The mint below calls mintDeclPrefix
 	// instead, because the spelling to mint depends on what the
 	// DECLARATIONS have spent as well, which this call cannot see.
 	// Raised in review of #522, twice: the first round collapsed two
@@ -1076,9 +1092,9 @@ func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 	// shape reaching that clause, where declAttrs' doc said there were
 	// two. Measured in review of #522.
 	//
-	// Falling through to the mint is the whole fix: declBindingAvoiding
-	// already avoids every prefix the declarations hold, so it picks a
-	// free one and both bindings survive.
+	// Falling through to the mint is the whole fix: mintDeclPrefix is
+	// handed every prefix the declarations hold and avoids all of
+	// them, so it picks a free one and both bindings survive.
 	prefix := ""
 	for _, d := range decls {
 		p, ok := declBinding(d.Attrs)
@@ -1219,17 +1235,26 @@ func declAttrs(attrs map[string]string, prefix string) map[string]string {
 // back first would rewrite the file differently on different runs.
 //
 // IT RETURNS NO PREFIX WHEN IT FINDS NONE, and the minted spelling it
-// used to hand back was observed by nobody. Since minting moved into
-// declBindingAvoiding, declPrefix takes the mint from there; every
-// other caller either checks the bool or replaces the prefix with a
-// hand-spelled "x". Measured in review of #522: returning "ZZZDEAD"
-// when unbound left the whole apps/wysiwyg suite green, so this
-// function's doc was where a reader learned a mint rule no caller here
-// could reach. The rule is on declBindingAvoiding now, where it lives,
-// and the three hand-spelled fallbacks are declFallbackPrefix.
+// used to hand back was observed by nobody. declPrefix calls
+// mintDeclPrefix itself; every other caller either checks the bool or
+// replaces the prefix with declFallbackPrefix. Measured in review of
+// #522: returning "ZZZDEAD" when unbound left the whole apps/wysiwyg
+// suite green, so this function's doc was where a reader learned a
+// mint rule no caller here could reach.
+//
+// IT THEN DELEGATED THE SCAN, and the delegate carried the same defect
+// one level down: declBindingAvoiding took an `also` argument that was
+// nil at its only call site — this one — so the mint it computed on
+// the unbound path was discarded by the only thing that could see it,
+// and replacing that return with "MUTANT" left the whole apps/wysiwyg
+// suite green a second time. The scan is the four lines below; the
+// mint rule is on mintDeclPrefix, which is what declPrefix calls.
+// Measured in review of #522.
 func declBinding(attrs map[string]string) (string, bool) {
-	if p, ok := declBindingAvoiding(attrs, nil); ok {
-		return p, true
+	for _, k := range sortedKeys(attrs) {
+		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
+			return strings.TrimPrefix(k, "xmlns:"), true
+		}
 	}
 	return "", false
 }
@@ -1260,9 +1285,9 @@ func declBindingOr(attrs map[string]string, fallback string) string {
 	return fallback
 }
 
-// declBindingAvoiding is declBinding with more maps the MINT must not
-// collide with, and the extra argument exists because avoiding the
-// envelope alone was not enough.
+// mintDeclPrefix is the MINT ALONE, with no adopt scan in front of it,
+// and `also` is the maps beyond the envelope that it must not collide
+// with — because avoiding the envelope alone was not enough.
 //
 // markup's namespace table for value expressions is ONE FLAT
 // DOCUMENT-WIDE MAP, so a prefix spent anywhere in the file is spent.
@@ -1282,26 +1307,15 @@ func declBindingOr(attrs map[string]string, fallback string) string {
 // "x" IS THE MINTED SPELLING, because every example uses it. x2, x3 …
 // are the way out of the case where the document binds x to something
 // else — legal, strange, and not worth clobbering the author over.
-// This paragraph was on declBinding, whose unbound return no caller
-// observed; it belongs here, on the function that does the minting.
-// Raised in review of #522.
-func declBindingAvoiding(attrs map[string]string, also []map[string]string) (string, bool) {
-	for _, k := range sortedKeys(attrs) {
-		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
-			return strings.TrimPrefix(k, "xmlns:"), true
-		}
-	}
-	return mintDeclPrefix(attrs, also), false
-}
-
-// mintDeclPrefix is the MINT ALONE, with no adopt scan in front of it.
 //
-// It is separate because declPrefix has a case where the adopt scan is
-// exactly wrong: the envelope binds p to the declaration namespace and
-// a declaration binds p to a VALUE namespace, so declPrefix declines p
-// — and then called declBindingAvoiding, whose first loop found the
-// envelope's p and handed it straight back. The decline was undone by
-// the function it delegated to. Measured in review of #522.
+// THE ADOPT SCAN IS NOT IN FRONT OF IT because declPrefix has a case
+// where that scan is exactly wrong: the envelope binds p to the
+// declaration namespace and a declaration binds p to a VALUE
+// namespace, so declPrefix declines p — and then called a function
+// whose first loop found the envelope's p and handed it straight back.
+// The decline was undone by the function it delegated to. That
+// delegate is gone; declPrefix calls this directly. Measured in review
+// of #522.
 func mintDeclPrefix(attrs map[string]string, also []map[string]string) string {
 	taken := func(p string) bool {
 		if attrs["xmlns:"+p] != "" {
