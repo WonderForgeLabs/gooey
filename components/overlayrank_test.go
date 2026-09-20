@@ -110,7 +110,7 @@ func TestAToastIsNotHiddenByAnOpenMenu(t *testing.T) {
 	}
 	if got := render.RowText(f.Cells, toast.Y); !strings.Contains(got, "THREE") {
 		t.Errorf("a toast on a row the open dropdown covers is not visible — it is painting underneath.\nrow %d: %q\n%s",
-			toast.Y, got, frameText(f, w, h))
+			toast.Y, got, frameText(f))
 	}
 	// THE DAMAGE COUNT, which the cell assertion above cannot be. Ranking
 	// MOVED this number and CLAUDE.md is explicit that when a change moves
@@ -229,7 +229,7 @@ func TestAnAdornmentIsAboveAToast(t *testing.T) {
 		t.Errorf("a component at OverlayRankAdornment sitting on a toast's cells is not what is on screen — "+
 			"it is painting underneath, reversing what docs/markup-reference.md states.\nrow %d: %q\n"+
 			"mark rank %d, toast rank %d\n%s",
-			tb.Y, got, rankOf(t, mark), rankOf(t, host2), frameText(f, w, h))
+			tb.Y, got, rankOf(t, mark), rankOf(t, host2), frameText(f))
 	}
 }
 

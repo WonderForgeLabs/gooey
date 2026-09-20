@@ -188,10 +188,125 @@ func ClipCols(s string, w int) string {
 // "世\ufffd界\ufffd" and no fixture in the repo could contain one. A
 // readback that cannot express what the writer produces makes the whole
 // class of wide-glyph bugs unassertable.
+//
+// A nil buffer is answered here rather than left to SpanText: `b.W` is
+// evaluated in the argument list, so a nil buffer would fault before the
+// guard one call down could run, inside this package with the caller off
+// the stack. A row of no buffer is EMPTY rather than padded, because
+// there is no width to pad to — which is the one place this function's
+// answer differs from SpanText's.
 func RowText(b *Buffer, y int) string {
+	if b == nil {
+		return ""
+	}
+	return SpanText(b, 0, y, b.W)
+}
+
+// BufferText is every row of b, newline-terminated — the whole screen as
+// a terminal would show it.
+//
+// It exists because a whole-BUFFER read is as common as a whole-ROW one
+// and had no name, so every caller wrote the loop ([#516]); the
+// account is in docs/specs/2026-08-27-display-width.md rather than here,
+// because this comment is what a consumer reads on pkg.go.dev and that
+// is a place for the contract.
+//
+// The trailing newline is on EVERY row including the last, so a
+// three-row buffer and the first three rows of a four-row one do not
+// compare equal — a dump missing its last row is a different string, not
+// a prefix.
+//
+// A nil buffer is the empty string, for RowText's reason.
+//
+// [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
+func BufferText(b *Buffer) string {
+	if b == nil {
+		return ""
+	}
 	var sb strings.Builder
-	for x := 0; x < b.W; x++ {
-		sb.WriteString(b.At(x, y).Text())
+	for y := 0; y < b.H; y++ {
+		sb.WriteString(RowText(b, y))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// SpanText is RowText over w columns starting at x — what that part of
+// row y would read as on a terminal.
+//
+// (x, y, w), NOT (y, x, w). Every other coordinate-taking function in
+// this package is x-then-y — Buffer.At, Buffer.Set, Buffer.SetString.
+// All four parameters are int, so a transposed call COMPILES, and by the
+// off-buffer rule below it returns spaces rather than panicking: the
+// fixture simply stops matching and the message blames the component.
+//
+// THE SPAN FORM IS THE ONE THE TESTS ACTUALLY WANT. A test asserting on
+// a dock header, a menu row's check box or a status gutter is asking
+// about a REGION, and without this each package grew its own reader —
+// each writing Continuation as a literal rune, which is the defect
+// RowText exists to remove, re-introduced one directory over. [#516] is
+// the sweep; this is the function that makes each site a call rather
+// than a helper.
+//
+// TWO EDGES, BOTH FROM THE SPAN CUTTING A WIDE GLYPH, and both are the
+// honest answer rather than a rounding:
+//
+//   - starting ON a continuation cell reads one column SHORT. The
+//     glyph's own cell is outside the span, and its continuation carries
+//     no text — half a glyph is not drawable, which is the same reason
+//     ClipCols stops before one.
+//   - ending on a glyph's FIRST cell reads one column LONG: that cell
+//     holds the whole glyph, so the returned string is two columns wide
+//     where the span asked for one.
+//
+// A caller comparing against a fixture of known width should keep its
+// span off a glyph's middle; a caller measuring should use StringWidth
+// on the result rather than assuming w.
+//
+// OFF THE BUFFER READS AS BLANKS, and that is a choice rather than an
+// accident — Buffer.At answers a space out of bounds, so a span that
+// runs past b.W, starts left of 0, or names a row that does not exist
+// returns spaces for those columns instead of a short string or a
+// panic. It matters because every converted reader here reads a FIXED
+// extent: a dropdown that moves down the screen, or a composer resized
+// in a later edit, turns the tail of one of these reads into phantom
+// blanks, and an assertion shaped `!strings.Contains(got, …)` or "the
+// row is empty" passes on blank input.
+//
+// TerminalColumns chose the other answer for the same question (nil for
+// an out-of-range y) because its result is a per-cell map and there is
+// no blank cell to report. Padding is the right answer HERE: a span is
+// a region of a terminal, and a terminal has blanks where nothing was
+// drawn. TestSpanTextPadsWhereTheBufferIsNot pins it, so the contract
+// is chosen rather than inherited from Buffer.At.
+//
+// A NIL BUFFER is the most out of range a span can be, and it is part of
+// the same contract: Buffer.At dereferences b.W, so without the guard a
+// nil buffer panics inside render with At on the stack rather than the
+// caller. TerminalColumns guards nil as its first condition for the same
+// reason.
+//
+// A NON-POSITIVE WIDTH IS THE EMPTY STRING, not blanks, and the guard is
+// checked BEFORE the nil one — so `SpanText(nil, 0, 0, -1)` is "" rather
+// than a panic inside strings.Repeat, which is the ONE arrangement where
+// the guard changes an answer rather than restating what the loop
+// already does. ClipCols answers `w <= 0` the same way, and the reason
+// is the same: zero columns of a terminal is nothing, not one blank. Why
+// that is a stated contract rather than whatever the loop happens to do
+// is item 4 of docs/specs/2026-08-27-display-width.md's readback
+// section.
+//
+// [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
+func SpanText(b *Buffer, x, y, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if b == nil {
+		return strings.Repeat(" ", w)
+	}
+	var sb strings.Builder
+	for i := 0; i < w; i++ {
+		sb.WriteString(b.At(x+i, y).Text())
 	}
 	return sb.String()
 }

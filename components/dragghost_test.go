@@ -63,7 +63,7 @@ func quiet(t *testing.T, c *gooey.Composer, before string, sink *strings.Builder
 	if n := c.FlushBytes(); n != 0 {
 		t.Fatalf("%s emitted %d bytes to the terminal, want 0", what, n)
 	}
-	if got := screen(c, 30, 5); got != before {
+	if got := screen(c); got != before {
 		t.Fatalf("%s changed cells.\nbefore:\n%s\nafter:\n%s", what, before, got)
 	}
 }
@@ -81,7 +81,7 @@ func TestPointerMotionWithoutAFollowerSchedulesNoFrame(t *testing.T) {
 	c.Frame()
 	var sink strings.Builder
 	c.Flush(&sink) // settle the terminal so FlushBytes below means something
-	before := screen(c, 30, 5)
+	before := screen(c)
 
 	*inval = 0
 	for x := 0; x < 12; x++ {
@@ -110,7 +110,7 @@ func TestParkedGhostCostsNothingPerMotion(t *testing.T) {
 	c.Frame()
 	var sink strings.Builder
 	c.Flush(&sink)
-	before := screen(c, 30, 5)
+	before := screen(c)
 
 	*inval = 0
 	for x := 0; x < 12; x++ {
@@ -266,18 +266,18 @@ func TestHideRestoresTheScreenAndTheZeroCost(t *testing.T) {
 	c := gooey.NewComposer(page, 30, 5)
 	inval := counter(c)
 	c.Frame()
-	before := screen(c, 30, 5)
+	before := screen(c)
 
 	c.HandleMouse(motion(4, 2))
 	ghost.Show(c.Focus())
 	c.Frame()
-	if got := screen(c, 30, 5); got == before {
+	if got := screen(c); got == before {
 		t.Fatal("the ghost never painted: the screen is unchanged with a ghost up")
 	}
 
 	ghost.Hide()
 	c.Frame()
-	if got := screen(c, 30, 5); got != before {
+	if got := screen(c); got != before {
 		t.Fatalf("hiding the ghost left a scar.\nbefore:\n%s\nafter:\n%s", before, got)
 	}
 	if _, painted := c.Frame(); painted != 0 {

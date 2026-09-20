@@ -721,7 +721,41 @@ quietest in the suite: ~35 sites counted runes across
 everything green, because every fixture in the repo was ASCII, *and*
 because six packages' `row(b, y)` test helpers rendered the continuation
 marker as a literal rune — so no fixture could hold a wide glyph and be
-asserted on. Read a row back with `render.RowText`. To pin one of these,
+asserted on. Three readers cover it. A whole row is `render.RowText(b, y)`.
+A REGION of one is `render.SpanText(b, x, y, w)` — the form a test
+asserting on a dock header, a menu row or a status gutter actually wants,
+and its absence is why those six helpers grew back one directory over
+([#516](https://github.com/WonderForgeLabs/gooey/issues/516)). The whole
+buffer is `render.BufferText(b)`, every row newline-terminated, because a
+dump of the screen is as common a thing to want as a row and every caller
+that needed one wrote the loop out instead.
+
+**Never hand-roll any of the three** — and read that as the target
+state, not as a description of the tree. It is not true today:
+[#516](https://github.com/WonderForgeLabs/gooey/issues/516) is the open
+sweep, MANY readers across the tree still build a row or a screen from
+`At(x, y).Rune` and so cannot hold a wide glyph at all, and nothing in
+the root suite reddens when a new one appears. Named by PROPERTY rather
+than by module and symbol, for two reasons: a single example read as
+*the* live exception where the real population is an order of magnitude
+larger, and a module-and-symbol name here is one nothing checks —
+`TestCLAUDEMDNamesNoDeletedModule` reads only its own
+`moduleNamespaces` list, which predates the `apps/` move
+([#316](https://github.com/WonderForgeLabs/gooey/issues/316)), and no
+guard resolves a symbol at all. Naming one anyway inside the sentence
+that says so leaves it exactly as unchecked as the sentence claims,
+which is where a stale citation starts; the derivation and its examples
+are in item 7 of `docs/specs/2026-08-27-display-width.md`. That is the same silent
+shape this paragraph opens by describing, which is why the rule is
+written with its exception rather than as an absolute: an unqualified
+"never" here would be a hand-maintained claim of exactly the kind the
+Verify section refuses, and a reader would conclude the tree already
+obeys it. The enforcing guard has to key on the LOOP SHAPE — a
+per-column read of `Cell.Rune` accumulated into a string — because a
+symbol grep provably misses both directions: the
+`append(…, At(x, y).Rune)` spelling, and a loop that already calls
+`RowText`. It belongs with #516's last directory; until then this
+sentence expires with the issue. To pin one of these,
 use two strings of the same COLUMN width and different rune counts
 (`"世界"` against `"abcd"`) and assert they measure alike; an ASCII
 fixture agrees with itself under either rule and passes against the bug.

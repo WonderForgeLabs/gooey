@@ -18,14 +18,6 @@ func pickerAt(depth render.ColorDepth, c render.Color) (*ColorPicker, *prop.Prop
 	return p, v, f
 }
 
-func rowText(f *gooey.Frame, y, w int) string {
-	var sb strings.Builder
-	for x := 0; x < w; x++ {
-		sb.WriteRune(f.Cells.At(x, y).Rune)
-	}
-	return sb.String()
-}
-
 func TestColorPickerArrowsSelectChannelAndAdjustValue(t *testing.T) {
 	p, v, _ := pickerAt(render.TrueColor, render.RGB(10, 20, 30))
 
@@ -180,7 +172,7 @@ func TestColorPicker16UsesAFillMeter(t *testing.T) {
 	cur := render.RGB(100, 170, 60)
 	p, _, f := pickerAt(render.Color16, cur)
 	w := p.barWidth()
-	row := rowText(f, 0, pickerLabelW+w)
+	row := rowText(f, 0, 0, pickerLabelW+w)
 
 	if !strings.Contains(row, "░") {
 		t.Errorf("16-color bar has no empty run: %q", row)
@@ -219,7 +211,10 @@ func TestColorPickerReadoutIsTierSpecific(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.depth.String(), func(t *testing.T) {
 			_, _, f := pickerAt(tc.depth, render.RGB(255, 170, 60))
-			row := rowText(f, 4, 30)
+			// render.RowText, NOT rowText(f, 0, 4, 30): the readout is
+			// a whole row and the 30 was pickerAt's own Caps.Cols.
+			// The bar read at :175 is a genuine span and stays one.
+			row := render.RowText(f.Cells, 4)
 			if !strings.Contains(row, tc.want) {
 				t.Errorf("readout %q does not contain %q", row, tc.want)
 			}
@@ -227,7 +222,10 @@ func TestColorPickerReadoutIsTierSpecific(t *testing.T) {
 	}
 	// Truecolor must NOT claim a palette index it isn't using.
 	_, _, f := pickerAt(render.TrueColor, render.RGB(255, 170, 60))
-	if row := rowText(f, 4, 30); strings.Contains(row, "xterm") {
+	// And the same read, for the stronger reason: this one asserts a
+	// SUBSTRING IS ABSENT, so a window that has drifted off the readout
+	// reads blanks and the claim passes untested.
+	if row := render.RowText(f.Cells, 4); strings.Contains(row, "xterm") {
 		t.Errorf("truecolor readout mentions a palette index: %q", row)
 	}
 }

@@ -1,11 +1,13 @@
 package components
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // Menu check items. The point of binding a handle rather than carrying a
@@ -25,17 +27,6 @@ func checkBarFixture(checked *prop.Property[bool]) *MenuBar {
 	}}}
 }
 
-func menuRows(f *gooey.Frame, b gooey.Rect) string {
-	var sb strings.Builder
-	for y := b.Y; y < b.Y+14; y++ {
-		for x := 0; x < 40; x++ {
-			sb.WriteRune(f.Cells.At(x, y).Rune)
-		}
-		sb.WriteByte('\n')
-	}
-	return sb.String()
-}
-
 func TestACheckItemDrawsItsBox(t *testing.T) {
 	on := prop.NewSource(false)
 	bar := checkBarFixture(on)
@@ -45,14 +36,14 @@ func TestACheckItemDrawsItsBox(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f, bar.Bounds())
+	got := frameText(f)
 	if !strings.Contains(got, "[ ] Wrap") {
 		t.Errorf("an unchecked item does not draw an empty box:\n%s", got)
 	}
 
 	on.Set(true)
 	f, _ = c.Frame()
-	got = menuRows(f, bar.Bounds())
+	got = frameText(f)
 	if !strings.Contains(got, "[x] Wrap") {
 		t.Errorf("after checking, the item does not draw a checked box:\n%s", got)
 	}
@@ -69,22 +60,37 @@ func TestAPlainItemAlignsWithItsCheckedNeighbour(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	rows := strings.Split(menuRows(f, bar.Bounds()), "\n")
-	var wrapAt, plainAt int = -1, -1
-	for _, r := range rows {
-		if i := strings.Index(r, "Wrap"); i >= 0 {
-			wrapAt = i
-		}
-		if i := strings.Index(r, "Plain"); i >= 0 {
-			plainAt = i
-		}
-	}
-	if wrapAt < 0 || plainAt < 0 {
-		t.Fatalf("could not find both items:\n%s", strings.Join(rows, "\n"))
-	}
-	if wrapAt != plainAt {
+	rows := frameRows(f)
+	// EVERY MATCH, not the last one — matchRows' own doc carries the
+	// reason. frameRows just widened from a fixed 14 rows to the whole
+	// frame, which is more rows for a second match to hide in.
+	const noItem = "This test compares ONE lead column against another, so " +
+		"an absent item leaves nothing to compare."
+	wrap := onlyMatch(t, rows, "Wrap", noItem)
+	plain := onlyMatch(t, rows, "Plain", noItem)
+	// MEASURED IN COLUMNS, AND COMPARED IN COLUMNS. strings.Index answers
+	// in BYTES, and the dropdown's border is '│' — three bytes for one
+	// column — so the offset printed 7 where the cell is 5, a diagnostic
+	// sending the reader to the wrong cell of a row this file now puts
+	// wide glyphs into. That much was already fixed; the COMPARISON was
+	// left in bytes, on the argument that both rows carry the same prefix
+	// so the offsets differ exactly when the columns do.
+	//
+	// That argument is true of today's fixture and is no longer
+	// CONSTRAINED. frameText reads the whole frame now, so what onlyMatch
+	// guarantees is that each word appears exactly once ANYWHERE ON
+	// SCREEN — not that both matches are dropdown rows sharing a border
+	// prefix. A byte comparison over two rows with different prefixes is
+	// then a column comparison only by coincidence, and
+	// docs/specs/2026-09-05-menu-item-icons.md:118 records this exact
+	// trap springing twice already in menu code. The two widths are
+	// computed for the message regardless, so comparing them costs
+	// nothing.
+	wrapCol := render.StringWidth(rows[wrap.row][:wrap.byteAt])
+	plainCol := render.StringWidth(rows[plain.row][:plain.byteAt])
+	if wrapCol != plainCol {
 		t.Errorf("the checked item's text starts at column %d and the plain one's at %d; "+
-			"a menu's lead column belongs to the menu", wrapAt, plainAt)
+			"a menu's lead column belongs to the menu", wrapCol, plainCol)
 	}
 }
 
@@ -101,7 +107,7 @@ func TestAMenuWithNoCheckItemsKeepsItsOldSpacing(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f, bar.Bounds())
+	got := frameText(f)
 	if strings.Contains(got, "[ ]") || strings.Contains(got, "[x]") {
 		t.Errorf("a menu with no check items drew a check column:\n%s", got)
 	}
@@ -167,14 +173,10 @@ func TestACheckedMenuIsWideEnoughForItsLabels(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	var sb strings.Builder
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 60; x++ {
-			sb.WriteRune(f.Cells.At(x, y).Rune)
-		}
-		sb.WriteByte('\n')
-	}
-	if got := sb.String(); !strings.Contains(got, "[x] Wrap long lines") {
+	// frameText, not a second hand-built window: a written-down extent
+	// reads short on the axis a dropdown moves along, and a short read
+	// comes back as phantom blanks rather than as an error.
+	if got := frameText(f); !strings.Contains(got, "[x] Wrap long lines") {
 		t.Errorf("the label is clipped; the dropdown was sized without the check column:\n%s", got)
 	}
 }
@@ -196,32 +198,106 @@ func TestTheAcceleratorUnderlineFollowsTheCheckColumn(t *testing.T) {
 	// underlined '[' to catch — it overwrites the '[' WITH a 'W'. A test
 	// that only looked for an underlined 'W' passed against exactly that,
 	// which a mutation run is how we found out.
-	// COLUMNS ARE RUNES, and strings.Index returns BYTES. The dropdown's
-	// border is '│', three bytes each, so a byte offset lands three cells
-	// right of the cell it names — which is how the first version of this
-	// assertion read column 7 of the row below and reported a perfectly
-	// correct underline as misplaced.
-	b := bar.Bounds()
-	rows := strings.Split(menuRows(f, b), "\n")
-	for dy, r := range rows {
-		bytesAt := strings.Index(r, "[x] Wrap")
-		if bytesAt < 0 {
-			continue
-		}
-		at := len([]rune(r[:bytesAt]))
-		// The check box must have SURVIVED, which is what discriminates
-		// an underline placed in the label from one placed over the box:
-		// Render SETS the rune as well as the style, so a wrong offset
-		// does not leave an underlined '[' behind — it overwrites the '['
-		// WITH the accelerator letter.
-		want := at + len([]rune("[x] "))
-		cell := f.Cells.At(want, b.Y+dy)
-		if !cell.Style.Underline || cell.Rune != 'W' {
-			t.Errorf("column %d of row %d is %q (underline=%v); the accelerator underline "+
-				"is not on the label's first letter", want, b.Y+dy, cell.Rune, cell.Style.Underline)
-		}
-		return
+	// COLUMNS ARE NOT RUNES AND NOT BYTES. strings.Index answers in
+	// BYTES and the dropdown's border is '│' — three bytes for one
+	// column — so the conversion off a byte offset is
+	// render.StringWidth. A rune count agrees with the column only while
+	// the prefix is narrow, which it is in this fixture and is not in
+	// TestACheckItemDrawsAWideLabelInItsOwnColumns thirty lines below.
+	//
+	// THE ROW INDEX IS THE ROW, because frameText reads the frame from
+	// its top. Anything bounds-relative agrees with it only while a
+	// MenuBar sits at y=0, which is the kind of accidental agreement a
+	// moved fixture breaks silently.
+	rows := frameRows(f)
+	// ZERO IS THIS TEST'S SUBJECT: the underline overwriting the check
+	// box leaves no intact row at all, so an absent match is the
+	// regression rather than a broken fixture.
+	hit := onlyMatch(t, rows, "[x] Wrap",
+		"The underline overwrote the check box, which is this test's subject.")
+	y := hit.row
+	at := render.StringWidth(rows[y][:hit.byteAt])
+	// The check box must have SURVIVED, which is what discriminates
+	// an underline placed in the label from one placed over the box:
+	// Render SETS the rune as well as the style, so a wrong offset
+	// does not leave an underlined '[' behind — it overwrites the '['
+	// WITH the accelerator letter.
+	want := at + render.StringWidth("[x] ")
+	cell := f.Cells.At(want, y)
+	if !cell.Style.Underline || cell.Rune != 'W' {
+		t.Errorf("column %d of row %d is %q (underline=%v); the accelerator underline "+
+			"is not on the label's first letter", want, y, cell.Rune, cell.Style.Underline)
 	}
-	t.Fatalf("no intact \"[x] Wrap\" row; the underline overwrote the check box:\n%s",
-		strings.Join(rows, "\n"))
+}
+
+// TestACheckItemDrawsAWideLabelInItsOwnColumns is the fixture frameText
+// could not hold before it read through render.SpanText, and it is the
+// half of #516 that matters: converting a reader proves nothing on its
+// own — the fixture it UNBLOCKS is what pins a claim.
+//
+// Measured, both readers, on the same frame:
+//
+//	SpanText  "│[x] Wrap 世界 │"
+//	Cell.Rune "│[x] Wrap 世�界� │"
+//
+// So an assertion written against the second failed for a reason that
+// was not the bug, and nobody wrote one — which is how every fixture in
+// this file came to be ASCII, and an ASCII fixture agrees with itself
+// under the rune rule and the column rule alike.
+//
+// THE BORDER IS THE ASSERTION, not the label. That the glyphs read back
+// is the reader working; that the right edge lands one column after them
+// is the DROPDOWN having sized itself in columns rather than runes. A
+// menu measuring "Wrap 世界" with len([]rune(...)) asks for a box two
+// columns narrower than its own text and clips the label, which is the
+// #357 failure this file's check column is otherwise full of ASCII
+// proof against.
+func TestACheckItemDrawsAWideLabelInItsOwnColumns(t *testing.T) {
+	bar := &MenuBar{Menus: []Menu{{
+		Title: "_View",
+		Items: []MenuItem{
+			{Text: "_Wrap 世界", Checked: prop.NewSource(true), Action: gooey.Command(func() {})},
+			{Text: "_Plain", Action: gooey.Command(func() {})},
+		},
+	}}}
+	c := gooey.NewComposer(bar, 40, 16)
+	t.Cleanup(c.Close)
+	c.Frame()
+	bar.Open(0, nil)
+	c.Frame()
+	f, _ := c.Frame()
+
+	rows := frameRows(f)
+	// "NO ROW MATCHED" AND "THE ROW IS WRONG" ARE DIFFERENT FAULTS, and
+	// the ifNone here is what keeps them apart. Without it a missing row
+	// reaches the comparison below as `the wide label's row reads ""`,
+	// which points at the menu's WIDTH when the answer is that the
+	// dropdown is not on the frame. That is one step removed from the
+	// class SpanText's own doc names: a read drifted off the surface
+	// comes back as blanks rather than short, so going short is not the
+	// signal either.
+	hit := onlyMatch(t, rows, "Wrap", fmt.Sprintf(
+		"The dropdown did not paint: none of the %dx%d frame's rows holds it, "+
+			"which is a different fault from the row being mis-sized.",
+		f.Cells.W, f.Cells.H))
+	// TRIMMED AT BOTH ENDS, because the claim is RELATIVE: the right
+	// border lands one column after the glyphs. TrimRight alone made the
+	// assertion depend on the dropdown starting at column 0, which holds
+	// only because _View is this fixture's one menu — add a menu before
+	// it, the ordinary way a menu fixture grows, and the row reads
+	// "        │[x] Wrap 世界 │", the comparison fails, and the message
+	// diagnoses the menu's WIDTH when the difference is its X. That is
+	// the fault-versus-fault distinction the missing-row diagnostic
+	// above already draws, left undrawn one line below it. If the lead
+	// column ever becomes part of the claim it gets its own assertion
+	// and its own sentence.
+	got := strings.TrimSpace(rows[hit.row])
+	if want := "│[x] Wrap 世界 │"; got != want {
+		t.Errorf("the wide label's row reads %q, want %q. A box narrower than "+
+			"its own text is the menu measuring runes where it owes columns; a "+
+			"row holding U+FFFD is this test's reader doing it instead. The "+
+			"comparison is trimmed at both ends, so the difference is the box "+
+			"and not where it starts.\n%s",
+			got, want, strings.Join(rows, "\n"))
+	}
 }

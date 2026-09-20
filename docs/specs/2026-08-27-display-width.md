@@ -116,7 +116,14 @@ generalises:
    **no fixture could contain a wide glyph and be asserted on.** The
    failure was unassertable by construction, not merely unasserted.
 
-`render.RowText` is the fix for (2), and the technique for (1) is to
+`render.RowText` is the fix for (2) — with `render.SpanText(b, x, y, w)`
+beside it for the REGION case, added in
+[#520](https://github.com/WonderForgeLabs/gooey/pull/520) once it was
+clear that a whole-row reader does not serve a test asserting on a dock
+header or a menu row's check box, and that each such test had therefore
+re-grown the private helper this section is about
+([#516](https://github.com/WonderForgeLabs/gooey/issues/516)). The
+technique for (1) is to
 build fixtures from two strings with the same **column** width and
 different rune counts — `"世界"` against `"abcd"` — and assert they
 measure alike. An ASCII fixture agrees with itself under either rule and
@@ -127,6 +134,219 @@ accelerator by searching the row for its rune could not fail, because the
 bug writes that rune *into the continuation cell* — the row holds two
 copies and the search matches the corrupted one, which is underlined.
 Locate by construction, never by searching for the value you expect.
+
+## How the readback contract was settled
+
+`SpanText`'s doc states a contract; this is where the rounds that
+produced it live, so the exported godoc says what the function promises
+rather than how the promise was arrived at. `RowText` and `SpanText` are
+public symbols in `render` and their comments are what a consumer reads
+on pkg.go.dev — a place for the contract, not for the history of the pull
+request that wrote it
+([#520](https://github.com/WonderForgeLabs/gooey/pull/520), raised in
+review of that PR).
+
+Four things were decided one at a time, each after the version before it
+shipped:
+
+1. **The span form at all.** `RowText` did not stop the private `row(b,
+   y)` helpers it was written to stop, because a test asserting on a dock
+   header, a menu row's check box or a status gutter is asking about a
+   REGION. Each package grew its own reader instead, and each wrote
+   `Continuation` as a literal rune — the defect `RowText` exists to
+   remove, one directory over.
+2. **`(x, y, w)`, not `(y, x, w)`.** It took `y` first for one commit.
+   All four parameters are `int`, so a transposed call compiles, and by
+   the padding rule it returns spaces rather than panicking: the fixture
+   stops matching and the message blames the component.
+3. **Off the buffer reads as blanks, and a nil buffer is part of that.**
+   `Buffer.At` already answers a space out of bounds, so padding is
+   inherited behaviour — but `Buffer.At` dereferences `b.W`, so a nil
+   buffer panicked *inside* `render` with `At` on the stack rather than
+   the caller. `RowText` needs its own nil guard for the same reason and
+   answers differently: a row of no buffer is empty, because there is no
+   width to pad to. `TerminalColumns` answers an out-of-range row with
+   `nil` rather than blanks, because a per-cell map has no blank cell to
+   report; that asymmetry is asserted rather than left to be noticed.
+4. **A non-positive width is `""`.** The enumeration in (3) named three
+   out-of-range shapes and nil, and never `w <= 0` — which matters
+   because a width can arrive as a DIFFERENCE — an extent minus an
+   origin, a remaining budget. (`components/box_test.go`'s `rowString`
+   computed one at the time; the round after this finding gave it
+   `SpanText`'s own signature, so the example is gone and the reason is
+   not.) The guard is mostly a restatement — for a
+   live buffer the loop returns `""` on its own, measured — with one
+   arrangement where it changes the answer: a nil buffer and a negative
+   width would hand `strings.Repeat` a count of `-1`, which panics. So
+   the width guard sits AHEAD of the nil guard, and that order is
+   load-bearing.
+
+The recurring shape across all four: **the empty string and a row of
+blanks both pass `!strings.Contains(got, …)` and "the row is empty".**
+Every one of these edges turns a reader that quietly returned nothing
+into a component that appears to have drawn nothing.
+
+The rest of what was settled is on the CALLER side of the same contract,
+and it is here rather than in the test comments for the reason above —
+the rule belongs next to the code, the account of which version was
+superseded does not:
+
+5. **A whole-row read is `RowText`, never `SpanText(b, 0, y, b.W)`.**
+   `RowText` *is* that expression, and it carries a nil guard the
+   hand-rolled loops do not. Three converted readers were left spelling
+   it the long way in the commit that wrote the rule down, which is the
+   same defect the sweep is about one level up.
+
+   **And the long way outlives the loop, because a wrapper takes the
+   width too.** Two more whole-row reads survived the conversion as
+   `rowText(f, 0, y, <literal>)`, each literal a copy of a width
+   declared dozens of lines above it — `components/layout_test.go`'s
+   `20` (the composer at the top of that test) and
+   `components/colorpicker_test.go`'s `30` (`pickerAt`'s own
+   `Caps.Cols`). Both assertions are ABSENCE claims —
+   `TrimSpace(row) != ""` and `!strings.Contains(row, "xterm")` — so the
+   phantom blanks a widened fixture would hand them do not fail, they
+   pass. They read `render.RowText(f.Cells, y)` now. What let them
+   survive is that `components/readback_test.go`'s header claimed all
+   three readers derive their window from the frame; `rowText` does not
+   and cannot, so the header now states the rule it actually has, and
+   this item is that rule.
+6. **A wrapper with the same signature is not worth its own comment.**
+   `components/box_test.go`'s `rowString` ended up as `SpanText`'s
+   parameters passed straight through, under seventeen lines explaining
+   that a wrapper taking a different *meaning* for the same position is a
+   quiet trap. That is an argument for deleting the wrapper, and it was
+   deleted. `rowText` earns its keep because it maps `*gooey.Frame` to
+   `f.Cells`; it takes `SpanText`'s order for the same reason. It lived
+   in `components/colorpicker_test.go` when this item was written and
+   lives in `components/readback_test.go` now, per item 7 — one helper
+   named by two files four paragraphs apart is the staleness item 7 is
+   about, and this is the paragraph a reader consults when deciding
+   whether the next directory's wrapper is worth keeping. A wrapper that
+   earns its keep has to be USED, though: five sites in the same package
+   went on calling `SpanText(f.Cells, 0, 0, n)` beside it, so the rule
+   and the package disagreed in the commit that stated the rule.
+
+   **What item 5 and this item jointly decided**, which this paragraph
+   read as "either the mapping is worth a wrapper everywhere or it is
+   worth one nowhere" until review of #520 — a conclusion item 5 exists
+   to refute, and one the branch's own later rounds reversed: a whole
+   row is `render.RowText`, a caller-chosen region is `rowText`, and the
+   wrapper is worth keeping only for the `*gooey.Frame` → `f.Cells`
+   mapping that `render` cannot make for it. Four of those five sites
+   were whole-row reads and went to `RowText`; that is item 5 applying,
+   not the rule failing. "They go through `rowText` now" was left
+   standing after it, false for four of the five, in the document the
+   remaining directories of #516 read.
+7. **A whole-BUFFER read is `render.BufferText`, and it had no name.**
+   Removing the width parameters in item 5 left `components`' `dump`,
+   `menuRows` and `screen` as byte-identical eight-line loops, each under
+   its own comment explaining continuation markers and where the window
+   comes from — and the same loop is written out in **many** more files
+   outside it. How many is deliberately not recorded, and the reason is
+   this item's own history: it said TWO, then ONE, and both were wrong.
+   ONE named `apps/scene`'s `containsRow` as the only copy outside
+   `components/`, and the command below answered with an order of
+   magnitude more, spread across `cmd/`, `handlers/`, `markup/` and
+   `apps/`. `containsRow` is not even in that answer: it is a row SEARCH
+   returning a bool rather than a dump, which makes it the least
+   representative member of the set it was offered as the whole of.
+   Derive it instead — the output is the claim, and no number from it
+   belongs in this paragraph:
+
+   ```sh
+   # a row-major walk BUILDING A STRING FROM Rune, one line per row
+   grep -rln --include='*_test.go' --exclude-dir=vendor 'At([^)]*)\.Rune' . |
+     xargs grep -ln 'WriteRune\|WriteString' | xargs grep -ln "'\\\\n'\|\"\\\\n\""
+   ```
+
+   Two of what that finds are byte-identical to the helpers collapsed
+   here AND take the extent as written-down ints, which is item 5's
+   decay mode in the same declaration: `markup/usercontrol_test.go`'s
+   `renderToString(t, w, cols, rows)` and `handlers/exec/exec_test.go`'s
+   `frameString(f, cols, rows)`.
+
+   The earlier correction stands on its own terms and is kept: `apps/wysiwyg`'s
+   `onScreen` already reads through `RowText`, and the other whole-plane
+   walk in that file is not a readback at all — it inspects every cell
+   for a control character and must keep seeing `render.Continuation`,
+   so converting it would destroy what it checks. A count of copies is
+   the kind of claim this document keeps having to correct; the
+   discriminating question is whether a loop is BUILDING A STRING FROM
+   `Rune`, not whether it walks the plane. `BufferText` sits beside
+   `RowText`, and the remaining directories of
+   [#516](https://github.com/WonderForgeLabs/gooey/issues/516) have a name
+   to call rather than a loop to copy. Its trailing newline is on every
+   row *including the last*, so a dump missing its final row is not a
+   prefix of the correct one — which is what keeps a `strings.Contains`
+   assertion over one honest.
+
+   **One delegation, not one per file — and one FILE, not one per
+   consumer.** Making them one-liners left `dump` and `menuRows` as
+   byte-identical DECLARATIONS in `components`: the duplication moved
+   down a level rather than being removed. Collapsing them turned up a
+   FOURTH copy the sweep could not have found, `menugeom_test.go`'s own
+   `frameText(f, w, h)` — the same loop, already going through
+   `RowText`, so no grep for the cell-reader bug matched it, and it
+   ignored `w` outright, which is the written-down extent of item 5
+   decaying in place rather than merely risking it.
+
+   Naming the survivor for what it answers was half the repair; it still
+   LIVED in the first file that wanted it, under a doc block about
+   dropdowns. That placement is the mechanism behind the staleness, not
+   a tidiness matter: while the explanation for a shared helper sits in
+   one consumer, every other consumer retells it in its own comments and
+   the copies drift apart — six of them in `menucheck_test.go` went on
+   naming `menuRows` after it was deleted. `components/readback_test.go`
+   now holds one of each — the readers it declares ARE the inventory, so
+   that adding one does not falsify a list written elsewhere — with the
+   continuation-marker reasoning stated once at the top, so the next
+   directory of the sweep copies a file rather than a loop.
+
+   **That header's own window paragraph decayed twice, one round
+   apart**, which is the account this item holds rather than the file.
+   It opened as "for `frameText` and `screen`, which is the pair this
+   paragraph is about"; `75ee14b` widened the opening clause to "every
+   reader whose extent is the FRAME's" and left the closing clause
+   reading "neither of those two now takes a width", so a paragraph
+   whose point is that counts decay closed on a count, two sentences
+   later, already wrong by one. The same commit's "Each took its extent
+   as parameters" was wrong in the other direction: `frameRows` is one
+   of the readers the widened clause covers and arrived in `4f0b381`
+   with the signature it has, never having taken an extent. Both are
+   stated by property now. The rule that survives is the one-line one —
+   a reader whose window is the buffer's own takes no width it was not
+   given by the thing it is reading — and the history of how it was got
+   wrong belongs here, where a reader of the file cannot mistake it for
+   a claim about the code in front of them.
+
+   **The last one out had the most call sites.** `row(b, y)` — a whole
+   row of a `*render.Buffer` with trailing blanks trimmed — stayed in
+   `components/composer_test.go` under its own retelling of the
+   continuation-marker reasoning while being called from
+   `background_test.go`, `buttonchrome_test.go`,
+   `canvas_bg_restore_test.go` and more, so the file that stated *"one
+   of each, in one file"* was three sentences from a counterexample with
+   more consumers than any helper it listed. That is the shape to
+   distrust: the helper everyone uses is the one nobody notices is
+   somewhere odd. It also sits one letter from `rowText` and agrees with
+   it about nothing — different receiver, whole row against a span,
+   trimmed against padded — which is the trap item 6 names, one level
+   up, so the distinguishing behaviour is now stated where both
+   declarations are visible at once.
+8. **One row search, not one per test.** `components/menucheck_test.go`
+   grew three copies of "every row holding a needle, and fatal unless
+   exactly one", two of which redeclared the same local `match` struct
+   and cross-referenced each other in comments written to keep the copies
+   in sync. `matchRows` and `onlyMatch` are the one spelling, over a
+   `rowMatch` rather than a bare `match` — a package-scope test type in a
+   package with dozens of test files owes the next file a hint rather
+   than a redeclaration error; the
+   zero-match diagnosis stays per-test, because "no row matched" means
+   the regression under test in one of them and "the dropdown did not
+   paint" in another. Two of the three copies also took the FIRST hit, so
+   a second matching row was resolved by iteration order while every
+   claim they make is positional.
 
 ## Rejected alternatives
 
