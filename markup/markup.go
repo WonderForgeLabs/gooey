@@ -1273,6 +1273,25 @@ func applyTooltipShorthand(e Element, w gooey.Component, ctx *Context) error {
 // resolves to a live handle at build time, lvalue semantics like every
 // other binding.
 func applyLayout(e Element, w gooey.Component, ctx *Context) error {
+	// NOTHING WAS BUILT IS ITS OWN SENTENCE. A Build returning
+	// (nil, nil) hands this function a nil gooey.Component, and the
+	// type assertion below answers the same ok=false a real
+	// Layout-less value does — so the refusal said "embed gooey.Base
+	// in what <Nada> builds" about an element that builds nothing, a
+	// remedy naming an edit that cannot be made. Scoped to documents
+	// that actually wrote a layout attribute, because that is the
+	// refusal this arm belongs to; a nil Build with no such attribute
+	// is somebody else's diagnosis. Raised in review of #486.
+	if w == nil {
+		named := layoutNamesIn(e.Attrs)
+		if len(named) == 0 {
+			return nil
+		}
+		return fmt.Errorf("markup: <%s %s=%q>: this element's Build returned no "+
+			"component at all, so %s can be applied to nothing. Fix <%s>'s "+
+			"Build to return a component or an error",
+			e.Name, named[0], e.Attrs[named[0]], strings.Join(named, ", "), e.Name)
+	}
 	hl, ok := w.(gooey.HasLayout)
 	if !ok {
 		// A COMPONENT WITH NO LAYOUT REFUSES THE ATTRIBUTES RATHER THAN
@@ -1298,11 +1317,32 @@ func applyLayout(e Element, w gooey.Component, ctx *Context) error {
 		// The collision is not hypothetical: Height sits in both
 		// tables on <Sparkline> in this tree today. Raised in review
 		// of #486.
+		//
+		// AND A SURFACE THAT IS NOT ENUMERABLE CANNOT SETTLE IT AT ALL,
+		// which is why the whole refusal is gated on AttrsKnown. The
+		// exemption above reads spec.Attrs, and that set is empty for a
+		// Context.Elements def with Known:false or Opaque and does not
+		// resolve at all for a Context.Components builder — the two
+		// surfaces the refusal was NEW for. Measured in review of #486
+		// round 12: a Known:false def whose Build reads
+		// e.Attrs["Width"] was refused with "Width would be accepted
+		// and never applied" while the builder demonstrably read "7".
+		//
+		// "Accepted and never applied" is a claim about who reads the
+		// name, and only an exhaustive Attrs makes it checkable.
+		// AttrsKnown is exactly that field, and gating on it is the
+		// rule checkAttrs already follows for the same reason. The
+		// silent drop stays open on the non-enumerable surfaces, and
+		// that is the honest trade: a false load error whose remedy
+		// breaks a working element is worse than the drop it replaces.
+		// Tracked in #550.
+		spec, specOK := ctx.spec(e.Name)
+		if !specOK || !spec.AttrsKnown {
+			return nil
+		}
 		declared := map[string]bool{}
-		if spec, ok := ctx.spec(e.Name); ok {
-			for _, a := range spec.Attrs {
-				declared[a.Name] = true
-			}
+		for _, a := range spec.Attrs {
+			declared[a.Name] = true
 		}
 		var dropped []string
 		for k := range e.Attrs {
@@ -1426,6 +1466,19 @@ func layoutInt(l *gooey.Layout, name string) *int {
 		return &l.Top
 	}
 	return nil
+}
+
+// layoutNamesIn is every layout-only name in attrs, sorted so a refusal
+// reads the same on every run.
+func layoutNamesIn(attrs map[string]string) []string {
+	var out []string
+	for k := range attrs {
+		if layoutOnlyName(k) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // layoutOnlyName reports whether name is in the universal LAYOUT row or

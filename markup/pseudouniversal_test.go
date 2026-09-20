@@ -712,16 +712,24 @@ func TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName(t *testing.T) {
 			"breaks the element", err)
 	}
 
-	// AND THE Context.Components SHAPE, which the catalog gate never
-	// reaches: its spec does not resolve, so checkAttrs returns early
-	// and applyLayout is the only gate there is. That makes the refusal
-	// WIDER than the AxesKnown arm this test is named for — a host app
-	// with a custom component that does not embed gooey.Base turns
-	// <LogPane Margin="2"/> from "loads and drops" into a load error.
-	// It is the silent drop being closed rather than a new restriction,
-	// and it is pinned here because the reference documents it as a
-	// breaking change and a documented claim with no arm is how the
-	// scope drifts back. Raised in review of #486.
+	// AND THE NON-ENUMERABLE SURFACES ARE OUT OF THE REFUSAL, which is
+	// this arm's second answer in two rounds and the first one was
+	// wrong. Round 11 widened the refusal to reach a Context.Components
+	// builder, on the grounds that its spec does not resolve so
+	// applyLayout is the only gate there is. Round 12 measured what
+	// that costs: the declared-name exemption reads spec.Attrs, which
+	// is empty for a Known:false/Opaque def and unresolvable for a
+	// Components builder — so a builder that READ e.Attrs["Width"] was
+	// told the name "would be accepted and never applied" and advised
+	// to remove it. "Accepted and never applied" is a claim about who
+	// reads the name, and only an exhaustive Attrs makes it checkable;
+	// AttrsKnown is exactly that field.
+	//
+	// So the refusal is gated on AttrsKnown and the silent drop stays
+	// open here, tracked in #550. It is pinned as an ACCEPTANCE rather
+	// than left unasserted, because "this loads" is the claim the
+	// reference now makes and an undocumented gate is how it drifts
+	// back. Raised in review of #486.
 	host := &Context{Components: map[string]Builder{
 		"LogPane": func(e Element, ctx *Context) (gooey.Component, error) {
 			return layoutlessComponent{}, nil
@@ -731,23 +739,59 @@ func TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName(t *testing.T) {
 		t.Fatal("the LogPane spec resolves, so checkAttrs is not skipped and " +
 			"this arm is not measuring the Components path")
 	}
-	err = mustFail(t, host, `<Gooey><LogPane Margin="2"/></Gooey>`)
-	for _, want := range []string{"Margin", "LogPane"} {
+	if _, err := Build([]byte(`<Gooey><LogPane Margin="2"/></Gooey>`), host); err != nil {
+		t.Errorf("<LogPane Margin=\"2\"/> is refused (%v). Its surface is not "+
+			"enumerable, so the loader cannot know whether the builder reads "+
+			"Margin itself — and a refusal whose remedy is \"remove it\" "+
+			"breaks the element when it does", err)
+	}
+
+	// AND THE SAME FOR A Known:false DEF, the other non-enumerable
+	// surface, with a builder that demonstrably consumes the name.
+	var seen string
+	opaque := &Context{Elements: map[string]*ElementDef{"Widthless": {
+		Name:   "Widthless",
+		Opaque: "the generator could not enumerate this",
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			seen = e.Attrs["Width"]
+			return layoutlessComponent{}, nil
+		},
+	}}}
+	if _, err := Build([]byte(`<Gooey><Widthless Width="7"/></Gooey>`), opaque); err != nil {
+		t.Errorf("<Widthless Width=\"7\"/> is refused (%v) and its Build read "+
+			"%q — the refusal's claim that the name is never applied is "+
+			"false, and its remedy breaks the element", err, seen)
+	}
+	if seen != "7" {
+		t.Errorf("the fixture's Build saw Width=%q, want \"7\" — this arm is "+
+			"about a builder that CONSUMES the name, so it proves nothing "+
+			"if the build never ran", seen)
+	}
+
+	// AND A BUILD THAT RETURNS NOTHING GETS ITS OWN SENTENCE. A nil
+	// gooey.Component fails the HasLayout assertion exactly as a real
+	// Layout-less value does, so the refusal advised embedding
+	// gooey.Base "in what <Nada> builds" — an edit that cannot be made,
+	// because nothing was built. Raised in review of #486.
+	nada := &ElementDef{Name: "Nada", Known: true,
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			return nil, nil
+		}}
+	_, err = Build([]byte(`<Gooey><Nada Margin="2"/></Gooey>`),
+		&Context{Elements: map[string]*ElementDef{"Nada": nada}})
+	if err == nil {
+		t.Fatal("<Nada Margin=\"2\"/> loaded and built no component at all")
+	}
+	if strings.Contains(err.Error(), "embed gooey.Base") {
+		t.Errorf("a Build returning (nil, nil) is diagnosed as a component "+
+			"without a Layout:\n\t%v\nThere is no component, so the remedy "+
+			"names an edit nobody can make", err)
+	}
+	for _, want := range []string{"Margin", "Nada", "returned no component"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the Components-path refusal does not name %s:\n\t%v", want, err)
+			t.Errorf("the nil-Build refusal does not name %s:\n\t%v", want, err)
 		}
 	}
-}
-
-// mustFail builds src and requires an error, returning it.
-func mustFail(t *testing.T, ctx *Context, src string) error {
-	t.Helper()
-	_, err := Build([]byte(src), ctx)
-	if err == nil {
-		t.Fatalf("%s loaded, and the component it builds has no Layout — the "+
-			"layout attribute was accepted and dropped", src)
-	}
-	return err
 }
 
 // TestAMisplacedPseudoElementReportsItsPlacement is finding 1 of #486's
