@@ -8,8 +8,11 @@ import (
 	"image"
 	gopng "image/png"
 	"io/fs"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -188,9 +191,466 @@ var rowPartition = map[string]struct {
 		"Context.Declared in markup.go and the gap is tracked as #512"},
 }
 
+// TestEveryPartitionTableIsRegistered derives the set of partition
+// tables from the package source and compares it against
+// partitionTables, so a table declared and not registered is RED rather
+// than a nil *regexp.Regexp waiting in partitionWords.
+//
+// The check partitionTables' own doc asks for. Relocating the
+// enumeration beside the tables made adding one a single edit at the
+// declaration site — better than a literal in another file, and still a
+// convention: a `var controlPartition = map[string]struct{inherit bool;
+// why string}{…}` declared here and left out of the literal gets no
+// pattern, partitionRunSide dereferences nil on it, and the panic
+// aborts the binary before any guard prints. Raised in review of #543.
+//
+// BY SHAPE, NOT BY NAME SUFFIX. The thing that makes a map one of these
+// tables is its TYPE — the same anonymous struct the `partition` alias
+// names — so that is what the walk matches. A suffix rule would miss a
+// table named something else and would claim one that merely ends in
+// "Partition".
+//
+// go/ast rather than reflection, for the reason contextFields gives:
+// CLAUDE.md's first invariant is that core carries none, and the
+// declaration is right there in the source.
+func TestEveryPartitionTableIsRegistered(t *testing.T) {
+	source := partitionTablesInSource(t)
+	declared := slices.Sorted(maps.Keys(source))
+	if len(declared) < 2 {
+		t.Fatalf("the source walk found %v, and this package declares at least "+
+			"boundaryPartition and rowPartition — the walk is broken, and the "+
+			"comparison below would pass over nothing", declared)
+	}
+	registered := map[string]bool{}
+	for _, tb := range partitionTables() {
+		registered[tb.name] = true
+		// AND THE NAME NAMES THAT MAP, which the name sets above
+		// cannot settle. partitionTables pairs a hand-written string
+		// with a map variable, and a copy-paste row like
+		// {"rowPartition", boundaryPartition} passes both arms of this
+		// test (the name sets match) and the key-set guard (a table
+		// compared against itself) while partitionWords builds no
+		// pattern for the real table's keys — the exact hole this
+		// change closes, reopened by a typo. The `why` strings are
+		// what discriminate it, and the AST walk is already standing
+		// on the literal. Raised in review of #543.
+		want, ok := source[tb.name]
+		if !ok {
+			continue // reported by the arm below
+		}
+		// UNREADABLE IS ITS OWN ANSWER, and it has to be, because the
+		// comparison below has exactly one verdict. A spelling this
+		// walk does not parse — a keyed {inherit: true, why: "…"}
+		// with the why built from something other than string
+		// literals, or a const key — used to arrive as the empty why
+		// and be reported as a pairing fault, sending the reader to
+		// partitionTables, which had nothing wrong with it. That is
+		// the defect class this file's own header is about, inside
+		// the guard. Raised in review of #543.
+		// AND THE DECLARATION ITSELF CAN BE UNREADABLE, which is not a
+		// loud version of the arm below but a different verdict: zero
+		// entries AND zero unread keys, so the key loop finds no source
+		// entry for anything and passes over the whole table. Measured
+		// in review of #543 — a `var lazy partition` populated in
+		// init() with every why replaced passed this test and the
+		// key-set guard. A guard certifying something it did not check
+		// is this file's own subject.
+		if !want.readable {
+			t.Errorf("%s is declared in a shape partitionTablesInSource "+
+				"cannot read — no composite literal to walk — so NONE of its "+
+				"entries are compared and registering it here buys nothing. "+
+				"Declare it as a literal, or teach the walk that shape",
+				tb.name)
+			continue
+		}
+		if want.unreadKeys > 0 {
+			t.Errorf("%d of %s's entries are spelled in a way "+
+				"partitionTablesInSource cannot read the KEY of, so they are "+
+				"missing from the comparison below and this table is only "+
+				"partly checked. Teach exprText that spelling, or write the "+
+				"key as a plain string literal", want.unreadKeys, tb.name)
+		}
+		// SORTED, so a red tree says the same thing twice. The loop
+		// breaks on the first mismatch and tb.part is a map, so map
+		// iteration order made the key this message names change
+		// between two runs of the same failure — in a file whose
+		// declared purpose is landing the reader on the cause in one
+		// step. Raised in review of #543.
+		for _, key := range slices.Sorted(maps.Keys(tb.part)) {
+			entry := tb.part[key]
+			got, ok := want.entries[key]
+			if !ok {
+				continue // the unreadKeys arm above owns this
+			}
+			if !got.read {
+				t.Errorf("the %q entry of %s is spelled in a way "+
+					"partitionTablesInSource cannot read the why of, so it "+
+					"cannot be compared. Teach partitionWhy that spelling, "+
+					"or write the why as a string literal or a + chain of "+
+					"them — this is NOT a pairing fault", key, tb.name)
+				break
+			}
+			if got.why != entry.why {
+				t.Errorf("partitionTables registers %s, but the map it hands "+
+					"over answers %q for %q where the declaration of %s in "+
+					"this package's source says %q. The name is paired with "+
+					"the wrong map", tb.name, entry.why, key, tb.name, got.why)
+				break
+			}
+		}
+	}
+	for _, name := range declared {
+		if !registered[name] {
+			t.Errorf("%s is declared in this package and not returned by "+
+				"partitionTables, so partitionWords builds no pattern for its "+
+				"keys and partitionRunSide nil-dereferences on the first one "+
+				"it is handed — a panic in whichever test runs first, naming "+
+				"nothing. Add it to partitionTables", name)
+		}
+	}
+	// AND NOTHING REGISTERED HAS GONE AWAY, which is the direction a
+	// deletion breaks: partitionTables would name a variable that no
+	// longer compiles, so this arm can only fire while it does.
+	for name := range registered {
+		if !slices.Contains(declared, name) {
+			t.Errorf("partitionTables names %s, which the source walk does not "+
+				"find — the matcher below it has stopped recognising a table "+
+				"it is meant to cover", name)
+		}
+	}
+}
+
+// partitionTablesInSource is every package-level map in this package
+// whose value type is the partition struct, by name, with each one's
+// declared key -> why text.
+//
+// THE why TEXT IS WHY THIS RETURNS MORE THAN NAMES. Key sets cannot
+// discriminate a name paired with the wrong map — the key-set guard
+// forces every table's keys equal — so the reasons are the only field
+// that differs between two tables, and they are right there in the
+// literal. Raised in review of #543.
+//
+// EVERY .go FILE, not just the tests. The glob was *_test.go, which
+// made the doc above wider than the walk: a partition table newly
+// declared in a non-test `package markup` file was invisible, so
+// `registered` never had to contain it and nothing went red — the
+// exact silent case the unregistered-table arm exists to catch.
+// (A table MOVED out of a test file was already caught, by the third
+// arm: partitionTables still names it and the walk stops finding it.)
+// Reproduced in review of #543: the same probe table reddens the test
+// as markup/zzprobe_test.go and is silent as markup/zzprobe.go.
+//
+// PACKAGE markup ONLY, and that filter is load-bearing rather than
+// tidiness — it is also what makes the wider glob safe. The glob
+// reaches markup/thirdparty_test.go, which is `package markup_test`,
+// and a partition-shaped var declared there would be reported as
+// unregistered and COULD NOT BE FIXED, because partitionTables() is in
+// `package markup` and cannot name it. Nothing is shaped that way
+// today, which is what makes it the silent kind. Raised in review of
+// #543.
+func partitionTablesInSource(t *testing.T) map[string]partitionSource {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("globbing this package: %v", err)
+	}
+	out := map[string]partitionSource{}
+	for _, f := range files {
+		file, err := parser.ParseFile(gotoken.NewFileSet(), f, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("%s does not parse: %v", f, err)
+		}
+		if file.Name.Name != "markup" {
+			continue
+		}
+		maps.Copy(out, partitionTablesIn(file))
+	}
+	return out
+}
+
+// partitionTablesIn is the per-file half of the walk above, split out
+// so a FIXTURE can drive it.
+//
+// Four of the branches below and in the helpers they call are
+// unexercised by this package's two real tables — the keyed `why`
+// spelling, the `partition` type alias, a var with a declared type, and
+// every unreadable-key path — so loosening any of them changes nothing
+// in the tree and the next edit is unguarded. Each was verified by hand
+// mutation when it was written, which is the right measurement in the
+// wrong place. `TestThePartitionSourceReaderSeesWhatItClaimsTo`
+// supplies the corpus the tree does not, the way
+// `TestTheZeroedTopMatcherSeesOnlyAReleasedSlot` does one module over.
+// Raised in review of #543.
+func partitionTablesIn(file *ast.File) map[string]partitionSource {
+	out := map[string]partitionSource{}
+	for _, d := range file.Decls {
+		g, ok := d.(*ast.GenDecl)
+		if !ok || g.Tok != gotoken.VAR {
+			continue
+		}
+		for _, sp := range g.Specs {
+			vs, ok := sp.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, n := range vs.Names {
+				if !isPartitionLiteral(typeOfSpec(vs, i)) {
+					continue
+				}
+				src := partitionSource{
+					entries:  map[string]partitionEntrySource{},
+					readable: true,
+				}
+				if i >= len(vs.Values) {
+					src.readable = false
+					out[n.Name] = src
+					continue
+				}
+				cl, ok := vs.Values[i].(*ast.CompositeLit)
+				if !ok {
+					src.readable = false
+					out[n.Name] = src
+					continue
+				}
+				for _, el := range cl.Elts {
+					kv, ok := el.(*ast.KeyValueExpr)
+					if !ok {
+						src.unreadKeys++
+						continue
+					}
+					key, kok := exprText(kv.Key)
+					if !kok {
+						// A KEY THIS WALK CANNOT READ IS COUNTED,
+						// not dropped. Dropped, it was simply
+						// absent from the map below, and the
+						// comparison read that absence as the
+						// empty why — a PAIRING fault, which is a
+						// different and false accusation. Raised
+						// in review of #543.
+						src.unreadKeys++
+						continue
+					}
+					why, wok := partitionWhy(kv.Value)
+					src.entries[key] = partitionEntrySource{why: why, read: wok}
+				}
+				out[n.Name] = src
+			}
+		}
+	}
+	return out
+}
+
+// partitionSource is one table as the source walk read it.
+//
+// THE BOOLS ARE THE POINT. "unreadable" and "empty" are different
+// answers, and folding them into one string made every spelling this
+// walk does not parse arrive at the comparison as an empty why — i.e.
+// as a PAIRING fault, which is false and sends the reader to
+// partitionTables. Raised in review of #543.
+type partitionSource struct {
+	entries map[string]partitionEntrySource
+	// unreadKeys is entries whose KEY this walk could not read, which
+	// cannot be recorded in entries because there is no key to record
+	// them under.
+	unreadKeys int
+	// readable is whether the DECLARATION itself is one this walk can
+	// read at all, which unreadKeys cannot say: a var with no
+	// initializer, or one initialised from something that is not a
+	// composite literal, yields zero entries and zero unread keys. That
+	// pair used to register as a table checked against nothing —
+	// measured, a table populated in init() with every why replaced
+	// passed both guards — which is this file's own subject one
+	// spelling further out. Raised in review of #543.
+	readable bool
+}
+
+// partitionEntrySource is one entry's why text and whether the literal
+// spelling it came from is one this walk understands.
+type partitionEntrySource struct {
+	why  string
+	read bool
+}
+
+// partitionWhy is the `why` text of one partition entry, with the
+// file's own line continuations joined back together, and whether the
+// literal was a spelling this reader understands.
+//
+// BOTH SPELLINGS, keyed and positional, because gofmt accepts both and
+// {inherit: true, why: "…"} is not a mistake — it read only the
+// positional {true, "…"} until review of #543 wrote one existing entry
+// the other way and watched a correctly paired table be reported as
+// mis-paired.
+func partitionWhy(e ast.Expr) (string, bool) {
+	cl, ok := e.(*ast.CompositeLit)
+	if !ok {
+		return "", false
+	}
+	keyed := false
+	for _, el := range cl.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		keyed = true
+		if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "why" {
+			return concatText(kv.Value)
+		}
+	}
+	// A KEYED LITERAL THAT OMITS why HAS ONE, and it is "". Falling
+	// through to the positional arm reported {inherit: true} as
+	// UNREADABLE — the same misdiagnosis the (string, bool) split was
+	// made to remove, one spelling further in, and with a message
+	// offering two remedies that do not apply: there is no spelling to
+	// teach and no string to write. The argument for reading the keyed
+	// form at all — gofmt accepts it and writing one is not a mistake —
+	// covers omitting a zero-valued field verbatim. Raised in review of
+	// #543.
+	if keyed {
+		return "", true
+	}
+	// AND {} IS THE SAME ANSWER, reached from the other side. An empty
+	// literal sets no keys, so `keyed` stays false and the positional
+	// arm's arity test fires — reporting the zero value of the struct,
+	// which is legal gofmt-clean Go for `inherit: false, why: ""`, as a
+	// spelling this walk cannot parse. The paragraph above applies to it
+	// verbatim: there is nothing to teach and no string to write. Raised
+	// in review of #543.
+	if len(cl.Elts) == 0 {
+		return "", true
+	}
+	if len(cl.Elts) != 2 {
+		return "", false
+	}
+	return concatText(cl.Elts[1])
+}
+
+// concatText unquotes a string literal, or a `"a" + "b" + …` chain of
+// them — the shape a 72-column comment width forces on every reason
+// long enough to be worth reading — and reports whether every leaf was
+// one it could read.
+func concatText(e ast.Expr) (string, bool) {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		s, err := strconv.Unquote(v.Value)
+		if err != nil {
+			return "", false
+		}
+		return s, true
+	case *ast.BinaryExpr:
+		if v.Op != gotoken.ADD {
+			return "", false
+		}
+		x, xok := concatText(v.X)
+		y, yok := concatText(v.Y)
+		return x + y, xok && yok
+	}
+	return "", false
+}
+
+// exprText is the unquoted value of a BasicLit string key, and whether
+// the expression was one: a const key, or any other expression, is not
+// something this walk can resolve, and saying so is the caller's job.
+func exprText(e ast.Expr) (string, bool) {
+	lit, ok := e.(*ast.BasicLit)
+	if !ok {
+		return "", false
+	}
+	s, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// typeOfSpec is the type expression for the i'th name in a var spec:
+// the declared type when there is one, otherwise the initializer's own
+// composite-literal type.
+func typeOfSpec(vs *ast.ValueSpec, i int) ast.Expr {
+	if vs.Type != nil {
+		return vs.Type
+	}
+	if i < len(vs.Values) {
+		if cl, ok := vs.Values[i].(*ast.CompositeLit); ok {
+			return cl.Type
+		}
+	}
+	return nil
+}
+
+// isPartitionLiteral reports whether e is map[string]struct{inherit
+// bool; why string} — spelled out or through the partition alias.
+func isPartitionLiteral(e ast.Expr) bool {
+	if id, ok := e.(*ast.Ident); ok && id.Name == "partition" {
+		return true
+	}
+	m, ok := e.(*ast.MapType)
+	if !ok {
+		return false
+	}
+	if id, ok := m.Key.(*ast.Ident); !ok || id.Name != "string" {
+		return false
+	}
+	st, ok := m.Value.(*ast.StructType)
+	if !ok || st.Fields == nil || len(st.Fields.List) != 2 {
+		return false
+	}
+	want := []struct{ name, typ string }{{"inherit", "bool"}, {"why", "string"}}
+	for i, fl := range st.Fields.List {
+		if len(fl.Names) != 1 || fl.Names[0].Name != want[i].name {
+			return false
+		}
+		id, ok := fl.Type.(*ast.Ident)
+		if !ok || id.Name != want[i].typ {
+			return false
+		}
+	}
+	return true
+}
+
+// namedPartition is a partition table with its NAME, because every
+// consumer of the set either iterates them all or has to say which one
+// is at fault, and a map has no name to print.
+type namedPartition struct {
+	name string
+	part partition
+}
+
+// partitionTables is EVERY partition table, declared beside them and
+// read by everything that has to cover all of them — partitionWords'
+// union and `TestThePartitionTablesShareOneKeySet` today.
+//
+// It exists because the union was a two-element literal in
+// referencedoc_test.go, which moved the coupling rather than removing
+// it: a third table declared here and left out of that literal
+// reintroduces the nil *regexp.Regexp partitionRunSide dereferences,
+// with the same symptom (a panic in whichever test is declared first)
+// and nothing red to name it. That is the enumerated-list shape
+// CLAUDE.md refuses, at a two-element sample.
+//
+// IT IS STILL A LITERAL, and that is a convention rather than a check —
+// so `TestEveryPartitionTableIsRegistered` derives the set from the
+// package source, the way `TestTheControlBoundaryPartitionsEveryContextField`
+// derives Context's fields, and goes red when a table is declared here
+// and left out of this function. Raised in review of #543, twice: the
+// first round relocated the enumeration and the doc above said why
+// relocating is not enough.
+func partitionTables() []namedPartition {
+	return []namedPartition{
+		{"boundaryPartition", boundaryPartition},
+		{"rowPartition", rowPartition},
+	}
+}
+
 // TestTheControlBoundaryPartitionsEveryContextField is the derived half:
-// the partition above must account for exactly the exported fields
+// boundaryPartition must account for exactly the exported fields
 // Context declares, no more and no fewer.
+//
+// NAMED, NOT "the partition above". It was the declaration above when
+// this was written and is 294 lines up now, with rowPartition, a test,
+// four AST helpers, a type and partitionTables in between — so the
+// positional reference had come to point at partitionTables(). A name
+// costs a word and cannot drift with the next insertion. Raised in
+// review of #543.
 //
 // AST, not reflection — CLAUDE.md's first invariant is that core carries
 // none, and a test that imported it to read a struct would be the first
@@ -1382,5 +1842,141 @@ func TestAControlCannotShadowAPageDeclaredElement(t *testing.T) {
 	if !strings.Contains(err.Error(), "card.gooey") {
 		t.Errorf("the collision is reported as %q — it names neither the control "+
 			"nor its file, so it reads as a page-level duplicate that nobody wrote", err)
+	}
+}
+
+// TestThePartitionSourceReaderSeesWhatItClaimsTo is the fixture corpus
+// for partitionTablesIn and the helpers under it, and it exists because
+// the live corpus cannot be one.
+//
+// This package declares two partition tables and both are spelled the
+// same way: `var x = map[string]struct{…}{"K": {true, "why"}}`. So four
+// branches never execute against the tree — the keyed `why` lookup, the
+// `partition` type alias in isPartitionLiteral, typeOfSpec's declared-
+// type arm, and every unreadable-key path including the unreadKeys
+// report. Loosening any of them leaves the suite green, which is the
+// state a fixture test is for.
+// `TestTheZeroedTopMatcherSeesOnlyAReleasedSlot` makes the same
+// argument for the clear-to-cap matcher one module over — backticked
+// because it lives in the ROOT module and is cited from here, so a
+// rename by somebody who never opens markup/ would otherwise orphan
+// this justification with nothing red.
+//
+// It also pins the distinction the misdiagnosis rounds were about: an
+// entry whose why is legitimately EMPTY reads as `{why: "", read:
+// true}`, and one this reader cannot parse reads as `read: false`.
+// Raised in review of #543.
+func TestThePartitionSourceReaderSeesWhatItClaimsTo(t *testing.T) {
+	const src = `package markup
+
+type partition = map[string]struct {
+	inherit bool
+	why     string
+}
+
+var positional = map[string]struct {
+	inherit bool
+	why     string
+}{
+	"A": {true, "plain"},
+	"B": {false, "a " + "joined " + "chain"},
+}
+
+var keyed partition = partition{
+	"C": {inherit: true, why: "by key"},
+	"D": {inherit: true},
+	"G": {},
+}
+
+var unreadable = map[string]struct {
+	inherit bool
+	why     string
+}{
+	constKey: {true, "the key is a const"},
+	"E":      {true, someConst},
+}
+
+// A DECLARED TYPE AND NO INITIALIZER, which is the only shape that
+// reaches typeOfSpec's vs.Type arm alone: with an initializer the
+// composite literal carries the type too, so the arm can be deleted
+// and every other fixture still resolves.
+var declaredNoInit partition
+
+var notATable = map[string]int{"F": 1}
+`
+	file, err := parser.ParseFile(gotoken.NewFileSet(), "zzfixture.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	got := partitionTablesIn(file)
+
+	if _, ok := got["notATable"]; ok {
+		t.Errorf("a map[string]int was read as a partition table — "+
+			"isPartitionLiteral matches on the VALUE type, and a table this "+
+			"walk invents is a name partitionTables can never satisfy: %v",
+			slices.Sorted(maps.Keys(got)))
+	}
+	if src, ok := got["declaredNoInit"]; !ok || len(src.entries) != 0 || src.readable {
+		t.Errorf("a var with a declared partition type and no initializer read "+
+			"as %v (found=%v, readable=%v), want an empty table marked "+
+			"UNREADABLE — this is the only shape that reaches typeOfSpec's "+
+			"declared-type arm, because a composite literal carries the type "+
+			"as well, and an empty table that does not say so registers as "+
+			"checked against nothing", src.entries, ok, src.readable)
+	}
+	if src, ok := got["positional"]; !ok || !src.readable {
+		t.Errorf("a table declared as a composite literal read as "+
+			"readable=%v (found=%v), want true — without this arm the verdict "+
+			"above passes for a reader that calls every table unreadable",
+			src.readable, ok)
+	}
+	for _, name := range []string{"positional", "keyed", "unreadable"} {
+		if _, ok := got[name]; !ok {
+			t.Fatalf("%s was not found, so every assertion below it is "+
+				"vacuous. Found: %v", name, slices.Sorted(maps.Keys(got)))
+		}
+	}
+	// `keyed` is declared with the ALIAS and with a declared type, which
+	// is two branches no live table reaches at once.
+	for _, tc := range []struct {
+		table, key string
+		why        string
+		read       bool
+	}{
+		{"positional", "A", "plain", true},
+		{"positional", "B", "a joined chain", true},
+		{"keyed", "C", "by key", true},
+		// THE ONE THAT WAS CALLED UNREADABLE. A keyed literal omitting
+		// the zero-valued field is legitimate and its why is "".
+		{"keyed", "D", "", true},
+		// AND THE EMPTY LITERAL, which reaches the same answer from the
+		// other side: no keys at all, so the keyed arm above cannot see
+		// it and the positional arity test used to call the struct's
+		// own zero value unreadable.
+		{"keyed", "G", "", true},
+		{"unreadable", "E", "", false},
+	} {
+		e, ok := got[tc.table].entries[tc.key]
+		if !ok {
+			t.Errorf("%s has no entry for %q — the reader dropped it, which is "+
+				"how an entry comes to be compared as an empty why",
+				tc.table, tc.key)
+			continue
+		}
+		if e.why != tc.why || e.read != tc.read {
+			t.Errorf("%s[%q] read as (%q, %v), want (%q, %v). An entry that is "+
+				"legitimately empty and one this reader cannot parse are "+
+				"different answers, and the pairing comparison has only one "+
+				"verdict for them", tc.table, tc.key, e.why, e.read, tc.why, tc.read)
+		}
+	}
+	if n := got["unreadable"].unreadKeys; n != 1 {
+		t.Errorf("unreadKeys is %d, want 1: the const-spelled key cannot be "+
+			"recorded under a key, so counting it is the only way the table "+
+			"says it is partly checked rather than clean", n)
+	}
+	if n := got["positional"].unreadKeys; n != 0 {
+		t.Errorf("unreadKeys is %d for a table whose keys are all string "+
+			"literals, want 0 — every table would report as partly checked", n)
 	}
 }

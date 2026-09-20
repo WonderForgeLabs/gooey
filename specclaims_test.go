@@ -465,38 +465,49 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 		}
 	}
 	if goCited == 0 {
-		// NAMED, BECAUSE THE POPULATION IS TWO. goCitations' doc
-		// records it: across every file goCommentSources reaches,
-		// exactly two comments cite a test name in backticks, and one
-		// of them is in THIS file — testFuncsUnder's doc, where the
-		// qualifier-versus-package-clause argument is made, which is
-		// what makes it a plausible thing for someone to reword. So
-		// the realistic trigger is not "the comments have stopped
-		// naming tests" and not "the pattern drifted" — it is someone
-		// rewording one of two specific comments, and a message that
-		// offers the two general diagnoses sends the reader to audit a
-		// regexp. Naming them lands the reader on the cause in one
-		// step. (The classifier itself is #530; this is the message.)
+		// NOT NAMED, AND THAT IS THE SECOND ATTEMPT AT THIS MESSAGE.
+		// It listed the population — "TWO: dependabotdirs_test.go and
+		// testFuncsUnder's doc in this file" — on the argument that at
+		// two comments the realistic trigger is someone rewording one
+		// of them, so naming them lands the reader on the cause in one
+		// step.
 		//
-		// THE MESSAGE CARRIES THE COMMAND THAT RE-DERIVES THEM rather
-		// than resting on the two names, because the names are the
-		// half that rots: this message said "this file's own
-		// goCitations doc" for a round, and goCitations' doc holds no
-		// backticked citation at all — it writes TestX and TestFoo
-		// bare, by this file's own rule. A reader who trips the floor
-		// and is sent to a comment that cannot be the cause has been
-		// sent further from it than a general diagnosis would have.
-		// Raised in review of #490.
+		// THE LIST WAS ACCURATE WHEN IT WAS WRITTEN, and the reason to
+		// delete it is not that it was wrong. On origin/main the
+		// population is exactly two and specclaims_test.go:269 IS
+		// testFuncsUnder's doc, so the message named both correctly.
+		// What deletes it is that THIS BRANCH added more citations, in
+		// files neither of them names, while touching neither named
+		// file — so a written list goes stale on any commit that adds
+		// a backtick anywhere in the tree, which no reviewer of that
+		// commit has reason to check. The count is left out on
+		// purpose: the version of this sentence that named three, in
+		// one file, was true at one commit of this branch and false at
+		// the next, which is the same failure one level up. Raised in
+		// review of #543. A reader sent
+		// to audit two comments that are not the cause has been sent
+		// further from it than a general diagnosis would have, and
+		// that is the failure the paragraph below this one already
+		// records about an earlier spelling of the same list.
+		//
+		// The first version of THIS paragraph claimed the list had
+		// been wrong twice inside one PR, counting a third citation
+		// from specclaims_test.go that is in fact one of the two it
+		// already named. A mis-measurement in a comment whose subject
+		// is measurements going stale. Raised in review of #490, and
+		// corrected in review of #543.
+		//
+		// So the message carries the COMMAND that re-derives them and
+		// no names at all.
 		t.Errorf("no Go comment in the tree cites a test in backticks, so the " +
 			"half of this guard that reads Go checks nothing. The population is " +
-			"TWO — dependabotdirs_test.go and testFuncsUnder's doc in this file " +
-			"— so the likely cause is that one of those two comments was reworded " +
-			"or its backticks dropped, not that the pattern has drifted. Re-derive " +
-			"them rather than trusting those two names — grep the tree's Go files " +
-			"for a backticked identifier beginning Test (optionally package-" +
-			"qualified) on a comment line — because a name written here is the half " +
-			"that rots. goCitations' doc says why the population is that small, and " +
-			"#530 is where widening it lives.")
+			"small enough that the likely cause is one of the few comments " +
+			"that carries one being reworded or its backticks dropped, not " +
+			"the pattern drifting — so " +
+			"derive it rather than reading a list: grep the tree's Go files for " +
+			"a backticked identifier beginning Test (optionally package-" +
+			"qualified) on a comment line. goCitations' doc says why the " +
+			"population is that small, and #530 is where widening it lives.")
 	}
 }
 
@@ -510,19 +521,43 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 // WHAT IT ADJUDICATES IS A SMALL FRACTION OF ITS OWN CORPUS, and the
 // sentence that used to stand here claimed otherwise: "a name that is
 // not a live reference is spelled WITHOUT backticks, which is honest and
-// needs nothing to classify it." Measured over the 617 files
-// goCommentSources reaches, the corpus is the other way round — TWO
-// backticked citations against roughly thirteen hundred bare Test
-// mentions, of which 39 across 31 distinct names do not resolve. The
-// bare ones are overwhelmingly live references, several of them added by
-// the same commits that add guards. So backticks are not a liveness
-// convention this tree follows; they are an accident of how one author
-// felt about formatting on the day, and the guard checks whichever
-// citations that accident happened to mark.
+// needs nothing to classify it." Measured once, in review of #490, over
+// the files goCommentSources reaches: a single-digit count of backticked
+// citations against roughly thirteen hundred bare Test mentions, of
+// which 39 across 31 distinct names did not resolve. The bare ones are
+// overwhelmingly live references, several of them added by the same
+// commits that add guards. So backticks are not a liveness convention
+// this tree follows; they are an accident of how one author felt about
+// formatting on the day, and the guard checks whichever citations that
+// accident happened to mark.
+//
+// THE RATIO IS THE CLAIM AND THE COUNT IS NOT. This paragraph said TWO
+// and the floor's own message named the two files. Both were accurate
+// on main and both went stale inside this branch, which added
+// citations in files neither of them mentions — so the figure moves on
+// commits that have no reason to look here. Run the grep in that
+// message for today's number; what does not move is that the two
+// populations are MORE THAN AN ORDER OF MAGNITUDE apart, which is what
+// makes the fraction small however the numerator drifts.
+//
+// THE HEADROOM IS THE WHOLE POINT OF PICKING THAT FIGURE, and this
+// paragraph has now got it wrong twice in the same way. It said THREE
+// orders — 2 citations against ~1,300 mentions is ~650, which rounds to
+// three — and this branch took the numerator to 8, or 2.3 orders. The
+// repair said "more than two, which holds at 8 and at 14", and that is
+// false against the denominator this very paragraph states: 1,300 ÷ 14
+// is 93, which is 1.97 orders. It survived only against a denominator
+// written in a commit message and nowhere here. Measured on this tree
+// today: ~1,590 Test-prefixed mentions on Go comment lines against 11
+// backticked, a factor of ~145. One order needs the numerator to pass
+// ~150 before it fails, which is more than this whole population; two
+// orders fails at 16. So the claim is one order, and a figure that
+// needs the denominator quoted to survive is the wrong figure. Raised
+// in review of #543.
 //
 // THE FLOOR BELOW IS WHAT KEEPS THIS FROM BEING VACUOUS, not evidence of
 // coverage: goCited == 0 catches the pattern drifting to nothing, and at
-// a population of two it is very nearly that test already.
+// a population this small it is very nearly that test already.
 //
 // LIVENESS AS THE CLASSIFIER is the fix and it is #530 rather than this
 // PR, because it is a sweep and not a rule change: 12 of the 31 are line
