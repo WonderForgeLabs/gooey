@@ -970,6 +970,32 @@ func envelopeParts(attrs map[string]string, decls []*node) (map[string]string, s
 	if len(decls) > 0 && !bound {
 		attrs = withDeclBinding(attrs, prefix)
 	}
+	// AND NO OTHER BINDING OF THE DECLARATION NAMESPACE SURVIVES ON
+	// <Gooey>. Only declarations use that namespace and every one of
+	// them is written under `prefix`, so a second envelope binding of
+	// it names nothing — and it is not merely tidiness: the author's
+	// binding of the SAME prefix to a value namespace, on a
+	// declaration, comes later in markup's one flat document-order map
+	// and is what {{p:Thing}} already resolves through. Keeping the
+	// envelope's copy while writing the declaration as <x:Property>
+	// leaves a dead binding whose only effect is to look live.
+	// Reached when declPrefix declines the envelope's own prefix
+	// because a declaration spends it. Raised in review of #522.
+	for k, v := range attrs {
+		if v != markup.XNamespace || !strings.HasPrefix(k, "xmlns:") {
+			continue
+		}
+		if strings.TrimPrefix(k, "xmlns:") == prefix {
+			continue
+		}
+		out := make(map[string]string, len(attrs))
+		for kk, vv := range attrs {
+			if kk != k {
+				out[kk] = vv
+			}
+		}
+		attrs = out
+	}
 	return attrs, prefix
 }
 
@@ -1036,15 +1062,34 @@ func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 	// calls into one on the grounds that they could not disagree, and
 	// they were not asking the same question.
 	envPrefix, envBound := declBinding(attrs)
-	if envBound {
+	if envBound && !spentElsewhere(envPrefix, decls) {
 		return envPrefix, true
 	}
+	// NOT A PREFIX A SIBLING HAS SPENT, which is the half the mint's
+	// own fix did not reach. This loop adopts the first declaration
+	// carrying a binding; declAttrs' first clause then drops any
+	// xmlns:<prefix> on the OTHER declarations, because on an emitted
+	// <p:Property> a xmlns:p naming anything else would unname the
+	// element. So a second declaration binding the same prefix to a
+	// value namespace lost that binding, and a document using
+	// {{p:Thing}} was saved as bytes markup.Build refuses — the third
+	// shape reaching that clause, where declAttrs' doc said there were
+	// two. Measured in review of #522.
+	//
+	// Falling through to the mint is the whole fix: declBindingAvoiding
+	// already avoids every prefix the declarations hold, so it picks a
+	// free one and both bindings survive.
 	prefix := ""
 	for _, d := range decls {
-		if p, ok := declBinding(d.Attrs); ok {
-			prefix = p
+		p, ok := declBinding(d.Attrs)
+		if !ok {
+			continue
+		}
+		if spentElsewhere(p, decls) {
 			break
 		}
+		prefix = p
+		break
 	}
 	if prefix == "" {
 		// MINTED AGAINST THE DECLARATIONS TOO, not just the envelope —
@@ -1056,8 +1101,7 @@ func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 		for _, d := range decls {
 			also = append(also, d.Attrs)
 		}
-		minted, _ := declBindingAvoiding(attrs, also)
-		return minted, false
+		return mintDeclPrefix(attrs, also), false
 	}
 	for _, d := range decls {
 		if p, ok := declBinding(d.Attrs); !ok || p != prefix {
@@ -1065,6 +1109,19 @@ func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
 		}
 	}
 	return prefix, true
+}
+
+// spentElsewhere reports whether any declaration binds p to something
+// OTHER than the declaration namespace — a value namespace the document
+// may be resolving {{p:Thing}} through, which this editor may not
+// reclaim. Raised in review of #522.
+func spentElsewhere(p string, decls []*node) bool {
+	for _, d := range decls {
+		if v, ok := d.Attrs["xmlns:"+p]; ok && v != markup.XNamespace {
+			return true
+		}
+	}
+	return false
 }
 
 // withDeclBinding is attrs plus the envelope's binding for
@@ -1144,10 +1201,18 @@ func declAttrs(attrs map[string]string, prefix string) map[string]string {
 //
 // THE BOOL IS THE HALF THAT WAS MISSING. This returned "x" as a
 // fallback and called it unreachable, on the grounds that a document
-// with declarations always carries the binding. True of the FILE and
-// not of these attrs: envelopeAttrs drops a namespace attribute the
-// content root repeats, so the binding can be absent here while being
-// present in what the user wrote. Raised in review of #522.
+// with declarations always carries the binding. That is true of the
+// FILE and not of these attrs — but the document it was true of is not
+// the one this paragraph named.
+//
+// It said "envelopeAttrs drops a namespace attribute the content root
+// repeats". carryDeclarations skips v == markup.XNamespace, so the
+// envelope's binding is never in the moved set and envelopeAttrs keeps
+// it; envelopeParts' own paragraph carried the same false premise and
+// was corrected in the same commit that left this one. The document
+// where the binding really is absent here is the one whose declaration
+// names the namespace as its own default xmlns. Raised in review of
+// #522, twice — the second time for this copy.
 //
 // Over sortedKeys, not a range: a document binding two prefixes to the
 // one namespace is legal and rare, and picking whichever the map handed
@@ -1179,10 +1244,15 @@ func declBinding(attrs map[string]string) (string, bool) {
 const declFallbackPrefix = "x"
 
 // declBindingOr is declBinding for the message sites: the document's own
-// prefix where there is one, and fallback where there is not. Three
-// sites spelled that `if !bound { prefix = "x" }` by hand, which is the
-// one-question-N-answers shape the declared-properties spec catalogues.
-// Raised in review of #522.
+// prefix where there is one, and fallback where there is not.
+//
+// TWO CALLERS, NOT THREE. Three sites spelled `if !bound { prefix = "x" }`
+// by hand — the one-question-N-answers shape the declared-properties
+// spec catalogues — and two of them route through here. alienDeclMsg
+// still writes it out, because it is handed a prefix and a bool rather
+// than an attrs map and has nothing to look the binding up in; what it
+// shares with these two is declFallbackPrefix, which is the answer
+// rather than the lookup. Raised in review of #522.
 func declBindingOr(attrs map[string]string, fallback string) string {
 	if p, ok := declBinding(attrs); ok {
 		return p
@@ -1221,6 +1291,18 @@ func declBindingAvoiding(attrs map[string]string, also []map[string]string) (str
 			return strings.TrimPrefix(k, "xmlns:"), true
 		}
 	}
+	return mintDeclPrefix(attrs, also), false
+}
+
+// mintDeclPrefix is the MINT ALONE, with no adopt scan in front of it.
+//
+// It is separate because declPrefix has a case where the adopt scan is
+// exactly wrong: the envelope binds p to the declaration namespace and
+// a declaration binds p to a VALUE namespace, so declPrefix declines p
+// — and then called declBindingAvoiding, whose first loop found the
+// envelope's p and handed it straight back. The decline was undone by
+// the function it delegated to. Measured in review of #522.
+func mintDeclPrefix(attrs map[string]string, also []map[string]string) string {
 	taken := func(p string) bool {
 		if attrs["xmlns:"+p] != "" {
 			return true
@@ -1236,7 +1318,7 @@ func declBindingAvoiding(attrs map[string]string, also []map[string]string) (str
 	for i := 2; taken(p); i++ {
 		p = "x" + strconv.Itoa(i)
 	}
-	return p, false
+	return p
 }
 
 // gooeyOpen is the envelope's opening tag, carrying whatever the opened
@@ -1421,8 +1503,17 @@ func declSpelling(d *node, envPrefix string, envBound bool, unbound string) stri
 // (browser.go), which this arm had stopped one short of.
 //
 // There used to be an `if prefix == "" { prefix = "x" }` here, which
-// could not fire — declBinding never returns "" — and read as the
-// handling that was in fact absent. Raised in review of #522.
+// could not fire at the time — declBinding returned its minted "x"
+// rather than "" — and read as the handling that was in fact absent.
+//
+// BOTH HALVES OF THAT SENTENCE HAVE SINCE TURNED OVER, and leaving it
+// would tell a reader the guard three lines below is dead code.
+// declBinding returns ("", false) when it finds no binding now, and
+// alienDeclMsg carries the real handling: declSpelling is given the
+// true `bound` so its own unbound arm can fire, and the TAIL — a
+// statement about what the namespace offers rather than about this
+// element — is normalised to declFallbackPrefix afterwards. Raised in
+// review of #522, twice.
 //
 // AND THE PREFIX IS A PER-ELEMENT QUESTION, which is why this takes the
 // nodes rather than their names. Both call sites hand it the ENVELOPE's

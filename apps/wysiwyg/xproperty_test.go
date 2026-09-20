@@ -212,14 +212,35 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			// own xmlns:p, left in place, made that p: resolve to
 			// urn:other. markup.Build accepts this document and refused
 			// the saved one, under "✓ saved". Raised in review of #522.
+			//
+			// THIS ARM EXPECTED "p" AND NO `keeps`, AND THAT WAS THE
+			// REMAINING HALF OF THE SAME LOSS. Dropping the
+			// declaration's xmlns:p is what keeps the emitted element a
+			// declaration, so the first fix was right about the
+			// element — and markup resolves value expressions through
+			// one flat document-ORDER map, in which the declaration's
+			// xmlns:p comes last. So {{p:Thing}} already means
+			// urn:other in the OPENED file, and a save that keeps p
+			// for the declaration re-points it to the declaration
+			// namespace: the document changes meaning under "✓ saved",
+			// exactly as the two arms below it do.
+			//
+			// declPrefix declines the envelope's prefix on the same
+			// grounds it declines an adopted one now, mints a free
+			// spelling, and the author's binding survives — so the
+			// expectation moves to "x" and `keeps` gains the binding.
+			// Raised in review of #522, twice: the first round fixed
+			// the element and left the document. Changing a green
+			// fixture is the right call only when the fixture is the
+			// claim being corrected, and here it is.
 			"bound on the declaration element to a DIFFERENT namespace",
-			"p",
+			"x",
 			`<Gooey xmlns:p="` + markup.XNamespace + `">` + "\n" +
 				`  <Property xmlns="` + markup.XNamespace + `" xmlns:p="urn:other" Name="Title" Type="string" Default="hi"/>` + "\n" +
 				`  <Canvas Name="Root">` + "\n" +
 				`    <Button Name="B" Content="go"/>` + "\n" +
 				`  </Canvas>` + "\n</Gooey>\n",
-			"",
+			`xmlns:p="urn:other"`,
 		},
 		{
 			// THE SAME LOSS WITH NO ENVELOPE BINDING AT ALL, reached the
@@ -237,6 +258,28 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			// keeps the author's binding and names the declaration, so
 			// both survive; `keeps` is what asserts the half the
 			// generic assertions below cannot see.
+			// AND THE SAME LOSS ON THE ADOPTED ROUTE, which the mint's
+			// fix does not reach. declPrefix takes the first
+			// declaration carrying a binding and never asks whether a
+			// SIBLING declaration spends that prefix on something
+			// else; declAttrs' first clause then drops the sibling's
+			// xmlns:p, because on an emitted <p:Property> a xmlns:p
+			// naming anything else would unname the element. The
+			// document uses {{p:Thing}}, so the saved file stops
+			// loading — the third shape reaching that clause, where
+			// declAttrs' doc claimed there were two. Raised in review
+			// of #522.
+			"a prefix a SIBLING declaration binds elsewhere",
+			"x",
+			`<Gooey>` + "\n" +
+				`  <p:Property xmlns:p="` + markup.XNamespace + `" Name="A" Type="string" Default="a"/>` + "\n" +
+				`  <Property xmlns="` + markup.XNamespace + `" xmlns:p="urn:other" Name="B" Type="string" Default="b"/>` + "\n" +
+				`  <Canvas Name="Root">` + "\n" +
+				`    <Button Name="B2" Content="go"/>` + "\n" +
+				`  </Canvas>` + "\n</Gooey>\n",
+			`xmlns:p="urn:other"`,
+		},
+		{
 			"a minted prefix the declaration itself binds elsewhere",
 			"x2",
 			`<Gooey>` + "\n" +
