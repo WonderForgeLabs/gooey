@@ -365,13 +365,14 @@ func (s *sink) counts() (n, after int) {
 // the test pumps the queue empty before it touches the property.
 //
 // IT IS A CLOCK, AND A CLOCK CANNOT COUNT CYCLES — see drainUntilPosts,
-// which replaced it wherever a test depends on the watcher having been
-// round. The two callers left are composer-driven: the watcher posts
-// through Composer.Start, so there is no Post for a counter to wrap.
-// Both are negative assertions, where too short a window makes the claim
-// vacuous rather than red — worth knowing before trusting one of them,
-// and the reason they were not converted rather than an argument that
-// they are fine.
+// which replaced it wherever there is a Post to wrap. The two callers
+// left are composer-driven: Composer.Start reads d.Post straight off
+// the Dispatcher inside its loop (composer.go), so a test that composes
+// a tree has nowhere to interpose, and #518 is that gap. Both are
+// negative assertions, where too short a window makes the claim vacuous
+// rather than red — they DO depend on the watcher having been round,
+// which is why the seam and not the will is what keeps them here. This
+// is the page both cite; neither re-derives it.
 func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
@@ -682,10 +683,11 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 //
 // With the increment moved first those three stay green and this test
 // goes red, which is the whole of its argument. They are the whole
-// scope because nothing else in the file constructs a countingPost —
-// drainBudget's table never builds one and the composer fixtures cannot
-// wrap the post they care about (#518) — so a green set stated as globs
-// claims coverage from tests the mutation cannot reach.
+// scope because no other FIXTURE constructs a countingPost — the fourth
+// construction in the file is this test's own, and drainBudget's table
+// never builds one while the composer fixtures cannot wrap the post
+// they care about (#518) — so a green set stated as globs claims
+// coverage from tests the mutation cannot reach.
 //
 // THE SAMPLE IS TAKEN AT ENQUEUE TIME, from inside the func Post
 // delegates to, which is the one instant between the two statements. The
@@ -1139,16 +1141,10 @@ func TestAFileChangeSchedulesAFrameAndAnIdlePollDoesNot(t *testing.T) {
 	// forever and nothing else in this file would notice.
 	// THE WINDOW, NOT A POLL COUNT: a 40ms drain buys ~40 polls idle and
 	// can buy zero on a loaded runner, so a message naming forty asserts
-	// what the test cannot observe. countingPost cannot wrap this one —
-	// the watcher posts through Composer.Start — so the repair is to the
-	// message: say what was waited, not what was assumed. It still fails
-	// closed; zero polls cannot schedule a frame either.
-	//
-	// THE SEAM IS THE MISSING PIECE, not the will: Composer.Start reads
-	// d.Post straight off the Dispatcher inside its loop, so a test that
-	// composes a tree has nowhere to interpose. #518 is that gap — this
-	// window and the idle-bytes one below are the two call sites waiting
-	// on it.
+	// what the test cannot observe. drainFor's doc says why this one
+	// cannot be converted; the repair here is to the message — say what
+	// was waited, not what was assumed. It still fails closed; zero
+	// polls cannot schedule a frame either.
 	const idleWindow = 40 * time.Millisecond
 	drainFor(d, idleWindow)
 	if scheduled != 0 {
@@ -1207,18 +1203,14 @@ func TestAFileChangeReachesTheCellsAndCostsAWireUpdate(t *testing.T) {
 	comp.Start(d)
 	defer comp.Close()
 
-	// STILL drainFor, for the reason the idleWindow site is: the
-	// watcher posts through Composer.Start, so there is no Post for
-	// countingPost to wrap (#518). That is what the two survivors have
-	// in common.
+	// STILL drainFor, for the reason its doc gives — the second of the
+	// two call sites waiting on #518.
 	//
-	// WHAT SEPARATES THEM IS THE NAME, on a different axis entirely.
-	// idleWindow is a named constant because its duration is quoted in
-	// a failure message and the message must not be able to disagree
-	// with the wait; this one is a literal because nothing here prints
-	// it. Both are negative
-	// assertions where a window buying zero polls is vacuous rather than
-	// red; neither is an argument that the window is enough.
+	// WHAT SEPARATES IT FROM THE idleWindow SITE IS THE NAME, on a
+	// different axis entirely: idleWindow is a constant because its
+	// duration is quoted in a failure message and the message must not
+	// be able to disagree with the wait, and this one is a literal
+	// because nothing here prints it.
 	drainFor(d, 30*time.Millisecond)
 	comp.Frame()
 	sink.Reset()
