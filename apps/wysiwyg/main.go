@@ -1318,9 +1318,9 @@ func declBindingOr(attrs map[string]string, fallback string) string {
 // and the file it writes no longer loads.
 //
 // The declarations' own attrs are the set that has to be added, and
-// only them: a binding on the content root or below comes later in
-// document order, so last-wins keeps it, and XML scoping keeps
-// <x:Property> resolving against the envelope.
+// only them: a binding on the content root or below sits further down
+// the file, so the loader's flat last-declaration-wins map keeps it, and
+// XML scoping keeps <x:Property> resolving against the envelope.
 //
 // "x" IS THE MINTED SPELLING, because every example uses it. x2, x3 …
 // are the way out of the case where the document binds x to something
@@ -2338,9 +2338,9 @@ type editor struct {
 	// assigned at the one site that assigns those, for the reason
 	// TestEnvAttrsIsAssignedWhereTheDocumentIs exists. Added for #517.
 	envDecls []*node
-	// seededDecls are the declared names seedDeclared last put into
-	// ed.docCtx.Values, so the next rebuild can take exactly those back
-	// out and no others. See seedDeclared for why the map is shared and
+	// seededDecls are the declared names seedDeclared most recently put
+	// into ed.docCtx.Values, so the next rebuild can take exactly those
+	// back out and no others. See seedDeclared for why the map is shared and
 	// why that makes retirement this method's job. Added in review of
 	// #522.
 	seededDecls []string
