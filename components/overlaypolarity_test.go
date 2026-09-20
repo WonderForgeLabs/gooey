@@ -163,10 +163,18 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		freeNearRe = regexp.MustCompile(
 			`(?:` + name + `.{0,80}?` + free + `)|(?:` + free + `.{0,80}?` + name + `)`)
 	}
-	// unqualifiedFreedom is the predicate, in one place, for the same
-	// reason flagged is: a fixture that reimplements it can agree with a
-	// broken one.
-	unqualifiedFreedom := func(text string) bool {
+	// unqualifiedFreedom is the predicate the freedom arm asks, and it
+	// TAKES THE PATH for the reason flagged does: the exemption is part
+	// of the question, and a predicate that cannot express it leaves
+	// the exemption at the call site where no fixture can reach it.
+	// This arm kept a blanket docs/specs/ prefix for a round after the
+	// other two moved to the date, so the file held exemptSpec's
+	// argument and its counterexample at once. Raised in review of
+	// #541.
+	unqualifiedFreedom := func(path, text string) bool {
+		if exemptSpec(path) {
+			return false
+		}
 		if freeNearRe == nil {
 			return false
 		}
@@ -216,18 +224,29 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		return false
 	}
 
-	// flagged is the whole question, in one place, so the tree walk and
-	// every fixture below ask it identically. A fixture that reimplements
-	// the predicate is a fixture that can agree with a broken one.
+	// flagged is the FIXTURES' form of the question, and calling it the
+	// one place the walk and the fixtures both ask was wrong twice
+	// over: the walk below does not call it and cannot, because each of
+	// its three arms has its own failure message naming which rule the
+	// sentence broke, and one bool cannot carry that. Saying "in one
+	// place" while the walk re-implemented the arms inline described
+	// the arrangement it warned against. Raised in review of #541.
 	//
-	// IT TAKES THE PATH, and that is what makes the sentence above true
-	// again. It did not, so it could express neither exemption, and the
-	// tree walk had diverged from it twice — most recently by an
-	// exemption added with no pin at all: deleting the line left the
-	// suite green, because nothing is red today and a fixture that
-	// cannot ask about a path cannot be the thing that notices.
-	// TestTheSpecExemptionIsScopedToRecordsThatPredateTheMarker is the
-	// pin. Raised in review of #541.
+	// WHAT IS ACTUALLY SHARED is every piece that can rot
+	// independently: nameRe, positionRe, liftVerbRe, attachedRe,
+	// proseUnits and exemptSpec. What is mirrored is only the shape —
+	// which regexes are ANDed per arm — and that mirror is the residual
+	// cost, stated rather than denied: a fourth arm added to the walk
+	// and not here is a rule no fixture exercises.
+	//
+	// IT TAKES THE PATH because the exemption is part of the question.
+	// It did not, so no fixture could ask about one, and the exemption
+	// shipped with no pin at all — deleting the line left the suite
+	// green, because nothing in the tree is red today and a fixture
+	// that cannot name a path cannot be the thing that notices. The two
+	// spec arms below reach this branch in both directions, and
+	// TestTheSpecExemptionIsScopedToRecordsThatPredateTheMarker pins
+	// exemptSpec itself. Raised in review of #541.
 	flagged := func(path, text string) bool {
 		if exemptSpec(path) {
 			return false
@@ -262,12 +281,19 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		if rerr != nil {
 			t.Fatalf("reading %s: %v", path, rerr)
 		}
-		// docs/specs/ is exempt here too, and for the same reason the
-		// positional arm gives: a dated record describes the hosts of
-		// its own date.
-		if !strings.HasPrefix(path, "../docs/specs/") {
+		// docs/specs/ is exempt here too, and BY DATE, which is the
+		// reason the positional arm actually gives. A blanket prefix
+		// was the wider exemption exemptSpec exists to retire: a record
+		// written after the marker landed and telling a reader an
+		// AdornmentLayer may go anywhere is wrong on its own date, and
+		// exempting it leaves the only guard that looks blind to
+		// exactly the document most likely to mislead — a new decision
+		// record. Two arms took the date and this one kept the prefix,
+		// so the file held both the argument and its counterexample.
+		// Raised in review of #541.
+		{
 			for _, b := range proseBlocks(string(body)) {
-				if !unqualifiedFreedom(b) {
+				if !unqualifiedFreedom(path, b) {
 					continue
 				}
 				freed++
@@ -371,7 +397,15 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// number moves when the COUNTING changes as readily as when the
 	// docs do, and both have happened. The test logs it on every run:
 	//
-	//	go test ./components/ -run TestNoDocTiesALiftedHostToItsPosition -v
+	//	go test ./components/ -run TestNoDocSaysASelfMarkedHostStaysInDocumentOrder -v
+	//
+	// The name above was wrong for one round — no test matched it, so
+	// the command printed "no tests to run" and PASS, which reads as
+	// confirmation and reports nothing. That is worse than the stale
+	// number it replaced, and nothing in the tree catches it:
+	// TestEveryCitedTestNameResolves walks proseFiles, which is
+	// Markdown only, so a test name cited in a Go comment is outside
+	// every citation guard there is. Raised in review of #541.
 	//
 	// The floor is a policy and stays; it sits far enough above zero
 	// that deleting the paragraphs which make the claim fails, and far
@@ -389,24 +423,30 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// AND THE MATCHER ITSELF, fed the two sentences that were live in
 	// this repo when the guard was written. Without this the test above
 	// is only evidence that nothing matched.
-	for _, tc := range []struct{ name, text string }{
-		{"README's feature table",
+	for _, tc := range []struct{ name, path, text string }{
+		// A RECORD DATED AFTER THE MARKER IS NOT EXEMPT, which is the
+		// half of exemptSpec that has to fire rather than decline. The
+		// sentence is the one two rows down, so the only difference
+		// between this arm and its partner in the must-not table is the
+		// DATE in the filename. Raised in review of #541.
+		{"a decision record written after the marker landed",
+			"../docs/specs/2026-09-30-zzfixture.md",
 			"`ToastHost` has no such lift yet, so for it document order is " +
 				"still the whole rule."},
-		{"the toolkit's on-screen caption",
+		{"README's feature table", zzFixturePath,
+			"`ToastHost` has no such lift yet, so for it document order is " +
+				"still the whole rule."},
+		{"the toolkit's on-screen caption", zzFixturePath,
 			`<Text Grid.Row="0" Style="dim">MenuBar dropdowns and Popups lift ` +
 				`out of document order; ToastHost and AdornmentLayer do not</Text>`},
-		// Both fixtures quote sentences RETIRED by #437 and #439; they are
-		// specimens the matcher must catch, not rules this file states.
-		{"README's adornment row — the prescriptive spelling",
+		{"README's adornment row — the prescriptive spelling", zzFixturePath,
 			"WPF's adorner plane: an `AdornmentLayer` (last child of the root) " +
 				"hosts components positioned against a *target's* arranged bounds."},
-		// Retired likewise (#437): quoted so the arm cannot pass vacuously.
-		{"howto-forms' markup comment — the prescriptive spelling",
+		{"howto-forms' markup comment — the prescriptive spelling", zzFixturePath,
 			"<AdornmentLayer/>   <!-- last child of the root -->"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if !flagged("../docs/zzfixture.md", tc.text) {
+			if !flagged(tc.path, tc.text) {
 				t.Errorf("the matcher does not flag the sentence it was written for:\n\t%s",
 					tc.text)
 			}
@@ -419,14 +459,23 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// one and to the MenuBar in the other. They are quoted here so that
 	// tightening the sentence rule back into an attachment-free one goes
 	// red in this package rather than four PRs later.
-	for _, tc := range []struct{ name, text string }{
-		{"architecture.md — the negation is a dropdown's position",
+	for _, tc := range []struct{ name, path, text string }{
+		// AND THE EXEMPTION, in the direction that DECLINES. Same
+		// sentence as the first arm of the table above, same matcher,
+		// and only the date in the path differs — so deleting
+		// exemptSpec's call from flagged reddens exactly this row.
+		// Raised in review of #541.
+		{"a decision record written before the marker landed",
+			"../docs/specs/2026-08-10-zzfixture.md",
+			"`ToastHost` has no such lift yet, so for it document order is " +
+				"still the whole rule."},
+		{"architecture.md — the negation is a dropdown's position", zzFixturePath,
 			"Z-order is document order **in two layers**: the ordinary tree, " +
 				"and then every component implementing `gooey.Overlay` — a popup " +
 				"surface, a `ToastHost`, an `AdornmentLayer` — lifted to the end " +
 				"with its subtree, because a dropdown is not at a position in the " +
 				"document, it is on top of it."},
-		{"demos.md — the negation is the MenuBar",
+		{"demos.md — the negation is the MenuBar", zzFixturePath,
 			"the `MenuBar`'s dropdown, the `ToastHost` and the `AdornmentLayer` " +
 				"are lifted out of document order into a paint layer of their own " +
 				"and ranked within it, so they paint above every tab from wherever " +
@@ -434,7 +483,7 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				"why `Grid.Row` still keeps it on the top row."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if flagged("../docs/zzfixture.md", tc.text) {
+			if flagged(tc.path, tc.text) {
 				t.Errorf("the matcher flags correct prose:\n\t%s\n"+
 					"The negation in this sentence belongs to another subject. A "+
 					"guard that fires on prose like this is noise, and noise is "+
@@ -504,9 +553,39 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				"shows an adornment pays nothing for hosting it.", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if hit := unqualifiedFreedom(tc.text); hit != tc.want {
+			if hit := unqualifiedFreedom(zzFixturePath, tc.text); hit != tc.want {
 				t.Errorf("unqualifiedFreedom=%v, want %v, for:\n\t%q",
 					hit, tc.want, tc.text)
+			}
+		})
+	}
+
+	// AND THE DATE, on this arm too. The sentence is the first row
+	// above, which fires; only the path differs, so a blanket
+	// docs/specs/ prefix here passes the pre-marker row and FAILS the
+	// post-marker one — which is the counterexample exemptSpec's own
+	// doc describes: a record written after the marker landed, telling
+	// a reader an AdornmentLayer may go anywhere, is wrong on its own
+	// date and was exempted anyway. Raised in review of #541.
+	const freeClaim = "The `AdornmentLayer` hosts adornments above the whole " +
+		"page: the app declares it anywhere spanning the page. The layer " +
+		"paints nothing and declares no background, so a page that never " +
+		"shows an adornment pays nothing for hosting it."
+	for _, tc := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"a record dated before the marker describes the hosts of its own date",
+			"../docs/specs/2026-08-10-zzfixture.md", false},
+		{"a record dated after it is wrong on its own date",
+			"../docs/specs/2026-09-30-zzfixture.md", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if hit := unqualifiedFreedom(tc.path, freeClaim); hit != tc.want {
+				t.Errorf("unqualifiedFreedom(%q, …)=%v, want %v — the freedom arm "+
+					"takes the DATED exemption, like the other two",
+					tc.path, hit, tc.want)
 			}
 		})
 	}
@@ -539,7 +618,7 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 			"## Overlays\n\nAn AdornmentLayer is not lifted, so declare it last.", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if hit := flagged("../docs/zzfixture.md", tc.text); hit != tc.want {
+			if hit := flagged(zzFixturePath, tc.text); hit != tc.want {
 				t.Errorf("flagged=%v, want %v, for:\n\t%q\nunits: %q",
 					hit, tc.want, tc.text, proseUnits(tc.text))
 			}
@@ -603,6 +682,14 @@ const negSpellings = `(?:do not|does not|don't|doesn't|no such|` +
 // name of its own decision record: docs/specs/2026-08-30-overlay-layer.md.
 // Specs are named by the date of the decision rather than of the commit,
 // which is what makes the filename usable as the comparison.
+// zzFixturePath is the path every fixture that is NOT about the spec
+// exemption passes to flagged: outside docs/specs/, so exemptSpec
+// declines and the sentence is judged on its wording alone. Named
+// rather than repeated at nine call sites, which is also what makes
+// the two spec arms visible as the exceptions they are. Raised in
+// review of #541.
+const zzFixturePath = "../docs/zzfixture.md"
+
 const markerLanded = "2026-08-30"
 
 // exemptSpec reports whether path is a decision record that PREDATES the
@@ -643,10 +730,15 @@ func exemptSpec(path string) bool {
 // exemption and the suite is green, so the line adding one could be
 // reverted by anyone with nothing going red.
 //
-// It asks exemptSpec directly AND through flagged, because the defect
-// was that flagged could not express the question at all — the tree
-// walk carried the exemption and the predicate every fixture asks did
-// not, so the two had diverged twice. Raised in review of #541.
+// It asks exemptSpec DIRECTLY, over the boundary cases a fixture
+// sentence cannot reach: an undated record, a short name, a
+// non-spec path, and the marker's own date. The question is also asked
+// THROUGH flagged, by the two spec arms of the matcher tables above —
+// same sentence, same matcher, different date in the path — because
+// the defect was that flagged could not express the question at all,
+// so every fixture was blind to an exemption the tree walk carried.
+// This comment claimed the second half before it was true. Raised in
+// review of #541, twice.
 func TestTheSpecExemptionIsScopedToRecordsThatPredateTheMarker(t *testing.T) {
 	for _, tc := range []struct {
 		path string

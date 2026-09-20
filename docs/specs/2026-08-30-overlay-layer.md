@@ -12,9 +12,12 @@ the pointer has to run both ways.
 **And the hit-testing section below is written as a NOT-YET.** It said
 "everything else below still holds", which was wrong about the very
 paragraphs a reader arriving from `component.go` comes for: they gate
-the work on "a non-capturing overlay actually exists", and #439 is the
-commit that makes three of them exist. Two —
-[`ToastHost`](../markup-reference.md) and `AdornmentLayer` — are
+the work on "a non-capturing overlay actually exists", and two now do.
+[#456](https://github.com/WonderForgeLabs/gooey/pull/456) (`6fbb935`)
+is the commit; [#439](https://github.com/WonderForgeLabs/gooey/issues/439)
+is the issue it closes, which this sentence called the commit. Three
+types carry the marker and only two of them are non-capturing:
+[`ToastHost`](../markup-reference.md#toasthost) and `AdornmentLayer` are
 container overlays that take no pointer capture, so the gap is LIVE and
 tracked in
 [#465](https://github.com/WonderForgeLabs/gooey/issues/465), which is
@@ -146,13 +149,17 @@ the Composer maintains — is worth writing when something does.
 > `docs/specs/2026-09-05-overlay-ranks.md`. Two overlapping popups are still
 > declaration-ordered, because they are equal-ranked.
 
-**Everything in this section was true on 2026-08-30 and is superseded by
-[#465](https://github.com/WonderForgeLabs/gooey/issues/465).** It is
-quoted rather than deleted, because the gap it records is why #465
-exists. The hit walk asks `overlayOf` now: it is lifted, it does know
-about the marker, and a later ordinary sibling does not take the press
-from an overlay. Read the paragraph below as the state of the tree on
-this spec's date.
+> **Written as a not-yet, and it is now.** The three paragraphs below
+> gate the work on a non-capturing overlay existing; two do. See the
+> supersession note at the top of this file — the gap is live and
+> tracked in [#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+> The dated wording is kept because a decision record describes its own
+> date.
+
+Hit-testing is untouched, and that is a gap rather than a non-event. A popup
+takes held pointer capture while open (`Popup.Open`), which routes presses to it
+regardless of where it sits in any order — so nothing about input needed to
+change *for the overlay this framework ships*.
 
 > Hit-testing is untouched, and that is a gap rather than a non-event. A popup
 > takes held pointer capture while open (`Popup.Open`), which routes presses to it
