@@ -287,22 +287,28 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 //     answers correctly;
 //   - docs_test.go's control-character sweep, which skips
 //     render.Continuation by name;
-//   - ONE read in components/preview/overlay_test.go, which asserts
+//   - the read in components/preview/overlay_test.go that asserts
 //     render.Continuation BY NAME — the rune plane is the subject, so
 //     .Rune is the right question.
 //
-// THE COMMAND IS THE AUTHORITY ON THAT LAST COUNT and the sentence it
-// replaced was not: this said "two reads in overlay_test.go" while the
-// grep above returns one. The second read it had in mind is real and
-// sits in the same file — the row snapshot that collects `c.Rune` off
-// an already-captured render.Cell, because Cell.Text() merges an
-// unwritten cell with a space and the assertion there is that a wide
-// pair became two blanks. It is a FIELD READ ON A VALUE, not a
-// `.At(...).Rune` call, so it is outside this grep's reach and outside
-// the set these bullets partition. Counting it here is the same defect
-// as the paragraph above it confesses to, one round later: a number in
-// prose sampled beside a command rather than from it. Raised in review
-// of #524.
+// NO COUNT IN THAT LAST BULLET, AND THAT IS THE THIRD ATTEMPT AT IT.
+// It said "two reads in overlay_test.go" against a grep returning one;
+// corrected to "ONE read", it was invalidated by two later commits on
+// this same branch that added a read each, and the grep now returns
+// three. The PARTITION held every time — both new reads are
+// single-cell identity checks against literals, which the first bullet
+// covers — so what kept breaking was only the number, in a paragraph
+// whose entire subject is that a number must come from the command
+// rather than sit beside it. So the bullet names WHAT it covers and
+// counts nothing; run the grep for today's figure.
+//
+// One read in that file is deliberately outside this partition and
+// worth saying so: the row snapshot collects `c.Rune` off an
+// already-captured render.Cell, because Cell.Text() merges an unwritten
+// cell with a space and the assertion there is that a wide pair became
+// two blanks. It is a FIELD READ ON A VALUE, not a `.At(...).Rune`
+// call, so this grep never reaches it. Raised in review of #524, three
+// rounds running.
 //
 // AGAINST A LITERAL is load-bearing in the first of those, and it is
 // what dockcollapse_test.go:747 was not: it captured a cell and compared
