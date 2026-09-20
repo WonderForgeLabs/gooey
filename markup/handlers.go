@@ -183,7 +183,16 @@ func lookupProvider(uri string) (HandlerProvider, bool) {
 func (ctx *Context) handlerCommand(x *handlerExpr) (gooey.Command, error) {
 	uri, ok := ctx.ns[x.Prefix]
 	if !ok {
-		return nil, fmt.Errorf("markup: undeclared namespace prefix %q — add xmlns:%s=\"…\" to the root element", x.Prefix, x.Prefix)
+		// TO THE DOCUMENT, not to the root element. A declaration on
+		// ANY element is document-wide (ctx.ns is one flat table merged
+		// in document order), which is what
+		// TestAPrefixDeclaredBelowTheRootIsDocumentWide pins and what
+		// the designer relies on: it has no envelope node to write one
+		// on, so it puts prefixed declarations on the user's root
+		// element instead. The old wording sent an author following it
+		// to the one place the designer cannot edit. Raised in review
+		// of #501.
+		return nil, fmt.Errorf("markup: undeclared namespace prefix %q — add xmlns:%s=\"…\" to an element of this document", x.Prefix, x.Prefix)
 	}
 	p, ok := lookupProvider(uri)
 	if !ok {

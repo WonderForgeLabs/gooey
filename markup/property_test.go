@@ -479,3 +479,101 @@ func TestDeclaredRegistryRecordsInstances(t *testing.T) {
 		t.Error("the nested Badge instance did not reach the page-wide registry")
 	}
 }
+
+// TestTheXPropertyRefusalNamesTheRoot is the pin nothing carried.
+//
+// `grep -rn "dependency property declaration"` answered only the Errorf
+// itself, so neither the message nor a change to it was under test —
+// unlike its two siblings, which values_test.go and handlers_test.go
+// both reach. Review of #501 reworded all three to "an element of this
+// document" and this one regressed, silently.
+//
+// AN ELEMENT PREFIX IS NOT A VALUE-EXPRESSION PREFIX, which is why the
+// three do not share a wording. handlers.go and values.go resolve a
+// prefix inside an attribute VALUE through ctx.ns — flat and
+// document-wide, so any element may carry the declaration, which is what
+// TestAPrefixDeclaredBelowTheRootIsDocumentWide measures. `x:` prefixes
+// an ELEMENT, resolved by encoding/xml with real subtree scoping before
+// this package sees it, and <x:Property> must be a direct child of the
+// root — so <Gooey> is the only element whose declaration is in scope.
+// The second arm here is the advice, followed: it must not come back
+// with the same refusal.
+func TestTheXPropertyRefusalNamesTheRoot(t *testing.T) {
+	const unprefixed = `<Gooey>
+  <Property Name="Count" Type="int" Default="1"/>
+  <Text>x</Text>
+</Gooey>`
+	_, err := Build([]byte(unprefixed), &Context{})
+	if err == nil {
+		t.Fatal("an unprefixed <Property> loaded, so the refusal this test is " +
+			"about never fired")
+	}
+	const want = `add xmlns:x="` + XNamespace + `" to the <Gooey> root element`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal reads\n\t%v\nwant it to carry\n\t%s\n"+
+			"Naming any other element is advice that does not work: see the "+
+			"arm below", err, want)
+	}
+
+	// THE ADVICE, FOLLOWED LITERALLY, on the element the reworded
+	// message would have sent the author to.
+	const below = `<Gooey>
+  <x:Property Name="Count" Type="int" Default="1"/>
+  <Text xmlns:x="` + XNamespace + `">x</Text>
+</Gooey>`
+	if _, err := Build([]byte(below), &Context{}); err == nil ||
+		!strings.Contains(err.Error(), "dependency property declaration") {
+		t.Errorf("declaring xmlns:x below the root gave %v; want the SAME "+
+			"refusal, because an element prefix is subtree-scoped and the "+
+			"<x:Property> above it is still unresolved. If this ever loads, the "+
+			"asymmetry documented here is gone and the message may widen", err)
+	}
+
+	// AND THE TWO PLACEMENTS THAT DO RESOLVE — so the arm above is about
+	// SCOPE and not about the declaration being rejected outright.
+	//
+	// THE SECOND OF THESE IS THE CORRECTION. This test had the root arm
+	// only, and the comment beside it read "the root is the only element
+	// whose declaration is in scope" — measured against the sibling case
+	// alone, which cannot tell "only the root" from "in scope at the
+	// element". XML scoping includes an element's OWN attributes, so
+	// <x:Property xmlns:x="…"/> resolves as well. The refusal's advice
+	// still names the root, because that is where every example puts it
+	// and where one declaration serves every declaration below — but the
+	// RULE is scope, and docs/markup-reference.md says so now. Raised in
+	// review of #501.
+	for _, tc := range []struct{ name, doc string }{
+		{"on the root", `<Gooey xmlns:x="` + XNamespace + `">
+  <x:Property Name="Count" Type="int" Default="1"/>
+  <Text>x</Text>
+</Gooey>`},
+		{"on the x:Property itself", `<Gooey>
+  <x:Property xmlns:x="` + XNamespace + `" Name="Count" Type="int" Default="1"/>
+  <Text>x</Text>
+</Gooey>`},
+	} {
+		// ANY error, not only the refusal. This asked whether the error
+		// was the <Property> one and let every other failure through —
+		// so a fixture typo, or any future change that breaks this
+		// document for an unrelated reason, would leave the arm green
+		// while it had stopped measuring that the declaration RESOLVES.
+		// That matters here specifically: this arm is the correction to
+		// a claim that was itself measured against too narrow a case,
+		// and a correction that cannot fail is not one. Both fixtures
+		// build with err == nil today, so nothing is lost by asking for
+		// it. Raised in review of #501.
+		_, err := Build([]byte(tc.doc), &Context{})
+		if err == nil {
+			continue
+		}
+		if strings.Contains(err.Error(), "dependency property declaration") {
+			t.Errorf("xmlns:x %s is still refused as an unprefixed <Property>: %v\n"+
+				"Both placements put the declaration in scope at the <x:Property>, "+
+				"which is what element-prefix resolution asks", tc.name, err)
+			continue
+		}
+		t.Errorf("xmlns:x %s did not build: %v\nThis arm exists to show the "+
+			"declaration RESOLVES, so any failure retires it — including one "+
+			"that has nothing to do with namespaces", tc.name, err)
+	}
+}
