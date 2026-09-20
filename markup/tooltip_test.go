@@ -13,7 +13,8 @@ import (
 
 // The two markup forms of #92 on one page: the child form on a Button
 // (with a Delay and a validated Gesture hint), the shorthand on a Text,
-// and the AdornmentLayer declared last. Everything below is pure markup
+// and the AdornmentLayer last — by convention; it ranks itself to the
+// top of the overlay layer either way. Everything below is pure markup
 // — the Include tier — with no code-behind anywhere.
 const tooltipPage = `<Gooey>
   <VStack>

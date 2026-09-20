@@ -1,9 +1,8 @@
 package gooey
 
 import (
-	"io/fs"
-	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -92,7 +91,12 @@ func rankRow(t *testing.T, f *Frame) string {
 // The higher-ranked one is declared FIRST, which is the WORST case for
 // declaration order: it is exactly the arrangement in which the document
 // would put the lower-ranked one on top, so a rank that did not work
-// shows up as the wrong rune.
+// shows up as the wrong rune. It is also the arrangement an app actually
+// has — a MenuBar somewhere in the page and a page-wide ToastHost after
+// it. The framework USED to tell you to declare the MenuBar last; #437's
+// global lift already made that irrelevant and #443 retired the wording,
+// so the fixture's shape is the worst case rather than an instruction
+// being followed.
 func TestAHigherRankPaintsOverALowerOneDeclaredLater(t *testing.T) {
 	top := &rankedStripe{stripe{ch: 'T', rank: 2}}
 	bottom := &rankedStripe{stripe{ch: 'B', rank: 1}}
@@ -183,26 +187,21 @@ func TestTheOverlayLayerStillClearsThePage(t *testing.T) {
 	}
 }
 
-// TestARankOrdersPaintAndNotHitTesting is the divergence the ranks
-// CREATE, pinned rather than described.
+// TestARankOrdersHitTestingAsWellAsPaint is the INVERSION of
+// TestARankOrdersPaintAndNotHitTesting, which pinned the divergence
+// while it stood.
 //
-// #437 lifted overlays out of document order for paint and left
-// hit-testing alone, calling that a gap. A rank widens it into a
-// contradiction an author can hit: paint answers by rank, hitTest still
-// walks ChildComponents in REVERSE (mouse.go), so the later sibling
-// wins the click. Declare a ranked host FIRST — which every
-// author-facing doc now says is free — and the two planes disagree.
+// That test said: paint answers by rank, hitTest walks ChildComponents
+// in reverse, so declare a ranked host first — which every author-facing
+// doc says is free — and the two planes disagree. It ended by naming the
+// four files whose caveats would come out if hit-testing ever became
+// rank-aware, and #465 is that change; the caveats came out with it.
 //
-// Under the retired "declare it last" rule they agreed, because the
-// thing on top was also the thing hit-testing found first. That is why
-// this test arrives with the ranks and not with #437: the freedom is
-// what makes the disagreement reachable.
-//
-// It is a TEST and not a paragraph because the two answers live in
-// different files with no shared symbol between them — nothing about
-// changing one drags the other into review. Raised in review of #456,
-// where the docs granted the freedom and said nothing about the click.
-func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
+// It stays a TEST and not a paragraph for the reason the old one gave:
+// the two answers live in different files with no shared symbol between
+// them, so nothing about changing one drags the other into review. What
+// changed is the direction, not the argument.
+func TestARankOrdersHitTestingAsWellAsPaint(t *testing.T) {
 	// BOTH are overlays, and that is what makes the paint arm about the
 	// RANK rather than about the lift. A plain leaf as the loser was the
 	// first version of this fixture, and mutating overlayRank to return
@@ -225,188 +224,267 @@ func TestARankOrdersPaintAndNotHitTesting(t *testing.T) {
 		t.Fatalf("PAINT: the ranked overlay was declared first and lost the cells: row %q", got)
 	}
 
-	// Same tree, same frame, opposite answer. If this ever returns `over`
-	// the divergence closed — which would be good news, and would make
-	// every page carrying the caveat wrong rather than merely stale.
+	// SAME TREE, SAME FRAME, SAME ANSWER — which is the whole claim.
 	//
-	// THE LIST IS DERIVED, NOT WRITTEN DOWN, and that is the whole of the
-	// difference. It was a seven-file literal in this message, kept in
-	// step by hand; review of #456 grepped for it and found FOUR more
-	// pages carrying the same caveat — component.go's own Overlay doc
-	// ("IT MOVES PAINT, NOT INPUT"), docs/specs/2026-09-05-overlay-ranks.md,
-	// docs/specs/2026-08-30-overlay-layer.md and
-	// docs/specs/2026-09-05-one-shot-overlay-order.md. A literal had
-	// already been wrong twice before that (the two learn pages, then
-	// this file's own CLAUDE.md entry), each time silently, each time
-	// caught only because somebody happened to look. Eleven is not a
-	// better number to maintain than seven; deriving it is the fix.
+	// `under` is the later sibling and the lower rank, so a walk that
+	// still preferred document order returns it and a walk that asks
+	// overlayOf returns `over`. Nothing else in the fixture separates
+	// them.
 	//
-	// citingPages is the derivation, and naming this test is what puts a
-	// page on the list. The four pages that carried the caveat without
-	// citing the test were edited to cite it, so the anchor covers them —
-	// a caveat added later without the citation is invisible here, which
-	// is the residual gap and the reason the convention is written into
-	// CLAUDE.md's paragraph rather than only here. Raised in review of
-	// #456.
+	// THE PAGE LIST IS DERIVED, not written here. This message carried a
+	// literal six-file list until review of #458 pointed out that the
+	// test it replaced had derived exactly that list — because the
+	// seven-file literal BEFORE it was missing four pages. A file
+	// renamed or a caveat written next quarter would leave the advice
+	// stale in the message a future reader follows.
+	pages := citingPages(t, "TestARankOrdersHitTestingAsWellAsPaint")
+	if len(pages) == 0 {
+		t.Fatalf("no page outside this file names this test, so the message below " +
+			"would be advice with nothing after it. Either the walk stopped " +
+			"matching or the caveat pages stopped citing the test that polices " +
+			"them; both are the failure this floor is for")
+	}
 	m := NewFocusManager(root)
 	hit := m.HitTest(0, 0)
-	if hit == Component(over) {
-		t.Fatalf("hit-testing now agrees with paint — the ranked overlay took the "+
-			"cell it paints. Delete the divergence caveat from these pages "+
-			"rather than this test:\n\t%s",
-			strings.Join(citingPages(t), "\n\t"))
+	if hit == Component(under) {
+		t.Fatalf("HIT: the later-declared, lower-ranked overlay took the press for a "+
+			"cell `over` paints. Hit-testing is back on document order alone, "+
+			"which is #465 — and what these pages say about it is wrong "+
+			"again:\n\t%s", strings.Join(pages, "\n\t"))
 	}
-	if hit != Component(under) {
-		t.Errorf("hit-testing returned %T, want the later-declared overlay: it walks "+
-			"document order in reverse and knows nothing about ranks", hit)
-	}
-}
-
-// isTheDivergencePin says whether a walked path is THIS file — the pin
-// that asserts the divergence, rather than a page that carries the
-// caveat about it.
-//
-// It compares the repo-relative PATH, and that is the whole content of
-// the function. Two files here are called overlayrank_test.go: this one
-// and components/overlayrank_test.go, which holds the user-facing claim.
-// A base-name match excluded both, so the second could never join the
-// derived list — and it is the file a reader is most likely to put the
-// caveat in next. The list is derived precisely so a page joins it by
-// citing rather than by being remembered, and an accidental exclusion
-// is the one way that guarantee fails quietly. Raised in review of #456.
-func isTheDivergencePin(p string) bool {
-	return filepath.ToSlash(p) == "overlayrank_test.go"
-}
-
-// TestTheDivergencePinExcludesItselfAndNothingElse is the fixture the
-// tree cannot supply: components/overlayrank_test.go does not cite the
-// test today, so the walk is green under both the path rule and the
-// base-name rule it replaced, and nothing would say which is in force.
-func TestTheDivergencePinExcludesItselfAndNothingElse(t *testing.T) {
-	for _, tc := range []struct {
-		path string
-		want bool
-	}{
-		{"overlayrank_test.go", true},
-		{"components/overlayrank_test.go", false},
-		{"docs/specs/2026-09-05-overlay-ranks.md", false},
-		{"apps/wysiwyg/overlayrank_test.go", false},
-	} {
-		if got := isTheDivergencePin(tc.path); got != tc.want {
-			t.Errorf("isTheDivergencePin(%q) = %v, want %v — %s", tc.path, got, tc.want,
-				map[bool]string{
-					true:  "this is the pin and must be excluded from the list it derives",
-					false: "this is a page like any other and joins the list by citing",
-				}[tc.want])
-		}
-	}
-	// And the pin really is one of two files sharing a base name, which
-	// is the fact the path comparison exists for.
-	if _, err := os.Stat("components/overlayrank_test.go"); err != nil {
-		t.Skipf("components/overlayrank_test.go is gone (%v), so the base-name "+
-			"collision this guards against no longer exists", err)
+	if hit != Component(over) {
+		t.Errorf("hit-testing returned %T, want the higher-ranked overlay — the same one "+
+			"paint put on top", hit)
 	}
 }
 
-// citingPages walks the tree for every page naming this test, which is
-// the convention that puts a page on the divergence list. It replaces a
-// literal enumeration in the failure message above; see the comment
-// there for why, and for the one gap it leaves.
+// TestANonConstantRankPartsThePlanes is the cost of OverlayRanker's
+// contract, measured rather than asserted in prose.
 //
-// The walk excludes this file BY PATH, not by base name. Two files in
-// this repo are called overlayrank_test.go — this one and
-// components/overlayrank_test.go, which carries the user-facing claim —
-// and a base-name match silently skipped both. The second is the file a
-// reader is most likely to put the caveat in next, and the list is
-// derived precisely so a page joins it by citing rather than by being
-// remembered. Raised in review of #456.
+// component.go says "Return a constant" and now says WHY in the sharper
+// form this branch introduced: paint SAMPLES the rank at structural
+// re-sync (Composer.orderPaint writes it), while hitTest reads it LIVE
+// through overlayOf on every UNCAPTURED motion event — and on unheld
+// presses and releases, while a captured move reads it on none.
+// Nothing refuses a varying
+// rank — OverlayRank() is a plain method on an exported interface — so
+// the sentence was the whole enforcement, and the failure it warns about
+// is now a PLANE DISAGREEMENT rather than a late restack. That is the
+// exact divergence #465 removed, reachable only through this contract,
+// and this file's own standard is that the planes "cannot part again"
+// (TestARankOrdersHitTestingAsWellAsPaint).
 //
-// It prunes dot-directories at EVERY depth, not just the top:
-// .claude/worktrees/ holds whole checkouts of this repo, so a walk
-// anchored only at the root reports the same page several times on a
-// developer machine and once in CI. vendor/ is pruned because it cannot
-// carry this caveat and is most of the tree.
-func citingPages(t *testing.T) []string {
+// So the assertion is the disagreement itself, stated exactly. It is not
+// a bug report against the framework: sampling is deliberate, and making
+// paint live would cost a per-frame walk. It is a pin on the DOCUMENTED
+// answer, and it goes red in both directions — if the two planes ever
+// agree here, either paint started reading live or hitTest started
+// reading a sample, and component.go's paragraph has to change with
+// whichever it was. Raised in review of #458.
+func TestANonConstantRankPartsThePlanes(t *testing.T) {
+	// The same two-overlays-differing-only-in-rank fixture the agreement
+	// test uses, for the same reason: a plain leaf as the loser would
+	// make this about the lift rather than the rank.
+	//
+	// BOTH RANKED, AND THE FLIP LANDS ABOVE THE FLOOR. This used
+	// `overlayStripe` for `under` and flipped `over` to -1, which
+	// overlayRank CLAMPS to OverlayRankPopup — the same rank `under`
+	// already had. The post-flip answer then came from beatenBy's
+	// POSITION tie-break while the message below described a rank
+	// comparison, so a reader debugging it would study a comparison that
+	// never ran. Adornment over Toast, flipped to Popup, is a real
+	// inversion at every step.
+	//
+	// AND `over` IS THE LATER SIBLING IN THIS FIXTURE, which is the half
+	// that makes the post-flip assertion a rank claim rather than a
+	// tie-break one. Position is the LAST thing beatenBy compares, after
+	// layer and rank, so it decides only a tie — but a tie is exactly
+	// what a walk that had stopped comparing ranks would see. With
+	// `over` earlier, that walk answers `under` too and the assertion
+	// passes for the wrong reason. As the later sibling, `over` wins
+	// every tie, so only a live rank comparison can hand the press to
+	// `under`; removing the rank arm from beatenBy reddens this, which
+	// is how the arrangement was checked rather than argued. Raised in
+	// review of #458.
+	over := &rankedStripe{stripe{ch: 'O', rank: OverlayRankAdornment}}
+	under := &rankedStripe{stripe{ch: 'U', rank: OverlayRankToast}}
+	root := &twoKids{kids: []Component{under, over}}
+
+	c := NewComposer(root, 12, 3)
+	t.Cleanup(c.Close)
+	f, _ := c.Frame()
+	m := NewFocusManager(root)
+	// THE PRECONDITION, because the whole test is a CHANGE in the
+	// answer: if the planes did not agree before the flip there is
+	// nothing for the flip to part.
+	if got := render.RowText(f.Cells, 0); !strings.HasPrefix(got, "O") {
+		t.Fatalf("before the flip the higher-ranked overlay does not own the cells: row %q", got)
+	}
+	if m.HitTest(0, 0) != Component(over) {
+		t.Fatalf("before the flip the planes already disagree, so this test measures nothing")
+	}
+
+	// A VARYING RANK, with no structural change to force a re-sync —
+	// which is what a real one would look like: a component returning a
+	// value that depends on its own state, read on a frame nobody
+	// rebuilt.
+	over.rank = OverlayRankPopup
+	f, _ = c.Frame()
+
+	if got := render.RowText(f.Cells, 0); !strings.HasPrefix(got, "O") {
+		t.Errorf("PAINT followed the new rank (row %q). component.go says paint "+
+			"samples the rank at re-sync, so it must still show the overlay that "+
+			"was ranked highest when the tree was last synced. If orderPaint now "+
+			"runs per frame, the OverlayRanker paragraph naming this divergence "+
+			"is out of date", got)
+	}
+	if hit := m.HitTest(0, 0); hit != Component(under) {
+		t.Errorf("HIT returned %T; component.go says hitTest reads the rank live "+
+			"through overlayOf, so after the flip it must answer with the other "+
+			"overlay — the planes parting is the documented cost of a "+
+			"non-constant rank. If the hit walk now reads a sample too, the two "+
+			"planes agree again and that paragraph should say so", hit)
+	}
+}
+
+// citingPages is every tracked file that names testName, minus the file
+// the name is DEFINED in.
+//
+// It exists because the message below used to carry the list as a
+// literal, and a literal list of six went into this branch two rounds
+// after review of #456 had derived the same list away — the seven-file
+// version it replaced was missing four pages, component.go's own Overlay
+// doc among them. A page joins by citing the test, which is also the act
+// that makes the page depend on it.
+//
+// docFilesIn is the same walk every guard in zorderdocs_test.go uses, so
+// the set is tracked files only and the two cannot drift.
+//
+// THE EXCLUDED FILE TRAVELS WITH THE NAME. This function took a testName
+// parameter in round six and went on excluding a hardcoded path, so a
+// second caller asking about a test defined elsewhere would have dropped
+// THIS file from that test's list — a page that does cite it — while
+// keeping the file that defines it, which does not count as a citation.
+// definingFile derives it instead. Raised in review of #458.
+func citingPages(t *testing.T, testName string) []string {
 	t.Helper()
-	var pages []string
-	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+	defined := definingFile(t, testName)
+	var out []string
+	for _, p := range docFilesIn(t, ".") {
+		if isTheDivergencePin(p, defined) {
+			continue
+		}
+		b, err := docText(p)
 		if err != nil {
-			return err
+			t.Fatalf("reading %s: %v", p, err)
 		}
-		if d.IsDir() {
-			if p != "." && (strings.HasPrefix(d.Name(), ".") || d.Name() == "vendor") {
-				return fs.SkipDir
-			}
-			return nil
+		if strings.Contains(b, testName) {
+			out = append(out, filepath.ToSlash(p))
 		}
-		switch filepath.Ext(p) {
-		case ".go", ".md":
-		default:
-			return nil
-		}
-		if isTheDivergencePin(p) {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(string(b), "TestARankOrdersPaintAndNotHitTesting") {
-			pages = append(pages, filepath.ToSlash(p))
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking for pages citing this test: %v", err)
 	}
-	sort.Strings(pages)
-	return pages
+	sort.Strings(out)
+	return out
 }
 
-// TestTheDivergenceListIsNotEmpty is the non-vacuity guard on the
-// derivation above, and it is not ceremony. citingPages walks for a
-// literal string; a rename of this test, a walk rooted elsewhere, or a
-// prune that swallows its own target all produce an EMPTY list, and an
-// empty list makes the failure message above say "delete the caveat from
-// these pages:" followed by nothing — advice that reads as "there is
-// nothing to do" at the exact moment there is most to do. Failing here
-// instead says which half broke.
+// definingFile is the tracked file that declares `func <testName>`, and
+// it is the one file citingPages must not report: a definition is not a
+// citation.
 //
-// The floor is a floor rather than a count, for the reason CLAUDE.md's
-// Verify section gives about numbers in prose: an exact figure is a
-// sample taken once, and this one was 7 until review of #456 measured
-// 11. What must hold is that the walk reaches the caveat's home pages at
-// all.
-func TestTheDivergenceListIsNotEmpty(t *testing.T) {
-	pages := citingPages(t)
-	if len(pages) < 8 {
-		t.Fatalf("the derived divergence list holds %d pages: %v\nA caveat this "+
-			"widely repeated cannot have shrunk to that, so suspect the "+
-			"derivation — a renamed test, a walk rooted elsewhere, or a prune "+
-			"that swallowed its own target — before believing the pages went "+
-			"away", len(pages), pages)
-	}
-	// THE THREE SURFACES THE CAVEAT MUST REACH, by kind rather than by
-	// name: the framework's own doc comments, the reference and spec
-	// prose, and the learn path where the freedom is GRANTED to a
-	// first-time reader. Losing one whole kind is the regression a total
-	// count hides, and the learn pages are exactly what an earlier
-	// literal list had missed.
-	kinds := map[string]bool{}
-	for _, p := range pages {
-		switch {
-		case strings.HasPrefix(p, "docs/learn/"):
-			kinds["learn"] = true
-		case strings.HasPrefix(p, "docs/"):
-			kinds["docs"] = true
-		case strings.HasSuffix(p, ".go"):
-			kinds["code"] = true
+// DERIVED, NOT NAMED, so the exclusion cannot part from the name it is
+// an exclusion for. Exactly one file must declare it — none means the
+// caller named a test that does not exist, and two is not expressible in
+// one Go package, so either answer says the walk or the name is wrong
+// rather than quietly trimming the list by one.
+func definingFile(t *testing.T, testName string) string {
+	t.Helper()
+	decl := regexp.MustCompile(`(?m)^func ` + regexp.QuoteMeta(testName) + `\(`)
+	var found []string
+	for _, p := range docFilesIn(t, ".") {
+		if !strings.HasSuffix(p, ".go") {
+			continue
+		}
+		b, err := docText(p)
+		if err != nil {
+			t.Fatalf("reading %s: %v", p, err)
+		}
+		if decl.MatchString(b) {
+			found = append(found, filepath.ToSlash(filepath.Clean(p)))
 		}
 	}
-	for _, want := range []string{"learn", "docs", "code"} {
-		if !kinds[want] {
-			t.Errorf("no %s page cites this test, so the divergence caveat there "+
-				"(if any) will outlive the behaviour: %v", want, pages)
+	if len(found) != 1 {
+		t.Fatalf("%d files declare func %s (%v), want exactly 1 — the exclusion "+
+			"citingPages applies is the file that DEFINES the test, and it cannot "+
+			"be derived from an answer that is not one file", len(found), testName, found)
+	}
+	return found[0]
+}
+
+// isTheDivergencePin reports whether p is that file. The path is the
+// whole path rather than a basename, for the reason docFilesIn's own
+// exemption gives — a basename exempts a same-named file at any depth.
+//
+// Clean before the compare, because the walk's spelling is not the only
+// one a caller has: docFilesIn(".") yields a bare `overlayrank_test.go`
+// while the honesty arm below hands it `./overlayrank_test.go`, and an
+// exemption that answers differently for two spellings of one file is
+// the same defect one level down.
+func isTheDivergencePin(p, defined string) bool {
+	return filepath.ToSlash(filepath.Clean(p)) == filepath.ToSlash(filepath.Clean(defined))
+}
+
+// TestTheDivergencePinExcludesItselfAndNothingElse keeps the exemption
+// from becoming a class. An exemption that matches more than the one
+// file it was written for is how a derived list quietly becomes a
+// shorter derived list.
+func TestTheDivergencePinExcludesItselfAndNothingElse(t *testing.T) {
+	// DERIVED, and this is the half the hardcoded version could not
+	// assert: the file the exclusion names is the file that declares the
+	// test citingPages is asked about. Move the test to a sibling and
+	// this answer moves with it.
+	defined := definingFile(t, "TestARankOrdersHitTestingAsWellAsPaint")
+	if defined != "overlayrank_test.go" {
+		t.Errorf("the test citingPages is asked about is declared in %q, want "+
+			"overlayrank_test.go — the arms below describe this file", defined)
+	}
+
+	// A SECOND NAME, DEFINED SOMEWHERE ELSE, which is the pairing itself
+	// rather than a mutation of it: under the hardcoded exclusion this
+	// arm is false both ways round — overlayrank_test.go, a page that
+	// CITES the test below, was dropped from its list, and
+	// overlayhit_test.go, which defines it, was kept.
+	elsewhere := definingFile(t, "TestADragIsNotWalkedForByAQueryEither")
+	if elsewhere != "overlayhit_test.go" {
+		t.Fatalf("the second test is declared in %q, want overlayhit_test.go — "+
+			"this arm exists to ask about a test defined in another file and "+
+			"has stopped doing so", elsewhere)
+	}
+	if !isTheDivergencePin("overlayhit_test.go", elsewhere) {
+		t.Error("the exclusion for a test defined in overlayhit_test.go does not " +
+			"cover that file, so a definition would be counted as a citation")
+	}
+	if isTheDivergencePin("overlayrank_test.go", elsewhere) {
+		t.Error("the exclusion for a test defined in overlayhit_test.go covers " +
+			"overlayrank_test.go, which only CITES it — the exclusion has not " +
+			"travelled with the name it is an exclusion for")
+	}
+	for _, p := range []string{
+		"overlayrank_test.go", "./overlayrank_test.go",
+	} {
+		if !isTheDivergencePin(p, defined) {
+			t.Errorf("isTheDivergencePin(%q) is false; this file must be excluded "+
+				"however the walk spells its path", p)
+		}
+	}
+	for _, p := range []string{
+		"packs/temporal-workflow/overlayrank_test.go",
+		"components/overlayrank_test.go",
+		"overlayrank.go",
+		"overlayonepass_test.go",
+	} {
+		if isTheDivergencePin(p, defined) {
+			t.Errorf("isTheDivergencePin(%q) is true; the exemption is for the one "+
+				"file that DEFINES the test, and anything wider silently shrinks "+
+				"the list the failure message derives", p)
 		}
 	}
 }

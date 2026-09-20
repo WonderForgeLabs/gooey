@@ -87,7 +87,7 @@ type ChildSetter interface {
 // the document, it is on top of it, and where its owner happens to be
 // declared has nothing to do with what it must cover.
 //
-// THE OLD ANSWER WAS "DECLARE IT LAST", and it was not an answer. A
+// THE OLD ANSWER WAS "DECLARE IT LAST", and it was never an answer. A
 // popup surface is the last of its OWNER'S children, which buys being
 // above the owner's other children and nothing else: Frame's z-ordered
 // pass forces a repaint only of nodes LATER in c.nodes than a painter
@@ -121,23 +121,33 @@ type ChildSetter interface {
 // because the two popups are the same KIND; that is exactly the
 // distinction the rank draws and the one it does not.
 //
-// IT MOVES PAINT, NOT INPUT. FocusManager.HitTest walks document order
-// and knows nothing about this marker, so a later sibling still takes a
-// press even where an overlay paints above it. Popup gets away with it
-// by holding pointer capture for as long as it is open, which routes
-// presses before the walk runs — but that is Popup's mechanism, not
-// something this interface provides.
+// IT MOVES PAINT AND, SINCE #465, INPUT. FocusManager.HitTest asks
+// overlayOf — this marker, plus OverlayRanker's rank — exactly as
+// orderPaint does, so an overlay takes the press from wherever it is
+// declared, and a nested one inherits its lifting root's answer on both
+// planes.
 //
-// So an overlay that does NOT take capture is responsible for its own
-// routing. Implementing this alone will paint you on top and leave the
-// clicks to whoever is underneath. Stated in review of #437; the same
-// gap is named in docs/specs/2026-08-30-overlay-layer.md.
+// THIS PARAGRAPH SAID THE OPPOSITE, and it was true from #437 until
+// #465: "FocusManager.HitTest walks document order and knows nothing
+// about this marker, so a later sibling still takes a press even where
+// an overlay paints above it… an overlay that does NOT take capture is
+// responsible for its own routing." Paint got the freedom in #437 and
+// input kept the old rule, so the two planes disagreed for every overlay
+// without capture — silently, because under the retired "declare it
+// last" rule the thing on top was also the thing the walk found first.
+// The divergence arrived with the freedom, not with the layer.
 //
-// TestARankOrdersPaintAndNotHitTesting (root package) is what holds the
-// divergence open, and naming it here is what puts this comment on the
-// list its failure message prints — so closing the gap sends whoever
-// closes it to this paragraph too. Review of #456 found this page
-// carrying the caveat and absent from that list.
+// Popup is why it took so long to be noticed: it holds pointer capture
+// for as long as it is open, which routes presses before the walk runs.
+// That is still Popup's own mechanism rather than something this
+// interface provides — it just no longer has to be.
+//
+// ONE RESIDUAL DIVERGENCE, and it is documented where the walk is
+// (FocusManager.HitTest, mouse.go): the hit walk prunes on bounds at
+// EVERY ancestor, where paint clips each node to its own rect. A surface
+// arranged outside its owner's rectangle therefore paints and cannot be
+// hit. Nothing shipped is in that position without also holding capture.
+// Tracked as #482.
 type Overlay interface{ OverlaysPage() }
 
 // OverlayRanker is an Overlay that says where in the overlay layer it
@@ -198,6 +208,17 @@ type Overlay interface{ OverlaysPage() }
 // value that can change needs the observer-and-re-sync machinery Frozen
 // has, and a method returning an int reads as dynamic in a way an empty
 // marker never does. Return a constant.
+//
+// AND THE TWO PLANES NOW READ IT DIFFERENTLY, which is the sharper cost
+// and was not here. Paint SAMPLES the rank at re-sync; hitTest reads it
+// LIVE, through overlayOf, on every UNCAPTURED motion event — and on
+// unheld presses and releases, which are not motion events at all,
+// while a captured move reads it on none (#465). So a
+// non-constant rank no longer merely restacks late — on the frame the
+// value changes, paint answers with the old rank and input with the new
+// one, and the planes disagree about which overlay is on top. That is
+// the exact divergence the ranking work exists to remove, reachable
+// only through this contract. Raised in review of #458.
 //
 // EQUAL RANKS STILL KEEP DOCUMENT ORDER. Two popups paint in the order
 // they were declared rather than the order they were opened; the rank
@@ -559,11 +580,12 @@ func (f *Frame) LayoutFault() *LayoutFault { return f.fault }
 // renderTree walked document order and never consulted Overlay, so #430
 // reproduced here verbatim long after Composer was fixed — on the path
 // that cmd/pixels, cmd/typeahead --dump and the test helpers across
-// components/, markup/ and the root use. A fixture asserted through it would have looked green while
-// encoding the bug. Both paths now order through the one overlayOf rule
-// (#438) and through the one appendByRank bucket pass, and
-// TestBothPaintPathsAgree compares them rather than pinning each to a
-// string, so they cannot drift together either.
+// components/, markup/ and the root all use. A fixture asserted through
+// it would have looked green while encoding the bug. Both paths now
+// order through the one overlayOf rule (#438) and through the one
+// appendByRank bucket pass, and TestBothPaintPathsAgree compares them
+// rather than pinning each to a string, so they cannot drift together
+// either.
 //
 // Z-ORDER, THOUGH, AND NOT THE PICTURE — the claim above is scoped on
 // purpose, because two things this path does NOT do are easy to assume

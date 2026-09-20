@@ -39,15 +39,17 @@
     <KeyBinding Gesture="ctrl+s" Command="{{.Start}}"/>
     <KeyBinding Gesture="ctrl+t" Command="{{.Notify}}"/>
 
-    <!-- Overlays are declared last because that is where they read
-         best, not because position is what puts them on top: a
-         ToastHost and an AdornmentLayer carry gooey.Overlay, so
-         Composer.orderPaint lifts them out of document order into a
-         layer of their own from wherever they are declared. Grid.Row
-         still places the bar on the top row — element order and layout
-         position are independent, which is exactly what an overlay
-         needs. Tips paint above toasts because the AdornmentLayer
-         ranks higher in that layer, not because it comes after. -->
+    <!-- Overlays. What is lifted out of document order into a paint
+         layer of its own is the ToastHost, the AdornmentLayer, and the
+         MenuBar's DROPDOWN — not the bar, which is why Grid.Row still
+         places it on the top row. The lifted parts paint above the
+         content from wherever their hosts are declared; the hosts are
+         at the end here because that reads best, not because it
+         decides anything. Within the overlay layer a
+         RANK decides: the AdornmentLayer is at the top, then the
+         ToastHost, then the dropdown — so a tip paints above a toast
+         and a toast paints above an open menu, whatever order these
+         three are written in. -->
     <MenuBar Grid.Row="0" Style="accent">
       <Menu Title="_Job">
         <MenuItem Text="Re_start" Gesture="ctrl+s" Command="{{.Start}}"/>

@@ -343,7 +343,7 @@ change repaints exactly the components that read it.
 `ArrangeChild`.** The interface is `Container { ChildComponents() []Component }`
 (`component.go:39`) — the framework walks children, never the container.
 Parents never call `child.Measure`/`child.Arrange`; `MeasureChild`
-(`layout.go:283`) and `ArrangeChild` (`layout.go:340`) apply the
+(`layout.go:301`) and `ArrangeChild` (`layout.go:358`) apply the
 margin/size/align/visibility sandwich, and skipping them silently drops all
 four. A component calling `Base.Arrange(b)` on *itself* is fine and common.
 A cycle no longer kills the process, and the fix is bigger than the issue
@@ -351,13 +351,32 @@ that asked for it. [#216](https://github.com/WonderForgeLabs/gooey/issues/216)
 asked for a depth cap on `MeasureChild`; capping that alone would have left
 the very crash it was filed for, because `Composer.build` runs BEFORE layout
 exists and dies on the **heap**, with no fatal error and no trace. Seven
-walks over `ChildComponents()` recurse in this package and all seven are
-bounded now — Compose and Focus by identity (they already key a map by
-component), Measure/Arrange/HitTest/Focusable/Render by depth against
-`MaxLayoutDepth` (512, which is 73x the deepest tree this repo has ever laid
-out). A control that includes itself is a **load** error naming the loop.
-Nothing panics: read the report with `Composer.LayoutFault()` /
-`App.LayoutFault()`.
+walks over `ChildComponents()` recurse in this package, and what each one
+bounds is not the same thing — the sentence here used to say "all seven
+are bounded now" and that reading flattered five of them:
+
+- **Compose and Focus bound by IDENTITY.** They already key a map by
+  component, so a cycle terminates however it is shaped.
+- **HitTest bounds TOTAL WORK.** Depth against `MaxLayoutDepth` (512,
+  which is 73x the deepest tree this repo has ever laid out) *and* a
+  whole-walk abort, which it needed once the ranked overlay layer took
+  away its early return on a hit.
+- **Measure, Arrange, Focusable and Render bound DEPTH ONLY**, and a
+  depth cap bounds the length of a path, not the number of them. On a
+  cycle that BRANCHES — a container that is its own child twice — the
+  visit count is exponential in the cap, so the walk terminates in the
+  same sense that 2^512 visits terminate. Measured: `Measure` did not
+  return in 5s. A single-child self-cycle returns instantly, which is
+  why the existing fixtures are green — one kid makes a cycle a line.
+  Tracked as [#506](https://github.com/WonderForgeLabs/gooey/issues/506);
+  the fix belongs in [#375](https://github.com/WonderForgeLabs/gooey/issues/375)'s
+  one walk-the-children primitive rather than in four copies.
+
+A control that includes itself is a **load** error naming the loop.
+Nothing panics, and on the four above that is the trap rather than the
+reassurance: `Composer.LayoutFault()` / `App.LayoutFault()` record the
+breach and the walk keeps going, so the fault says "handled" while the
+process hangs.
 
 Four walks OUTSIDE this package are still unbounded — `components/adorn.go`,
 `components/buttonbar.go`, `control/markup.go`, `control/snapshot.go`. They
@@ -419,7 +438,7 @@ comment COUNTS them by category (three doc comments, a spec heading, a
 test message) rather than listing them; derive the sites with a grep for
 `floor` rather than expecting a list to be there. Two things make this
 breakable in silence. The rank belongs to the **lifted subtree's root**,
-not to each node, so `overlayOf` (`component.go:281`) answers the parent's
+not to each node, so `overlayOf` (`component.go:302`) answers the parent's
 `parentOverlay` BEFORE testing the marker — reverse those two `if`s and a
 rank-2 container's rank-0 child lands in an earlier bucket, the parent
 paints after it, and a parent that covers its bounds erases the child it
@@ -449,37 +468,71 @@ to carry the nearest ancestor's background down
 ordering rule is not sharing a picture; if you add a paint path, the
 pre-clear is the half that will be forgotten.
 
-**The rank orders PAINT and nothing else.** `hitTest` (`mouse.go:142`;
-the reverse child walk is `mouse.go:158`) knows about neither layer nor
-rank, so the two planes can now disagree: a ranked host declared FIRST
-paints above a button and leaves the click to the button. Under the
-retired "declare it last" rule they agreed, which is why the divergence
-arrives with the ranks. `TestARankOrdersPaintAndNotHitTesting` fails if
-hit-testing ever becomes rank-aware, and its failure message names every
-page carrying the caveat — **this paragraph included** — so none of them
-can outlive the behaviour it describes. The list lives THERE and not
-here: this sentence held a four-file copy of it, missing the two learn
-pages and missing this file, so closing the gap would have reddened the
-test, sent whoever cleared it to six files, and left the invariant record
-asserting a divergence that was gone. `Popup` is
-exempt because it holds pointer capture while open, which routes presses
-before the walk runs — that is Popup's mechanism, not the marker's.
-Closing the gap is
-[#465](https://github.com/WonderForgeLabs/gooey/issues/465).
+**The rank orders PAINT AND THE CLICK, through one function.** It
+ordered paint alone until [#465](https://github.com/WonderForgeLabs/gooey/issues/465):
+`hitTest` walked children in reverse and knew about neither layer nor
+rank, so a ranked host declared FIRST painted above a button and left
+the click to the button. Under the retired "declare it last" rule the two
+planes agreed, which is why the divergence arrived with the ranks — the
+freedom is what made it reachable.
 
-**"Every page" is a claim the test now DERIVES, and a convention comes
-with it.** That list was a seven-file literal inside the failure message
-until review of #456 grepped for the caveat and found FOUR more pages
-carrying it — `component.go`'s own `Overlay` doc among them — so an
-absolute claim was being made off a hand-maintained list, which is the
-same shape as every count this file refuses to write down. The message
-now walks the tree and prints every page that NAMES the test, so a page
-joins the list by citing it. Cite it when you write the caveat somewhere
-new; a caveat without the citation is invisible to the walk, and that is
-the one gap left. `TestTheDivergenceListIsNotEmpty` guards the derivation
-itself, because an empty list turns the failure message into "delete the
-caveat from these pages:" followed by nothing — advice that reads as
-"nothing to do" at the moment there is most to do.
+`FocusManager.HitTest` (`mouse.go:178`) now returns the component that
+PAINTS LAST among those whose arranged bounds — AND EVERY ANCESTOR'S
+BOUNDS — contain the cell, comparing candidates on exactly what
+`appendByRank` orders by, and it gets there by asking `overlayOf` — the
+same membership-and-rank rule `orderPaint` and `gooey.Compose` ask.
+
+RENDERS is literal, and that half arrived a round later: a `Hidden`
+component occupies space and renders no content, so it is not hit
+either. Read that as `Render`, not as the cell plane — a hidden LEAF
+still pre-clears its own bounds, which erases a visible sibling
+underneath it
+([#508](https://github.com/WonderForgeLabs/gooey/issues/508)), so
+"paints nothing" is the wrong word and was measurably false.
+`hitTest` asks `paintable()` rather than testing `Visibility` a second
+way — the same question the paint path asks, which is what keeps the two
+from drifting — and it skips the NODE, not the subtree, because a hidden
+container still has its children painted over its own erasure.
+
+The ancestor half is not a detail: the walk prunes on bounds at every
+node, so a surface arranged outside its parent's rect paints and can
+never be hit. That is the point: not a second ordering, the same one.
+`TestARankOrdersHitTestingAsWellAsPaint` fails if they part again.
+Every page that taught the old "paint only, never hit testing" caveat
+lost it with the fix, and so did `zorderdocs_test.go`'s hit-test
+exemption, whose whole premise was that this walk still answered by
+position. How many pages that is, is deliberately not written here —
+this sentence said four while the test beside it said six, inside one
+PR, which is the counts-in-prose failure the Verify section describes.
+`TestARankOrdersHitTestingAsWellAsPaint`'s failure message walks the
+tree and names every page that cites it, so a page joins the list by
+citing the test.
+
+What the walk gave up is the early exit on a hit — an earlier sibling
+can out-rank a later one, so every subtree whose bounds contain the
+point is visited. It still prunes on bounds at every node, and still
+allocates nothing **of its own** — but it allocates whatever
+`ChildComponents` does, and `ToastHost` and `AdornmentLayer` each build
+a fresh slice per call, so a live toast costs one allocation per
+**uncaptured** motion event
+([#513](https://github.com/WonderForgeLabs/gooey/issues/513)). That
+qualifier is the correction: while the pointer is captured the walk
+does not run for a move at all, so a drag past a live toast allocates
+nothing, and the sentence without it is false of exactly the path the
+capture skip was added for.
+`Popup` never depended on any of it: it holds pointer capture while
+open, which routes presses before the walk runs — that is Popup's
+mechanism, not the marker's.
+
+**The list that needed deriving is gone, and the reason it is worth
+remembering is the shape.** #456 found that the divergence caveat's
+"every page carrying it" was a seven-file literal missing four pages —
+`component.go`'s own `Overlay` doc among them — and replaced the literal
+with a walk for pages that cite the test. #465 then closed the divergence
+and deleted the caveat everywhere, so there is no list left to maintain.
+What survives is the rule: an absolute claim made off a hand-maintained
+list is the same defect as a count written into prose, and this file
+refuses both.
 
 **Markup is two tiers behind one `fs.FS` seam.** `Include` = markup-only
 control, no code-behind; without `<x:Property>` declarations its attributes
@@ -509,7 +562,7 @@ past `HandleKey` still compiles and still passes most tests, and only
 `TestAttachmentKeysPrecedeHost` notices. After the bubble the mnemonics get
 the leftovers, in tree order; only then do tab/shift+tab and an unclaimed
 arrow fall through to focus navigation (`FocusDir`, `input.go:915`).
-`DispatchMouse` (`mouse.go:234`) bubbles the same way from the
+`DispatchMouse` (`mouse.go:581`) bubbles the same way from the
 captor-or-hit component. KeyBindings are scoped by their host component, so
 one only fires while the focused chain passes through it. Focus and hover
 are ordinary source properties (`FocusState`, `input.go:155`; `HoverState`,

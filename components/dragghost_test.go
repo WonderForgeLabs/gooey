@@ -9,8 +9,10 @@ import (
 )
 
 // A page shaped like an app that hosts free adornments: h rows of filler
-// under a layer declared LAST — by convention now, not because document
-// order decides it: AdornmentLayer is an Overlay and is lifted. Every filler
+// under a layer declared last. Last is no longer what puts the layer on
+// top — AdornmentLayer is a gooey.OverlayRanker at OverlayRankAdornment
+// and would be above the filler from anywhere — so this fixture proves
+// nothing about z-order and is not trying to. Every filler
 // is a Text — no HoverState anywhere — so the damage counts below are
 // the ghost's alone and not some host's hover repaint, the same reason
 // tipPage uses a Text host.
