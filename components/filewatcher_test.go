@@ -397,11 +397,10 @@ func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 // of the three adjacencies carry a completed scan and one does not:
 // between a fire post and the next paths post there is only the ticker
 // wait (components/filewatcher.go's loop is tick, post paths, await
-// reply, scan, post fire). This said "a scan sits between any two of
-// them", which over-counts exactly that adjacency — paths, fire, paths
-// is three posts and ONE completed scan. Both callers already use the
-// narrower form; this is the page a new caller reads when picking n,
-// so it says it too. Raised in review of #511.
+// reply, scan, post fire). Paths, fire, paths is three posts and ONE
+// completed scan, and this is the page a caller reads when picking n —
+// the two that bound scans state their claim against this paragraph
+// rather than re-deriving it.
 //
 // atomic because the posts come from the poll goroutine and the reads
 // from the test's.
@@ -674,12 +673,19 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 // it. An order that needs the instant forced cannot be pinned by a
 // fixture that waits for it.
 //
-// Measured, and the scope matters: with the increment moved first the
-// WATCHER FIXTURES stay green — TestFileWatcher*, TestDrainUntilPosts*,
-// TestDrainBudget*, TestAFileChange* — and this test goes red, which is
-// the whole of its argument. It said "the suite stays green", which was
-// true when it was measured and false by the end of the commit that
-// wrote it: the fixture is in the suite. Raised in review of #511.
+// Measured, and the scope is the three fixtures that route real posts
+// through countingPost.Post:
+//
+//	TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay
+//	TestFileWatcherDoesNotFireOverAnUnchangedFile
+//	TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan
+//
+// With the increment moved first those three stay green and this test
+// goes red, which is the whole of its argument. They are the whole
+// scope because nothing else in the file constructs a countingPost —
+// drainBudget's table never builds one and the composer fixtures cannot
+// wrap the post they care about (#518) — so a green set stated as globs
+// claims coverage from tests the mutation cannot reach.
 //
 // THE SAMPLE IS TAKEN AT ENQUEUE TIME, from inside the func Post
 // delegates to, which is the one instant between the two statements. The
@@ -878,11 +884,10 @@ func TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay(t *testing.T) {
 	// A disabled watcher still POSTS the fire — the poll loop posts it
 	// once a scan reports a hit, and it is fire(), on the UI goroutine,
 	// that reads Enabled and returns — so the sequence here can be paths,
-	// fire, paths. What makes three enough either way is that the poll
-	// goroutine is SERIAL and a scan sits between a paths post and the
-	// next: by the third move of the counter, a scan that began after the
-	// write has finished, and the baseline it advanced is what makes the
-	// change dropped rather than merely late.
+	// fire, paths. Three covers that worst case by the adjacency rule in
+	// countingPost's doc: by the third move of the counter a scan that
+	// began after the write has finished, and the baseline it advanced is
+	// what makes the change dropped rather than merely late.
 	drainUntilPosts(t, d, c, 3, w.Interval)
 	if hits != 0 {
 		t.Fatalf("a disabled watcher fired %d times", hits)
@@ -976,9 +981,9 @@ func TestFileWatcherDoesNotFireOverAnUnchangedFile(t *testing.T) {
 	// out — but it fails bounded rather than hanging.
 	//
 	// FORTY POSTS IS FORTY CYCLES STARTED, which is as close as the
-	// counter's units and this claim's come anywhere: a poll's scan
-	// FOLLOWS its post, so what is bounded is 39 completed scans — the
-	// overclaim is the scan after the last post, not that post's
+	// counter's units and this claim's come anywhere: by the adjacency
+	// rule in countingPost's doc what is bounded is 39 completed scans —
+	// the overclaim is the scan after the last post, not that post's
 	// closure, which drainUntilPosts' extra drain has run. And
 	// even that holds only while the idle path posts once, which nothing
 	// pins — FileWatcher.Start's no-hit arm continues without a fire post
