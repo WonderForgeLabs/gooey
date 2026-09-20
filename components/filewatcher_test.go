@@ -461,20 +461,23 @@ func drainBudget(n int64, every time.Duration) time.Duration {
 // TestDrainBudgetScalesWithTheCallersInterval pins both halves of the
 // budget, because both were unexercised by anything that runs.
 //
-// The watcher callers pass w.Interval, so which row they take is the
-// watcher's own declaration — and TWO OF THE THREE ROWS ARE REACHED
-// ONLY FROM HERE. Measured against this file rather than asserted:
-// every watcher caller (:837, :850, :949) passes an Interval of
-// time.Millisecond, under the 50ms floor, so they all take the floor
-// row; the zero row's one caller is the NO-WATCHER fixture at :610,
-// which passes a literal 0 rather than leaving an Interval unset; and
-// nothing at all reaches `every > per`.
+// ONE BRANCH HAS NO CALLER AT ALL, and it is `every > per` — the
+// above-floor row. Every watcher caller passes w.Interval from a
+// watcher declaring Interval: time.Millisecond, under the 50ms floor
+// (TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay, twice, and
+// TestFileWatcherDoesNotFireOverAnUnchangedFile), so all three take
+// the floor; the zero row's caller is the no-watcher fixture in
+// TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan, which passes a
+// literal 0 rather than leaving an Interval unset. The negative row
+// has no caller either, but it is the same clamp branch as the zero
+// row and that one runs.
 //
-// That dead above-floor branch is what an earlier round found, and this
-// table is the answer to it. The sentence here used to claim "all three
-// are live paths", which read as caller coverage this table is the
-// substitute for — the unpinned claim stated as fact that the last
-// several rounds have been spent removing.
+// So this table is the only thing exercising the scaling half, which
+// is what it is for. NAMED BY TEST RATHER THAN BY LINE: the four
+// citations here were line numbers into this same file, and they were
+// already off by two the day they were written — a number that points
+// into the file being edited is the one case where rot is guaranteed
+// and nothing goes red.
 //
 // Written as a table rather than as a converted caller because what is
 // under test is arithmetic, and a converted caller would pay two seconds
