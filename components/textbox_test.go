@@ -2134,7 +2134,10 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 // rune and backspace reattaches an orphan mark to its neighbour.
 // backspace and delete splice ONE RUNE out and set the caret from the
 // OLD index, so both reach exactly that position on a value where the
-// removed rune was the base of a cluster that is not at the end.
+// removed rune was the base of a cluster that is not at the end. The
+// selection arms of the same switch reach it through a different join:
+// deleteSelection splices [lo,hi) out, and lo is a boundary in the OLD
+// value rather than the new one — see its doc.
 // Measured on this branch before the fix: "ab" + U+0301, caret 1,
 // delete gives "á" with the caret at 1, and typing Z then gives "aŹ" —
 // the accent migrated onto the typed rune, which is the first harm
@@ -2152,20 +2155,21 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 // visible symptom.
 func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		start string
-		caret int
-		key   input.KeyEvent
-		want  string // after the delete, then typing Z
+		name     string
+		start    string
+		caret    int
+		selRight int // shift+right presses before the key, to select
+		key      input.KeyEvent
+		want     string // after the delete, then typing Z
 	}{
 		// The delete arm snaps RIGHTWARD, so the caret ends after the
 		// "á" glyph and the typed rune lands behind it. Leftward put
 		// it before the glyph, which walked the caret back over
 		// something nothing had deleted — review of #521, round 13.
 		{"delete takes the base out from under a following mark",
-			"ab́", 1, input.Named(input.KeyDelete), "áZ"},
+			"ab́", 1, 0, input.Named(input.KeyDelete), "áZ"},
 		{"backspace takes the base out from under a following mark",
-			"ab́", 2, input.Named(input.KeyBackspace), "Zá"},
+			"ab́", 2, 0, input.Named(input.KeyBackspace), "Zá"},
 		// AND ONE THE UI CAN ACTUALLY PRODUCE. The row above starts at
 		// caret 2 in "ab"+U+0301, whose boundaries are [0 1 3] — a
 		// mid-cluster start, which is the position this branch taught
@@ -2177,15 +2181,42 @@ func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 		// the flags — un-snapped the caret is 3, mid-cluster, which no
 		// other edit-path test reaches. Raised in review of #521.
 		{"backspace re-pairs regional indicators under the caret",
-			"🇺🇸🇺🇸🇺🇸", 4,
+			"🇺🇸🇺🇸🇺🇸", 4, 0,
 			input.Named(input.KeyBackspace),
 			"🇺🇸Z🇺🇺🇸"},
+
+		// AND THE SELECTION ARMS OF THE SAME SWITCH, which the three
+		// rows above do not reach: they press a bare key, and the
+		// first thing each selection arm does is hand off to
+		// deleteSelection. "👩"+ZWJ+"a"+"👨" has
+		// boundaries [0 2 3 4], so the caret starts on a real one and
+		// ONE shift+right selects exactly the "a" — every index here
+		// is produced by a gesture rather than by setCaret. Deleting
+		// joins the two emoji into one cluster, [0 3], and the
+		// un-snapped caret sits at 2 inside it, where typing puts Z
+		// between the ZWJ and the second emoji. Raised in review of
+		// #521, round 14.
+		{"a selection delete joins the clusters either side of it",
+			"👩‍a👨", 2, 1,
+			input.Named(input.KeyDelete),
+			"Z👩‍👨"},
+		{"a selection backspace joins them the same way",
+			"👩‍a👨", 2, 1,
+			input.Named(input.KeyBackspace),
+			"Z👩‍👨"},
+		{"and ctrl+x, which deletes through the same seam",
+			"👩‍a👨", 2, 1,
+			ctrlRune('x'),
+			"Z👩‍👨"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := prop.NewSource(tc.start)
 			tb := &TextBox{Text: v}
 			tb.SetFocused(true)
 			tb.setCaret(tc.caret)
+			for range tc.selRight {
+				tb.HandleKey(input.KeyEvent{Key: input.KeyRight, Mods: input.ModShift})
+			}
 			tb.HandleKey(tc.key)
 
 			runes := []rune(v.Get())
@@ -2206,6 +2237,50 @@ func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 				t.Errorf("typing after the delete gave %q, want %q — a mark that "+
 					"lands on the typed rune instead of its own base is what a "+
 					"mid-cluster caret does", v.Get(), tc.want)
+			}
+		})
+	}
+}
+
+// TestReplacingASelectionInsertsWhereItWas is the counterfactual for
+// the snap the test above pins, and without it the exemption is
+// unfireable.
+//
+// deleteSelection takes `snap` from its caller because the answer
+// differs by caller, and the three DELETING callers are now pinned. The
+// two INSERTING ones were not: with replace and paste switched to
+// snap the whole suite stayed green, so the parameter could have been
+// collapsed to an unconditional snap and nothing would have said so —
+// the shape this branch has spent four rounds removing.
+//
+// The value is the one the delete rows use, and the difference is the
+// whole point. Deleting the selected "a" fuses the two emoji, so the
+// caret must leave the cluster; typing over the same selection puts the
+// rune BETWEEN them, and a snapped caret would pull it in front of
+// both. That is snapOut's setText exemption stated as an outcome
+// rather than as a rule. Raised in review of #521, round 14.
+func TestReplacingASelectionInsertsWhereItWas(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  input.KeyEvent
+	}{
+		{"typing", input.Rune('Z')},
+		{"paste", ctrlRune('v')},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			SetKillBuffer("Z")
+			v := prop.NewSource("\U0001F469\u200da\U0001F468")
+			tb := &TextBox{Text: v}
+			tb.SetFocused(true)
+			tb.setCaret(2)
+			tb.HandleKey(input.KeyEvent{Key: input.KeyRight, Mods: input.ModShift})
+			tb.HandleKey(tc.key)
+
+			const want = "\U0001F469\u200dZ\U0001F468"
+			if v.Get() != want {
+				t.Errorf("replacing the selection gave %q, want %q — the rune "+
+					"belongs where the selection was, between the two emoji; a "+
+					"snapped caret puts it in front of both", v.Get(), want)
 			}
 		})
 	}

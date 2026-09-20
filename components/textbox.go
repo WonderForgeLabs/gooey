@@ -1300,7 +1300,7 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		t.replace(ev.Rune)
 	case ev == input.Named(input.KeyBackspace):
 		if _, _, ok := t.Selection(); ok {
-			t.deleteSelection()
+			t.deleteSelection(true)
 			break
 		}
 		caret := t.Caret()
@@ -1323,7 +1323,7 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		t.setText(next, snapOut(next, caret-1, false))
 	case ev == input.Named(input.KeyDelete):
 		if _, _, ok := t.Selection(); ok {
-			t.deleteSelection()
+			t.deleteSelection(true)
 			break
 		}
 		caret, runes := t.Caret(), t.value()
@@ -1346,7 +1346,7 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		if !t.copySelection() {
 			return true
 		}
-		t.deleteSelection()
+		t.deleteSelection(true)
 	case ev == ctrlRune('c'):
 		// Copy only claims the key when there IS something to copy. The
 		// framework quit key is ctrl+c and it is checked on what bubbles
@@ -1379,7 +1379,7 @@ func (t *TextBox) insertText(text string) bool {
 		return false
 	}
 	if _, _, ok := t.Selection(); ok {
-		t.deleteSelection()
+		t.deleteSelection(false)
 	}
 	caret, runes := t.Caret(), t.value()
 	ins := []rune(text)
@@ -1463,20 +1463,56 @@ func ctrlRune(r rune) input.KeyEvent {
 
 func (t *TextBox) replace(r rune) {
 	if _, _, ok := t.Selection(); ok {
-		t.deleteSelection()
+		t.deleteSelection(false)
 	}
 	caret, runes := t.Caret(), t.value()
 	next := append(append(append([]rune{}, runes[:caret]...), r), runes[caret:]...)
 	t.setText(next, caret+1)
 }
 
-func (t *TextBox) deleteSelection() {
+// deleteSelection splices the selection out and leaves the caret at lo.
+// `snap` is the CALLER'S answer, not this function's, and the two
+// answers are genuinely different.
+//
+// lo and hi are cluster boundaries in the OLD value, which every
+// producer of a selection in this file guarantees. That is not the same
+// as lo being a boundary in the NEW one: the splice joins runes[lo-1]
+// to runes[hi], and where that join is a grapheme join, lo lands
+// mid-cluster. "👩"+ZWJ+"a"+"👨" has boundaries
+// [0 2 3 4], so caret 2 and the selection [2,3) are both reachable with
+// a right arrow and a shift+right; deleting leaves boundaries [0 3]
+// with the caret at 2, and typing Z then gives
+// "👩"+ZWJ+"Z"+"👨" — the typed rune INSIDE the emoji
+// sequence, which is the harm moveKey's doc enumerates, reached through
+// the selection arms rather than the bare keys.
+//
+// THE INSERTING CALLERS MUST NOT SNAP. replace and paste delete the
+// selection and then insert at the caret, so a snap here would pull the
+// insertion backwards to the start of the joined cluster — typing over
+// that same selection is supposed to give
+// "👩"+ZWJ+"Z"+"👨", which is the right answer for an
+// INSERTION and is exactly what snapOut's setText exemption protects.
+// That is why this is a parameter rather than an unconditional snap.
+//
+// LEFTWARD at the three deleting callers, though snapOut's contract is
+// "outward in the direction it was travelling" and a selection delete
+// does not travel. Rightward would carry the caret past the "👨",
+// content the user never selected, and the next backspace would then
+// destroy the whole joined cluster; leftward is clusterStartAt of where
+// the caret already is. That is the mirror of the argument round 13
+// made for the forward-delete arm. Raised in review of #521.
+func (t *TextBox) deleteSelection(snap bool) {
 	lo, hi, ok := t.Selection()
 	if !ok {
 		return
 	}
 	runes := t.value()
-	t.setText(append(append([]rune{}, runes[:lo]...), runes[hi:]...), lo)
+	next := append(append([]rune{}, runes[:lo]...), runes[hi:]...)
+	caret := lo
+	if snap {
+		caret = snapOut(next, lo, false)
+	}
+	t.setText(next, caret)
 }
 
 // copySelection puts the selection in the kill buffer and reports
