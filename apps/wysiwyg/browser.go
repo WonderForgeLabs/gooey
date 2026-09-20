@@ -50,6 +50,7 @@ import (
 	"unicode"
 
 	"github.com/WonderForgeLabs/gooey/components"
+	"github.com/WonderForgeLabs/gooey/markup"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -365,15 +366,235 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// two — TestEnvAttrsIsAssignedWhereTheDocumentIs checks that from the
 	// AST rather than leaving it to three comments. Raised in review of
 	// #501.
+	//
+	// A FILE WHOSE ROOT IS A DECLARATION IS REFUSED HERE, because nodeOf
+	// deliberately lets a root-position x-namespaced element through for
+	// the PASTE path (see there) and this is the one caller that would
+	// then write it back. Measured before the guard: the file opened with
+	// "unknown element <Property>", was wrapped in a <Gooey>, and ctrl+s
+	// wrote `<Property Name="T" … xmlns:p="…"/>` — the prefix gone from
+	// the author's file, under a build error. saveOpenFile is not gated
+	// on the build and canSave gates on openPath, which the open had set.
+	// Raised in review of #522.
+	//
+	// n.Elem != "Gooey" because the envelope is the envelope whatever
+	// namespace it resolves in: a document whose DEFAULT xmlns is the x
+	// namespace puts <Gooey> itself in it, and that file has an answer of
+	// its own.
+	//
+	// THAT COVERS THE DEFAULT-xmlns SHAPE AND ONLY IT, which this
+	// paragraph did not say. A root <x:Gooey> with unprefixed children
+	// reaches neither refusal — splitDecls files the children as kids,
+	// so alienDecls is silent — and the file opened green and was saved
+	// back as plain <Gooey>. The answer is upstream now: nodeOf's
+	// root-position exemption asks the element name, so these bytes
+	// never reach a document at all. Raised in review of #522.
+	//
+	// WHICH IS THE ALIEN REFUSAL, NOT THE ROOT COUNT. This paragraph said
+	// the root count, and the alien arm was added after it and returns
+	// first: with the default xmlns on <Gooey>, splitDecls files every
+	// child into decls, alienDecls fires, and the editor answers
+	// "<x:Canvas> is an unknown language element; the
+	// wonderforge.io/gooey/x namespace declares <x:Property> only" —
+	// which is markup.Build's own sentence for the same bytes, the
+	// standard this file holds its other refusals to. The behaviour was
+	// right and the stated reason pointed at a branch that cannot fire,
+	// in a file whose comments other arms reason from. Raised in review
+	// of #522.
+	//
+	// AND THE ELEMENT NAME DECIDES WHICH REFUSAL, which this guard did
+	// not ask: it tested only the namespace, so <x:Foo/> as a whole file
+	// was called "a dependency property declaration, not a document" —
+	// and the advice that follows is then actively wrong, because an
+	// author who moves it under a <Gooey> root lands on the editor's own
+	// alien refusal, which
+	// TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer
+	// pins. bareDeclWhy asks n.Elem != "Property" first for exactly this
+	// reason; the open path is the one site added after alienDecls and
+	// alienDeclMsg were written for it. Raised in review of #522.
+	if n.Space == markup.XNamespace && n.Elem != "Gooey" {
+		prefix, bound := declBinding(n.Attrs)
+		if n.Elem != "Property" {
+			// THE FILE-LEVEL TAIL IS ADDED HERE, not inside
+			// alienDeclMsg, because that message is shared with the
+			// envelope-CHILD call sites where "no document to show" is
+			// simply false. Without it this arm said only "that is not
+			// a language element", which reads as a fault to fix in
+			// place — and the fix it prescribes, writing
+			// <prefix:Property>, is refused three lines up by the arm
+			// below as a whole file. That is the same
+			// sending-them-at-a-wall-we-know-about this branch split
+			// the alien case out to stop, one arm over and in the
+			// other direction. Raised in review of #522.
+			ed.status.Set("✗ " + rel + ": " +
+				alienDeclMsg([]*node{n}, prefix, bound) +
+				". A file whose whole content is one has no document to show")
+			return
+		}
+		prefix = declBindingOr(n.Attrs, declFallbackPrefix)
+		ed.status.Set("✗ " + rel + ": <" + prefix + ":" + n.Elem + "> is a " +
+			"dependency property declaration, not a document. A declaration " +
+			"belongs among the children of a <Gooey> root, where it defines " +
+			"that control's public surface; a file whose whole content is one " +
+			"has no document to show")
+		return
+	}
+	// AND THE UNPREFIXED SPELLING, which is splitDecls' THIRD arm and the
+	// one the whole partition exists to diagnose — the author who wrote
+	// <Property> meaning <x:Property>. The guard above is keyed on the
+	// namespace, so that file fell through it entirely: it opened with
+	// "markup: unknown element <Property>", set ed.openPath, and ctrl+s
+	// then wrote the editor's synthesised document — the declaration
+	// wrapped in a <Gooey> — over the author's file.
+	//
+	// THE MESSAGE WAS ALSO ABOUT A DOCUMENT THE AUTHOR DID NOT WRITE.
+	// markup.Build on those bytes answers "root element must be <Gooey>,
+	// got <Property>"; "unknown element" only arises once the editor has
+	// put the declaration under its surface, and splitDecls' own doc
+	// names that string as the one the author must not be shown.
+	//
+	// The other three routes to these bytes were already covered — the
+	// prefixed file by the arm above, a paste by bareDeclWhy's third arm,
+	// and one inside a <Gooey> by splitDecls' bare arm — which is what
+	// made this the odd path out rather than a gap in the idea. Raised in
+	// review of #522.
+	//
+	// IT DESCRIBES RATHER THAN PRESCRIBES, which is what separates this
+	// arm from bareDeclMsg and is why it no longer calls it.
+	// bareDeclMsg is markup's sentence for a declaration found AMONG AN
+	// ENVELOPE'S CHILDREN, where a <Gooey> root exists to carry the
+	// xmlns:x its remedy names. Here there is none: an author who
+	// followed it in order — write <x:Property>, add xmlns:x to the
+	// <Gooey> root element — had no <Gooey> root to add it to, and on
+	// the next open landed on the prefixed arm fifty lines up. That is
+	// the same sending-them-at-a-wall-we-know-about this branch split
+	// the alien case out to stop, a third time. The prefixed arm above
+	// already describes where a declaration belongs instead of
+	// prescribing an edit; this one now matches it, and keeps
+	// bareDeclMsg's DIAGNOSIS — that <Property> is the spelling written
+	// without its namespace — which is the half that was always true
+	// here. Raised in review of #522.
+	if n.Elem == "Property" {
+		ed.status.Set("✗ " + rel + ": <Property> is a dependency property " +
+			"declaration written without its namespace; the spelling is " +
+			"<x:Property>, under xmlns:x=\"" + markup.XNamespace + "\". A " +
+			"declaration belongs among the children of a <Gooey> root, where " +
+			"it defines that control's public surface; a file whose whole " +
+			"content is one has no document to show")
+		return
+	}
 	var env map[string]string
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
 	// the surface Canvas holds one child and that child is the user's
 	// root. Unwrapping here rather than in nodeOf keeps nodeOf usable for
 	// the seed strings, which have no envelope.
+	var decls []*node
 	if n.Elem == "Gooey" {
+		// DECLARATIONS FIRST, because they are not root elements and
+		// counting them as such refused a well-formed document. markup
+		// hands the whole <Gooey> to splitDeclarations
+		// (markup/property.go), which partitions its children and only
+		// then requires one visual kid; this editor counted n.Kids and
+		// told the author a file markup loads has "2 root elements" —
+		// advice whose only reading is to delete the declaration. #517.
+		var kids, bare []*node
+		decls, kids, bare = splitDecls(n)
+		n.Kids = kids
+		// THE MISNAMESPACED DECLARATION IS ITS OWN FAULT, and it is
+		// reported before the count because the count cannot see it.
+		// An unprefixed <Property> is a declaration the author forgot
+		// to namespace, and neither route reached markup's advice: with
+		// a content root beside it the editor called it a second root,
+		// and alone it was unwrapped and built inside the surface,
+		// where markup answers "unknown element <Property>". Both were
+		// measured. Raised in review of #522.
+		if len(bare) > 0 {
+			ed.status.Set("✗ " + rel + ": " + bareDeclMsg(len(bare)))
+			return
+		}
+		// AND AN x-NAMESPACED ELEMENT THAT IS NOT Property IS ITS OWN
+		// FAULT TOO. splitDecls keys on the namespace, so <x:Foo> lands
+		// in decls, and the count message below then named it
+		// <x:Property> — an element this file does not contain — and
+		// called a thing markup rejects outright a declaration. markup's
+		// own answer is "unknown language element", and it is the one
+		// the author can act on. Raised in review of #522.
+		if alien := alienDecls(decls); len(alien) > 0 {
+			// THE BINDING TRAVELS WITH THE PREFIX. Discarding the bool
+			// named declBinding's minted spelling in a file that
+			// contains no such prefix — the same defect the count
+			// branch below states at length, which this arm had
+			// stopped one short of. Raised in review of #522.
+			prefix, bound := declBinding(n.Attrs)
+			ed.status.Set("✗ " + rel + ": " + alienDeclMsg(alien, prefix, bound))
+			return
+		}
 		if len(n.Kids) != 1 {
-			ed.status.Set("✗ " + rel + ": a <Gooey> document needs exactly one root element, found " + strconv.Itoa(len(n.Kids)))
+			// NAMING THE DECLARATIONS SEPARATELY, so the count the
+			// author is given is the one they can act on. "found 2" for
+			// a root and a declaration sent them looking for a second
+			// root that was never there.
+			msg := "✗ " + rel + ": a <Gooey> document needs exactly one root element, found " +
+				strconv.Itoa(len(n.Kids))
+			if len(decls) > 0 {
+				// THE AUTHOR'S OWN PREFIX, not "x:". The message exists
+				// to tell them which of their elements is being counted
+				// separately, and #522 is the change that made a p:
+				// document round-trip as p: — so naming x: here sends
+				// the reader looking for elements their file does not
+				// contain. n.Attrs is in hand, which is where the
+				// binding lives. Raised in review of #522.
+				//
+				// THE WHOLE TAIL AGREES, not just the verb. It read
+				// "its 1 <p:Property> declaration is not root elements"
+				// — the noun carried the verb and the trailing literal
+				// stayed plural. Nothing went red over it because
+				// nothing asserted this branch at all; the tests here
+				// now do.
+				//
+				// AND AN UNBOUND PREFIX IS NOT WRITTEN. declBinding
+				// falls back to "x" when the envelope binds nothing,
+				// which is exactly the document whose declaration is
+				// named by its own default xmlns — a file containing no
+				// x: anywhere. Naming <x:Property> there sends the
+				// author looking for an element they never wrote.
+				// Raised in review of #522.
+				//
+				// EVERY ONE OF THEM IS SPELLED FROM ITS OWN BINDING,
+				// through declElemName, because a document may bind
+				// more than one prefix to the x namespace and XML
+				// scoping puts the binding wherever the author wrote
+				// it. This read decls[0] and printed that spelling with
+				// len(decls), so a file holding one <p:Property> and
+				// one <q:Property> was told it held "2 <p:Property>
+				// declarations" — a count of elements it does not
+				// contain, in the branch whose own comment claimed to
+				// be about one element. The rounds that got here are in
+				// docs/specs/2026-08-10-markup-declared-properties.md.
+				// Raised in review of #522.
+				elems := make([]string, len(decls))
+				same := true
+				for i, d := range decls {
+					elems[i] = declElemName(d, n.Attrs)
+					same = same && elems[i] == elems[0]
+				}
+				noun := " declarations are not root elements"
+				if len(decls) == 1 {
+					noun = " declaration is not a root element"
+				}
+				if same {
+					msg += " (its " + strconv.Itoa(len(decls)) + " " + elems[0] + noun + ")"
+				} else {
+					// THE COUNT STAYS, and the list is what it counted.
+					// Dropping the prefix on disagreement was the other
+					// candidate and names <Property>, which bareDeclMsg
+					// defines as the missing-namespace typo.
+					msg += " (its " + strconv.Itoa(len(decls)) + " declarations — " +
+						strings.Join(elems, ", ") + " — are not root elements)"
+				}
+			}
+			ed.status.Set(msg)
 			return
 		}
 		// THE ENVELOPE'S NAMESPACE DECLARATIONS COME DOWN WITH IT, and
@@ -391,6 +612,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	}
 	ed.root.Kids = []*node{n}
 	ed.envAttrs = env
+	ed.envDecls = decls
 	ed.sel = n
 	ed.openPath.Set(rel)
 	// A NEW DOCUMENT STARTS WITH NO PAST. Without this the previous
@@ -423,7 +645,7 @@ func (ed *editor) saveOpenFile() error {
 	if ed.ws == nil || ed.ws.dir == "" || rel == "" {
 		return nil
 	}
-	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
 	full := filepath.Join(ed.ws.dir, filepath.FromSlash(rel))
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		ed.status.Set("✗ save " + rel + ": " + err.Error())

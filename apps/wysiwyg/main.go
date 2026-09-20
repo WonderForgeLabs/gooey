@@ -261,6 +261,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -532,7 +533,61 @@ func encoderNamed(name string) (graphics.Encoder, error) {
 // gooey component: the editor manipulates a document, and the tree is
 // derived from it.
 type node struct {
-	Elem  string
+	Elem string
+	// Space is the element's resolved XML NAMESPACE — the default
+	// xmlns in scope for an unprefixed element, the prefix's binding
+	// for a prefixed one.
+	//
+	// IT IS NOT EMPTY FOR ORDINARY COMPONENTS, which is what this said
+	// until review of #522 and is wrong about every file the editor
+	// opens. nodeOf tracks the inherited default xmlns in its
+	// `defaults` stack precisely so it can resolve them. Measured on
+	// the shape every in-tree .gooey under apps/ uses — the count that
+	// stood here was wrong at the commit that wrote it, and the
+	// property is what matters: `find apps -name '*.gooey' | xargs
+	// grep -L 'xmlns='` comes back empty.
+	//
+	//	<Gooey xmlns="wonderforge.io/gooey/2026">   Gooey  Space="wonderforge.io/gooey/2026"
+	//	  <Canvas Name="Root">                      Canvas Space="wonderforge.io/gooey/2026"
+	//	    <Button Name="B"/>                      Button Space="wonderforge.io/gooey/2026"
+	//
+	// Space is empty only for a document with no default xmlns at all,
+	// and that is NOT only fixtures — this said "palette seed strings
+	// and hand-written fixtures" until review of #522 listed three
+	// shipped, editor-openable documents with no default xmlns
+	// (cmd/typeahead, grpc/cmd/grpcdemo, presentations/the-rectangle;
+	// derive them with `grep -L 'xmlns='` over the tree's .gooey
+	// files). The workspace browser scans whatever directory it is
+	// pointed at, so all three open here with Space == "" on every
+	// node. So `n.Space == ""` does not mean "not namespaced" AND it
+	// does not mean "fixture"; it means the document declares no
+	// default xmlns, and this paragraph is the one place a reader
+	// learns what the field holds. Nothing is broken by the old
+	// sentence today because splitDecls keys on k.Elem == "Property"
+	// (matching markup's own c.Name == "Property") rather than on
+	// Space == "".
+	//
+	// It is kept because one partition depends on it and cannot be made
+	// from Elem: <x:Property> is a language declaration and <Property>
+	// is a component name somebody could register, and encoding/xml has
+	// already resolved the prefix by the time this model is built.
+	// markup's own splitDeclarations keys on the same thing (c.Space ==
+	// markup.XNamespace, markup/property.go), so the editor is asking
+	// the same question rather than a lookalike. Added for #517.
+	//
+	// It is NOT written back out by markup(): a declaration is emitted
+	// by the envelope, which re-derives the prefix from the xmlns the
+	// document declares.
+	//
+	// EVERY element carries this, not only a declaration — nodeOf sets
+	// it from whatever encoding/xml resolved — and for anything but a
+	// declaration the prefix is DROPPED on write: <t:Thing/> under the
+	// content root is re-emitted as <Thing/>. That loss predates this
+	// field and is out of scope here, but this field is the first thing
+	// in the model that can detect it, and this comment used to say
+	// "nothing else in the tree carries a namespace", which asserts the
+	// loss cannot happen. Raised in review of #522.
+	Space string
 	Attrs map[string]string
 	// Body is the element's TEXT CONTENT — the "hello" in
 	// <Text>hello</Text> — and it is a field rather than an entry in
@@ -861,6 +916,443 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 	return out
 }
 
+// envelopeHead is the document's opening <Gooey …> tag together with
+// the declarations that belong to the envelope rather than to the tree.
+//
+// <x:Property> is a child of the ENVELOPE, not of the content root —
+// markup hands the whole <Gooey> element to splitDeclarations, which
+// partitions its children and only then requires one visual kid. The
+// editor's document is the content root, so a declaration has nowhere
+// in the tree to live and rides with envAttrs instead, written back
+// here. Added for #517.
+func envelopeHead(attrs map[string]string, decls []*node) string {
+	attrs, prefix := envelopeParts(attrs, decls)
+	var b strings.Builder
+	b.WriteString(gooeyOpen(attrs))
+	for _, d := range decls {
+		q := *d
+		q.Elem = prefix + ":" + d.Elem
+		q.Attrs = declAttrs(d.Attrs, prefix)
+		b.WriteString(q.markup("  "))
+	}
+	return b.String()
+}
+
+// envelopeParts is the <Gooey> attributes the save will actually write
+// and the prefix its declarations go out under — the half of
+// envelopeHead that decides what the FILE binds, split out from the half
+// that renders it.
+//
+// It is split because a second caller needs the decision and not the
+// bytes: reconcileNamespaces has to know which prefixes the saved
+// envelope binds in order to refuse a paste that rebinds one, and
+// deriving that from the returned string would mean parsing markup this
+// function has just finished writing. Splitting it is also what stops
+// the two drifting — a change to the minting rule below moves the
+// refusal with it, where a mirror of the rule in clipboard.go would go
+// one scope short the next time this grows, which is exactly how it
+// went one scope short this time. Raised in review of #522.
+//
+// THE PREFIX AND THE BINDING TRAVEL TOGETHER. Writing x: without an
+// xmlns:x on the tag saves a file markup.Build refuses, and
+// saveOpenFile is not gated on the build, so the editor reported
+// "✓ saved" over it.
+//
+// WHICH DOCUMENTS REACH IT IS declPrefix'S ANSWER, NOT A LIST HERE.
+// Every shape whose declPrefix reports bound == false arrives at the
+// write: a declaration binding the namespace as its own default xmlns,
+// and each of the decline-and-mint routes — the envelope's prefix
+// spent by a sibling declaration, an adoptable declaration prefix
+// spent by another, a minted prefix the declaration itself binds.
+//
+// This paragraph named a fixed set twice and was short both times:
+// first "two", corrected to "one" at the base merge, then left at
+// "one" while f525472 and 5fa3a62 added the mint routes in this same
+// branch — four of the seven arms of
+// TestASavedDeclarationCarriesTheBindingThatNamesIt reach it today.
+// Nothing went red either time, because the behaviour is pinned by
+// other arms; what rotted was the reason, in the one file whose other
+// arms reason from these comments. So the rule is the bool, and the
+// population is a run of the fixture rather than a sentence.
+//
+// The correction that is still worth keeping is the one about a
+// document binding the same prefix on <Gooey> AND on the content root,
+// which does NOT reach it: carryDeclarations skips
+// v == markup.XNamespace, so the envelope's xmlns:x is never in the
+// moved SET, and envelopeAttrs — which since #501 takes that set rather
+// than re-deriving the answer — keeps it. Measured through
+// openWorkspaceFile: envAttrs holds xmlns:x, bound is true, and
+// withDeclBinding is not called.
+func envelopeParts(attrs map[string]string, decls []*node) (map[string]string, string) {
+	prefix, bound := declPrefix(attrs, decls)
+	if len(decls) > 0 && !bound {
+		attrs = withDeclBinding(attrs, prefix)
+	} else {
+		// A COPY ON THIS PATH TOO, for the reason declAttrs' doc gives
+		// about its own: both callers hand this ed.envAttrs, the
+		// editor's live document state, and a fast path that returns
+		// the caller's map when nothing needs changing makes the copy
+		// conditional on the input — so the guarantee holds for
+		// whichever document the test picked and not for the one a
+		// future caller writes through. Inert today (envelopeHead and
+		// envelopeNamespaces only read it), which is the same "inert
+		// for the same reason" the declAttrs round declined to rely
+		// on. Raised in review of #522.
+		out := make(map[string]string, len(attrs))
+		for k, v := range attrs {
+			out[k] = v
+		}
+		attrs = out
+	}
+	// AND NO OTHER BINDING OF THE DECLARATION NAMESPACE SURVIVES ON
+	// <Gooey>. Only declarations use that namespace and every one of
+	// them is written under `prefix`, so a second envelope binding of
+	// it names nothing — and it is not merely tidiness: the author's
+	// binding of the SAME prefix to a value namespace, on a
+	// declaration, comes later in markup's one flat document-order map
+	// and is what {{p:Thing}} already resolves through. Keeping the
+	// envelope's copy while writing the declaration as <x:Property>
+	// leaves a dead binding whose only effect is to look live.
+	// Reached when declPrefix declines the envelope's own prefix
+	// because a declaration spends it. Raised in review of #522.
+	for k, v := range attrs {
+		if v != markup.XNamespace || !strings.HasPrefix(k, "xmlns:") {
+			continue
+		}
+		if strings.TrimPrefix(k, "xmlns:") == prefix {
+			continue
+		}
+		out := make(map[string]string, len(attrs))
+		for kk, vv := range attrs {
+			if kk != k {
+				out[kk] = vv
+			}
+		}
+		attrs = out
+	}
+	return attrs, prefix
+}
+
+// envelopeNamespaces adds to into every prefix binding the saved
+// envelope carries — the ones on <Gooey> itself, minted binding
+// included, and the ones each declaration is written out with.
+//
+// INTO, and not a fresh map, because these are seeded before the
+// document's own and the order is the contract: markup.parse merges
+// every declaration into one flat map in document order and the last
+// one parsed wins, and the envelope and its declaration children are
+// both outside — and before — the content root.
+//
+// declAttrs, not d.Attrs: a declaration's binding of markup.XNamespace
+// under some OTHER prefix is dropped on the way out, so it is not a
+// binding the file has and a paste that re-points it conflicts with
+// nothing. Reading the node's own attrs instead would refuse pastes the
+// saved document has no quarrel with. Added for #522.
+func envelopeNamespaces(attrs map[string]string, decls []*node, into map[string]string) {
+	head, prefix := envelopeParts(attrs, decls)
+	for k, v := range head {
+		if isNamespaceAttr(k) {
+			into[k] = v
+		}
+	}
+	for _, d := range decls {
+		for k, v := range declAttrs(d.Attrs, prefix) {
+			if isNamespaceAttr(k) {
+				into[k] = v
+			}
+		}
+	}
+}
+
+// declPrefix is the prefix these declarations are written back under,
+// and whether the document already binds it somewhere the saved file
+// will still carry — so an envelope binding is added only when there is
+// nothing else naming the namespace.
+//
+// TWO PLACEMENTS ARE LEGAL, which is what this exists for and what
+// declBinding alone could not see. XML scoping puts xmlns:p on <Gooey>
+// OR on the <p:Property> element itself; markup/property.go's own
+// comment records both and TestTheXPropertyRefusalNamesTheRoot pins all
+// three placements. Reading only the envelope, the element-level
+// placement round-tripped LOSSILY: the author's p: became a minted x:,
+// a new xmlns:x appeared on <Gooey>, and the xmlns:p left on the
+// declaration named nothing. The file still loaded, so nothing went
+// red — the PR's stated invariant ("a file that binds p: is saved with
+// p:") simply stopped holding one placement over. Raised in review of
+// #522.
+//
+// The envelope wins when it binds one, because that is the binding
+// every declaration is under. Otherwise the first declaration carrying
+// its own binding names them all, and the envelope gains a binding only
+// if some declaration does not carry that same one — which is the only
+// case where writing the prefix alone would save a file markup refuses.
+func declPrefix(attrs map[string]string, decls []*node) (string, bool) {
+	// ONE SCAN OF attrs FOR THE BINDING. declBinding answers the
+	// envelope's own question here — which prefix, if any, it binds to
+	// markup.XNamespace. The mint below calls mintDeclPrefix
+	// instead, because the spelling to mint depends on what the
+	// DECLARATIONS have spent as well, which this call cannot see.
+	// Raised in review of #522, twice: the first round collapsed two
+	// calls into one on the grounds that they could not disagree, and
+	// they were not asking the same question.
+	envPrefix, envBound := declBinding(attrs)
+	if envBound && !spentElsewhere(envPrefix, decls) {
+		return envPrefix, true
+	}
+	// NOT A PREFIX A SIBLING HAS SPENT, which is the half the mint's
+	// own fix did not reach. This loop adopts the first declaration
+	// carrying a binding; declAttrs' first clause then drops any
+	// xmlns:<prefix> on the OTHER declarations, because on an emitted
+	// <p:Property> a xmlns:p naming anything else would unname the
+	// element. So a second declaration binding the same prefix to a
+	// value namespace lost that binding, and a document using
+	// {{p:Thing}} was saved as bytes markup.Build refuses — the third
+	// shape reaching that clause, where declAttrs' doc said there were
+	// two. Measured in review of #522.
+	//
+	// Falling through to the mint is the whole fix: mintDeclPrefix is
+	// handed every prefix the declarations hold and avoids all of
+	// them, so it picks a free one and both bindings survive.
+	prefix := ""
+	for _, d := range decls {
+		p, ok := declBinding(d.Attrs)
+		if !ok {
+			continue
+		}
+		if spentElsewhere(p, decls) {
+			break
+		}
+		prefix = p
+		break
+	}
+	if prefix == "" {
+		// MINTED AGAINST THE DECLARATIONS TOO, not just the envelope —
+		// the second call is what the paragraph above used to say was
+		// unnecessary, and it is necessary for a different question:
+		// this one avoids prefixes the DECLARATIONS have spent, which
+		// declBinding(attrs) above cannot see. Raised in review of #522.
+		also := make([]map[string]string, 0, len(decls))
+		for _, d := range decls {
+			also = append(also, d.Attrs)
+		}
+		return mintDeclPrefix(attrs, also), false
+	}
+	for _, d := range decls {
+		if p, ok := declBinding(d.Attrs); !ok || p != prefix {
+			return prefix, false
+		}
+	}
+	return prefix, true
+}
+
+// spentElsewhere reports whether any declaration binds p to something
+// OTHER than the declaration namespace — a value namespace the document
+// may be resolving {{p:Thing}} through, which this editor may not
+// reclaim. Raised in review of #522.
+func spentElsewhere(p string, decls []*node) bool {
+	for _, d := range decls {
+		if v, ok := d.Attrs["xmlns:"+p]; ok && v != markup.XNamespace {
+			return true
+		}
+	}
+	return false
+}
+
+// withDeclBinding is attrs plus the envelope's binding for
+// markup.XNamespace. A copy, because attrs is the editor's own envAttrs
+// and writing the binding into it would make the next save look as
+// though the file had always carried one.
+func withDeclBinding(attrs map[string]string, prefix string) map[string]string {
+	out := make(map[string]string, len(attrs)+1)
+	for k, v := range attrs {
+		out[k] = v
+	}
+	out["xmlns:"+prefix] = markup.XNamespace
+	return out
+}
+
+// declAttrs is a declaration's attributes with every binding of
+// markup.XNamespace that no longer names it removed: a default xmlns,
+// and any prefixed binding other than the one it is being written under.
+//
+// A declaration is re-emitted PREFIXED, so a default binding it carried
+// is no longer what names it — and left in place it also re-binds the
+// default namespace for the declaration's own attributes, which is a
+// different document from the one that was opened.
+//
+// The same sentence covers a PREFIXED binding other than the one being
+// written: left in place it goes out as <q:Property … xmlns:p="…"> with
+// p: naming nothing.
+//
+// AND THE THIRD CLAUSE IS DIFFERENT IN KIND. On the copy,
+// xmlns:<prefix> must be ABSENT OR EQUAL to markup.XNamespace, whatever
+// it used to say — not "dropped if it names the x namespace", which is
+// the predicate that let a declaration carrying xmlns:<prefix> bound to
+// something ELSE survive onto the element envelopeHead emits as
+// <prefix:Property>, so the prefix resolved to the something else and
+// the declaration stopped being one. That was a bug rather than a
+// residue, and it is why the prefix mint in declPrefix is left alone:
+// this clause closes both shapes that reach it.
+//
+// Returned as a copy, UNCONDITIONALLY, for the same reason as
+// withDeclBinding: these attrs are ed.envDecls[i].Attrs, the editor's
+// own document state, and a fast path that returned the caller's map
+// when nothing needed dropping made the asserted copy conditional on
+// the input. envelopeHead's `q := *d` aliases d.Kids and d.Slots the
+// same way and is inert for the same reason — nothing writes through
+// it. Stated here because that is the other place a future caller
+// would assume a copy.
+//
+// The rounds that got to this shape, and what each earlier predicate
+// did wrong, are in
+// docs/specs/2026-08-10-markup-declared-properties.md. Raised in
+// review of #522.
+func declAttrs(attrs map[string]string, prefix string) map[string]string {
+	dead := func(k, v string) bool {
+		if k == "xmlns:"+prefix {
+			// The one spelling that names the emitted element. Bound to
+			// anything else it unnames it, so it goes whatever it says.
+			return v != markup.XNamespace
+		}
+		if v != markup.XNamespace {
+			return false
+		}
+		return k == "xmlns" || strings.HasPrefix(k, "xmlns:")
+	}
+	out := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		if !dead(k, v) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// declBinding is the prefix this envelope binds to markup.XNamespace,
+// and whether it already binds it — so a declaration is written back
+// with the spelling its author chose, and the binding is written with
+// it when there is none to find.
+//
+// THE BOOL IS THE HALF THAT WAS MISSING. This returned "x" as a
+// fallback and called it unreachable, on the grounds that a document
+// with declarations always carries the binding. That is true of the
+// FILE and not of these attrs — but the document it was true of is not
+// the one this paragraph named.
+//
+// It said "envelopeAttrs drops a namespace attribute the content root
+// repeats". carryDeclarations skips v == markup.XNamespace, so the
+// envelope's binding is never in the moved set and envelopeAttrs keeps
+// it; envelopeParts' own paragraph carried the same false premise and
+// was corrected in the same commit that left this one. The document
+// where the binding really is absent here is the one whose declaration
+// names the namespace as its own default xmlns. Raised in review of
+// #522, twice — the second time for this copy.
+//
+// Over sortedKeys, not a range: a document binding two prefixes to the
+// one namespace is legal and rare, and picking whichever the map handed
+// back first would rewrite the file differently on different runs.
+//
+// IT RETURNS NO PREFIX WHEN IT FINDS NONE, and the minted spelling it
+// used to hand back was observed by nobody. declPrefix calls
+// mintDeclPrefix itself; every other caller either checks the bool or
+// replaces the prefix with declFallbackPrefix. Measured in review of
+// #522: returning "ZZZDEAD" when unbound left the whole apps/wysiwyg
+// suite green, so this function's doc was where a reader learned a
+// mint rule no caller here could reach.
+//
+// IT THEN DELEGATED THE SCAN, and the delegate carried the same defect
+// one level down: declBindingAvoiding took an `also` argument that was
+// nil at its only call site — this one — so the mint it computed on
+// the unbound path was discarded by the only thing that could see it,
+// and replacing that return with "MUTANT" left the whole apps/wysiwyg
+// suite green a second time. The scan is the four lines below; the
+// mint rule is on mintDeclPrefix, which is what declPrefix calls.
+// Measured in review of #522.
+func declBinding(attrs map[string]string) (string, bool) {
+	for _, k := range sortedKeys(attrs) {
+		if attrs[k] == markup.XNamespace && strings.HasPrefix(k, "xmlns:") {
+			return strings.TrimPrefix(k, "xmlns:"), true
+		}
+	}
+	return "", false
+}
+
+// declFallbackPrefix is what a MESSAGE says when the document binds the
+// namespace nowhere: markup's own literal, which every example uses and
+// which markup/property.go's <x:%s> refusal is spelled with.
+//
+// It is not a save-path answer and must not become one — declPrefix
+// mints against what the document has already spent, and a message that
+// named the mint would name a prefix the file does not contain.
+const declFallbackPrefix = "x"
+
+// declBindingOr is declBinding for the message sites: the document's own
+// prefix where there is one, and fallback where there is not.
+//
+// TWO CALLERS, NOT THREE. Three sites spelled `if !bound { prefix = "x" }`
+// by hand — the one-question-N-answers shape the declared-properties
+// spec catalogues — and two of them route through here. alienDeclMsg
+// still writes it out, because it is handed a prefix and a bool rather
+// than an attrs map and has nothing to look the binding up in; what it
+// shares with these two is declFallbackPrefix, which is the answer
+// rather than the lookup. Raised in review of #522.
+func declBindingOr(attrs map[string]string, fallback string) string {
+	if p, ok := declBinding(attrs); ok {
+		return p
+	}
+	return fallback
+}
+
+// mintDeclPrefix is the MINT ALONE, with no adopt scan in front of it,
+// and `also` is the maps beyond the envelope that it must not collide
+// with — because avoiding the envelope alone was not enough.
+//
+// markup's namespace table for value expressions is ONE FLAT
+// DOCUMENT-WIDE MAP, so a prefix spent anywhere in the file is spent.
+// The mint checked `attrs` — the envelope's own attributes — and
+// declAttrs then drops `xmlns:<minted>` off the declaration whatever it
+// used to say, so a document whose <Property> carried
+// xmlns:x="urn:probe:handlers" was rewritten with that binding GONE and
+// <Gooey xmlns:x="…/gooey/x"> in its place. Measured in review of #522:
+// the editor reports the load error, ctrl+s is not gated on the build,
+// and the file it writes no longer loads.
+//
+// The declarations' own attrs are the set that has to be added, and
+// only them: a binding on the content root or below sits further down
+// the file, so the loader's flat last-declaration-wins map keeps it, and
+// XML scoping keeps <x:Property> resolving against the envelope.
+//
+// "x" IS THE MINTED SPELLING, because every example uses it. x2, x3 …
+// are the way out of the case where the document binds x to something
+// else — legal, strange, and not worth clobbering the author over.
+//
+// THE ADOPT SCAN IS NOT IN FRONT OF IT because declPrefix has a case
+// where that scan is exactly wrong: the envelope binds p to the
+// declaration namespace and a declaration binds p to a VALUE
+// namespace, so declPrefix declines p — and then called a function
+// whose first loop found the envelope's p and handed it straight back.
+// The decline was undone by the function it delegated to. That
+// delegate is gone; declPrefix calls this directly. Measured in review
+// of #522.
+func mintDeclPrefix(attrs map[string]string, also []map[string]string) string {
+	taken := func(p string) bool {
+		if attrs["xmlns:"+p] != "" {
+			return true
+		}
+		for _, m := range also {
+			if m["xmlns:"+p] != "" {
+				return true
+			}
+		}
+		return false
+	}
+	p := "x"
+	for i := 2; taken(p); i++ {
+		p = "x" + strconv.Itoa(i)
+	}
+	return p
+}
+
 // gooeyOpen is the envelope's opening tag, carrying whatever the opened
 // file wrote on it.
 //
@@ -886,6 +1378,14 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // way every other attribute in this document does and the two must agree
 // about quoting. They agreed on %q until review of #501, which is how
 // they came to agree about being wrong.
+//
+// THAT PARAGRAPH IS envelopeHead'S NOW. All three call sites moved
+// there when #517 gave the envelope declarations to write, so this
+// function has exactly one caller and envelopeHead is where the three
+// literals were collapsed. The comment kept saying otherwise because
+// envelopeHead was inserted directly below this block with no blank
+// line, which also made godoc read the whole of it as envelopeHead's
+// doc and left gooeyOpen with none. Raised in review of #522.
 func gooeyOpen(attrs map[string]string) string {
 	var b strings.Builder
 	b.WriteString("<Gooey")
@@ -894,6 +1394,245 @@ func gooeyOpen(attrs map[string]string) string {
 	}
 	b.WriteString(">\n")
 	return b.String()
+}
+
+// splitDecls partitions an envelope's children into the property
+// DECLARATIONS and the rest, on the same key markup's splitDeclarations
+// uses (markup/property.go).
+//
+// ONE FUNCTION BECAUSE THERE ARE TWO READERS, which is carryDeclarations'
+// argument three files over and applies unchanged: openWorkspaceFile
+// needs both halves and pasteMarkup needs the declarations, and they had
+// a copy of the split each. markup refuses any <x:Foo> that is not
+// Property, so the day that predicate moves the editor would otherwise
+// have two places to follow it to. Raised in review of #522.
+//
+// THREE WAYS OUT, BECAUSE markup'S SWITCH HAS THREE ARMS. The editor
+// kept only two of them, and the missing one is the likely typo: a
+// <Property> with no namespace at all. markup diagnoses it by name —
+// "write it as <x:Property> and add xmlns:x=… to the <Gooey> root
+// element" — and the editor counted it as a root element, so
+// <Gooey><Property …/><Canvas/></Gooey> was refused with "needs exactly
+// one root element, found 2" and the author was told to delete a root
+// that was never there. That is #517's own shape, one case over.
+//
+// The one-kid spelling is no better, and the review that raised this
+// assumed it was: <Gooey><Property …/></Gooey> passes the count, gets
+// unwrapped, and the Build that follows sees the declaration INSIDE the
+// editor's surface rather than on a root, so it answers "markup:
+// unknown element <Property>". Measured both ways before this arm
+// existed. Neither spelling reached markup's advice, so the editor has
+// to give it. Raised in review of #522.
+func splitDecls(n *node) (decls, kids, bare []*node) {
+	for _, k := range n.Kids {
+		switch {
+		case k.Space == markup.XNamespace:
+			decls = append(decls, k)
+		case k.Elem == "Property":
+			bare = append(bare, k)
+		default:
+			kids = append(kids, k)
+		}
+	}
+	return decls, kids, bare
+}
+
+// alienDecls is every child splitDecls filed as a declaration that is
+// NOT <x:Property> — the arm markup answers with "unknown language
+// element".
+//
+// splitDecls keys on the NAMESPACE, exactly as markup's
+// splitDeclarations does, so <x:Foo> lands in decls beside a real
+// declaration. Every message built from that slice then described it as
+// a declaration, and one of them spelled the element literally: a
+// document holding <x:Foo/> was refused with "its 1 <x:Property>
+// declaration is not a root element", naming an element the file does
+// not contain and calling a thing markup rejects outright a declaration.
+// That is the defect this branch exists to remove, one arm over. Raised
+// in review of #522.
+func alienDecls(decls []*node) []*node {
+	var out []*node
+	for _, d := range decls {
+		if d.Elem != "Property" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// declElemName is how one declaration is SPELLED in a message: its own
+// xmlns binding if it carries one, otherwise the envelope's, otherwise
+// bare.
+//
+// PER ELEMENT, because a document may bind more than one prefix to
+// markup.XNamespace and XML scoping puts the binding wherever the author
+// wrote it. alienDeclMsg has asked per element since review of #522;
+// browser.go's root-count refusal read decls[0] and printed that
+// spelling with len(decls), so a file holding one <p:Property> and one
+// <q:Property> was told it held "2 <p:Property> declarations". This is
+// that question asked once, in one place, so the two messages cannot
+// drift again.
+//
+// A BARE <Property> IS THE ANSWER WHEN NOTHING BINDS THE NAMESPACE,
+// and it is the file's own spelling rather than a guess: this path
+// passes declSpelling an empty fallback, so an envelope that binds no
+// prefix produces exactly what the document contains. The arm is
+// pinned by TestTheRootCountRefusalSaysWhatItCounted's "no prefix
+// bound" row.
+//
+// This paragraph argued the opposite until review of #522 — against
+// spelling the element from "declBinding's fallback", which stopped
+// existing when 995eae8 retired the unobserved mint and left
+// declBinding returning ("", false). It was the site missed when
+// alienDeclMsg's sibling paragraph got the same correction.
+func declElemName(d *node, envelope map[string]string) string {
+	p, ok := declBinding(envelope)
+	return declSpelling(d, p, ok, "")
+}
+
+// declSpelling is the question itself, taking the envelope's answer
+// already resolved because its two callers arrive with it in different
+// shapes: declElemName has the envelope's attribute map, alienDeclMsg
+// has the prefix and a bool it was handed.
+//
+// IT EXISTS BECAUSE THE CLAIM ABOVE WAS NOT TRUE. declElemName's doc
+// said the spelling was "asked once, in one place, so the two messages
+// cannot drift again" while alienDeclMsg still carried its own
+// per-element loop and never called it — an invariant asserted in prose
+// and not provided by the code, which is the shape this branch keeps
+// removing (see declAttrs' doc). Now it is one function and the
+// sentence holds.
+//
+// `unbound` IS A PARAMETER RATHER THAN A CONSTANT, and that is the
+// deliberate difference the unification had to preserve rather than
+// flatten. With no binding anywhere, the browser's refusal wants the
+// bare <Property> — bareDeclMsg defines that spelling as the
+// missing-namespace typo, so naming a prefix the file does not contain
+// would be a guess. The alien refusal wants <x:Foo>, because it has to
+// match markup's own <x:%s> message, which
+// TestAnEnvelopeInTheXNamespaceGetsTheAlienRefusal pins. Both answer
+// the same question; they differ only in what to say when nothing
+// answers it. Raised in review of #522.
+//
+// AND THE PARAMETER WAS DEAD WHILE THAT PARAGRAPH STOOD. Both callers
+// passed "", and alienDeclMsg got its <x:Foo> by normalising its own
+// prefix to "x" and then telling this function envBound was true — so
+// the arm below was statically unreachable and the difference was
+// preserved somewhere other than where it was documented. alienDeclMsg
+// now threads its real bool and names declFallbackPrefix here. Raised
+// in review of #522, again.
+func declSpelling(d *node, envPrefix string, envBound bool, unbound string) string {
+	if p, ok := declBinding(d.Attrs); ok {
+		return "<" + p + ":" + d.Elem + ">"
+	}
+	if envBound {
+		return "<" + envPrefix + ":" + d.Elem + ">"
+	}
+	if unbound != "" {
+		return "<" + unbound + ":" + d.Elem + ">"
+	}
+	return "<" + d.Elem + ">"
+}
+
+// alienDeclMsg is markup's own answer for those elements, said by the
+// editor for the reason bareDeclMsg gives: the author is looking here.
+//
+// DERIVED FROM markup.XNamespace, like its sibling, so the URI cannot
+// drift from the one splitDeclarations compares against.
+//
+// bound IS THE AUTHOR'S PREFIX OR NOBODY'S. When the document binds the
+// namespace, the editor can do better than markup — which spells the
+// refusal <x:%s> whatever the file says (markup/property.go) — and name
+// the elements the way the author wrote them. When it does not, the
+// prefix in hand is declBinding's MINTED one, and writing it named a
+// prefix the file does not contain: a declaration bound by its own
+// default xmlns under an envelope binding xmlns:x elsewhere was refused
+// with "<x2:Foo> … declares <x2:Property> only", sending the author to
+// look for an element nobody had written and to invent a prefix to fix
+// it with. Unbound, this says exactly what markup says. That is the
+// same rule the root-count refusal states at length one file over
+// (browser.go), which this arm had stopped one short of.
+//
+// There used to be an `if prefix == "" { prefix = "x" }` here, which
+// could not fire at the time — declBinding returned its minted "x"
+// rather than "" — and read as the handling that was in fact absent.
+//
+// BOTH HALVES OF THAT SENTENCE HAVE SINCE TURNED OVER, and leaving it
+// would tell a reader the guard three lines below is dead code.
+// declBinding returns ("", false) when it finds no binding now, and
+// alienDeclMsg carries the real handling: declSpelling is given the
+// true `bound` so its own unbound arm can fire, and the TAIL — a
+// statement about what the namespace offers rather than about this
+// element — is normalised to declFallbackPrefix afterwards. Raised in
+// review of #522, twice.
+//
+// AND THE PREFIX IS A PER-ELEMENT QUESTION, which is why this takes the
+// nodes rather than their names. Both call sites hand it the ENVELOPE's
+// binding, and XML scoping lets the binding sit on the element: a file
+// binding xmlns:x on the envelope and writing <d:Foo> with its own
+// xmlns:d was refused as <x:Foo>. That is worse than the unbound case
+// above rather than the same size — x: IS bound in that file, so the
+// message reads as a quote from the document and the author goes looking
+// for an x:Foo nobody wrote. The element's own binding wins; the
+// envelope's is the fallback, and markup's literal "x" the fallback for
+// that. Raised in review of #522.
+//
+// THE TAIL STAYS ON THE ENVELOPE'S PREFIX, deliberately: "the …
+// namespace declares <x:Property> only" is a statement about what the
+// namespace offers, not about what this element is called, and the
+// spelling an author would write a Property under is the document's
+// binding rather than the alien element's.
+//
+// WHICH SAYS WHICH SPELLING WINS, NOT WHAT TO DO WITH NO ENVELOPE
+// BINDING AT ALL. The tail fell straight to declFallbackPrefix there,
+// so a file binding the namespace only on the element — legal, and the
+// placement declPrefix exists for — was told the namespace "declares
+// <x:Property> only" while containing no x: anywhere. That is the same
+// invent-a-prefix harm the element half two paragraphs up was fixed
+// for, one step further out, and it reached the paste refusal too. The
+// ladder is now the same three steps declSpelling walks: the envelope's
+// binding, then the first alien element's, then markup's literal.
+// Raised in review of #522.
+func alienDeclMsg(alien []*node, prefix string, bound bool) string {
+	elems := make([]string, len(alien))
+	for i, d := range alien {
+		elems[i] = declSpelling(d, prefix, bound, declFallbackPrefix)
+	}
+	if !bound {
+		prefix = declFallbackPrefix
+		for _, d := range alien {
+			if p, ok := declBinding(d.Attrs); ok {
+				prefix = p
+				break
+			}
+		}
+	}
+	verb := "is an unknown language element"
+	if len(elems) > 1 {
+		verb = "are unknown language elements"
+	}
+	return strings.Join(elems, ", ") + " " + verb + "; the " + markup.XNamespace +
+		" namespace declares <" + prefix + ":Property> only"
+}
+
+// bareDeclMsg is what markup's splitDeclarations says about an
+// unprefixed <Property>, said by the editor because the editor is where
+// the author is looking.
+//
+// DERIVED FROM markup.XNamespace rather than spelled, so the URI cannot
+// drift from the one the loader compares against;
+// TestTheEditorSaysWhatMarkupWouldAboutABareProperty pins the rest of
+// the sentence against markup's own error for the same document rather
+// than against a copy of it.
+func bareDeclMsg(n int) string {
+	if n == 1 {
+		return "<Property> is a dependency property declaration; write it as " +
+			"<x:Property> and add xmlns:x=\"" + markup.XNamespace +
+			"\" to the <Gooey> root element"
+	}
+	return "these " + strconv.Itoa(n) + " <Property> elements are dependency " +
+		"property declarations; write them as <x:Property> and add xmlns:x=\"" +
+		markup.XNamespace + "\" to the <Gooey> root element"
 }
 
 // nodeOf parses markup into the editor's document model — a palette
@@ -976,7 +1715,9 @@ func nodeOf(src string) (*node, error) {
 			// `<x:Property>` read through here becomes a node named
 			// `Property`, which saveOpenFile writes as `<Property>` —
 			// the exact spelling splitDeclarations' `c.Name ==
-			// "Property"` arm (markup/property.go) refuses.
+			// "Property"` arm (markup/property.go) refuses. That lift is
+			// what the x-namespace exemption below answers, which is why
+			// the namespace is exempted here rather than refused.
 			// Raised in review of #501.
 			//
 			// IT ALSO CHANGES WHICH REFUSAL FIRES TODAY, on files in
@@ -1016,10 +1757,83 @@ func nodeOf(src string) (*node, error) {
 			// same element name, so the rewrite preserves meaning. It is
 			// only the spelling that moves, and no spelling survives a
 			// document model that holds none.
-			if t.Name.Space != def {
+			//
+			// ONE NAMESPACE IS EXEMPT, AND ONLY AS A CHILD OF THE
+			// ENVELOPE. The refusal's premise is that the model cannot
+			// hold the namespace, so writing the element back out
+			// renames it. What answers that premise is envelopeHead
+			// re-deriving the prefix from declPrefix — and that exists
+			// for the envelope's own children and nothing else. Below
+			// the content root node.markup writes n.Elem and the prefix
+			// is gone, exactly as node.Space's own doc says.
+			//
+			// NOT WIDENED TO "any namespace node.Space can hold", which
+			// is every namespace: Space is set on every element and
+			// DROPPED on write for everything but a declaration.
+			//
+			// AND THE WIDENING THAT MATTERS IS POSITIONAL, NOT BY URI,
+			// which the paragraph above claimed to have ruled out while
+			// applying the exemption at every DEPTH. Measured on a file
+			// with an <x:Property> under the content root: the document
+			// OPENED, with a build error — and saveOpenFile is not gated
+			// on the build while canSave gates on openPath, which the
+			// open had set. So ctrl+s on a file the editor was reporting
+			// an error for rewrote it to <Property> on disk, losing the
+			// prefix. Before this branch nodeOf refused the open and
+			// nothing could rewrite anything, so the exemption made a
+			// silent data loss out of a refusal. Raised in review of
+			// #522.
+			//
+			// len(stack) == 1 is the test because the envelope is on the
+			// stack and this element is not yet: a direct child of
+			// <Gooey>, which is where a declaration lives and the only
+			// place the save path can put its prefix back.
+			//
+			// AND len(stack) == 0 — the parsed root — because that is
+			// PASTE's shape, where the node is one element with no
+			// envelope and bareDeclWhy owns the refusal with a message
+			// that says what a declaration is. Refusing here instead
+			// replaced it with "element … is namespaced", which is true
+			// and useless to someone who copied an <x:Property> out of
+			// a document. Nothing writes such a node back: pasteMarkup
+			// refuses it before insertSubtree.
+			//
+			// That leaves ONE way a root-position declaration reaches
+			// disk — a FILE whose root element is one — and
+			// openWorkspaceFile refuses that directly, because measuring
+			// it here is what found it: the file opened, was wrapped in
+			// a <Gooey>, and saved as <Property> with the prefix gone.
+			// See the guard there. Raised in review of #522.
+			//
+			// AND THE ROOT ARM ASKS THE ELEMENT NAME, which it did not:
+			// it exempted every x-namespaced element in root position,
+			// so a file rooted at <x:Gooey> had no arm anywhere. Its
+			// children are unprefixed, so splitDecls files them as kids
+			// and alienDecls never fires; openWorkspaceFile's own guard
+			// excludes n.Elem == "Gooey" on the grounds that the
+			// default-xmlns shape has an answer of its own, which the
+			// PREFIXED shape does not reach. The editor reported
+			// "✓ builds" and ctrl+s rewrote the root element's resolved
+			// namespace on disk — markup.Build accepts both forms,
+			// since its root check is on the LOCAL name, so nothing
+			// downstream stops it either.
+			//
+			// THE ARM EXCLUDES Gooey AND NOTHING ELSE, deliberately:
+			// <x:Property> and <x:Foo> in root position both have
+			// answers already — bareDeclWhy's two arms — and reaching
+			// them requires nodeOf to hand the node back rather than
+			// refuse it here. Narrowing to Property alone takes the
+			// alien answer away from <x:Foo> and hands it this generic
+			// sentence instead, which
+			// TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved
+			// and TestAPastedAlienElementKeepsItsOwnPrefix both catch.
+			// Measured in review of #522.
+			envelopeChild := (len(stack) == 0 && t.Name.Local != "Gooey") ||
+				(len(stack) == 1 && stack[0].Elem == "Gooey")
+			if t.Name.Space != def && !(envelopeChild && t.Name.Space == markup.XNamespace) {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
-			n := &node{Elem: t.Name.Local, Attrs: map[string]string{}}
+			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
 			for _, a := range t.Attr {
 				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
 				// ATTRIBUTE, and that spelling is the whole fix for
@@ -1519,6 +2333,23 @@ type editor struct {
 	// and saving it silently took the demo's graphics mode away under a
 	// "✓ saved". Measured before the fix. Raised in review of #501.
 	envAttrs map[string]string
+	// envDecls are the <x:Property> declarations the opened file's
+	// <Gooey> carried. They travel with envAttrs and with ed.root.Kids —
+	// assigned at the one site that assigns those, for the reason
+	// TestEnvAttrsIsAssignedWhereTheDocumentIs exists. Added for #517.
+	envDecls []*node
+	// seededDecls are the declared names seedDeclared most recently put
+	// into ed.docCtx.Values, so the next rebuild can take exactly those
+	// back out and no others. See seedDeclared for why the map is shared and
+	// why that makes retirement this method's job. Added in review of
+	// #522.
+	seededDecls []string
+	// shadowedDecls are the declared names seedDeclared could NOT seed
+	// because the editor's own chrome already binds them. The skip is
+	// right — see seedDeclared — but it is invisible in the preview, so
+	// rebuild appends them to the build status. Raised in review of
+	// #522.
+	shadowedDecls []string
 
 	// hist is the undo/redo stacks over the DOCUMENT MODEL. It is
 	// recorded from rebuild rather than from each mutator, so a mutation
@@ -2717,8 +3548,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := gooeyOpen(ed.envAttrs) + ed.doc().markup("  ") + "</Gooey>\n"
-	full := gooeyOpen(ed.envAttrs) + ed.root.markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := envelopeHead(ed.envAttrs, ed.envDecls) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below
@@ -2730,7 +3561,25 @@ func (ed *editor) rebuild() {
 		// Driving another app: the target's live binding context is the
 		// only authority on whether this document loads, so validate
 		// against IT rather than against the editor's own context.
+		//
+		// SO seedDeclared DOES NOT RUN HERE, and that exclusion is the
+		// scope of #517's build half: under -attach, opening a control's
+		// own defining document still reports the target's `"Title" not
+		// found in context`. It is the right call for the same reason
+		// the branch exists — the editor cannot seed a context it does
+		// not own, and a name it invented locally would make the preview
+		// disagree with the app — but seedDeclared's doc reads as
+		// unconditional, so the exclusion is stated at the branch that
+		// causes it. Raised in review of #522.
 		ed.pushRemote(src)
+		return
+	}
+
+	// The document's own declarations are part of the vocabulary it is
+	// built against, and only the editor can put them there — see
+	// seedDeclared. Before the Build, because that is what consumes
+	// them.
+	if !ed.seedDeclared(full) {
 		return
 	}
 
@@ -2744,7 +3593,7 @@ func (ed *editor) rebuild() {
 		ed.status.Set("✗ " + err.Error())
 		return
 	}
-	ed.status.Set("✓ builds")
+	ed.status.Set("✓ builds" + shadowedNote(ed.shadowedDecls))
 	ed.pv.Swap(w)
 	// The one moment the document and the built tree are known to
 	// correspond: w is what markup.Build made of THIS document. Inverted
@@ -2755,6 +3604,182 @@ func (ed *editor) rebuild() {
 	ed.nodeOf = map[gooey.Component]*node{}
 	ed.compOf = map[*node]gooey.Component{}
 	ed.mapNodes(ed.root, w)
+}
+
+// seedDeclared gives the open document's own <x:Property> declarations
+// a live handle in the vocabulary the preview is built against, so a
+// file that DECLARES a property and then binds it — {{.Title}} in the
+// body of the control that declares Title — previews instead of
+// refusing to load.
+//
+// NOTHING ELSE DOES THIS, and the reason is structural rather than an
+// oversight. declarations.instantiate runs at an INSTANTIATION SITE
+// (markup/usercontrol.go): the page that writes <Card Title="…"/>
+// resolves the attribute and hands the result down. The editor is
+// holding card.gooey itself, which has no site above it, so the
+// declared names never reach Context.Values and the control's own
+// binding is the error the user sees:
+//
+//	✗ markup: "Title" not found in context
+//
+// #517 opened such a file and #522's first rounds made it round-trip;
+// this is the half that makes it BUILD. Raised in review of #522.
+//
+// markup.Declaration.AbsentValue picks the value, and that call is the
+// whole of the policy: it is the handle an omitted optional attribute
+// would have got, Default included. A Required property has no default
+// and previews as its type's zero — the only stand-in available to a
+// tool that is not an instantiation site, and a visible one, since an
+// empty string on the surface is what a caller who forgot it would see.
+//
+// RETIRED AND RESEEDED WHOLE, every rebuild. docCtx.Values is the
+// editor's one binding map (newEditor gives docCtx ed.ctx.Values), so a
+// name the previous file declared would otherwise still resolve in the
+// next one — and a Type edited in place would keep the handle of the
+// type it used to be, which builds and then paints the wrong thing.
+// Reseeding costs one parse of a document the rebuild is about to parse
+// again; the early return keeps that off every document that declares
+// nothing.
+//
+// A name Values already holds is LEFT ALONE, and that check is load
+// bearing rather than defensive. menuValues registers the IDE shell's
+// own bindings under BARE names — Region, CodeView, Save — in this same
+// map, and a declaration may legally be called any of them. Without the
+// check such a document would replace the editor's handle with a string
+// source and then, on the next open, DELETE it: the menus would be
+// bound to nothing, in a session that had merely opened a file.
+// markup.Seeded's placeholders are safe by spelling (<Name>_<Attr>) and
+// these are not.
+//
+// THE SHARED MAP HAS A SECOND CONSEQUENCE, and it reaches further than
+// menuValues. ed.docCtx.Values IS ed.ctx.Values, and both the gRPC and
+// the MCP server are handed ed.ctx (see the comment at their start), so
+// the open document's declared names are in the vocabulary the CONTROL
+// PLANE validates and patches against. Two halves, one wanted and one
+// not:
+//
+//   - the binding pickers see them, which is why typedBindings and
+//     commandBindings (editors.go) offer {{.Title}} while the declaring
+//     document is open — the reason this is not simply filtered out;
+//   - a client's set_value against a seeded name takes, and is then
+//     DISCARDED on the next rebuild, because the loop above installs a
+//     fresh handle from Default every time.
+//
+// Transient by construction, in other words, and the transience is the
+// part a client cannot see. It is recorded rather than removed because
+// removing it costs the first half.
+// TestASeededNameIsVisibleToTheControlPlaneAndIsTransient measures both.
+//
+// LOCAL PREVIEW ONLY. rebuild returns on the remote path before it
+// reaches this, so none of the above is true under -attach; the comment
+// at that branch carries the reasoning.
+//
+// AND Type="any" IS NOT PREVIEWED, which is the other scope boundary
+// and belongs here for the same reason the remote path does. The
+// absent-optional answer for `any` is a *prop.Property[any], and every
+// consumer one level down wants the concrete handle — so a defining
+// document that uses the escape hatch opens and does NOT build:
+//
+//	✗ markup: <Text Style="{{.Tint}}"> is *prop.Property[interface {}];
+//	  need *prop.Property[render.Style]
+//
+// Measured through openWorkspaceFile in review of #522, on both
+// markup-only controls this tree ships (cmd/colors/swatch.gooey and
+// cmd/cards/card.gooey) and on all four consumer positions the escape
+// hatch exists for. It is not a defect in AbsentValue, which returns
+// exactly what resolve returns for an absent optional `any`; a
+// Declaration does not know its consumer, so a preview for these is a
+// separate decision rather than a fix. isHandlerExpr requires the type
+// for behaviour crossing a control boundary and propKinds has no row
+// for a slice, so it is also the only spelling a series handle has.
+// TestAnAnyDeclarationSeedsAHandleItsConsumersRefuse pins the state of
+// play, so the day it changes the docs go with it.
+func (ed *editor) seedDeclared(src string) bool {
+	// CLEARED BEFORE THE EARLY RETURN, not inside the loop below: a
+	// document that shadowed a name and is then replaced by one
+	// declaring nothing takes the early return, and a note left over
+	// from the previous document would name a declaration the open file
+	// does not contain.
+	ed.shadowedDecls = ed.shadowedDecls[:0]
+	if len(ed.envDecls) == 0 && len(ed.seededDecls) == 0 {
+		return true
+	}
+	for _, name := range ed.seededDecls {
+		delete(ed.docCtx.Values, name)
+	}
+	ed.seededDecls = ed.seededDecls[:0]
+	decls, err := markup.Declarations([]byte(src))
+	if err != nil {
+		// The build this precedes reports it, with the same message and
+		// in the place the user is already looking. Parsing twice is
+		// what needing the declarations BEFORE the build costs.
+		return true
+	}
+	for _, d := range decls {
+		if _, taken := ed.docCtx.Values[d.Name]; taken {
+			// SKIPPED, AND SAID. The skip is the behaviour
+			// TestADeclarationDoesNotCaptureAnEditorBinding earns; the
+			// silence was the defect. Measured on a document declaring
+			// Name="Region" Type="string" Default="zzz" and binding
+			// {{.Region}}: status "✓ builds", the handle still the
+			// IDE's own *prop.Property[int] region enum, the <Text>
+			// rendering "0" — an editor implementation detail shown
+			// inside the user's document, under a green status, with
+			// the author's only route to the diagnosis being to know
+			// menuValues' name list.
+			//
+			// newEditor PANICS on a duplicate binding name for the very
+			// reason that went unsaid here: one of the two is
+			// unreachable and nothing would say which. A panic is
+			// obviously wrong for a name a USER'S FILE chose; a line in
+			// the status is not. Raised in review of #522.
+			ed.shadowedDecls = append(ed.shadowedDecls, d.Name)
+			continue
+		}
+		v, err := d.AbsentValue()
+		if err != nil {
+			// SAID, NOT SWALLOWED, and the caller stops. A `continue`
+			// here left the name unbound and the Build that follows
+			// then failed with `"Title" not found in context` — the
+			// exact pre-#517 error, reported as though nothing had been
+			// attempted, about the one document this whole function
+			// exists to make load. The arm is unreachable today (a
+			// Declaration from Declarations always carries a type-table
+			// row, and Default was coerced at parse time), which is the
+			// argument for reporting it rather than for hiding it:
+			// nothing will ever have seen this message, so it must
+			// carry its own cause. Raised in review of #522.
+			ed.status.Set("✗ " + err.Error())
+			return false
+		}
+		ed.docCtx.Values[d.Name] = v
+		ed.seededDecls = append(ed.seededDecls, d.Name)
+	}
+	return true
+}
+
+// shadowedNote is what the build status says about declared names the
+// editor's own chrome already binds, and "" when there are none.
+//
+// APPENDED TO "✓ builds" RATHER THAN REPLACING IT, because the document
+// really does build: the binding resolves, the tree is made, the preview
+// is live. What it is not is the author's value — the handle is the
+// IDE's, so Default never appears and the declared Type is not what the
+// binding resolved to. That is a narrower claim than a failure and the
+// status says the narrower thing.
+//
+// IT NAMES THE NAMES, because the author's only other route to the
+// diagnosis is knowing menuValues' list, which is not in their document.
+func shadowedNote(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	verb := " is a name the editor itself binds"
+	if len(names) > 1 {
+		verb = " are names the editor itself binds"
+	}
+	return " — " + strings.Join(names, ", ") + verb + "; the preview shows the " +
+		"editor's value, not this declaration's"
 }
 
 func (ed *editor) outline() string {
