@@ -845,7 +845,7 @@ func TestAFloatedSurfaceFollowsTheDocumentItIsShowing(t *testing.T) {
 		t.Fatalf("Rows opened %v", p.Mode())
 	}
 	box := p.FloatBounds()
-	before := cellLine(f, box.X+1, box.Y+1, box.W-2)
+	before := rowText(f, box.Y+1, box.X+1, box.W-2)
 	if !strings.Contains(before, "Auto") {
 		t.Fatalf("the surface's first track row reads %q, want the Auto track", before)
 	}
@@ -853,7 +853,7 @@ func TestAFloatedSurfaceFollowsTheDocumentItIsShowing(t *testing.T) {
 	// k cycles the track's kind and writes it. The surface must follow.
 	p.PreviewKey(input.Rune('k'))
 	f, _ = c.Frame()
-	after := cellLine(f, box.X+1, box.Y+1, box.W-2)
+	after := rowText(f, box.Y+1, box.X+1, box.W-2)
 	if after == before {
 		t.Errorf("the surface still reads %q after the track changed to %q; it is showing a "+
 			"stale answer", after, ed.sel.Attrs["Rows"])
@@ -861,15 +861,6 @@ func TestAFloatedSurfaceFollowsTheDocumentItIsShowing(t *testing.T) {
 	if !strings.Contains(after, "Star") {
 		t.Errorf("the surface reads %q; the track is now %q", after, ed.sel.Attrs["Rows"])
 	}
-}
-
-// cellLine reads w cells of row y as a string.
-func cellLine(f *gooey.Frame, x, y, w int) string {
-	var sb strings.Builder
-	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
-	}
-	return strings.TrimRight(sb.String(), " ")
 }
 
 // TestTheLastTrackCannotBeRemovedThroughThePropertyEditor. components.Grid defaults a missing

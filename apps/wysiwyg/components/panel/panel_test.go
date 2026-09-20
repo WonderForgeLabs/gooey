@@ -38,6 +38,66 @@ func term8x16(cols, rows int) term.Caps {
 	return term.Caps{Cols: cols, Rows: rows, CellW: 8, CellH: 16, Color: render.TrueColor}
 }
 
+// rowText reads w CELLS of row y off a Composer's cell plane.
+//
+// Text(), NOT .Rune: a continuation cell — the second column of a wide
+// glyph — carries render.Continuation, and writing that rune out puts a
+// literal marker in the row. CLAUDE.md names that helper shape as the
+// reason no fixture in six packages could hold a wide glyph and be
+// asserted on, and this package held two of them. w is a COLUMN count,
+// so a caller with a string wants render.StringWidth rather than its
+// length.
+//
+// UNTRIMMED, and so is the same-named helper in apps/wysiwyg
+// (dock_test.go): a span reader returns the span. This package is where
+// that matters most — TestPixelTierTitleIsOnTheCellPlane compares against
+// " Files ", whose trailing space a trim would eat, and the clip
+// assertions read a HasSuffix of the full span — but the two are not
+// allowed to differ for it, because the doc comments are otherwise nearly
+// word for word and a reader carrying an assumption across would meet the
+// difference as a failure with no explanation. A caller that wants blanks
+// gone says strings.TrimRight at the site. Raised in review of #502.
+func rowText(c *gooey.Composer, y, x, w int) string {
+	var sb strings.Builder
+	for i := 0; i < w; i++ {
+		sb.WriteString(c.Cells().At(x+i, y).Text())
+	}
+	return sb.String()
+}
+
+// TestRowTextReadsThroughAWideGlyph is this package's half of the pair
+// the helper's own doc says "are not allowed to differ". A copy with no
+// test of its own is free to drift into exactly the state that
+// paragraph forbids, while its twin in apps/wysiwyg carries the only
+// assertion and stays green.
+//
+// Reverting BOTH copies to WriteRune(….Rune) left the whole tree green,
+// measured: every fixture in either package is ASCII, and an ASCII row
+// agrees with itself under a rune read and a cluster read alike. So the
+// fixture is CLAUDE.md's recipe — a glyph whose column count and rune
+// count differ, in a span wider than what was drawn into it, which pins
+// the continuation rule and the untrimmed-span rule with one read.
+func TestRowTextReadsThroughAWideGlyph(t *testing.T) {
+	const wide = "世界" // two runes, FOUR columns
+	c := gooey.NewComposer(&components.Text{Content: components.Str(wide)}, 8, 1)
+	t.Cleanup(c.Close)
+	c.Frame()
+
+	// THE COUNTEREXAMPLE IS READ, NOT SPELLED: a literal for it is a
+	// second answer about the same eight cells, free to disagree with
+	// `want`. Raised in review of #502.
+	var runeRead strings.Builder
+	for x := 0; x < 8; x++ {
+		runeRead.WriteRune(c.Cells().At(x, 0).Rune)
+	}
+	if got, want := rowText(c, 0, 0, 8), wide+"    "; got != want {
+		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
+			"read the same eight cells are %q — the continuation marker written "+
+			"out as a literal rune — and a trimmed read drops the four blanks the "+
+			"span asked for", got, wide, want, runeRead.String())
+	}
+}
+
 // page puts a pane over a text line, so there is a neighbour whose repaint
 // can be provoked without touching the pane. enc nil is the cell tier.
 func page(enc graphics.Encoder) (*gooey.Composer, *Pane, *prop.Property[string]) {
@@ -124,12 +184,8 @@ func TestPixelTierTitleIsOnTheCellPlane(t *testing.T) {
 	c, p, _ := page(graphics.Kitty{})
 	c.Frame()
 	b := p.Bounds()
-	var got strings.Builder
-	for x := b.X + 2; x < b.X+2+len(" Files "); x++ {
-		got.WriteRune(c.Cells().At(x, b.Y).Rune)
-	}
-	if got.String() != " Files " {
-		t.Errorf("the top edge reads %q, want the title on the cell plane", got.String())
+	if got := rowText(c, b.Y, b.X+2, render.StringWidth(" Files ")); got != " Files " {
+		t.Errorf("the top edge reads %q, want the title on the cell plane", got)
 	}
 }
 
@@ -253,15 +309,11 @@ func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
 	c.Frame()
 
 	b := p.Bounds()
-	if len(title) <= b.W {
+	if render.StringWidth(title) <= b.W {
 		t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
 	}
 
-	var row strings.Builder
-	for x := b.X; x < b.X+b.W; x++ {
-		row.WriteRune(c.Cells().At(x, b.Y).Rune)
-	}
-	got := row.String()
+	got := rowText(c, b.Y, b.X, b.W)
 
 	// Not dropped: the label is there, inset one border cell and one pad.
 	if !strings.HasPrefix(got, "╭─ Files") {
@@ -277,7 +329,7 @@ func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
 	// And the whole label really was truncated.
 	if strings.Contains(got, title) {
 		t.Errorf("top row is %q; it carries the full %d-column title inside a %d-column pane",
-			got, len(title), b.W)
+			got, render.StringWidth(title), b.W)
 	}
 }
 
