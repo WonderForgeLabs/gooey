@@ -459,7 +459,8 @@ func drainBudget(n int64, every time.Duration) time.Duration {
 }
 
 // TestDrainBudgetScalesWithTheCallersInterval pins both halves of the
-// budget, because both were unexercised by anything that runs.
+// budget, because nothing ASSERTED either of them. Both execute on
+// every run of this suite; what no caller did was check the answer.
 //
 // NO CALLER SUPPLIES AN ABOVE-FLOOR INTERVAL, which is what the 200ms
 // row is for. Every watcher caller passes w.Interval from a watcher
@@ -469,9 +470,8 @@ func drainBudget(n int64, every time.Duration) time.Duration {
 // floor. The negative row has no caller either, but it is the same
 // clamp branch as the zero row, and that one runs.
 //
-// THE SCALING BRANCH ITSELF DOES RUN, and this paragraph claimed it had
-// no caller at all until review of #511 measured otherwise. The
-// no-watcher fixture in TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan
+// THE SCALING BRANCH ITSELF RUNS. The no-watcher fixture in
+// TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan
 // passes a literal 0; the clamp turns that into DefaultWatchInterval,
 // which is above the 50ms floor, so `every > per` executes on every run
 // of this suite. What has no caller is an above-floor interval the
@@ -539,10 +539,11 @@ func TestDrainBudgetScalesWithTheCallersInterval(t *testing.T) {
 // arithmetic is drainBudget and TestDrainBudgetScalesWithTheCallersInterval
 // says what it does.
 //
-// MUTATE BY REMOVING THE FIRST WAIT, not both: dropping both leaves the
-// watcher no cycle to scan the edit in, so every assertion holds
-// vacuously and the matrix is all-pass for the mutation's reasons rather
-// than the guard's.
+// MUTATING A CALLER THAT WAITS TWICE — TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay
+// is the one — REMOVE THE FIRST WAIT, not both: dropping both leaves
+// the watcher no cycle to scan the edit in, so every assertion holds
+// vacuously and the matrix is all-pass for the mutation's reasons
+// rather than the guard's.
 func drainUntilPosts(t *testing.T, disp *gooey.Dispatcher, c *countingPost, n int64, every time.Duration) int64 {
 	t.Helper()
 	base := c.n.Load()
@@ -647,15 +648,15 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 // TestCountingPostEnqueuesBeforeItCounts pins the order the comment on
 // Post calls the whole contract.
 //
-// Nothing else could, though not for the reason this gave: the posts in
+// Nothing else could. The posts in
 // TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay and
 // TestFileWatcherDoesNotFireOverAnUnchangedFile come from the POLL
 // goroutine while drainUntilPosts Loads from the test's, which is what
-// countingPost's own doc says and what the atomic is there for. Review
-// of #511 caught the contradiction between the two paragraphs.
+// countingPost's own doc says and what the atomic is there for — so
+// the swap is not unobservable there for want of concurrency.
 //
-// The swap is unobservable in those fixtures for a different reason,
-// and it is the one that argues for this test: the window between the
+// It is unobservable in those fixtures for a different reason, and it
+// is the one that argues for this test: the window between the
 // increment and the enqueue is nanoseconds against a 1ms poll, AND
 // every caller carries slack over the claim it makes — n=3 where one
 // advanced scan suffices, n=40 for a negative assertion — so a one-post
