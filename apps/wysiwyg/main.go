@@ -1771,7 +1771,32 @@ func nodeOf(src string) (*node, error) {
 			// it here is what found it: the file opened, was wrapped in
 			// a <Gooey>, and saved as <Property> with the prefix gone.
 			// See the guard there. Raised in review of #522.
-			envelopeChild := len(stack) == 0 || (len(stack) == 1 && stack[0].Elem == "Gooey")
+			//
+			// AND THE ROOT ARM ASKS THE ELEMENT NAME, which it did not:
+			// it exempted every x-namespaced element in root position,
+			// so a file rooted at <x:Gooey> had no arm anywhere. Its
+			// children are unprefixed, so splitDecls files them as kids
+			// and alienDecls never fires; openWorkspaceFile's own guard
+			// excludes n.Elem == "Gooey" on the grounds that the
+			// default-xmlns shape has an answer of its own, which the
+			// PREFIXED shape does not reach. The editor reported
+			// "✓ builds" and ctrl+s rewrote the root element's resolved
+			// namespace on disk — markup.Build accepts both forms,
+			// since its root check is on the LOCAL name, so nothing
+			// downstream stops it either.
+			//
+			// THE ARM EXCLUDES Gooey AND NOTHING ELSE, deliberately:
+			// <x:Property> and <x:Foo> in root position both have
+			// answers already — bareDeclWhy's two arms — and reaching
+			// them requires nodeOf to hand the node back rather than
+			// refuse it here. Narrowing to Property alone takes the
+			// alien answer away from <x:Foo> and hands it this generic
+			// sentence instead, which
+			// TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved
+			// and TestAPastedAlienElementKeepsItsOwnPrefix both catch.
+			// Measured in review of #522.
+			envelopeChild := (len(stack) == 0 && t.Name.Local != "Gooey") ||
+				(len(stack) == 1 && stack[0].Elem == "Gooey")
 			if t.Name.Space != def && !(envelopeChild && t.Name.Space == markup.XNamespace) {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
@@ -3615,6 +3640,27 @@ func (ed *editor) rebuild() {
 // LOCAL PREVIEW ONLY. rebuild returns on the remote path before it
 // reaches this, so none of the above is true under -attach; the comment
 // at that branch carries the reasoning.
+//
+// AND Type="any" IS NOT PREVIEWED, which is the other scope boundary
+// and belongs here for the same reason the remote path does. The
+// absent-optional answer for `any` is a *prop.Property[any], and every
+// consumer one level down wants the concrete handle — so a defining
+// document that uses the escape hatch opens and does NOT build:
+//
+//	✗ markup: <Text Style="{{.Tint}}"> is *prop.Property[interface {}];
+//	  need *prop.Property[render.Style]
+//
+// Measured through openWorkspaceFile in review of #522, on both
+// markup-only controls this tree ships (cmd/colors/swatch.gooey and
+// cmd/cards/card.gooey) and on all four consumer positions the escape
+// hatch exists for. It is not a defect in AbsentValue, which returns
+// exactly what resolve returns for an absent optional `any`; a
+// Declaration does not know its consumer, so a preview for these is a
+// separate decision rather than a fix. isHandlerExpr requires the type
+// for behaviour crossing a control boundary and propKinds has no row
+// for a slice, so it is also the only spelling a series handle has.
+// TestAnAnyDeclarationSeedsAHandleItsConsumersRefuse pins the state of
+// play, so the day it changes the docs go with it.
 func (ed *editor) seedDeclared(src string) bool {
 	// CLEARED BEFORE THE EARLY RETURN, not inside the loop below: a
 	// document that shadowed a name and is then replaced by one

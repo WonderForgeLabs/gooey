@@ -382,6 +382,14 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// namespace puts <Gooey> itself in it, and that file has an answer of
 	// its own.
 	//
+	// THAT COVERS THE DEFAULT-xmlns SHAPE AND ONLY IT, which this
+	// paragraph did not say. A root <x:Gooey> with unprefixed children
+	// reaches neither refusal — splitDecls files the children as kids,
+	// so alienDecls is silent — and the file opened green and was saved
+	// back as plain <Gooey>. The answer is upstream now: nodeOf's
+	// root-position exemption asks the element name, so these bytes
+	// never reach a document at all. Raised in review of #522.
+	//
 	// WHICH IS THE ALIEN REFUSAL, NOT THE ROOT COUNT. This paragraph said
 	// the root count, and the alien arm was added after it and returns
 	// first: with the default xmlns on <Gooey>, splitDecls files every

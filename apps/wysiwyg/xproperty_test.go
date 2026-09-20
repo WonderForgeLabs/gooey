@@ -1045,6 +1045,25 @@ func TestADeclarationOutsideTheEnvelopeIsRefusedBeforeItCanBeSaved(t *testing.T)
 			doc:  `<Property Name="T" Type="string"/>` + "\n",
 			want: "the spelling is <x:Property>",
 		},
+		{
+			// THE ENVELOPE ITSELF, PREFIXED. nodeOf exempted every
+			// x-namespaced element in ROOT position, for the paste
+			// path, and the open path's own guard excludes
+			// n.Elem == "Gooey" — so this file had no arm at all: the
+			// children are unprefixed, splitDecls files them as kids,
+			// alienDecls never fires, and the editor reported
+			// "✓ builds". ctrl+s then wrote it back as plain <Gooey>,
+			// rewriting the root element's resolved namespace on disk
+			// under a green status, which is the class the prefixed
+			// refusal exists to delete. markup.Build accepts both
+			// forms — its root check is on the LOCAL name — so nothing
+			// downstream stops it either. Measured in review of #522.
+			name: "the envelope itself, prefixed",
+			doc: `<x:Gooey xmlns:x="` + markup.XNamespace + `" ` +
+				`xmlns="wonderforge.io/gooey/2026">` + "\n" +
+				`  <Canvas Name="Root"/>` + "\n</x:Gooey>\n",
+			want: "is namespaced",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := workspaceFixture(t)
@@ -1451,5 +1470,53 @@ func TestEnvelopePartsNeverHandsBackTheEditorsOwnMap(t *testing.T) {
 			"Title is now %q. That map is ed.envAttrs, so a future caller "+
 			"writing a binding into the result would make the next save look "+
 			"as though the file had always carried one", attrs["Title"])
+	}
+}
+
+// TestAnAnyDeclarationSeedsAHandleItsConsumersRefuse is the scope
+// boundary of the preview, stated as a test because the claim in three
+// places said "every declaration".
+//
+// AbsentValue returns exactly what resolve returns for an absent
+// optional: for Type="any" that is a *prop.Property[any], and every
+// consumer one level down wants the concrete handle. So a defining
+// document using the escape hatch OPENS and does not BUILD — which is
+// the half "opening it is not enough" was about, one type over. Both
+// markup-only controls this tree ships use Type="any", so this is not
+// an obscure corner: isHandlerExpr requires it for behaviour crossing a
+// control boundary, and propKinds has no row for a slice type.
+//
+// THIS PINS THE STATE OF PLAY RATHER THAN BLESSING IT. Giving these a
+// preview cannot come from AbsentValue — a Declaration does not know
+// its consumer — so it is a separate decision; when it is made, this
+// test goes red and the three paragraphs that describe the fourth case
+// go with it. Raised in review of #522.
+func TestAnAnyDeclarationSeedsAHandleItsConsumersRefuse(t *testing.T) {
+	root := workspaceFixture(t)
+	const doc = `<Gooey xmlns="wonderforge.io/gooey/2026" xmlns:x="` +
+		markup.XNamespace + `">` + "\n" +
+		`  <x:Property Name="Tint" Type="any"/>` + "\n" +
+		`  <Text Style="{{.Tint}}">hi</Text>` + "\n</Gooey>\n"
+	if err := os.WriteFile(filepath.Join(root, "any.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("any.gooey")
+
+	got := ed.status.Get()
+	if !strings.Contains(got, "*prop.Property[interface {}]") {
+		t.Errorf("the status reads %q. If this now BUILDS, the preview has "+
+			"gained an answer for Type=\"any\" — update seedDeclared's doc, "+
+			"docs/architecture.md and docs/markup-reference.md, all three of "+
+			"which describe the fourth case, and then delete this test", got)
+	}
+	// OPENED, which is the half that makes the failure a preview gap
+	// rather than a refusal: openPath is set, so ctrl+s still works and
+	// the author can edit the file. A refusal would have cleared it.
+	if ed.openPath.Get() == "" {
+		t.Errorf("the file was refused rather than opened; this test is about a " +
+			"document that opens and does not build")
 	}
 }
