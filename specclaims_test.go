@@ -476,11 +476,15 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 		// delete it is not that it was wrong. On origin/main the
 		// population is exactly two and specclaims_test.go:269 IS
 		// testFuncsUnder's doc, so the message named both correctly.
-		// What deletes it is that THIS BRANCH added three more
-		// citations in markup/referencedoc_test.go while touching
-		// neither named file — so a written list goes stale on any
-		// commit that adds a backtick anywhere in the tree, which no
-		// reviewer of that commit has reason to check. A reader sent
+		// What deletes it is that THIS BRANCH added more citations, in
+		// files neither of them names, while touching neither named
+		// file — so a written list goes stale on any commit that adds
+		// a backtick anywhere in the tree, which no reviewer of that
+		// commit has reason to check. The count is left out on
+		// purpose: the version of this sentence that named three, in
+		// one file, was true at one commit of this branch and false at
+		// the next, which is the same failure one level up. Raised in
+		// review of #543. A reader sent
 		// to audit two comments that are not the cause has been sent
 		// further from it than a general diagnosis would have, and
 		// that is the failure the paragraph below this one already
@@ -529,12 +533,19 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 //
 // THE RATIO IS THE CLAIM AND THE COUNT IS NOT. This paragraph said TWO
 // and the floor's own message named the two files. Both were accurate
-// on main and both went stale inside this branch, which added three
-// citations in a file neither of them mentions — so the figure moves on
+// on main and both went stale inside this branch, which added
+// citations in files neither of them mentions — so the figure moves on
 // commits that have no reason to look here. Run the grep in that
-// message for today's number; what does not move is the three orders of
-// magnitude between the two populations, which is what makes the
-// fraction small however the numerator drifts.
+// message for today's number; what does not move is that the two
+// populations are MORE THAN TWO ORDERS OF MAGNITUDE apart, which is
+// what makes the fraction small however the numerator drifts.
+//
+// It said THREE orders, and that was the one figure this paragraph
+// nominated as stable: 2 citations against ~1,300 bare mentions is a
+// factor of ~650, which rounds to three, and this branch took the
+// numerator to 8 — ~186, or 2.3 orders. Half an order, moved by the
+// commits the sentence claimed it survives. "More than two" holds at
+// 8 and at 14. Raised in review of #543.
 //
 // THE FLOOR BELOW IS WHAT KEEPS THIS FROM BEING VACUOUS, not evidence of
 // coverage: goCited == 0 catches the pattern drifting to nothing, and at
