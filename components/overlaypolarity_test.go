@@ -281,29 +281,24 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		if rerr != nil {
 			t.Fatalf("reading %s: %v", path, rerr)
 		}
-		// docs/specs/ is exempt here too, and BY DATE, which is the
-		// reason the positional arm actually gives. A blanket prefix
-		// was the wider exemption exemptSpec exists to retire: a record
-		// written after the marker landed and telling a reader an
-		// AdornmentLayer may go anywhere is wrong on its own date, and
-		// exempting it leaves the only guard that looks blind to
-		// exactly the document most likely to mislead — a new decision
-		// record. Two arms took the date and this one kept the prefix,
-		// so the file held both the argument and its counterexample.
-		// Raised in review of #541.
-		{
-			for _, b := range proseBlocks(string(body)) {
-				if !unqualifiedFreedom(path, b) {
-					continue
-				}
-				freed++
-				t.Errorf("%s tells a reader that %v may go anywhere, and stops "+
-					"there:\n\t%s\nThe marker took its PAINT position out of the "+
-					"document; the layer still re-anchors during its own Arrange, so "+
-					"a layer declared before the content it adorns drops a custom "+
-					"adornment that neither persists nor follows the pointer. Say "+
-					"which order is free and which is not.", path, arrangeOrdered, b)
+		// The docs/specs/ exemption for THIS arm is inside
+		// unqualifiedFreedom, which is where the argument for it is
+		// written. It used to be an `if !strings.HasPrefix(path,
+		// "../docs/specs/")` here, and when the predicate took it over
+		// the guard was replaced by a bare block rather than deleted —
+		// leaving a paragraph about an exemption above a loop that made
+		// none. Raised in review of #541, twice.
+		for _, b := range proseBlocks(string(body)) {
+			if !unqualifiedFreedom(path, b) {
+				continue
 			}
+			freed++
+			t.Errorf("%s tells a reader that %v may go anywhere, and stops "+
+				"there:\n\t%s\nThe marker took its PAINT position out of the "+
+				"document; the layer still re-anchors during its own Arrange, so "+
+				"a layer declared before the content it adorns drops a custom "+
+				"adornment that neither persists nor follows the pointer. Say "+
+				"which order is free and which is not.", path, arrangeOrdered, b)
 		}
 		for _, s := range proseUnits(string(body)) {
 			if !nameRe.MatchString(s) {
@@ -669,22 +664,52 @@ const negSpellings = `(?:do not|does not|don't|doesn't|no such|` +
 //
 // from the two above, where the nearest host name is nine and thirty
 // words back behind a dash. Measured against the stack tip — which is
-// the base that matters, and the one the first version skipped: 9
-// sentences examined by THIS arm, none flagged, and both defective
-// spellings flagged as fixtures below. (The test's own total is larger,
-// because the positional arm counts separately above; the run logs it —
-// no figure is written here, for the reason the floor's own paragraph
-// gives about a count going stale twice.)
+// the base that matters, and the one the first version skipped: none
+// flagged, and both defective spellings flagged as fixtures below.
+//
+// NO FIGURE, for the reason the floor's own paragraph gives, and this
+// one had gone stale three times before it went. The explanation that
+// stood beside it was also impossible: it said the test's own total is
+// larger "because the positional arm counts separately above", and the
+// positional arm's examined++ sits INSIDE the branch that calls
+// t.Errorf, so on a green tree it contributes nothing. Every counted
+// sentence is this arm's. What moved the number each time was the
+// exemption narrowing under it — the date replacing the prefix, then
+// markerLanded moving to the adoption date — which is what a count in
+// prose cannot say. The run logs it. Raised in review of #541.
 //
 // It is an approximation of "whose subject is this", and the shape of
 // what it gives up is stated rather than left to be discovered: a
 // negation that PRECEDES its host ("nothing lifts a ToastHost") or sits
 // further than three words after it goes unseen.
 
-// markerLanded is the DECISION date of the overlay layer, which is the
-// name of its own decision record: docs/specs/2026-08-30-overlay-layer.md.
-// Specs are named by the date of the decision rather than of the commit,
-// which is what makes the filename usable as the comparison.
+// markerLanded is the DECISION date on which the marker reached the
+// hosts THIS GUARD EXAMINES, which is not the date the overlay layer
+// was decided. #437 lifted popupSurface alone; docs/specs/2026-09-05-
+// overlay-ranks.md records it in as many words — "Only `popupSurface`
+// adopted the marker. `ToastHost`, `AdornmentLayer` and therefore every
+// `Tooltip` stayed in the ordinary layer" — and #439 is what put the
+// marker on the two names selfMarkedHosts resolves to. So a record
+// dated in [2026-08-30, 2026-09-05) saying a ToastHost does not lift
+// was TRUE on its own date, and the earlier constant refused it the
+// exemption: the cry-wolf failure exemptSpec exists to prevent, in the
+// six days between the two records. docs/specs/2026-09-01-paste-marker-
+// grace.md already sits in that window and escapes only by not
+// discussing overlay hosts.
+//
+// ONE CONSTANT MEANS THE LATEST ADOPTION among the names
+// overlayHostByName covers, and it has to: the exemption is "this
+// record was right about EVERY host it could have named", so a date
+// earlier than the last adoption exempts a record that was already
+// wrong about one of them. A per-host date is the instrument that
+// removes the approximation, and it is a bigger one than this guard
+// needs while the two self-marked hosts adopted on the same day.
+//
+// Specs are named by the date of the decision rather than of the
+// commit, which is what makes the filename usable as the comparison.
+// Raised in review of #541.
+const markerLanded = "2026-09-05"
+
 // zzFixturePath is the path every fixture that is NOT about the spec
 // exemption passes to flagged: outside docs/specs/, so exemptSpec
 // declines and the sentence is judged on its wording alone. Named
@@ -692,8 +717,6 @@ const negSpellings = `(?:do not|does not|don't|doesn't|no such|` +
 // the two spec arms visible as the exceptions they are. Raised in
 // review of #541.
 const zzFixturePath = "../docs/zzfixture.md"
-
-const markerLanded = "2026-08-30"
 
 // exemptSpec reports whether path is a decision record that PREDATES the
 // overlay marker, and so was right about its own date.
@@ -714,6 +737,13 @@ const markerLanded = "2026-08-30"
 // failing open costs the guard.
 func exemptSpec(path string) bool {
 	const dir = "../docs/specs/"
+	// filepath.ToSlash, because the caller builds this path with
+	// filepath.WalkDir and the literal above is slash-separated.
+	// receiversDeclaring normalises and this did not: off Linux the
+	// prefix never matches, every pre-marker record loses its
+	// exemption, and the guard goes red on accurate history for a
+	// reason its message does not name. Raised in review of #541.
+	path = filepath.ToSlash(path)
 	if !strings.HasPrefix(path, dir) {
 		return false
 	}
@@ -750,12 +780,20 @@ func TestTheSpecExemptionIsScopedToRecordsThatPredateTheMarker(t *testing.T) {
 	}{
 		{"../docs/specs/2026-08-10-adornments.md", true,
 			"a record predating the marker was right about its own date"},
-		{"../docs/specs/" + markerLanded + "-overlay-layer.md", false,
-			"the record that INTRODUCES the marker is not history about it"},
-		{"../docs/specs/2026-09-05-overlay-ranks.md", false,
+		{"../docs/specs/2026-08-30-overlay-layer.md", true,
+			"#437 lifted popupSurface alone, so on this date a ToastHost " +
+				"genuinely did not lift and the record was right about it"},
+		{"../docs/specs/" + markerLanded + "-overlay-ranks.md", false,
+			"the record that INTRODUCES the marker on these hosts is not " +
+				"history about it"},
+		{"../docs/specs/2026-09-10-later-note.md", false,
 			"a record written after the marker is wrong on its own date"},
 		{"../docs/specs/undated-note.md", false,
 			"the exemption rests on knowing the date, so an unnamed record cannot claim it"},
+		{"../docs/specs/short.md", false,
+			"a name too short to carry a date cannot claim the exemption — the " +
+				"row that makes exemptSpec's length check reachable, without " +
+				"which deleting it stays green and name[:10] becomes a panic"},
 		{"../docs/architecture.md", false, "not a decision record at all"},
 		{"../README.md", false, "not a decision record at all"},
 	} {
