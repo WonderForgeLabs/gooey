@@ -8,9 +8,11 @@ import (
 	"image"
 	gopng "image/png"
 	"io/fs"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -197,7 +199,8 @@ var rowPartition = map[string]struct {
 // CLAUDE.md's first invariant is that core carries none, and the
 // declaration is right there in the source.
 func TestEveryPartitionTableIsRegistered(t *testing.T) {
-	declared := partitionTableNames(t)
+	source := partitionTablesInSource(t)
+	declared := slices.Sorted(maps.Keys(source))
 	if len(declared) < 2 {
 		t.Fatalf("the source walk found %v, and this package declares at least "+
 			"boundaryPartition and rowPartition — the walk is broken, and the "+
@@ -206,6 +209,29 @@ func TestEveryPartitionTableIsRegistered(t *testing.T) {
 	registered := map[string]bool{}
 	for _, tb := range partitionTables() {
 		registered[tb.name] = true
+		// AND THE NAME NAMES THAT MAP, which the name sets above
+		// cannot settle. partitionTables pairs a hand-written string
+		// with a map variable, and a copy-paste row like
+		// {"rowPartition", boundaryPartition} passes both arms of this
+		// test (the name sets match) and the key-set guard (a table
+		// compared against itself) while partitionWords builds no
+		// pattern for the real table's keys — the exact hole this
+		// change closes, reopened by a typo. The `why` strings are
+		// what discriminate it, and the AST walk is already standing
+		// on the literal. Raised in review of #543.
+		want, ok := source[tb.name]
+		if !ok {
+			continue // reported by the arm below
+		}
+		for key, entry := range tb.part {
+			if got := want[key]; got != entry.why {
+				t.Errorf("partitionTables registers %s, but the map it hands "+
+					"over answers %q for %q where the declaration of %s in "+
+					"this package's source says %q. The name is paired with "+
+					"the wrong map", tb.name, entry.why, key, tb.name, got)
+				break
+			}
+		}
 	}
 	for _, name := range declared {
 		if !registered[name] {
@@ -228,19 +254,37 @@ func TestEveryPartitionTableIsRegistered(t *testing.T) {
 	}
 }
 
-// partitionTableNames is every package-level map in this package whose
-// value type is the partition struct, by name.
-func partitionTableNames(t *testing.T) []string {
+// partitionTablesInSource is every package-level map in this package
+// whose value type is the partition struct, by name, with each one's
+// declared key -> why text.
+//
+// THE why TEXT IS WHY THIS RETURNS MORE THAN NAMES. Key sets cannot
+// discriminate a name paired with the wrong map — the key-set guard
+// forces every table's keys equal — so the reasons are the only field
+// that differs between two tables, and they are right there in the
+// literal. Raised in review of #543.
+//
+// PACKAGE markup ONLY, and the filter is load-bearing rather than
+// tidiness. The glob is *_test.go, which reaches markup/thirdparty_test.go
+// — that file is `package markup_test`, and a partition-shaped var
+// declared there would be reported as unregistered and COULD NOT BE
+// FIXED, because partitionTables() is in `package markup` and cannot
+// name it. Nothing is shaped that way today, which is what makes it the
+// silent kind. Raised in review of #543.
+func partitionTablesInSource(t *testing.T) map[string]map[string]string {
 	t.Helper()
 	files, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatalf("globbing this package: %v", err)
 	}
-	var out []string
+	out := map[string]map[string]string{}
 	for _, f := range files {
-		file, err := parser.ParseFile(gotoken.NewFileSet(), f, nil, 0)
+		file, err := parser.ParseFile(gotoken.NewFileSet(), f, nil, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("%s does not parse: %v", f, err)
+		}
+		if file.Name.Name != "markup" {
+			continue
 		}
 		for _, d := range file.Decls {
 			g, ok := d.(*ast.GenDecl)
@@ -253,15 +297,73 @@ func partitionTableNames(t *testing.T) []string {
 					continue
 				}
 				for i, n := range vs.Names {
-					if isPartitionLiteral(typeOfSpec(vs, i)) {
-						out = append(out, n.Name)
+					if !isPartitionLiteral(typeOfSpec(vs, i)) {
+						continue
+					}
+					out[n.Name] = map[string]string{}
+					if i >= len(vs.Values) {
+						continue
+					}
+					cl, ok := vs.Values[i].(*ast.CompositeLit)
+					if !ok {
+						continue
+					}
+					for _, el := range cl.Elts {
+						kv, ok := el.(*ast.KeyValueExpr)
+						if !ok {
+							continue
+						}
+						key, kerr := strconv.Unquote(exprText(kv.Key))
+						if kerr != nil {
+							continue
+						}
+						out[n.Name][key] = partitionWhy(kv.Value)
 					}
 				}
 			}
 		}
 	}
-	sort.Strings(out)
 	return out
+}
+
+// partitionWhy is the `why` text of one partition entry: the second
+// element of a {inherit, why} literal, with the file's own line
+// continuations joined back together.
+func partitionWhy(e ast.Expr) string {
+	cl, ok := e.(*ast.CompositeLit)
+	if !ok || len(cl.Elts) != 2 {
+		return ""
+	}
+	return concatText(cl.Elts[1])
+}
+
+// concatText unquotes a string literal, or a `"a" + "b" + …` chain of
+// them — the shape a 72-column comment width forces on every reason
+// long enough to be worth reading.
+func concatText(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		s, err := strconv.Unquote(v.Value)
+		if err != nil {
+			return ""
+		}
+		return s
+	case *ast.BinaryExpr:
+		if v.Op != gotoken.ADD {
+			return ""
+		}
+		return concatText(v.X) + concatText(v.Y)
+	}
+	return ""
+}
+
+// exprText is an expression's source spelling, for the BasicLit keys
+// partitionTablesInSource unquotes.
+func exprText(e ast.Expr) string {
+	if lit, ok := e.(*ast.BasicLit); ok {
+		return lit.Value
+	}
+	return ""
 }
 
 // typeOfSpec is the type expression for the i'th name in a var spec:
@@ -344,8 +446,15 @@ func partitionTables() []namedPartition {
 }
 
 // TestTheControlBoundaryPartitionsEveryContextField is the derived half:
-// the partition above must account for exactly the exported fields
+// boundaryPartition must account for exactly the exported fields
 // Context declares, no more and no fewer.
+//
+// NAMED, NOT "the partition above". It was the declaration above when
+// this was written and is 294 lines up now, with rowPartition, a test,
+// four AST helpers, a type and partitionTables in between — so the
+// positional reference had come to point at partitionTables(). A name
+// costs a word and cannot drift with the next insertion. Raised in
+// review of #543.
 //
 // AST, not reflection — CLAUDE.md's first invariant is that core carries
 // none, and a test that imported it to read a struct would be the first

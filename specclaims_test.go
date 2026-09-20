@@ -470,23 +470,36 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 		// testFuncsUnder's doc in this file" — on the argument that at
 		// two comments the realistic trigger is someone rewording one
 		// of them, so naming them lands the reader on the cause in one
-		// step. The argument was sound and the list was wrong twice
-		// inside one PR: by the time it was written a third citation
-		// had joined from specclaims_test.go itself, and review of #543
-		// added two more in markup/referencedoc_test.go. A reader sent
+		// step.
+		//
+		// THE LIST WAS ACCURATE WHEN IT WAS WRITTEN, and the reason to
+		// delete it is not that it was wrong. On origin/main the
+		// population is exactly two and specclaims_test.go:269 IS
+		// testFuncsUnder's doc, so the message named both correctly.
+		// What deletes it is that THIS BRANCH added three more
+		// citations in markup/referencedoc_test.go while touching
+		// neither named file — so a written list goes stale on any
+		// commit that adds a backtick anywhere in the tree, which no
+		// reviewer of that commit has reason to check. A reader sent
 		// to audit two comments that are not the cause has been sent
-		// further from it than a general diagnosis would have — which
-		// is the very failure the paragraph below this one already
-		// recorded about an earlier spelling of the same list.
+		// further from it than a general diagnosis would have, and
+		// that is the failure the paragraph below this one already
+		// records about an earlier spelling of the same list.
+		//
+		// The first version of THIS paragraph claimed the list had
+		// been wrong twice inside one PR, counting a third citation
+		// from specclaims_test.go that is in fact one of the two it
+		// already named. A mis-measurement in a comment whose subject
+		// is measurements going stale. Raised in review of #490, and
+		// corrected in review of #543.
 		//
 		// So the message carries the COMMAND that re-derives them and
-		// no names at all. Raised in review of #490, and again in
-		// review of #543 after the list it argued for went stale in the
-		// same file that argued for it.
+		// no names at all.
 		t.Errorf("no Go comment in the tree cites a test in backticks, so the " +
 			"half of this guard that reads Go checks nothing. The population is " +
-			"small enough that the likely cause is one of those comments being " +
-			"reworded or its backticks dropped, not the pattern drifting — so " +
+			"small enough that the likely cause is one of the few comments " +
+			"that carries one being reworded or its backticks dropped, not " +
+			"the pattern drifting — so " +
 			"derive it rather than reading a list: grep the tree's Go files for " +
 			"a backticked identifier beginning Test (optionally package-" +
 			"qualified) on a comment line. goCitations' doc says why the " +
@@ -515,11 +528,13 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 // accident happened to mark.
 //
 // THE RATIO IS THE CLAIM AND THE COUNT IS NOT. This paragraph said TWO
-// and the floor's own message listed the two files, and both were stale
-// within the PR that measured them — review of #543 found five. Run the
-// grep in that message for today's figure; what does not move is the
-// three orders of magnitude between the two populations, which is what
-// makes the fraction small however the numerator drifts.
+// and the floor's own message named the two files. Both were accurate
+// on main and both went stale inside this branch, which added three
+// citations in a file neither of them mentions — so the figure moves on
+// commits that have no reason to look here. Run the grep in that
+// message for today's number; what does not move is the three orders of
+// magnitude between the two populations, which is what makes the
+// fraction small however the numerator drifts.
 //
 // THE FLOOR BELOW IS WHAT KEEPS THIS FROM BEING VACUOUS, not evidence of
 // coverage: goCited == 0 catches the pattern drifting to nothing, and at

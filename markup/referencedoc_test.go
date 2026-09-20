@@ -800,24 +800,26 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // TestThePartitionTablesShareOneKeySet to keep the two key sets equal —
 // but partitionRunSide indexes this map with names from WHICHEVER table
 // it was handed, so an exported field added to rowPartition alone
-// yields a nil *regexp.Regexp and FindAllStringIndex nil-derefs. The
-// guard written for exactly that condition cannot report it: Go runs
-// tests in declaration order, `TestTheBoundaryGuardsPickTheirTable`
+// yields a nil *regexp.Regexp and FindAllStringIndex nil-derefs.
+// Measured in review of #490 by adding one key to rowPartition: a
+// nil-pointer stack trace in a test about table dispatch, with nothing
+// naming the real fault.
+//
+// The guard written for exactly that condition cannot report it: Go
+// runs tests in declaration order, `TestTheBoundaryGuardsPickTheirTable`
 // passes rowPartition down this path, and it is declared EARLIER in
 // this file than `TestThePartitionTablesShareOneKeySet` — so the panic
 // aborts the binary first and the key-set guard's carefully written
 // message never prints. Order is the load-bearing fact and the two
 // names carry it; the line numbers this comment first pinned were
-// accurate and unchecked. The names are BACKTICKED because that is the
-// only reason they are checked at all: `TestEveryCitedTestNameResolves`
-// reads Go comments through a backtick-anchored pattern, so the bare
-// spelling this comment first used bought nothing and claimed
-// otherwise, and one of the two names stayed bare through the round
-// that said so. Measured in review of #543 by renaming the test.
+// accurate and unchecked.
 //
-// Measured in review of #490 by adding
-// one key to rowPartition: a nil-pointer stack trace in a test about
-// table dispatch, with nothing naming the real fault.
+// The names are BACKTICKED because that is the only reason they are
+// checked at all: `TestEveryCitedTestNameResolves` reads Go comments
+// through a backtick-anchored pattern, so the bare spelling this
+// comment first used bought nothing and claimed otherwise, and one of
+// the two names stayed bare through the round that said so. Measured in
+// review of #543 by renaming the test.
 //
 // Taking the union removes the dependency rather than documenting it.
 // The key-set test stays, and is now a claim ABOUT the tables rather
