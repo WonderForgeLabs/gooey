@@ -1522,37 +1522,6 @@ func hasRevisionTail(v string) bool {
 	return true
 }
 
-<<<<<<< HEAD
-=======
-// malformedPseudo is the one shape this file could not report: a
-// version TRYING to be a pseudo-version and failing.
-//
-// TWO WAYS TO FAIL, AND THE FIRST VERSION SAW ONE. It was
-// `!revisionOf(v).ok && stampOf(v) != ""`, which re-derived the reason
-// from stampOf alone — so the case where the STAMP is what is broken was
-// unreachable by construction: a 13- or 15-digit stamp makes stampOf
-// answer "" and the whole thing collapses to "plain tag". Measured on
-// this branch, every one of these was filed as a tag and reported by
-// nothing:
-//
-//	v0.0.0-2026091313223-e5cdb56ececd     13-digit stamp
-//	v0.0.0-202609131322321-e5cdb56ececd   15-digit
-//	v0.0.0--e5cdb56ececd                  no stamp at all
-//	v0.0.0-2026091x132232-e5cdb56ececd    a letter in the stamp
-//
-// Go's pseudo-version form requires EXACTLY 14 digits, so each of these
-// is read as an ordinary prerelease and the proxy is asked for a tag of
-// that name — the same unresolvable require as the clipped revision,
-// with shapeMsg silent and skewFrom filing it under `tagged`, which is
-// the mis-filing shapeMalformedRevision's own comment calls "what let it past
-// every check in this file".
-//
-// THE DISCRIMINATOR IS THE TAIL, asked directly rather than through
-// revisionOf's conjunction. `>= 2` dashes is what keeps a legitimate
-// prerelease tag out: v1.2.3-abcdef123456 has one dash and a hex tail,
-// and the arm at TestEveryRequireShapeReachesItsOwnArm pins that it
-// stays a tag. Raised in review of #497.
->>>>>>> af17a481 (fix(test): the malformed-pseudo message names the half that is broken)
 // stampSlot reports that v's penultimate dash-part is where a stamp
 // would go and is ROUGHLY stamp-shaped: 13 to 15 characters, the same
 // slot stampOf reads exactly.
@@ -1626,7 +1595,7 @@ func stampSlot(v string) bool {
 // is read as an ordinary prerelease and the proxy is asked for a tag of
 // that name — the same unresolvable require as the clipped revision,
 // with shapeMsg silent and skewFrom filing it under `tagged`, which is
-// the mis-filing shapeMalformed's own comment calls "what let it past
+// the mis-filing shapeMalformedRevision's own comment calls "what let it
 // every check in this file".
 //
 // THE DISCRIMINATOR IS THE TAIL, asked directly rather than through
