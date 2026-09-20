@@ -88,6 +88,14 @@ func TestValidAttributesStillLoad(t *testing.T) {
 	}
 }
 
+// TestNamespacedAttributesAreLoadErrors is also where the SPELLING of
+// the refusal is pinned, and that half is a contract with a second
+// package: apps/wysiwyg's namespacedAttrName reproduces both arms so
+// the designer and the loader name the same attribute the same way, and
+// CI vets the app modules without running their suites, so nothing there can
+// catch this module changing its mind. The arms below are what stops it
+// changing silently — if you edit "xml:Style" or "{zz}Style" here, edit
+// namespacedAttrName with it. Raised in review of #501.
 func TestNamespacedAttributesAreLoadErrors(t *testing.T) {
 	cases := []struct {
 		name, src, want, reason string

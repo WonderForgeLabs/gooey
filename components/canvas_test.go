@@ -18,17 +18,6 @@ func canvasFrame(root gooey.Component, cols, rows int) *gooey.Frame {
 	return gooey.Compose(root, term.Caps{Cols: cols, Rows: rows}, nil)
 }
 
-func dump(f *gooey.Frame, cols, rows int) string {
-	var sb strings.Builder
-	for y := 0; y < rows; y++ {
-		for x := 0; x < cols; x++ {
-			sb.WriteRune(f.Cells.At(x, y).Rune)
-		}
-		sb.WriteByte('\n')
-	}
-	return sb.String()
-}
-
 func TestCanvasArrangesChildrenAtAbsoluteOffsets(t *testing.T) {
 	a := &Text{Content: Str("A")}
 	b := &Text{Content: Str("B")}
@@ -70,7 +59,7 @@ func TestCanvasConstrainsChildrenToRemainingSpace(t *testing.T) {
 	if got, want := long.Bounds().W, 4; got != want {
 		t.Errorf("width at offset 6 of 10: %d, want %d", got, want)
 	}
-	if got, want := dump(f, 10, 1), "      ABCD\n"; got != want {
+	if got, want := frameText(f), "      ABCD\n"; got != want {
 		t.Errorf("frame:\n%q\nwant:\n%q", got, want)
 	}
 }
@@ -86,7 +75,7 @@ func TestCanvasOverlapPaintsInTreeOrder(t *testing.T) {
 	}}
 	f := canvasFrame(c, 6, 1)
 
-	if got, want := dump(f, 6, 1), "XabX  \n"; got != want {
+	if got, want := frameText(f), "XabX  \n"; got != want {
 		t.Errorf("overlap frame: %q, want %q (later sibling on top)", got, want)
 	}
 }
@@ -106,7 +95,7 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	}}
 	comp := gooey.NewComposer(c, 6, 1)
 	f, _ := comp.Frame()
-	if got, want := dump(f, 6, 1), "XabX  \n"; got != want {
+	if got, want := frameText(f), "XabX  \n"; got != want {
 		t.Fatalf("first frame: %q, want %q", got, want)
 	}
 
@@ -116,7 +105,7 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 	if painted != 2 {
 		t.Fatalf("painted %d components, want exactly 2 (the occluded text + its forced occluder)", painted)
 	}
-	if got, want := dump(f, 6, 1), "YabY  \n"; got != want {
+	if got, want := frameText(f), "YabY  \n"; got != want {
 		t.Errorf("after repainting the occluded component: %q, want %q — "+
 			"the occluder must repaint above the new content", got, want)
 	}
@@ -133,10 +122,10 @@ func TestCanvasOverlapRepaintRepaintsTheOccluderAbove(t *testing.T) {
 func TestCanvasPaintsNoChromeOfItsOwn(t *testing.T) {
 	c := &Canvas{Children: []gooey.Component{at(&Text{Content: Str("keep")}, 1, 0)}}
 	f := canvasFrame(c, 8, 2)
-	before := dump(f, 8, 2)
+	before := frameText(f)
 
 	c.Render(f) // painting the container directly must change nothing
-	if after := dump(f, 8, 2); after != before {
+	if after := frameText(f); after != before {
 		t.Errorf("Canvas.Render altered the buffer:\n%q\nwas:\n%q", after, before)
 	}
 }
@@ -162,7 +151,7 @@ func TestCanvasChildrenKeepLayoutSemantics(t *testing.T) {
 	c := &Canvas{Children: []gooey.Component{hidden, margined}}
 	f := canvasFrame(c, 8, 3)
 
-	if got := dump(f, 8, 3); strings.Contains(got, "gone") {
+	if got := frameText(f); strings.Contains(got, "gone") {
 		t.Errorf("collapsed canvas child painted: %q", got)
 	}
 	// Offset 1 plus a 2-cell left margin puts it at x=3.

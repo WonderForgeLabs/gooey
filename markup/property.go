@@ -325,7 +325,52 @@ func splitDeclarations(root Element) (declarations, []Element, error) {
 		case c.Name == "Property":
 			// The likely typo: the element is right, the namespace is
 			// missing, and without this it would be read as a component.
-			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to the root element", XNamespace)
+			//
+			// TO THE ROOT ELEMENT, and this one stays that way — the
+			// reword that made its two siblings say "an element of this
+			// document" is wrong HERE, and review of #501 measured it by
+			// following the advice: a <Gooey> whose xmlns:x sits on a
+			// <Text> is refused with this very message again, so the
+			// author lands where they started.
+			//
+			// AN ELEMENT PREFIX IS NOT A VALUE-EXPRESSION PREFIX, and
+			// the axis is three-way rather than two. handlers.go and
+			// values.go resolve a prefix inside an attribute VALUE —
+			// the `t:` of Click="{{t:Fire}}" — through ctx.ns, which
+			// parse builds flat and document-wide, so there any element
+			// may carry the declaration. A prefix on an attribute NAME
+			// is never LOOKED UP in ctx.ns: parse refuses it outright
+			// with namespacedAttrError, so <Button t:Click="Fire"/> is
+			// a load error rather than a flat resolution. The reserved
+			// xmlns: declarations are not an exception to that rule but
+			// the other side of it — parse's own
+			// `a.Name.Space == "xmlns"` arm consumes them, ahead of
+			// the refusal, and they are what BUILDS the table. (Named
+			// rather than counted: this said "three arms earlier" and
+			// one arm separates them. Raised in review of #501.) This
+			// paragraph said "an ATTRIBUTE prefix" for both until
+			// review of #501 read it literally, which collapses the
+			// refused case into the resolved one on the very axis it is
+			// drawing.
+			//
+			// `x:` prefixes an ELEMENT, and splitDeclarations reads
+			// c.Space, which encoding/xml resolved with real XML
+			// subtree scoping before this package saw it. So the
+			// declaration must be IN SCOPE AT THE <x:Property>, which a
+			// sibling's copy never is.
+			//
+			// TWO PLACES SATISFY THAT, not one, and the round that wrote
+			// this comment measured only the sibling case and concluded
+			// "the root element" was the whole rule. XML scoping includes
+			// an element's own attributes, so
+			// <x:Property xmlns:x="…" …/> resolves too — measured, it
+			// loads. The message names the root because that is where
+			// every example puts it and where one declaration serves
+			// every declaration below it; it is advice, not an exhaustive
+			// statement of scope, and docs/markup-reference.md carries
+			// the rule itself. TestTheXPropertyRefusalNamesTheRoot pins
+			// all three placements. Corrected in review of #501.
+			return ds, nil, fmt.Errorf("markup: <Property> is a dependency property declaration; write it as <x:Property> and add xmlns:x=%q to the <Gooey> root element", XNamespace)
 		default:
 			kids = append(kids, c)
 		}

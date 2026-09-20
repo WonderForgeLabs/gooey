@@ -38,14 +38,6 @@ func outsideWrites(t *testing.T, b *render.Buffer, r gooey.Rect) {
 	}
 }
 
-func rowString(b *render.Buffer, y, x0, x1 int) string {
-	out := []rune{}
-	for x := x0; x < x1; x++ {
-		out = append(out, b.At(x, y).Rune)
-	}
-	return string(out)
-}
-
 func TestDrawBoxRunesShape(t *testing.T) {
 	b := filled(12, 6)
 	r := gooey.Rect{X: 1, Y: 1, W: 6, H: 4}
@@ -57,7 +49,7 @@ func TestDrawBoxRunesShape(t *testing.T) {
 		"#╰────╯#",
 	}
 	for i, w := range want {
-		if got := rowString(b, r.Y+i, 0, 8); got != w {
+		if got := render.SpanText(b, 0, r.Y+i, 8); got != w {
 			t.Errorf("row %d = %q, want %q", r.Y+i, got, w)
 		}
 	}
@@ -125,7 +117,7 @@ func TestDrawBoxTitleClipsAndNeverStrandsPadding(t *testing.T) {
 		r := gooey.Rect{X: 1, Y: 1, W: tc.w, H: 3}
 		DrawBoxRunes(b, r, render.Style{})
 		DrawBoxTitle(b, r, "title", render.Style{})
-		if got := rowString(b, r.Y, r.X, r.X+r.W); got != tc.want {
+		if got := render.SpanText(b, r.X, r.Y, r.W); got != tc.want {
 			t.Errorf("w=%d top row = %q, want %q", tc.w, got, tc.want)
 		}
 		outsideWrites(t, b, r)

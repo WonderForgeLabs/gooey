@@ -9,8 +9,10 @@ import (
 )
 
 // A page shaped like an app that hosts free adornments: h rows of filler
-// under a layer declared LAST — by convention now, not because document
-// order decides it: AdornmentLayer is an Overlay and is lifted. Every filler
+// under a layer declared last. Last is no longer what puts the layer on
+// top — AdornmentLayer is a gooey.OverlayRanker at OverlayRankAdornment
+// and would be above the filler from anywhere — so this fixture proves
+// nothing about z-order and is not trying to. Every filler
 // is a Text — no HoverState anywhere — so the damage counts below are
 // the ghost's alone and not some host's hover repaint, the same reason
 // tipPage uses a Text host.
@@ -63,7 +65,7 @@ func quiet(t *testing.T, c *gooey.Composer, before string, sink *strings.Builder
 	if n := c.FlushBytes(); n != 0 {
 		t.Fatalf("%s emitted %d bytes to the terminal, want 0", what, n)
 	}
-	if got := screen(c, 30, 5); got != before {
+	if got := screen(c); got != before {
 		t.Fatalf("%s changed cells.\nbefore:\n%s\nafter:\n%s", what, before, got)
 	}
 }
@@ -81,7 +83,7 @@ func TestPointerMotionWithoutAFollowerSchedulesNoFrame(t *testing.T) {
 	c.Frame()
 	var sink strings.Builder
 	c.Flush(&sink) // settle the terminal so FlushBytes below means something
-	before := screen(c, 30, 5)
+	before := screen(c)
 
 	*inval = 0
 	for x := 0; x < 12; x++ {
@@ -110,7 +112,7 @@ func TestParkedGhostCostsNothingPerMotion(t *testing.T) {
 	c.Frame()
 	var sink strings.Builder
 	c.Flush(&sink)
-	before := screen(c, 30, 5)
+	before := screen(c)
 
 	*inval = 0
 	for x := 0; x < 12; x++ {
@@ -266,18 +268,18 @@ func TestHideRestoresTheScreenAndTheZeroCost(t *testing.T) {
 	c := gooey.NewComposer(page, 30, 5)
 	inval := counter(c)
 	c.Frame()
-	before := screen(c, 30, 5)
+	before := screen(c)
 
 	c.HandleMouse(motion(4, 2))
 	ghost.Show(c.Focus())
 	c.Frame()
-	if got := screen(c, 30, 5); got == before {
+	if got := screen(c); got == before {
 		t.Fatal("the ghost never painted: the screen is unchanged with a ghost up")
 	}
 
 	ghost.Hide()
 	c.Frame()
-	if got := screen(c, 30, 5); got != before {
+	if got := screen(c); got != before {
 		t.Fatalf("hiding the ghost left a scar.\nbefore:\n%s\nafter:\n%s", before, got)
 	}
 	if _, painted := c.Frame(); painted != 0 {

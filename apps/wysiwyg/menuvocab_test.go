@@ -743,7 +743,7 @@ func TestPastingIntoAContainerThatRefusesItRevertsTheDocument(t *testing.T) {
 // TestAddingANestedElementThePaletteOffersIsRefusedRatherThanPanicking.
 //
 // planAdd refuses a Nested element with no legal home on the page by
-// returning an empty addPlan (addplan.go:222), and addSelected dereferences
+// returning an empty addPlan, and addSelected dereferences
 // `plan.into` a few lines later. Today loadPalette keeps Nested elements out
 // of the palette, so the two never meet and the deref is safe by an accident
 // of a filter in a different function.

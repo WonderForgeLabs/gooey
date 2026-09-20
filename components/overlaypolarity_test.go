@@ -91,7 +91,8 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// word "lift" — so it only ever sees the DENIAL of the lift ("does not
 	// lift", "no such lift"). The retired rule's other form does not argue
 	// about lifting at all; it just tells the reader where to put the
-	// element:
+	// element. Both sentences below are RETIRED — quoted as history, not
+	// stated — since #437 lifted overlays into a layer and #439 ranked it:
 	//
 	//	README.md          "an `AdornmentLayer` (last child of the root)"
 	//	howto-forms.md     "<AdornmentLayer/>   <!-- last child of the root -->"
@@ -112,14 +113,19 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	// The gap is `.{0,80}?` and NOT `[^.!?]{0,80}?`, which is what the
 	// first draft used to mean "in the same sentence". That class cannot
 	// cross an exclamation mark, and the second site this arm exists to
-	// catch is an HTML comment — `<!-- last child of the root -->` — whose
-	// `<!--` contains one. The constraint was redundant as well as wrong:
+	// catch is an HTML comment quoting the rule #437 retired —
+	// `<!-- last child of the root -->` — whose
+	// `<!--` contains one. (That quotation is history, not a claim.) The constraint was redundant as well as wrong:
 	// proseUnits has already cut the text into sentences, so every string
 	// reaching this regex is one, and 80 characters is the proximity rule.
 	positionRe := regexp.MustCompile(`(?i)` + "`?" + `\b(?:` +
 		strings.Join(hosts, "|") + `)\b` + "`?" +
+		// The alternation below is a list of RETIRED spellings — #437
+		// lifted these hosts and #439 ranked them, so each is a rule to
+		// catch, never one this file states.
 		`.{0,80}?` +
 		`(?:last child|declare it last|must be last|` +
+		// Retired likewise (#437/#439): specimens, not claims.
 		`last element|at the end of the root|bottom of the root)`)
 
 	// THE OPPOSITE POLARITY, which is the gap review of #456 found by
@@ -226,42 +232,22 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 	}
 
 	var examined, freed int
-	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		// Dot-directories pruned at EVERY depth, not just the top:
-		// .claude/worktrees holds whole other checkouts of this repo,
-		// and reading another agent's tree would make this guard report
-		// on prose that is not ours. Same reason CLAUDE.md's verify loop
-		// prunes with -name '.?*' rather than -not -path './.*'.
-		if d.IsDir() {
-			if n := d.Name(); n == "vendor" || n == "node_modules" ||
-				(strings.HasPrefix(n, ".") && n != "..") {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		// The corpus is what a READER IS TOLD: prose, shipped markup,
-		// and doc comments on the code itself. _test.go is out, and not
-		// for tidiness — THIS FILE quotes both defective sentences, once
-		// in the comment above and once as the fixture that proves the
-		// matcher fires, so a corpus including tests flags the guard
-		// itself and there is no wording that escapes it. A test that
-		// quotes a wrong sentence in order to catch it is not making the
-		// claim. The cost is real and stated: a wrong claim in a test
-		// comment goes unguarded.
-		if strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		switch filepath.Ext(path) {
-		case ".md", ".gooey", ".go":
-		default:
-			return nil
-		}
+	// ONE CORPUS, NOT A THIRD WALK. This built its own walk with the
+	// dot-prune, the vendor prune and a floor — and without the tracked
+	// filter its two siblings were given, so one untracked scratch file
+	// at the repo root made it fail naming a path that is not in the
+	// repository. A reviewer reproduced it with
+	// `printf ... > scratch-polarity-probe.md`. overlayProseFiles is the
+	// same corpus by construction (same extensions, same _test.go
+	// exclusion, same prunes) and carries the tracked map and the skip
+	// when git cannot answer, so calling it closes this for good rather
+	// than copying the filter a third time — which is what the sibling's
+	// own comment, "a lesson learned in one place does not protect its
+	// sibling", predicted would happen. Raised in review of #458.
+	for _, path := range overlayProseFiles(t, "..") {
 		body, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return rerr
+			t.Fatalf("reading %s: %v", path, rerr)
 		}
 		// docs/specs/ is exempt here too, and for the same reason the
 		// positional arm gives: a dated record describes the hosts of
@@ -289,9 +275,10 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 			// A spec is a dated decision record — CLAUDE.md's convention,
 			// and the reason they are named by the date of the decision
 			// rather than of the commit. Four of them describe the
-			// AdornmentLayer and ToastHost of 2026-08-10, when "the last
+			// AdornmentLayer and ToastHost of 2026-08-10 — before #437
+			// lifted them — when "the last
 			// child of the root" was how those hosts got on top, and that
-			// is a true account of what was decided then. Rewriting them
+			// is a true account, superseded since, of what was decided then. Rewriting them
 			// to match today would be falsifying the record; flagging
 			// them would make this guard cry wolf on every historical
 			// design note until someone did.
@@ -321,10 +308,6 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 				"marker is what changed, this sentence and the type go together.",
 				path, s)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking the tree: %v", err)
 	}
 
 	// NON-VACUITY, and it is a floor with a number in it because the
@@ -366,9 +349,12 @@ func TestNoDocSaysASelfMarkedHostStaysInDocumentOrder(t *testing.T) {
 		{"the toolkit's on-screen caption",
 			`<Text Grid.Row="0" Style="dim">MenuBar dropdowns and Popups lift ` +
 				`out of document order; ToastHost and AdornmentLayer do not</Text>`},
+		// Both fixtures quote sentences RETIRED by #437 and #439; they are
+		// specimens the matcher must catch, not rules this file states.
 		{"README's adornment row — the prescriptive spelling",
 			"WPF's adorner plane: an `AdornmentLayer` (last child of the root) " +
 				"hosts components positioned against a *target's* arranged bounds."},
+		// Retired likewise (#437): quoted so the arm cannot pass vacuously.
 		{"howto-forms' markup comment — the prescriptive spelling",
 			"<AdornmentLayer/>   <!-- last child of the root -->"},
 	} {
@@ -729,6 +715,8 @@ func TestEveryRankedTypeIsAlsoAnOverlay(t *testing.T) {
 
 var overlayRankRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlayRank\(\)`)
 
+var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
+
 // overlayMarkedReceivers is every receiver type of an OverlaysPage
 // method in this package's non-test source, sorted.
 //
@@ -736,8 +724,11 @@ var overlayRankRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlayRank\(\)`)
 // declare this method", one method on one line per implementor by the
 // convention this package already follows, and a loader here would pull
 // the whole package graph into a guard whose subject is three lines.
-var overlaysPageRe = regexp.MustCompile(`^func \(\w+ \*?(\w+)\) OverlaysPage\(\)`)
-
+//
+// THE var WAS INSERTED BETWEEN THIS AND ITS SUBJECT, leaving the
+// comment describing a regexp and the function bare. Found by #483's
+// guard on the merge of main into that branch — which is the shape
+// that guard exists for, met in code that had already landed.
 func overlayMarkedReceivers(t *testing.T) []string {
 	// UNQUALIFIED, because the subject is one package's own map and
 	// every name the walk can reach is in it. receiversDeclaring keys by

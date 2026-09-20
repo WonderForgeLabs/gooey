@@ -131,7 +131,7 @@ func TestAnIconItemDrawsItsRuneOnTheCellPlane(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f, bar.Bounds())
+	got := frameText(f)
 	if !strings.Contains(got, "○") {
 		t.Errorf("an item with an IconRune did not draw it on the cell plane:\n%s", got)
 	}
@@ -247,7 +247,7 @@ func TestAnIconAndACheckAreDifferentColumns(t *testing.T) {
 	c.Frame()
 	f, _ := c.Frame()
 
-	got := menuRows(f, bar.Bounds())
+	got := frameText(f)
 	if !strings.Contains(got, "○") {
 		t.Errorf("the icon is missing when the item also has a check:\n%s", got)
 	}

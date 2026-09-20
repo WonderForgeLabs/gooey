@@ -167,16 +167,41 @@ Rendered, that is three lines: `1 Visible`, a blank line where the Hidden
 text would be, then `4 sits right under the blank`. The Collapsed element
 contributes nothing.
 
-- **Hidden** measures and arranges normally but paints nothing. It keeps
-  its full space — including its gap inside a stack.
-- **Collapsed** measures to zero, arranges to zero, paints nothing, and
-  costs **no gap either**: it neither brings a gap with it nor leaves one
-  behind, so collapsing the first child does not strand a gap at the top.
-  Its subtree is also skipped by focus traversal, so a collapsed panel
-  cannot be tabbed into.
+- **Hidden** measures and arranges normally but renders no content. It
+  keeps its full space — including its gap inside a stack.
+- **Collapsed** measures to zero, arranges to zero, renders no content,
+  and costs **no gap either**: it neither brings a gap with it nor leaves
+  one behind, so collapsing the first child does not strand a gap at the
+  top. Its subtree is also skipped by focus traversal, so a collapsed
+  panel cannot be tabbed into.
 
-That is the whole distinction, and it is the reason to pick one over the
-other: **Hidden reserves the space, Collapsed reclaims all of it.**
+That is the whole distinction along the space axis, and it is the reason
+to pick one over the other: **Hidden reserves the space, Collapsed
+reclaims all of it.**
+
+**Neither is hit-tested, and that is the other half of the choice.** A
+Hidden node is skipped by the hit walk ([#465](https://github.com/WonderForgeLabs/gooey/issues/465)),
+so a press over a hidden button lands on whatever is beneath it rather
+than on the button — picking `Hidden` to "grey something out" gives you a
+control that is invisible *and* inert, and the press does not stop there,
+it goes through. Only the NODE is skipped: a Visible child of a Hidden
+parent is still on screen and still hittable.
+
+**That node-only rule is Hidden's alone.** `Collapsed` returns from the
+hit walk before it descends into the children at all (`mouse.go`, the
+`Visibility == Collapsed` arm, which sits above the bounds check), so a
+Visible child of a Collapsed parent is not hittable — the whole subtree
+is out of the walk, exactly as it is out of layout and out of focus
+traversal. If you want the space back but the children still reachable,
+neither value does that; move them.
+
+This step used to say Hidden "paints nothing", and that is retired: a
+hidden LEAF still pre-clears its own bounds, and so erases a visible
+sibling it overlaps ([#508](https://github.com/WonderForgeLabs/gooey/issues/508)).
+"Renders no content" is the accurate half.
+This step is where a reader makes the Hidden-or-Collapsed decision, so it
+is the page that has to carry both facts; `docs/markup-reference.md`'s
+`Visibility` row is the same rule stated for the attribute.
 
 The `Gap="0"` above is for legibility, not necessity — it keeps the
 three-line result easy to count. The same markup with `Gap="1"` behaves

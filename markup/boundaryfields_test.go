@@ -75,6 +75,14 @@ var boundaryPartition = map[string]struct {
 		"the reference paragraph is derived from this row, so the wording " +
 		"corrected on Context.Dir had to reach here too"},
 	"Variant": {true, "the pixel protocol is a property of the app, not of one file"},
+	"catalogNoIncludes": {false, "RESET, and structurally rather than by " +
+		"choice: a control is a DOCUMENT, so it goes through " +
+		"document.build, which clears the memo on the way in and restores " +
+		"it on the way out. The opposite answer from the row seam, which " +
+		"is not a document and inherits it — and the difference is real " +
+		"rather than an oversight, because a nested Load may carry a " +
+		"different Context.Elements and must not hand its assembly back " +
+		"to the page"},
 
 	"Values": {false, "VALUES ISOLATE — the whole point of the boundary. They " +
 		"cross only through the declared surface (<x:Property>), which is " +
@@ -142,6 +150,13 @@ var rowPartition = map[string]struct {
 	"Dir": {true, "Dir is the PAGE's host-side anchor, and a row does not " +
 		"change which page it is in"},
 	"Variant": {true, "the pixel protocol is a property of the app"},
+	"catalogNoIncludes": {false, "RESET, because it is DERIVED STATE and not " +
+		"a registration. Every other true in this table is something an " +
+		"author registered and a row must still see; this is a memo of an " +
+		"assembly over three of them, so inheriting it would be a claim " +
+		"about a cache rather than about vocabulary — and a wrong one the " +
+		"day a seam is handed different Elements. The control seam resets " +
+		"it too, structurally, through document.build"},
 	"controls": {false, "RESET, because a row is a legitimate re-entry and " +
 		"identity cannot tell a terminating recursive template from a " +
 		"self-supplying one. Inheriting it caught the #216 stack overflow " +
@@ -826,6 +841,14 @@ func TestEveryInheritedRegistrationReachesAControl(t *testing.T) {
 			// fire. The page's sentinel is 3 so this is not two zeroes
 			// agreeing.
 			crossed = child.rowDepth == page.rowDepth
+		case "catalogNoIncludes":
+			// RESET, and structurally: a control is a DOCUMENT, so
+			// document.build clears the memo on the way in and restores
+			// it on the way out. Non-nil here would mean a nested load
+			// answering from the page's assembly — which is exactly the
+			// staleness the clear exists to prevent, since the child
+			// may carry different Elements. See boundaryPartition.
+			crossed = child.catalogNoIncludes != nil
 		case "controls":
 			// It EXTENDS rather than copies, so the claim is that the
 			// ancestry names the control being built. The entries are
@@ -1333,6 +1356,13 @@ func TestEveryInheritedRegistrationReachesATemplateRow(t *testing.T) {
 					"unreachable", row.rowDepth, page.rowDepth+1)
 			}
 			crossed = row.rowDepth == page.rowDepth
+		case "catalogNoIncludes":
+			// RESET, and non-nil is the whole of what crossing would
+			// mean here: the row answering vocabulary questions from an
+			// assembly made before the seam. It is derived state rather
+			// than a registration — see rowPartition's entry — so there
+			// is no page-side sentinel to look for, only its absence.
+			crossed = row.catalogNoIncludes != nil
 		case "controls":
 			// RESET, so the claim is that the row does NOT carry the
 			// page's ancestry. See rowPartition's entry and

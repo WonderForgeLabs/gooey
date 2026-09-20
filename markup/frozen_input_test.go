@@ -353,7 +353,8 @@ const hoverWatchPage = `<Gooey>
 //
 //  1. the walk declines to register the watcher (input.go:436), so
 //     updateWatchers returns on its len(m.watchers) == 0 fast path;
-//  2. DispatchMouse retargets the hit to the frozen host (mouse.go:176),
+//  2. DispatchMouse retargets the hit to the frozen host (frozenHostFor,
+//     in mouse.go),
 //     so m.within(hw.host, hit) is false for any host inside the subtree.
 //
 // Verified by deleting each on its own and running this test: green both
@@ -518,8 +519,8 @@ func (a *probeAdornment) Measure(gooey.Size) gooey.Size { return gooey.Size{W: 1
 func (a *probeAdornment) Render(*gooey.Frame)           {}
 
 // frozenValidationPage is validationPage with the field inside the
-// wrapper. The AdornmentLayer stays OUTSIDE it, which is where a page
-// actually puts one — last child of the root.
+// wrapper. The AdornmentLayer stays OUTSIDE it, which is what matters
+// here — outside the Frozen subtree, not last in the root.
 const frozenValidationPage = `<Gooey>
   <VStack>
     %s<TextBox Name="field" Text="{{.Name}}" Error="{{.NameErr}}" InvalidStyle="bad">

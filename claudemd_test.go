@@ -395,30 +395,6 @@ func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 // against the main its neighbour is about to create.
 var citationRe = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
 
-// citeForms are the spellings CLAUDE.md actually uses to attach an
-// identifier to a citation. Only these get the second check; a citation
-// in any other shape gets the mechanical half alone.
-//
-// NO COUNT, deliberately. This said "the three spellings" and the
-// paragraph below said "the two forms or nothing" — a count in prose
-// gone stale inside the guard written to stop counts in prose going
-// stale, and the two disagreed with each other as well as with the
-// slice. The honesty arm iterates this slice, so a fourth form is
-// covered by construction rather than by somebody remembering to add a
-// case. Raised in review of #475.
-//
-// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
-// guard took the nearest backticked identifier on either side, which
-// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
-// following sentence and `components/timer.go:55` against the word
-// `done` — a test that cries wolf gets suppressed, so the rule is one of
-// the forms below or nothing.
-//
-// Each carries its own field extractor rather than a shared one, because
-// the identifier and the path swap group positions between them and
-// deciding which is which by sniffing for ".go" is the kind of guess this
-// guard exists to remove.
-//
 // A NAMED TYPE, because citeRange restated this field list as an
 // anonymous struct and that is a second copy of a fact in the test whose
 // thesis is that second copies drift. Adding a field here would have
@@ -445,6 +421,29 @@ type citeForm struct {
 	sample func(ident, path string, line int) string
 }
 
+// citeForms are the spellings CLAUDE.md actually uses to attach an
+// identifier to a citation. Only these get the second check; a citation
+// in any other shape gets the mechanical half alone.
+//
+// NO COUNT, deliberately. This said "the three spellings" and the
+// paragraph below said "the two forms or nothing" — a count in prose
+// gone stale inside the guard written to stop counts in prose going
+// stale, and the two disagreed with each other as well as with the
+// slice. The honesty arm iterates this slice, so a fourth form is
+// covered by construction rather than by somebody remembering to add a
+// case. Raised in review of #475.
+//
+// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
+// guard took the nearest backticked identifier on either side, which
+// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
+// following sentence and `components/timer.go:55` against the word
+// `done` — a test that cries wolf gets suppressed, so the rule is one of
+// the forms below or nothing.
+//
+// Each carries its own field extractor rather than a shared one, because
+// the identifier and the path swap group positions between them and
+// deciding which is which by sniffing for ".go" is the kind of guess this
+// guard exists to remove.
 var citeForms = []citeForm{
 	// `Ident` … (`path:NNN`) — prose may sit between, but no backticks,
 	// which is what keeps the identifier the one being cited.
@@ -1132,6 +1131,16 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // branch adds two to is main's, not the one it forked from. Stating
 // the delta rather than the arithmetic is what survives the next such
 // merge.
+//
+// IT WENT DOWN ONCE AND SHOULD NOT HAVE. An earlier round resolved a
+// stale `overlayOf` (`component.go:281`) citation by deleting the
+// number and lowering this constant to match — which drops the one
+// function this whole PR turns on out of the checked set, and is the
+// inverse of this branch's own recorded rule that an unlined citation
+// is not checked at all. overlayOf is at component.go:302 and the
+// sentence is about the two ifs at :303-308, so the citation is
+// repointable; it was repointed and the constant went back up. Raised
+// in review of #458.
 const wantIdentChecked = 24
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
@@ -2064,6 +2073,19 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 	}
 }
 
+// ONCE PER BINARY, not once per caller. Two tests ask for each of these
+// indexes and each walk parses the whole tree (vendor/ included), which
+// put a substantial slice of pure duplicate work in the root suite. The
+// memo changes nothing either test asserts: the walk is over files on
+// disk, which no test here writes. Raised in review of #490.
+//
+// The memo stays even though buildDeclaredByPackage now delegates to a
+// memoized index of its own: this one is the SEAM, and a caller should
+// not have to know that the two indexes share a walk. Collapsing it
+// would make the sharing load-bearing for correctness rather than for
+// cost.
+var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
+
 // declaredByPackage maps a package NAME to every identifier declared at
 // the top level of one of its files, tests included: a doc may cite a
 // guard's table, and rowPartition lives in a _test.go file.
@@ -2085,19 +2107,6 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 // package name union their symbols, which is the only imprecision here
 // and a safe one: it can accept a citation that resolves in the wrong
 // copy, never reject one that resolves in the right one.
-// ONCE PER BINARY, not once per caller. Two tests ask for each of these
-// indexes and each walk parses the whole tree (vendor/ included), which
-// put a substantial slice of pure duplicate work in the root suite. The
-// memo changes nothing either test asserts: the walk is over files on
-// disk, which no test here writes. Raised in review of #490.
-//
-// The memo stays even though buildDeclaredByPackage now delegates to a
-// memoized index of its own: this one is the SEAM, and a caller should
-// not have to know that the two indexes share a walk. Collapsing it
-// would make the sharing load-bearing for correctness rather than for
-// cost.
-var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
-
 func declaredByPackage(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	out, err := declaredIndex()
@@ -2365,9 +2374,45 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 	}
 }
 
-// vendoredByPackage indexes the EXPORTED declarations of vendored
-// packages whose short name collides with one of ours, which is the only
-// way a citation of `pkg.Name` can be read two ways.
+// Memoized for the reason declaredIndex gives. The parameter is not part
+// of the key because there is only one possible argument — declaredIndex
+// is itself memoized, so every caller passes the same map.
+var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
+	declared, err := declaredIndex()
+	if err != nil {
+		return nil, err
+	}
+	return buildVendoredByPackage(declared)
+})
+
+// The bool is whether there IS an index, and it is what the callers
+// branch on — this function no longer decides for them.
+//
+// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
+// condition justifies. t.Skip from a helper stops the caller, so a
+// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
+// whole — every one of the hundred-plus citations its own floor insists
+// on, silenced by a two-citation problem in this file's doc comment. The
+// skip replaced a silent empty map, which was worse in the other
+// direction (the empty map turned those two citations into errors about
+// the wrong thing); the answer to both is to report the condition and
+// let each caller narrow. Raised in review of #490, twice.
+func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
+	t.Helper()
+	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
+		return nil, false
+	}
+	out, err := vendoredIndex()
+	if err != nil {
+		t.Fatalf("walking vendor for declarations: %v", err)
+	}
+	return out, true
+}
+
+// buildVendoredByPackage indexes the EXPORTED declarations of vendored
+// packages whose short name collides with one of ours — the map
+// vendoredByPackage hands its callers — which is the only way a citation
+// of `pkg.Name` can be read two ways.
 //
 // THE COLLISION IS REAL AND ALREADY HERE. Three of this repo's package
 // names are also the last segment of a vendored import path — grpc
@@ -2427,41 +2472,6 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // price is a page citing a vendored METHOD as `pkg.Name`, which would
 // still error and would have to be spelled with more of its import path
 // — and no page does today. Raised in review of #490.
-// Memoized for the reason declaredIndex gives. The parameter is not part
-// of the key because there is only one possible argument — declaredIndex
-// is itself memoized, so every caller passes the same map.
-var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
-	declared, err := declaredIndex()
-	if err != nil {
-		return nil, err
-	}
-	return buildVendoredByPackage(declared)
-})
-
-// The bool is whether there IS an index, and it is what the callers
-// branch on — this function no longer decides for them.
-//
-// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
-// condition justifies. t.Skip from a helper stops the caller, so a
-// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
-// whole — every one of the hundred-plus citations its own floor insists
-// on, silenced by a two-citation problem in this file's doc comment. The
-// skip replaced a silent empty map, which was worse in the other
-// direction (the empty map turned those two citations into errors about
-// the wrong thing); the answer to both is to report the condition and
-// let each caller narrow. Raised in review of #490, twice.
-func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
-	t.Helper()
-	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
-		return nil, false
-	}
-	out, err := vendoredIndex()
-	if err != nil {
-		t.Fatalf("walking vendor for declarations: %v", err)
-	}
-	return out, true
-}
-
 func buildVendoredByPackage(collidesWith map[string]map[string]bool) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	err := filepath.WalkDir("vendor", func(p string, d fs.DirEntry, err error) error {
