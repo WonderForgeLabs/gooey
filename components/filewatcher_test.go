@@ -461,23 +461,24 @@ func drainBudget(n int64, every time.Duration) time.Duration {
 // TestDrainBudgetScalesWithTheCallersInterval pins both halves of the
 // budget, because both were unexercised by anything that runs.
 //
-// ONE BRANCH HAS NO CALLER AT ALL, and it is `every > per` — the
-// above-floor row. Every watcher caller passes w.Interval from a
-// watcher declaring Interval: time.Millisecond, under the 50ms floor
+// NO CALLER SUPPLIES AN ABOVE-FLOOR INTERVAL, which is what the 200ms
+// row is for. Every watcher caller passes w.Interval from a watcher
+// declaring Interval: time.Millisecond, under the 50ms floor
 // (TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay, twice, and
-// TestFileWatcherDoesNotFireOverAnUnchangedFile), so all three take
-// the floor; the zero row's caller is the no-watcher fixture in
-// TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan, which passes a
-// literal 0 rather than leaving an Interval unset. The negative row
-// has no caller either, but it is the same clamp branch as the zero
-// row and that one runs.
+// TestFileWatcherDoesNotFireOverAnUnchangedFile), so all three take the
+// floor. The negative row has no caller either, but it is the same
+// clamp branch as the zero row, and that one runs.
 //
-// So this table is the only thing exercising the scaling half, which
-// is what it is for. NAMED BY TEST RATHER THAN BY LINE: the four
-// citations here were line numbers into this same file, and they were
-// already off by two the day they were written — a number that points
-// into the file being edited is the one case where rot is guaranteed
-// and nothing goes red.
+// THE SCALING BRANCH ITSELF DOES RUN, and this paragraph claimed it had
+// no caller at all until review of #511 measured otherwise. The
+// no-watcher fixture in TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan
+// passes a literal 0; the clamp turns that into DefaultWatchInterval,
+// which is above the 50ms floor, so `every > per` executes on every run
+// of this suite. What has no caller is an above-floor interval the
+// CALLER chose — an input, not a branch — and the two are not the same
+// claim: on the false version the 200ms row is redundant with the zero
+// row and deleting it costs nothing, and on the true one it is the only
+// coverage of the direct path there is.
 //
 // Written as a table rather than as a converted caller because what is
 // under test is arithmetic, and a converted caller would pay two seconds
@@ -646,9 +647,21 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 // TestCountingPostEnqueuesBeforeItCounts pins the order the comment on
 // Post calls the whole contract.
 //
-// Nothing else could: every post in this file's other fixtures completes
-// on one goroutine before the next Load, so swapping the two statements
-// is unobservable there — measured, the suite stays green with the
+// Nothing else could, though not for the reason this gave: the posts in
+// TestFileWatcherEnabledFalseDropsTheHitAndDoesNotReplay and
+// TestFileWatcherDoesNotFireOverAnUnchangedFile come from the POLL
+// goroutine while drainUntilPosts Loads from the test's, which is what
+// countingPost's own doc says and what the atomic is there for. Review
+// of #511 caught the contradiction between the two paragraphs.
+//
+// The swap is unobservable in those fixtures for a different reason,
+// and it is the one that argues for this test: the window between the
+// increment and the enqueue is nanoseconds against a 1ms poll, AND
+// every caller carries slack over the claim it makes — n=3 where one
+// advanced scan suffices, n=40 for a negative assertion — so a one-post
+// overclaim flips no assertion even on the interleavings that do hit
+// it. An order that needs the instant forced cannot be pinned by a
+// fixture that waits for it. Measured: the suite stays green with the
 // increment moved first.
 //
 // THE SAMPLE IS TAKEN AT ENQUEUE TIME, from inside the func Post
@@ -1172,8 +1185,8 @@ func TestAFileChangeReachesTheCellsAndCostsAWireUpdate(t *testing.T) {
 	comp.Start(d)
 	defer comp.Close()
 
-	// A BARE drainFor, for the same reason idleWindow is one 60 lines up
-	// and labelled there: the watcher posts through Composer.Start, so
+	// A BARE drainFor, for the same reason idleWindow is bare where it
+	// is declared: the watcher posts through Composer.Start, so
 	// there is no Post for countingPost to wrap (#518). Unnamed here because
 	// the duration is not quoted in any message — which is the whole of
 	// the difference between the two survivors, and the reason one
