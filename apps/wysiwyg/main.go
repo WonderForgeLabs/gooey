@@ -1356,10 +1356,23 @@ func mintDeclPrefix(attrs map[string]string, also []map[string]string) string {
 // gooeyOpen is the envelope's opening tag, carrying whatever the opened
 // file wrote on it.
 //
-// ONE FUNCTION FOR THREE LITERALS. `"<Gooey>\n"` was spelled
-// independently in ed.rebuild (twice) and in saveOpenFile, and nothing
+// ONE FUNCTION FOR EVERY ENVELOPE THAT DESCRIBES A DOCUMENT. `"<Gooey>\n"`
+// was spelled independently in ed.rebuild and in saveOpenFile, and nothing
 // crossed them — which is the gap TestReopeningTheRebuiltSourceIsStable
 // was added to close from the other end.
+//
+// ONE LITERAL IS LEFT, AND ON PURPOSE: fragmentFor (remotemode.go). A
+// patch fragment is not a document — it addresses an island inside
+// someone else's, so the envelope attributes this function writes are
+// exactly the ones it must not carry. A Graphics or a default xmlns
+// belongs to the file the author saved; an xmlns:x scopes <x:Property>
+// elements that are siblings of the content root and never travel in a
+// fragment at all. The handler prefixes DO travel, because
+// carryDeclarations already put them on the content root, which is what
+// ed.root.markup writes. The count that used to be here was
+// hand-maintained and was already one behind — so
+// TestOnlyOneFunctionWritesADocumentEnvelope derives the set instead.
+// Raised in review of #501, twice.
 //
 // attrValue like node.markup, because these attributes go back out the
 // way every other attribute in this document does and the two must agree
@@ -1702,7 +1715,9 @@ func nodeOf(src string) (*node, error) {
 			// `<x:Property>` read through here becomes a node named
 			// `Property`, which saveOpenFile writes as `<Property>` —
 			// the exact spelling splitDeclarations' `c.Name ==
-			// "Property"` arm (markup/property.go) refuses.
+			// "Property"` arm (markup/property.go) refuses. That lift is
+			// what the x-namespace exemption below answers, which is why
+			// the namespace is exempted here rather than refused.
 			// Raised in review of #501.
 			//
 			// IT ALSO CHANGES WHICH REFUSAL FIRES TODAY, on files in
