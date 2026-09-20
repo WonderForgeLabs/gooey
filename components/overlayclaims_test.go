@@ -226,6 +226,7 @@ var hostByName = map[string]func() any{
 // hostLiftedClaim matches "<Host> … lifted" or "<Host> … gooey.Overlay"
 // within a short run, in either order — "the MenuBar is lifted" and "a
 // gooey.Overlay, which the MenuBar is" both.
+//
 // CASE-SENSITIVE ON THE HOST NAME, and the marker needs a word boundary.
 // Both were wrong in the first draft and both produced FALSE POSITIVES
 // on docs/markup-reference.md's ToastHost paragraph:
@@ -238,16 +239,35 @@ var hostByName = map[string]func() any{
 //
 // A guard that fires on correct prose is noise, and noise is how a guard
 // gets deleted.
+//
 // MEMOIZED, and that is not a micro-optimisation: the call site is
-// inside files x lines x hosts, so compiling here cost 189 prose files
-// times their lines times two hosted names — tens of thousands of
-// regexp.MustCompile calls. Measured on this tree,
-// TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs ran in 7.45s as written
-// and 0.58s memoized (the review measured 20.89s against 1.54s on its own
-// runner; the ratio is the portable part), which made it the most
-// expensive test in this package by a wide margin. Same defect class as the qualifiers() package
-// var and the parallelised tree scan; this is the third time. Raised in
-// review of #458.
+// inside files x lines x hosts, so compiling here cost one regexp per
+// file in overlayProseFiles per line per hosted name — tens of
+// thousands of regexp.MustCompile calls, and enough to make
+// TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs the most expensive
+// test in this package by a wide margin.
+//
+// NEITHER THE CORPUS SIZE NOR THE SECONDS ARE WRITTEN HERE, and that
+// is the fix rather than an omission. This said "189 prose files"
+// while overlayProseFiles' own floor comment, 167 lines down, said
+// ~479 — one file stating the size of one corpus twice and disagreeing
+// with itself by 2.5x, with git ls-files agreeing with neither (199
+// tracked .md/.gooey plus 290 tracked non-test .go = 489 candidates).
+// A reader taking 189 as the corpus size reads it against that floor's
+// `len(out) < 300` and concludes the walk is already below its own
+// floor — i.e. that the guard is broken when it is not. The four
+// wall-clock figures that stood here have the same problem
+// retiredRuleProblems' doc records one file over: a reader cannot tell
+// a stale sample from a regression, which is the one thing a
+// performance note is for. Re-measure instead:
+//
+//	go test ./components/ -run TestNoDocCallsAHostLiftedWhenOnlyItsSurfaceIs -v
+//
+// Same defect class as the qualifiers() package var and the
+// parallelised tree scan; this is the third time. Raised in review of
+// #458, and the count and timings removed in review of #458 round 17 —
+// in the file that records that a lesson learned in one place does not
+// protect its sibling, landing on itself.
 //
 // The lock rather than a package-level table built at init, because the
 // hosts come from hostsWhoseSurfaceCarriesTheMarker, which needs a *T.
@@ -282,6 +302,7 @@ func hostLiftedClaim(host string) *regexp.Regexp {
 // thousand characters away, and restoring the wrong claim was measured
 // SILENT. A qualifier that can be satisfied from anywhere on a line is
 // not a qualifier in a file whose lines are paragraphs.
+//
 // A BARE "popup" IS NOT ON THIS LIST, and that was the second half of
 // the same silence: README's row is headed "Menus, toasts, popups", so
 // the category word sat thirty characters from the claim and excused it
@@ -406,8 +427,10 @@ func overlayProseFiles(t *testing.T, root string) []string {
 		t.Fatalf("walking %s: %v", root, err)
 	}
 	// A FLOOR, because a walk that found nothing passes every assertion
-	// above it — and 40 was not that floor. The tree holds ~479 matching
-	// files, so 40 also passed with docs/, components/, apps/ and cmd/
+	// above it — and 40 was not that floor. The tree holds several
+	// hundred matching files (derive it: git ls-files '*.md' '*.gooey'
+	// plus the non-test '*.go', minus vendor/), so 40 also passed with
+	// docs/, components/, apps/ and cmd/
 	// lost TOGETHER: the walk could go blind to four of the five places
 	// the rule is taught and still call itself intact. That is the exact
 	// argument this PR made about docFilesIn's floor in the sibling file,
