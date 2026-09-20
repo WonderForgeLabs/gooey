@@ -937,10 +937,10 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 //
 // The open path can carry a declaration down blind: the <Gooey>
 // envelope is the outermost element, so whether the loader reads
-// "child wins" or "last in document order wins" it gets the same
-// answer. A paste has neither property. It puts the pasted envelope's
-// declaration on a node INSIDE the open document — later in document
-// order than the root's own — and markup.parse keeps ONE FLAT,
+// "child wins" or "the last declaration in the document wins" it gets
+// the same answer. A paste has neither property. It puts the pasted envelope's
+// declaration on a node INSIDE the open document — further down it
+// than the root's own — and markup.parse keeps ONE FLAT,
 // document-wide prefix map in which the last declaration wins
 // (markup.parse). So a pasted xmlns:t binding t to a different URI
 // rebinds t for every expression in the document, including the ones
@@ -1225,8 +1225,9 @@ func reconcileNamespacesInto(n *node, doc, own map[string]string) error {
 }
 
 // collectNamespaces records every declaration in a subtree. A prefix
-// declared twice in one document is already last-wins to the loader, so
-// recording the last one here is agreeing with it rather than choosing.
+// declared twice in one document already resolves to the final
+// declaration for the loader, so recording that one here is agreeing
+// with it rather than choosing.
 //
 // SORTED ON BOTH WALKS, the way node.markup sorts when it writes
 // attributes AND slot names back out — and only ONE of those two sorts

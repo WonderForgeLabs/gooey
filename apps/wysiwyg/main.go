@@ -773,7 +773,7 @@ func (n *node) markup(indent string) string {
 // THAT REASONING IS THE OPEN PATH'S AND DOES NOT CROSS TO PASTE, which
 // is the half this comment claimed for both call sites and had no right
 // to. unwrapGooey lands the declaration on a node INSIDE the open
-// document, later in document order than the root's own, so a pasted
+// document, further down it than the root's own, so a pasted
 // prefix bound to a different URI wins for the whole document — every
 // expression already using it included. reconcileNamespaces
 // (clipboard.go) is where that is settled, before the subtree is
