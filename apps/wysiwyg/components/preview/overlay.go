@@ -535,7 +535,17 @@ type mark struct {
 	// `e` under a written `é` passed too. render.Cell is comparable,
 	// which setCluster already relies on at `got == prev[0]`. Raised
 	// in review of #524.
-	wrote render.Cell
+	//
+	// BOTH COLUMNS, not just the lead, and for a reason the lead
+	// cannot cover: ownership is a per-column question once healSeam
+	// is in the picture. A foreign NARROW write over a wide mark's
+	// lead makes healSeam blank the continuation beside it, in the
+	// style that cell holds — ours — so the tail is still the
+	// overlay's while the lead is not. Deciding from the lead alone
+	// skipped the whole mark and left the guide's background on a
+	// column the document owns, with the mark then discarded so it
+	// could never be repaired. Raised in review of #524.
+	wrote [2]render.Cell
 	// EVERY COLUMN THE CLUSTER COVERS, not just the lead. A fixed array
 	// because nothing this component draws is wider than two columns and
 	// the alternative allocates once per glyph per frame on the paint
@@ -581,6 +591,29 @@ type mark struct {
 // own writes in place, which is what the composer's bounds sweep
 // repaints over (see Arrange's doc); the half-lift leaves a cell
 // neither side agrees about.
+// ours reports whether column c of this mark still holds what the
+// overlay put there.
+//
+// THE SEAM REPAIR'S OUTPUT IS STILL OURS, which is the arm a whole-cell
+// comparison misses. healSeam's `cont && !lead` arm blanks an orphaned
+// continuation using the style THAT CELL holds, and on a wide mark
+// whose lead a narrow foreign write has taken, that style is the
+// overlay's. The result is a blank carrying the guide's background on a
+// column the document owns, and the node beneath it is clean — so it
+// stays until something unrelated dirties the cell. Measured in review
+// of #524.
+//
+// Only for c > 0: at c == 0 a blank in our own style is what the
+// overlay would have found and declined to write over, so there is
+// nothing to reclaim.
+func (m mark) ours(got render.Cell, c int) bool {
+	if got == m.wrote[c] {
+		return true
+	}
+	return c > 0 && got.Rune == ' ' && got.Cluster == "" &&
+		got.Style == m.wrote[c].Style
+}
+
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	// THE SAME TOLERANCE setCluster CARRIES, and it has to be here
 	// rather than only there: Render calls this as its second
@@ -594,9 +627,15 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	clip := f.Cells.ClipRect()
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
-		if f.Cells.At(m.x, m.y) != m.wrote {
-			continue
-		}
+		// THE CLIP IS A WHOLE-MARK GATE and ownership is per column.
+		// The two questions are not the same one. A clip that no
+		// longer holds every column of the mark means the tail write
+		// would be DROPPED, so restoring the lead alone half-lifts a
+		// pair — that is the case
+		// TestAWideMarkIsNotHalfLiftedWhenTheClipNARROWS pins. A
+		// column somebody else has taken is a different thing: the
+		// columns we still own go back, and nothing is left half
+		// anything.
 		if m.y < clip.Y || m.y >= clip.Y+clip.H ||
 			m.x < clip.X || m.x+m.cols > clip.X+clip.W {
 			continue
@@ -609,6 +648,9 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 		// continuation afterwards is what puts the cell the overlay
 		// found back.
 		for c := 0; c < m.cols; c++ {
+			if !m.ours(f.Cells.At(m.x+c, m.y), c) {
+				continue
+			}
 			f.Cells.SetCell(m.x+c, m.y, m.prev[c])
 		}
 	}
@@ -636,9 +678,10 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 // is occupied, no mark appears. The content wins, because the content is
 // what the user is looking at.
 //
-// render.Buffer.SetCell is already bounds-checked, so nothing here
-// clips; the nil guard is for tests that render without a frame, and
-// restoreMarks carries the same one for the same callers.
+// render.Buffer.SetCell is CLIP-scoped, which is the axis this file
+// turns on everywhere else — see setCluster's own doc — so nothing
+// here clips. The nil guard is for tests that render without a frame,
+// and restoreMarks carries the same one for the same callers.
 func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
 	o.setCluster(f, x, y, string(r), render.RuneWidth(r), st)
 }
@@ -682,13 +725,19 @@ func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
 // what was actually written removes the question rather than relying on
 // a clip staying put.
 //
-// ONE MARK FOR THE PAIR AND BOTH ITS CELLS IN IT. The lift is still one
-// decision — the guard reads the lead, and healSeam means a foreign
-// write to the lead cannot leave our tail orphaned — but WHAT IS PUT
-// BACK is per column, because healSeam repairs the orphaned
-// continuation with the style that cell currently holds, and that is
-// the OVERLAY's. Measured on this component before the fix, drawing 世
-// in the guide's style and lifting it again:
+// ONE MARK FOR THE PAIR AND BOTH ITS CELLS IN IT — and the LIFT IS PER
+// COLUMN TOO. This said the lift was one decision because "healSeam
+// means a foreign write to the lead cannot leave our tail orphaned",
+// and orphaned is not the injury: healSeam repairs the orphan with the
+// style that cell currently holds, which is the OVERLAY's, so a
+// foreign narrow write over the lead leaves the guide's background on
+// a column the document owns. Deciding the whole mark from the lead
+// skipped it, and restoreMarks clears o.marks whether or not anything
+// was lifted, so the snapshot went with it. See mark.ours. Raised in
+// review of #524, twice — the second time for the lift.
+//
+// Measured on this component before the first fix, drawing 世 in the
+// guide's style and lifting it again:
 //
 //	after draw:    c0={世 fg=0,255,0 bg=255,0,0}  c1={Continuation, same}
 //	after restore: c0={' ' style unset}           c1={' ' fg=0,255,0 bg=255,0,0}
@@ -740,6 +789,14 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 	if got == prev[0] {
 		return
 	}
+	// READ BACK, not constructed: the continuation the buffer lays in
+	// the second column is its spelling of the pair, and asking it is
+	// the same reason the lead is read back rather than assumed.
+	var wrote [2]render.Cell
+	wrote[0] = got
+	if cols > 1 {
+		wrote[1] = f.Cells.At(x+1, y)
+	}
 	o.marks = append(o.marks, mark{
 		// CLAMPED TO WHAT WAS SNAPSHOTTED, not only to the array.
 		// cols above bounds the FILL; this bounds the COUNT
@@ -753,7 +810,7 @@ func (o *Overlay) setCluster(f *gooey.Frame, x, y int, cluster string, w int, st
 		// forms, VS16, a combining pair, tab and NUL — the bound
 		// belongs on the value the array is indexed by anyway. Raised
 		// in review of #524.
-		x: x, y: y, wrote: got, prev: prev, cols: min(max(got.Width(), 1), cols),
+		x: x, y: y, wrote: wrote, prev: prev, cols: min(max(got.Width(), 1), cols),
 	})
 }
 

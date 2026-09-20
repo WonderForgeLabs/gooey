@@ -439,6 +439,17 @@ func TestSetClusterAllocatesNothing(t *testing.T) {
 // in a branch whose subject is claims that outlive their reasoning.
 // Raised in review of #524.
 func TestAFrameWithoutCellsIsToleratedEndToEnd(t *testing.T) {
+	// THROUGH Render, which is what the name claims and what the
+	// argument is about — the direct calls below pin the guard, and
+	// only this reaches the ORDER that made the guard necessary.
+	// Moving restoreMarks below Render's `g == nil` return changes the
+	// contract and leaves every direct-call assertion untouched.
+	// Raised in review of #524.
+	through := NewOverlay(nil, nil)
+	through.marks = append(through.marks, mark{x: 0, y: 0, cols: 1})
+	through.Render(&gooey.Frame{})
+	through.Render(nil)
+
 	o := &Overlay{}
 	// A MARK IN HAND, so the loop body is reached rather than skipped
 	// by an empty slice — the panic was on the ClipRect above the loop,
@@ -447,4 +458,72 @@ func TestAFrameWithoutCellsIsToleratedEndToEnd(t *testing.T) {
 	o.restoreMarks(&gooey.Frame{})
 	o.setCell(&gooey.Frame{}, 0, 0, 'x', render.Style{})
 	o.setCell(nil, 0, 0, 'x', render.Style{})
+}
+
+// TestAForeignNarrowWriteOverAWideLeadStillGivesTheTailBack is the
+// per-column half of ownership, and the claim setCluster's doc used to
+// make for the whole pair.
+//
+// That doc said the lift is one decision because "healSeam means a
+// foreign write to the lead cannot leave our tail orphaned". Orphaned
+// is not the injury. healSeam's continuation arm blanks the orphan
+// using the style THAT CELL holds — the overlay's — so what it leaves
+// is a blank carrying the guide's background, on a column the document
+// owns. Deciding the whole mark from the lead then skipped it, and
+// o.marks is cleared whether or not a mark was lifted, so the snapshot
+// was thrown away and the repair could never happen on a later frame.
+// The node beneath that cell is clean, so the guide's background sat
+// there until something unrelated dirtied it.
+//
+// Measured on this head before the fix, 10x1, both columns pre-cleared
+// to Bg{1,2,3}, the overlay drawing 世 in Bg{9,9,9} and the document
+// then repainting column 0 with its own narrow glyph:
+//
+//	after the foreign write: c1={Rune:' ' Bg:{9,9,9}}
+//	after restoreMarks:      c1={Rune:' ' Bg:{9,9,9}}   <- the guide's
+//
+// Reachability is the same as the other wide-glyph pins in this file:
+// the overlay draws only single-column box glyphs and ASCII gutter
+// specs today, so cols == 2 is unreachable through the shipped editor —
+// see this file's header for why the pins are here anyway. Raised in
+// review of #524.
+func TestAForeignNarrowWriteOverAWideLeadStillGivesTheTailBack(t *testing.T) {
+	pre := render.Style{Bg: render.RGB(1, 2, 3)}
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	for x := 0; x < 10; x++ {
+		f.Cells.SetCell(x, 0, render.Cell{Rune: ' ', Style: pre})
+	}
+	o := &Overlay{}
+	o.setCluster(f, 0, 0, "世", 2, render.Style{Bg: render.RGB(9, 9, 9)})
+	if len(o.marks) != 1 || o.marks[0].cols != 2 {
+		t.Fatalf("setCluster took %d marks and %d columns for a wide write "+
+			"into blank cells, want 1 and 2 — this test is about the PAIR",
+			len(o.marks), func() int {
+				if len(o.marks) == 0 {
+					return 0
+				}
+				return o.marks[0].cols
+			}())
+	}
+	snap := o.marks[0].prev
+
+	// The document repaints column 0 with a narrow glyph of its own.
+	// The buffer's seam repair turns our continuation in column 1 into
+	// a blank — in our style, which is the whole finding.
+	owner := render.Style{Bg: render.RGB(4, 5, 6)}
+	f.Cells.SetCell(0, 0, render.Cell{Rune: 'Z', Style: owner})
+	o.restoreMarks(f)
+
+	if got := f.Cells.At(0, 0).Style; got != owner {
+		t.Errorf("restoring put %+v into column 0, which the document had "+
+			"just taken with its own narrow glyph — the lead is not ours "+
+			"any more and must be left alone", got)
+	}
+	if got := f.Cells.At(1, 0); got != snap[1] {
+		t.Errorf("column 1 came back %+v, want the pre-clear %+v. The seam "+
+			"repair converted our continuation to a blank IN OUR STYLE, so "+
+			"that column is still the overlay's to give back — and the "+
+			"mark is discarded after this frame, so a skip here is "+
+			"permanent", got, snap[1])
+	}
 }
