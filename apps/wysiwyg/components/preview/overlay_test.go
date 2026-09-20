@@ -425,3 +425,26 @@ func TestSetClusterAllocatesNothing(t *testing.T) {
 			"want 0 — the per-glyph slice is back on the paint path", got)
 	}
 }
+
+// TestAFrameWithoutCellsIsToleratedEndToEnd pins the contract setCell's
+// doc states, which was true only as far as setCluster.
+//
+// Render calls restoreMarks as its second statement, above every early
+// return, so the guard one layer down could not protect the frame that
+// never reaches it: restoreMarks read ClipRect off a nil *render.Buffer
+// and segfaulted — render.Buffer.ClipRect reads four fields with no nil
+// receiver check, so this was a hard crash rather than a zero value.
+// The composer always supplies a buffer, so nothing shipped could reach
+// it; what was false was the sentence explaining why the guard exists,
+// in a branch whose subject is claims that outlive their reasoning.
+// Raised in review of #524.
+func TestAFrameWithoutCellsIsToleratedEndToEnd(t *testing.T) {
+	o := &Overlay{}
+	// A MARK IN HAND, so the loop body is reached rather than skipped
+	// by an empty slice — the panic was on the ClipRect above the loop,
+	// and an empty overlay would pass this test in the broken tree too.
+	o.marks = append(o.marks, mark{x: 0, y: 0, cols: 1})
+	o.restoreMarks(&gooey.Frame{})
+	o.setCell(&gooey.Frame{}, 0, 0, 'x', render.Style{})
+	o.setCell(nil, 0, 0, 'x', render.Style{})
+}

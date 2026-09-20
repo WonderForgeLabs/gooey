@@ -452,10 +452,16 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 // for character, including the defect that one was rewritten for, and
 // the sweep that fixed the four helpers in package main stopped at this
 // package's boundary: fit("世世世", 4) answered "it fits" and returned
-// six columns for a four-column track. A track spec is authored text —
-// tracks.go reads it off the document's Tracks= attribute and does not
-// validate it — so this is reachable from a .gooey file, not only from
-// Go source. Raised in review of #524.
+// six columns for a four-column track.
+//
+// IT IS NOT REACHABLE TODAY, and this paragraph claimed it was — off a
+// "Tracks=" attribute that does not exist; ed.tracks reads Rows/Cols.
+// components.ParseGridLens rejects a spec holding a wide glyph before
+// a *Guide exists at all, so nothing in the shipped editor can hand
+// this function one. The argument for pinning it anyway is in
+// overlay_test.go's header: the safety is a property of a DIFFERENT
+// function, in a different module, that no reader of this file can see
+// and no future spec grammar has to keep. Raised in review of #524.
 func fit(s string, w int) string {
 	if w <= 0 {
 		return ""
@@ -576,6 +582,15 @@ type mark struct {
 // repaints over (see Arrange's doc); the half-lift leaves a cell
 // neither side agrees about.
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
+	// THE SAME TOLERANCE setCluster CARRIES, and it has to be here
+	// rather than only there: Render calls this as its second
+	// statement, above every early return, so a frame without cells
+	// reached ClipRect before setCluster's guard could run and
+	// segfaulted — render.Buffer.ClipRect reads four fields off a nil
+	// receiver. Raised in review of #524.
+	if f == nil || f.Cells == nil {
+		return
+	}
 	clip := f.Cells.ClipRect()
 	for i := len(o.marks) - 1; i >= 0; i-- {
 		m := o.marks[i]
@@ -621,8 +636,9 @@ func (o *Overlay) restoreMarks(f *gooey.Frame) {
 // is occupied, no mark appears. The content wins, because the content is
 // what the user is looking at.
 //
-// render.Buffer.Set is already bounds-checked; the nil guard is for
-// tests that render without a frame.
+// render.Buffer.SetCell is already bounds-checked, so nothing here
+// clips; the nil guard is for tests that render without a frame, and
+// restoreMarks carries the same one for the same callers.
 func (o *Overlay) setCell(f *gooey.Frame, x, y int, r rune, st render.Style) {
 	o.setCluster(f, x, y, string(r), render.RuneWidth(r), st)
 }
