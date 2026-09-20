@@ -232,6 +232,22 @@ func TestEveryPartitionTableIsRegistered(t *testing.T) {
 		// partitionTables, which had nothing wrong with it. That is
 		// the defect class this file's own header is about, inside
 		// the guard. Raised in review of #543.
+		// AND THE DECLARATION ITSELF CAN BE UNREADABLE, which is not a
+		// loud version of the arm below but a different verdict: zero
+		// entries AND zero unread keys, so the key loop finds no source
+		// entry for anything and passes over the whole table. Measured
+		// in review of #543 — a `var lazy partition` populated in
+		// init() with every why replaced passed this test and the
+		// key-set guard. A guard certifying something it did not check
+		// is this file's own subject.
+		if !want.readable {
+			t.Errorf("%s is declared in a shape partitionTablesInSource "+
+				"cannot read — no composite literal to walk — so NONE of its "+
+				"entries are compared and registering it here buys nothing. "+
+				"Declare it as a literal, or teach the walk that shape",
+				tb.name)
+			continue
+		}
 		if want.unreadKeys > 0 {
 			t.Errorf("%d of %s's entries are spelled in a way "+
 				"partitionTablesInSource cannot read the KEY of, so they are "+
@@ -346,60 +362,63 @@ func partitionTablesInSource(t *testing.T) map[string]partitionSource {
 // every unreadable-key path — so loosening any of them changes nothing
 // in the tree and the next edit is unguarded. Each was verified by hand
 // mutation when it was written, which is the right measurement in the
-// wrong place. TestThePartitionSourceReaderSeesWhatItClaimsTo supplies
-// the corpus the tree does not, the way
-// TestTheZeroedTopMatcherSeesOnlyAReleasedSlot does one module over.
+// wrong place. `TestThePartitionSourceReaderSeesWhatItClaimsTo`
+// supplies the corpus the tree does not, the way
+// `TestTheZeroedTopMatcherSeesOnlyAReleasedSlot` does one module over.
 // Raised in review of #543.
 func partitionTablesIn(file *ast.File) map[string]partitionSource {
 	out := map[string]partitionSource{}
-	{
-		for _, d := range file.Decls {
-			g, ok := d.(*ast.GenDecl)
-			if !ok || g.Tok != gotoken.VAR {
+	for _, d := range file.Decls {
+		g, ok := d.(*ast.GenDecl)
+		if !ok || g.Tok != gotoken.VAR {
+			continue
+		}
+		for _, sp := range g.Specs {
+			vs, ok := sp.(*ast.ValueSpec)
+			if !ok {
 				continue
 			}
-			for _, sp := range g.Specs {
-				vs, ok := sp.(*ast.ValueSpec)
-				if !ok {
+			for i, n := range vs.Names {
+				if !isPartitionLiteral(typeOfSpec(vs, i)) {
 					continue
 				}
-				for i, n := range vs.Names {
-					if !isPartitionLiteral(typeOfSpec(vs, i)) {
-						continue
-					}
-					src := partitionSource{entries: map[string]partitionEntrySource{}}
-					if i >= len(vs.Values) {
-						out[n.Name] = src
-						continue
-					}
-					cl, ok := vs.Values[i].(*ast.CompositeLit)
-					if !ok {
-						out[n.Name] = src
-						continue
-					}
-					for _, el := range cl.Elts {
-						kv, ok := el.(*ast.KeyValueExpr)
-						if !ok {
-							src.unreadKeys++
-							continue
-						}
-						key, kok := exprText(kv.Key)
-						if !kok {
-							// A KEY THIS WALK CANNOT READ IS COUNTED,
-							// not dropped. Dropped, it was simply
-							// absent from the map below, and the
-							// comparison read that absence as the
-							// empty why — a PAIRING fault, which is a
-							// different and false accusation. Raised
-							// in review of #543.
-							src.unreadKeys++
-							continue
-						}
-						why, wok := partitionWhy(kv.Value)
-						src.entries[key] = partitionEntrySource{why: why, read: wok}
-					}
-					out[n.Name] = src
+				src := partitionSource{
+					entries:  map[string]partitionEntrySource{},
+					readable: true,
 				}
+				if i >= len(vs.Values) {
+					src.readable = false
+					out[n.Name] = src
+					continue
+				}
+				cl, ok := vs.Values[i].(*ast.CompositeLit)
+				if !ok {
+					src.readable = false
+					out[n.Name] = src
+					continue
+				}
+				for _, el := range cl.Elts {
+					kv, ok := el.(*ast.KeyValueExpr)
+					if !ok {
+						src.unreadKeys++
+						continue
+					}
+					key, kok := exprText(kv.Key)
+					if !kok {
+						// A KEY THIS WALK CANNOT READ IS COUNTED,
+						// not dropped. Dropped, it was simply
+						// absent from the map below, and the
+						// comparison read that absence as the
+						// empty why — a PAIRING fault, which is a
+						// different and false accusation. Raised
+						// in review of #543.
+						src.unreadKeys++
+						continue
+					}
+					why, wok := partitionWhy(kv.Value)
+					src.entries[key] = partitionEntrySource{why: why, read: wok}
+				}
+				out[n.Name] = src
 			}
 		}
 	}
@@ -419,6 +438,15 @@ type partitionSource struct {
 	// cannot be recorded in entries because there is no key to record
 	// them under.
 	unreadKeys int
+	// readable is whether the DECLARATION itself is one this walk can
+	// read at all, which unreadKeys cannot say: a var with no
+	// initializer, or one initialised from something that is not a
+	// composite literal, yields zero entries and zero unread keys. That
+	// pair used to register as a table checked against nothing —
+	// measured, a table populated in init() with every why replaced
+	// passed both guards — which is this file's own subject one
+	// spelling further out. Raised in review of #543.
+	readable bool
 }
 
 // partitionEntrySource is one entry's why text and whether the literal
@@ -463,6 +491,16 @@ func partitionWhy(e ast.Expr) (string, bool) {
 	// covers omitting a zero-valued field verbatim. Raised in review of
 	// #543.
 	if keyed {
+		return "", true
+	}
+	// AND {} IS THE SAME ANSWER, reached from the other side. An empty
+	// literal sets no keys, so `keyed` stays false and the positional
+	// arm's arity test fires — reporting the zero value of the struct,
+	// which is legal gofmt-clean Go for `inherit: false, why: ""`, as a
+	// spelling this walk cannot parse. The paragraph above applies to it
+	// verbatim: there is nothing to teach and no string to write. Raised
+	// in review of #543.
+	if len(cl.Elts) == 0 {
 		return "", true
 	}
 	if len(cl.Elts) != 2 {
@@ -1787,8 +1825,12 @@ func TestAControlCannotShadowAPageDeclaredElement(t *testing.T) {
 // `partition` type alias in isPartitionLiteral, typeOfSpec's declared-
 // type arm, and every unreadable-key path including the unreadKeys
 // report. Loosening any of them leaves the suite green, which is the
-// state a fixture test is for. TestTheZeroedTopMatcherSeesOnlyAReleasedSlot
-// makes the same argument for the clear-to-cap matcher one module over.
+// state a fixture test is for.
+// `TestTheZeroedTopMatcherSeesOnlyAReleasedSlot` makes the same
+// argument for the clear-to-cap matcher one module over — backticked
+// because it lives in the ROOT module and is cited from here, so a
+// rename by somebody who never opens markup/ would otherwise orphan
+// this justification with nothing red.
 //
 // It also pins the distinction the misdiagnosis rounds were about: an
 // entry whose why is legitimately EMPTY reads as `{why: "", read:
@@ -1813,6 +1855,7 @@ var positional = map[string]struct {
 var keyed partition = partition{
 	"C": {inherit: true, why: "by key"},
 	"D": {inherit: true},
+	"G": {},
 }
 
 var unreadable = map[string]struct {
@@ -1843,11 +1886,19 @@ var notATable = map[string]int{"F": 1}
 			"walk invents is a name partitionTables can never satisfy: %v",
 			slices.Sorted(maps.Keys(got)))
 	}
-	if src, ok := got["declaredNoInit"]; !ok || len(src.entries) != 0 {
+	if src, ok := got["declaredNoInit"]; !ok || len(src.entries) != 0 || src.readable {
 		t.Errorf("a var with a declared partition type and no initializer read "+
-			"as %v (found=%v), want an empty table — this is the only shape "+
-			"that reaches typeOfSpec's declared-type arm, because a composite "+
-			"literal carries the type as well", src.entries, ok)
+			"as %v (found=%v, readable=%v), want an empty table marked "+
+			"UNREADABLE — this is the only shape that reaches typeOfSpec's "+
+			"declared-type arm, because a composite literal carries the type "+
+			"as well, and an empty table that does not say so registers as "+
+			"checked against nothing", src.entries, ok, src.readable)
+	}
+	if src, ok := got["positional"]; !ok || !src.readable {
+		t.Errorf("a table declared as a composite literal read as "+
+			"readable=%v (found=%v), want true — without this arm the verdict "+
+			"above passes for a reader that calls every table unreadable",
+			src.readable, ok)
 	}
 	for _, name := range []string{"positional", "keyed", "unreadable"} {
 		if _, ok := got[name]; !ok {
@@ -1868,6 +1919,11 @@ var notATable = map[string]int{"F": 1}
 		// THE ONE THAT WAS CALLED UNREADABLE. A keyed literal omitting
 		// the zero-valued field is legitimate and its why is "".
 		{"keyed", "D", "", true},
+		// AND THE EMPTY LITERAL, which reaches the same answer from the
+		// other side: no keys at all, so the keyed arm above cannot see
+		// it and the positional arity test used to call the struct's
+		// own zero value unreadable.
+		{"keyed", "G", "", true},
 		{"unreadable", "E", "", false},
 	} {
 		e, ok := got[tc.table].entries[tc.key]

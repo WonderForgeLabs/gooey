@@ -537,15 +537,23 @@ func TestEveryCitedTestNameResolves(t *testing.T) {
 // citations in files neither of them mentions — so the figure moves on
 // commits that have no reason to look here. Run the grep in that
 // message for today's number; what does not move is that the two
-// populations are MORE THAN TWO ORDERS OF MAGNITUDE apart, which is
-// what makes the fraction small however the numerator drifts.
+// populations are MORE THAN AN ORDER OF MAGNITUDE apart, which is what
+// makes the fraction small however the numerator drifts.
 //
-// It said THREE orders, and that was the one figure this paragraph
-// nominated as stable: 2 citations against ~1,300 bare mentions is a
-// factor of ~650, which rounds to three, and this branch took the
-// numerator to 8 — ~186, or 2.3 orders. Half an order, moved by the
-// commits the sentence claimed it survives. "More than two" holds at
-// 8 and at 14. Raised in review of #543.
+// THE HEADROOM IS THE WHOLE POINT OF PICKING THAT FIGURE, and this
+// paragraph has now got it wrong twice in the same way. It said THREE
+// orders — 2 citations against ~1,300 mentions is ~650, which rounds to
+// three — and this branch took the numerator to 8, or 2.3 orders. The
+// repair said "more than two, which holds at 8 and at 14", and that is
+// false against the denominator this very paragraph states: 1,300 ÷ 14
+// is 93, which is 1.97 orders. It survived only against a denominator
+// written in a commit message and nowhere here. Measured on this tree
+// today: ~1,590 Test-prefixed mentions on Go comment lines against 11
+// backticked, a factor of ~145. One order needs the numerator to pass
+// ~150 before it fails, which is more than this whole population; two
+// orders fails at 16. So the claim is one order, and a figure that
+// needs the denominator quoted to survive is the wrong figure. Raised
+// in review of #543.
 //
 // THE FLOOR BELOW IS WHAT KEEPS THIS FROM BEING VACUOUS, not evidence of
 // coverage: goCited == 0 catches the pattern drifting to nothing, and at
