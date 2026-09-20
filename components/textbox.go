@@ -1300,7 +1300,7 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		t.replace(ev.Rune)
 	case ev == input.Named(input.KeyBackspace):
 		if _, _, ok := t.Selection(); ok {
-			t.deleteSelection(true)
+			t.deleteSelection(snapLeft)
 			break
 		}
 		caret := t.Caret()
@@ -1323,7 +1323,7 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		t.setText(next, snapOut(next, caret-1, false))
 	case ev == input.Named(input.KeyDelete):
 		if _, _, ok := t.Selection(); ok {
-			t.deleteSelection(true)
+			t.deleteSelection(snapRight)
 			break
 		}
 		caret, runes := t.Caret(), t.value()
@@ -1346,7 +1346,7 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		if !t.copySelection() {
 			return true
 		}
-		t.deleteSelection(true)
+		t.deleteSelection(snapLeft)
 	case ev == ctrlRune('c'):
 		// Copy only claims the key when there IS something to copy. The
 		// framework quit key is ctrl+c and it is checked on what bubbles
@@ -1379,7 +1379,7 @@ func (t *TextBox) insertText(text string) bool {
 		return false
 	}
 	if _, _, ok := t.Selection(); ok {
-		t.deleteSelection(false)
+		t.deleteSelection(snapNone)
 	}
 	caret, runes := t.Caret(), t.value()
 	ins := []rune(text)
@@ -1463,7 +1463,7 @@ func ctrlRune(r rune) input.KeyEvent {
 
 func (t *TextBox) replace(r rune) {
 	if _, _, ok := t.Selection(); ok {
-		t.deleteSelection(false)
+		t.deleteSelection(snapNone)
 	}
 	caret, runes := t.Caret(), t.value()
 	next := append(append(append([]rune{}, runes[:caret]...), r), runes[caret:]...)
@@ -1471,8 +1471,8 @@ func (t *TextBox) replace(r rune) {
 }
 
 // deleteSelection splices the selection out and leaves the caret at lo.
-// `snap` is the CALLER'S answer, not this function's, and the two
-// answers are genuinely different.
+// Where that lands inside a cluster, `dir` is the CALLER'S answer, not
+// this function's, and the callers genuinely differ.
 //
 // lo and hi are cluster boundaries in the OLD value, which every
 // producer of a selection in this file guarantees. That is not the same
@@ -1494,14 +1494,10 @@ func (t *TextBox) replace(r rune) {
 // INSERTION and is exactly what snapOut's setText exemption protects.
 // That is why this is a parameter rather than an unconditional snap.
 //
-// LEFTWARD at the three deleting callers, though snapOut's contract is
-// "outward in the direction it was travelling" and a selection delete
-// does not travel. Rightward would carry the caret past the "👨",
-// content the user never selected, and the next backspace would then
-// destroy the whole joined cluster; leftward is clusterStartAt of where
-// the caret already is. That is the mirror of the argument round 13
-// made for the forward-delete arm. Raised in review of #521.
-func (t *TextBox) deleteSelection(snap bool) {
+// THE DIRECTION IS THE CALLER'S TOO, for the same reason — see snapDir
+// below, which is why this takes one rather than a bool. Raised in
+// review of #521.
+func (t *TextBox) deleteSelection(dir snapDir) {
 	lo, hi, ok := t.Selection()
 	if !ok {
 		return
@@ -1509,11 +1505,49 @@ func (t *TextBox) deleteSelection(snap bool) {
 	runes := t.value()
 	next := append(append([]rune{}, runes[:lo]...), runes[hi:]...)
 	caret := lo
-	if snap {
+	switch dir {
+	case snapLeft:
 		caret = snapOut(next, lo, false)
+	case snapRight:
+		caret = snapOut(next, lo, true)
 	}
 	t.setText(next, caret)
 }
+
+// snapDir is which way deleteSelection takes the caret out of a cluster
+// the splice created, and it is THREE answers rather than two because
+// the five callers fall into three groups.
+//
+// snapNone is replace and paste, for the reason deleteSelection's doc
+// gives: they insert at the caret afterwards, and snapOut's setText
+// exemption is about exactly that.
+//
+// snapLeft and snapRight are the direction snapOut's contract asks for
+// — "outward in the direction it was travelling" — which backspace and
+// delete answer differently and which a single bool got wrong. Snapping
+// both arms leftward reintroduced the defect round 13 fixed, in the arm
+// round 13's fixture could not see:
+//
+//	"x" + U+1F469 + ZWJ + "a" + U+1F468, boundaries [0 1 3 4 5]
+//	caret 3, shift+right selects [3,4)
+//	delete -> "x👩\u200d👨" caret 1   <- back over the 👩 nothing deleted
+//	delete -> "x\u200d👨"             <- 👩 destroyed, orphan ZWJ leads
+//
+// CTRL+X IS snapLeft, and it is the one genuinely ambiguous caller: a
+// cut does not travel, so neither direction follows from snapOut's
+// contract. It goes left because lo is the left end of the range that
+// left, and because a cut ENDS the gesture — the text is in the kill
+// buffer and the next key is usually a move or a paste, so there is no
+// next press in the same direction to protect from. If cut ever grows a
+// repeat idiom, that is what changes the answer. Raised in review of
+// #521.
+type snapDir int
+
+const (
+	snapNone snapDir = iota
+	snapLeft
+	snapRight
+)
 
 // copySelection puts the selection in the kill buffer and reports
 // whether there was one.

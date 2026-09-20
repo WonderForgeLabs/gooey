@@ -1971,7 +1971,13 @@ func TestAnArrowKeyStepsByClusterNotByRune(t *testing.T) {
 // clusterStartAt(p) == p. Raised in review of #521.
 func TestWordMotionAndDoubleClickLandOnClusterBoundaries(t *testing.T) {
 	onBoundary := func(runes []rune, p int) bool {
-		return p == len(runes) || clusterStartAt(runes, p) == p
+		// NO `p == len(runes) ||` HERE: clusterStartAt returns i
+		// unchanged for i >= len(runes), so the end already answers
+		// true and the disjunct could never change the answer — the
+		// same dead-branch shape round 9 of this branch wrote down and
+		// round 13 removed from TestADeleteNeverLeavesTheCaretInside
+		// ACluster. Raised in review of #521.
+		return clusterStartAt(runes, p) == p
 	}
 	for _, tc := range []struct {
 		name  string
@@ -2188,26 +2194,34 @@ func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 		// AND THE SELECTION ARMS OF THE SAME SWITCH, which the three
 		// rows above do not reach: they press a bare key, and the
 		// first thing each selection arm does is hand off to
-		// deleteSelection. "👩"+ZWJ+"a"+"👨" has
-		// boundaries [0 2 3 4], so the caret starts on a real one and
+		// deleteSelection. "x"+"👩"+ZWJ+"a"+"👨" has
+		// boundaries [0 1 3 4 5], so the caret starts on a real one and
 		// ONE shift+right selects exactly the "a" — every index here
 		// is produced by a gesture rather than by setCaret. Deleting
-		// joins the two emoji into one cluster, [0 3], and the
-		// un-snapped caret sits at 2 inside it, where typing puts Z
-		// between the ZWJ and the second emoji. Raised in review of
-		// #521, round 14.
+		// joins the two emoji into one cluster, [0 1 4], and the
+		// un-snapped caret sits at 3 inside it, where typing puts Z
+		// between the ZWJ and the second emoji.
+		//
+		// THE LEADING "x" IS THE MEASUREMENT, not decoration. Without
+		// it the fused cluster starts at rune 0, so a leftward snap
+		// lands on the left wall and the three rows agree whichever
+		// direction the code chose — which is how round 14's fix came
+		// to snap the forward-delete arm backwards with this table
+		// green. The wants below now differ BY DIRECTION, which is the
+		// distinction they exist to encode. Raised in review of #521,
+		// rounds 14 and 15.
 		{"a selection delete joins the clusters either side of it",
-			"👩‍a👨", 2, 1,
+			"x👩‍a👨", 3, 1,
 			input.Named(input.KeyDelete),
-			"Z👩‍👨"},
-		{"a selection backspace joins them the same way",
-			"👩‍a👨", 2, 1,
+			"x👩‍👨Z"},
+		{"a selection backspace joins them and stays behind the glyph",
+			"x👩‍a👨", 3, 1,
 			input.Named(input.KeyBackspace),
-			"Z👩‍👨"},
-		{"and ctrl+x, which deletes through the same seam",
-			"👩‍a👨", 2, 1,
+			"xZ👩‍👨"},
+		{"and ctrl+x, which travels nowhere and goes left with backspace",
+			"x👩‍a👨", 3, 1,
 			ctrlRune('x'),
-			"Z👩‍👨"},
+			"xZ👩‍👨"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := prop.NewSource(tc.start)
@@ -2308,21 +2322,48 @@ func TestReplacingASelectionInsertsWhereItWas(t *testing.T) {
 // outcome: both leave the caret on a boundary, and only the second
 // press says which boundary was the right one.
 func TestAForwardDeleteNeverWalksTheCaretBackwards(t *testing.T) {
-	v := prop.NewSource("ab́cd")
-	tb := &TextBox{Text: v}
-	tb.SetFocused(true)
-	tb.HandleKey(input.Named(input.KeyRight)) // caret 1, a cluster boundary
+	for _, tc := range []struct {
+		name     string
+		start    string
+		rights   int // right arrows, to reach a boundary honestly
+		selRight int // then shift+right presses, to select
+		want     string
+	}{
+		{"the bare key", "ab́cd", 1, 0, "ád"},
+		// AND THE SELECTION ARM, which routes through deleteSelection
+		// and which this test did not reach until the fix for round
+		// 14 put a second direction behind that seam. Same shape: the
+		// splice fuses "👩"+ZWJ and "👨" into one
+		// cluster, so the caret must leave it, and leftward leaves it
+		// over a glyph nothing deleted — the second press then
+		// destroys the "👩" and the value is left holding an
+		// orphan ZWJ. Raised in review of #521, round 15.
+		{"delete with a selection", "x👩‍a👨", 2, 1,
+			"x👩‍👨"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := prop.NewSource(tc.start)
+			tb := &TextBox{Text: v}
+			tb.SetFocused(true)
+			for range tc.rights {
+				tb.HandleKey(input.Named(input.KeyRight))
+			}
+			for range tc.selRight {
+				tb.HandleKey(input.KeyEvent{Key: input.KeyRight, Mods: input.ModShift})
+			}
 
-	before := tb.Caret()
-	tb.HandleKey(input.Named(input.KeyDelete))
-	if tb.Caret() < before {
-		t.Fatalf("a forward delete moved the caret from %d to %d, over a glyph "+
-			"it did not delete — the value is now %q", before, tb.Caret(), v.Get())
-	}
-	tb.HandleKey(input.Named(input.KeyDelete))
-	if got := []rune(v.Get()); len(got) > 0 && got[0] == '́' {
-		t.Errorf("after two forward deletes the value is %q, which OPENS with a "+
-			"combining mark: the second press consumed the base the caret had "+
-			"already moved past", v.Get())
+			before := tb.Caret()
+			tb.HandleKey(input.Named(input.KeyDelete))
+			if tb.Caret() < before {
+				t.Fatalf("a forward delete moved the caret from %d to %d, over a glyph "+
+					"it did not delete — the value is now %q", before, tb.Caret(), v.Get())
+			}
+			tb.HandleKey(input.Named(input.KeyDelete))
+			if v.Get() != tc.want {
+				t.Errorf("after two forward deletes the value is %q, want %q: the "+
+					"second press consumed a glyph the caret had already moved past",
+					v.Get(), tc.want)
+			}
+		})
 	}
 }
