@@ -108,7 +108,7 @@ func TestTheTrackSpecIsShownAgainstTheSpaceItProduces(t *testing.T) {
 	// margin and writing outside it lands on the editor's own chrome.
 	for c := range g.Cols {
 		q := g.Cells[0][c]
-		got := rowText(f, q.Y, q.X+1, render.StringWidth(g.Cols[c]))
+		got := readCells(f, q.X+1, q.Y, render.StringWidth(g.Cols[c]))
 		if got != g.Cols[c] {
 			t.Errorf("column %d is %q but the gutter at its top edge reads %q — the number "+
 				"you edit is not shown against the space it produces", c, g.Cols[c], got)
@@ -120,7 +120,7 @@ func TestTheTrackSpecIsShownAgainstTheSpaceItProduces(t *testing.T) {
 		if q.H < 2 {
 			continue
 		}
-		got := rowText(f, q.Y+1, q.X, render.StringWidth(g.Rows[r]))
+		got := readCells(f, q.X, q.Y+1, render.StringWidth(g.Rows[r]))
 		if got != g.Rows[r] {
 			t.Errorf("row %d is %q but its gutter reads %q", r, g.Rows[r], got)
 		}
@@ -131,9 +131,15 @@ func TestTheTrackSpecIsShownAgainstTheSpaceItProduces(t *testing.T) {
 // than .Rune: a continuation cell holds render.Continuation, which is
 // rune -1 and encodes as U+FFFD. Raised in review of #524.
 //
-// n IS STILL A CELL COUNT, and the callers pass rune counts of ASCII
-// gutter labels, where the two agree. A caller with a wide glyph in hand
-// wants render.StringWidth of it.
+// n IS A CELL COUNT, and every caller measures its span with
+// render.StringWidth. They passed rune counts for one round: the
+// accessor was swept for the wide-glyph case and the LENGTH it walks
+// was left behind, so for a spec of "世世" — two runes, four cells —
+// this read [x, x+2), got the lead plus the continuation's empty
+// Text(), and compared "世" against "世世". The two agree on the ASCII
+// specs ParseGridLens accepts today, which is a property of a
+// different function in a different module and not something this file
+// can see. Raised in review of #524.
 func readCells(f *gooey.Frame, x, y, n int) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {

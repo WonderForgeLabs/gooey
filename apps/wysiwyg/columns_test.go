@@ -9,16 +9,27 @@ import (
 )
 
 // EVERY WIDTH ON THESE ROWS IS A COLUMN COUNT, and this file is where
-// that is checked for the four helpers PACKAGE MAIN sizes its own chrome
-// with. The module has a fifth, in components/preview — overlay.go's
-// fit, beside the module's only per-rune write loop — and the sentence
-// here said "this app" while reasoning about this package, so the sweep
-// that fixed four stopped at a boundary its own framing hid. Both are
-// swept now and pinned in that package's own overlay_test.go, which
-// carries the reachability the fixture could not. Raised in review of
-// #524.
+// that is checked for the helpers PACKAGE MAIN sizes its own chrome
+// with — the ones that take a string and a cell budget and answer with
+// at most that many columns. components/preview holds one more of the
+// same shape, overlay.go's fit, beside the module's only per-rune write
+// loop; the sentence here said "this app" while reasoning about this
+// package, so the sweep stopped at a boundary its own framing hid. That
+// one is swept too and pinned in that package's own overlay_test.go,
+// which carries the reachability this fixture could not. Raised in
+// review of #524.
 //
-// Package main has four of them and they did not agree. dock.go's clipTo
+// NO COUNT OF THEM HERE, and this paragraph carried one — "four" —
+// until review of #524 measured it wrong at the commit that wrote it:
+// browser.go's elide is of exactly that shape, is pinned by this file
+// below, and was ADDED by the same commit. shortPath is another. A
+// number in prose is a sample taken once, which is the rule CLAUDE.md's
+// Verify section gives and the one this branch has now retracted at
+// this altitude three times. The inventory is a grep, not a sentence:
+//
+//	grep -n 'func .*\(s\|p\) string, w int) string' apps/wysiwyg/*.go
+//
+// They did not agree, which is what the sweep was. dock.go's clipTo
 // delegates to render.ClipCols and always has since #441; statusaddr.go's
 // ellipsize and padTo, and properties.go's pad, each counted runes. A
 // reader of any one file could not see the disagreement, and no fixture
