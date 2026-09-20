@@ -258,66 +258,17 @@ func TestNoEndpointsKeepsTheServingText(t *testing.T) {
 
 // screenRow reads one row of the cell plane back as a string.
 //
-// THROUGH render.RowText, because a per-rune read renders
-// render.Continuation as U+FFFD — the defect this branch fixed one file
-// over in noticeseparation_test.go, left standing here in a file the
-// same branch edits. A whole-row readback IS RowText, and a second
-// spelling of it is the shape that kept wide glyphs out of this
-// package's fixtures at all.
-//
-// WHICH IS AN ARGUMENT ABOUT THE DIRECTORY, so the other six moved in
-// the same branch: dock_test.go's rowText, floatover_test.go's cellLine
-// and tracks_test.go's readCells to Cell.Text(), designmode_test.go's
-// screen to RowText a row at a time, and — a round later — the two span
-// readbacks in components/panel/panel_test.go, which is a different
-// package under the same tree. A sentence claiming one spelling while
-// others stood is the shape of claim this branch exists to retire, and
-// the first version of this paragraph made it twice: it said "four" and
-// reasoned about package wysiwyg while the command below reasons about
-// the directory, so two multi-cell readbacks one package down sat inside
-// the grep's output and outside the sentence. Derive the set rather than
-// trusting that list:
-//
-//	grep -rnE '\.At\([^)]*\)\.Rune' --include='*_test.go' apps/wysiwyg
-//
-// Every remaining hit is one of three, and the third is the one the
-// first version of this sentence did not have:
-//
-//   - a SINGLE-CELL identity check against a LITERAL, which .Rune
-//     answers correctly;
-//   - docs_test.go's control-character sweep, which skips
-//     render.Continuation by name;
-//   - the read in components/preview/overlay_test.go that asserts
-//     render.Continuation BY NAME — the rune plane is the subject, so
-//     .Rune is the right question.
-//
-// NO COUNT IN THAT LAST BULLET, AND THAT IS THE THIRD ATTEMPT AT IT.
-// It said "two reads in overlay_test.go" against a grep returning one;
-// corrected to "ONE read", it was invalidated by two later commits on
-// this same branch that added a read each, and the grep now returns
-// three. The PARTITION held every time — both new reads are
-// single-cell identity checks against literals, which the first bullet
-// covers — so what kept breaking was only the number, in a paragraph
-// whose entire subject is that a number must come from the command
-// rather than sit beside it. So the bullet names WHAT it covers and
-// counts nothing; run the grep for today's figure.
-//
-// One read in that file is deliberately outside this partition and
-// worth saying so: the row snapshot collects `c.Rune` off an
-// already-captured render.Cell, because Cell.Text() merges an unwritten
-// cell with a space and the assertion there is that a wide pair became
-// two blanks. It is a FIELD READ ON A VALUE, not a `.At(...).Rune`
-// call, so this grep never reaches it. Raised in review of #524, three
-// rounds running.
-//
-// AGAINST A LITERAL is load-bearing in the first of those, and it is
-// what dockcollapse_test.go:747 was not: it captured a cell and compared
-// a later read against the capture, so every value but the stale one
-// reported green — render.Continuation included, in the test whose whole
-// subject is what a clip leaves in a column a wide glyph could not be
-// written into. It asserts what the cell holds now. Raised in review of
-// #524, corrected in the two rounds after.
-func screenRow(f *gooey.Frame, y int) string { return render.RowText(f.Cells, y) }
+// render.RowText rather than a loop over .Rune, for the reason rowText
+// carries: a continuation cell rendered as its marker rune puts a
+// literal U+FFFD in the row, and every caller here is comparing text.
+// render.Continuation is rune(-1) and string(rune(-1)) is the
+// replacement character U+FFFD, which is what render/width.go writes in
+// its own comment — spell it exactly, because a neighbouring code point
+// in this sentence is one a grep over a failure diff would never find.
+// Raised in review of #502.
+func screenRow(f *gooey.Frame, y int) string {
+	return render.RowText(f.Cells, y)
+}
 
 // ---- 2. the copy tells the truth ----
 
@@ -695,14 +646,8 @@ func TestTheDotOccupiesOneCellAndTheAddressFollowsIt(t *testing.T) {
 	if got := f.Cells.At(b.X+1, b.Y).Rune; got != ' ' {
 		t.Errorf("cell %d,%d holds %q, want the separating space", b.X+1, b.Y, got)
 	}
-	// Cell.Text() per cell, not .Rune, for screenRow's reason: the chip's
-	// label is a fixture that can hold a wide glyph, and a per-rune read
-	// would answer U+FFFD for its continuation. Raised in review of #524.
-	var text strings.Builder
-	for x := b.X + 2; x < b.X+b.W; x++ {
-		text.WriteString(f.Cells.At(x, b.Y).Text())
-	}
-	if got := strings.TrimRight(text.String(), " "); got != testGrpc {
+	// The chip's span is its bounds; the address does not fill it.
+	if got := strings.TrimRight(rowText(f, b.Y, b.X+2, b.W-2), " "); got != testGrpc {
 		t.Errorf("the chip reads %q from cell %d, want %q: the address must begin exactly "+
 			"one cell after the dot", got, b.X+2, testGrpc)
 	}

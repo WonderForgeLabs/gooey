@@ -184,12 +184,8 @@ func TestPixelTierTitleIsOnTheCellPlane(t *testing.T) {
 	c, p, _ := page(graphics.Kitty{})
 	c.Frame()
 	b := p.Bounds()
-	var got strings.Builder
-	for x := b.X + 2; x < b.X+2+render.StringWidth(" Files "); x++ {
-		got.WriteString(c.Cells().At(x, b.Y).Text())
-	}
-	if got.String() != " Files " {
-		t.Errorf("the top edge reads %q, want the title on the cell plane", got.String())
+	if got := rowText(c, b.Y, b.X+2, render.StringWidth(" Files ")); got != " Files " {
+		t.Errorf("the top edge reads %q, want the title on the cell plane", got)
 	}
 }
 
@@ -334,11 +330,7 @@ func TestATitleTooWideIsClippedNotDropped(t *testing.T) {
 				t.Fatalf("the title fits in %d columns, so this test is not exercising the clip", b.W)
 			}
 
-			var row strings.Builder
-			for x := b.X; x < b.X+b.W; x++ {
-				row.WriteString(c.Cells().At(x, b.Y).Text())
-			}
-			got := row.String()
+			got := rowText(c, b.Y, b.X, b.W)
 
 			// Not dropped: the label is there, inset one border cell and one pad.
 			if !strings.HasPrefix(got, tc.wantPrefix) {

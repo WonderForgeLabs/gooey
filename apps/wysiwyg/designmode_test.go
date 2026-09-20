@@ -238,24 +238,37 @@ func TestTheTwoModeLabelsAreTheSameWidth(t *testing.T) {
 
 // screen is the retained cell plane as text — what a user would see.
 //
-// A ROW AT A TIME, THROUGH render.RowText. The per-cell walk this
-// replaces special-cased rune 0 as a blank and did NOT special-case
-// render.Continuation, which is rune -1 and encodes as U+FFFD — so a
-// wide glyph anywhere on the plane put a replacement character into
-// every assertion made through this. RowText is the whole-row read, and
-// a second spelling of it is what kept wide glyphs out of this package's
-// fixtures. Raised in review of #524.
+// render.RowText PER ROW, not a cell-by-cell read of .Rune. This built
+// the string from the rune with an `r == 0` guard, and
+// render.Continuation is rune(-1), not 0 — so the guard missed it and
+// WriteRune(-1) wrote U+FFFD into the middle of the row. That is the
+// helper shape CLAUDE.md names as the reason no fixture in six packages
+// could hold a wide glyph and be asserted on, and this was one of the
+// six: both callers are strings.Contains assertions over what it
+// returns. Raised in review of #502, where the sibling helper in
+// dock_test.go claimed to be the only reader of its kind in this
+// package while this one sat beside it.
+//
+// NO NUL HANDLING, and the guard that used to sit here was the same
+// dead shape this helper replaced. It carried a ReplaceAll and a
+// paragraph asserting that "a never-painted cell holds rune 0" —
+// render.NewBuffer calls Clear, which writes Cell{Rune: ' '} into every
+// cell, and Buffer.At answers a space out of bounds, so an unpainted
+// cell already reads as a blank. Measured: a settled 150x44 buildPage
+// holds ZERO cells with rune 0, and a fresh render.NewBuffer(10, 2)
+// reports rune 32. docs_test.go's onScreen is the same whole-row read
+// with no NUL handling at all and its callers work.
+//
+// Buffer.Set does accept rune 0 — it refuses only Continuation — so a
+// COMPONENT could write one, which is a much narrower claim than the one
+// that was here and not a thing anything in this tree does. Raised in
+// review of #502.
 func screen(c *gooey.Composer) string {
 	var b strings.Builder
 	cells := c.Cells()
 	_, rows := c.Size()
 	for y := 0; y < rows; y++ {
-		// A NEVER-WRITTEN CELL IS A BLANK, and RowText does not say so:
-		// Cell.Text() returns string(rune(0)) for one, a NUL rather than
-		// a space. The walk this replaces mapped it, and so does this, at
-		// the row rather than the cell — it is what makes a row of
-		// untouched plane read as whitespace instead of as eighty NULs.
-		b.WriteString(strings.ReplaceAll(render.RowText(cells, y), "\x00", " "))
+		b.WriteString(render.RowText(cells, y))
 		b.WriteByte('\n')
 	}
 	return b.String()

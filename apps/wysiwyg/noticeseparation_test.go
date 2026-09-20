@@ -172,20 +172,9 @@ func TestTheRealFailureReasonSurvivesTheReservedWidth(t *testing.T) {
 	}
 	f, _ := c.Frame()
 	nb := ed.addrs.notice.Bounds()
-	// .Text(), not .Rune. A per-rune readback renders render.Continuation
-	// as a literal rune, which is the reason CLAUDE.md gives for the whole
-	// wide-glyph class having been unassertable: no fixture holding one
-	// could be read back through it. render.RowText is the helper for
-	// this, and it takes a whole ROW — the notice owns columns
-	// [nb.X, nb.X+nb.W) of a 160-column strip, and a byte slice of
-	// RowText's answer is not a column slice — so the span is walked
-	// here and the fix is the cell accessor, which is what RowText itself
-	// uses. Raised in review of #524.
-	var painted strings.Builder
-	for x := nb.X; x < nb.X+nb.W; x++ {
-		painted.WriteString(f.Cells.At(x, nb.Y).Text())
-	}
-	if got := strings.TrimRight(painted.String(), " "); got != msg {
+	// The notice is painted into a reserved span wider than the message,
+	// so the blanks after it are the reservation, not the notice.
+	if got := strings.TrimRight(rowText(f, nb.Y, nb.X, nb.W), " "); got != msg {
 		t.Errorf("the notice painted %q for the message %q — the reserved %d cells do "+
 			"not hold the failure this app actually produces, so the ellipsis lands "+
 			"where the reason starts", got, msg, copyNoticeWidth)
