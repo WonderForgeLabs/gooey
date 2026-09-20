@@ -389,9 +389,19 @@ func drainFor(disp *gooey.Dispatcher, d time.Duration) {
 // request, and one whose scan found a change posts the fire too, so n
 // posts is between n/2 and n cycles and every caller states its claim in
 // the units it measures. The guarantee is a LOWER bound — n posts cannot
-// have happened in fewer than n/2 cycles, and the poll goroutine is
-// serial, so a scan sits between any two of them — and it holds whatever
-// the machine was doing in between.
+// have happened in fewer than n/2 cycles, because a cycle posts at most
+// two — and it holds whatever the machine was doing in between.
+//
+// WHAT n POSTS BOUND IS THE PATHS POSTS AMONG THEM, not n-1 scans. A
+// scan FOLLOWS every paths post and precedes that cycle's fire, so two
+// of the three adjacencies carry a completed scan and one does not:
+// between a fire post and the next paths post there is only the ticker
+// wait (components/filewatcher.go's loop is tick, post paths, await
+// reply, scan, post fire). This said "a scan sits between any two of
+// them", which over-counts exactly that adjacency — paths, fire, paths
+// is three posts and ONE completed scan. Both callers already use the
+// narrower form; this is the page a new caller reads when picking n,
+// so it says it too. Raised in review of #511.
 //
 // atomic because the posts come from the poll goroutine and the reads
 // from the test's.
@@ -662,8 +672,14 @@ func TestDrainUntilPostsReportsOnlyPostsWhoseClosuresRan(t *testing.T) {
 // advanced scan suffices, n=40 for a negative assertion — so a one-post
 // overclaim flips no assertion even on the interleavings that do hit
 // it. An order that needs the instant forced cannot be pinned by a
-// fixture that waits for it. Measured: the suite stays green with the
-// increment moved first.
+// fixture that waits for it.
+//
+// Measured, and the scope matters: with the increment moved first the
+// WATCHER FIXTURES stay green — TestFileWatcher*, TestDrainUntilPosts*,
+// TestDrainBudget*, TestAFileChange* — and this test goes red, which is
+// the whole of its argument. It said "the suite stays green", which was
+// true when it was measured and false by the end of the commit that
+// wrote it: the fixture is in the suite. Raised in review of #511.
 //
 // THE SAMPLE IS TAKEN AT ENQUEUE TIME, from inside the func Post
 // delegates to, which is the one instant between the two statements. The
@@ -1186,12 +1202,16 @@ func TestAFileChangeReachesTheCellsAndCostsAWireUpdate(t *testing.T) {
 	comp.Start(d)
 	defer comp.Close()
 
-	// A BARE drainFor, for the same reason idleWindow is bare where it
-	// is declared: the watcher posts through Composer.Start, so
-	// there is no Post for countingPost to wrap (#518). Unnamed here because
-	// the duration is not quoted in any message — which is the whole of
-	// the difference between the two survivors, and the reason one
-	// carries a named constant and this one does not. Both are negative
+	// STILL drainFor, for the reason the idleWindow site is: the
+	// watcher posts through Composer.Start, so there is no Post for
+	// countingPost to wrap (#518). That is what the two survivors have
+	// in common.
+	//
+	// WHAT SEPARATES THEM IS THE NAME, on a different axis entirely.
+	// idleWindow is a named constant because its duration is quoted in
+	// a failure message and the message must not be able to disagree
+	// with the wait; this one is a literal because nothing here prints
+	// it. Both are negative
 	// assertions where a window buying zero polls is vacuous rather than
 	// red; neither is an argument that the window is enough.
 	drainFor(d, 30*time.Millisecond)
