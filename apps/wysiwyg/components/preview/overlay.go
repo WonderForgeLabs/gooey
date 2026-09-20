@@ -420,7 +420,7 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 			if g.Cursor.Axis == AxisCol && g.Cursor.Index == c {
 				st = o.cursorStyle
 			}
-			o.drawText(f, q.X+1, q.Y, fit(spec, q.W-1), st, q.W-1)
+			o.drawText(f, q.X+1, q.Y, spec, st, q.W-1)
 		}
 	}
 	// Row specs on the grid's first column, one row BELOW each track's
@@ -441,7 +441,7 @@ func (o *Overlay) drawGutters(f *gooey.Frame, g *Guide) {
 		if g.Cursor.Axis == AxisRow && g.Cursor.Index == r {
 			st = o.cursorStyle
 		}
-		o.drawText(f, q.X, q.Y+1, fit(spec, q.W), st, q.W)
+		o.drawText(f, q.X, q.Y+1, spec, st, q.W)
 	}
 }
 
@@ -485,8 +485,15 @@ func fit(s string, w int) string {
 // rune landed on a cell the previous one already covered. CLAUDE.md
 // names this pair. Raised in review of #524.
 //
-// IT TAKES THE BUDGET fit APPROVED, because the two disagree about a
-// zero-width cluster and `max(w, 1)` is the right advance. fit budgets
+// IT FITS THE STRING ITSELF, and then bounds the walk anyway. The call
+// sites passed fit(spec, w) AND w, two arguments that have to agree
+// with nothing making them — the only thing keeping them together was
+// that both sites repeated the width expression. Now `cols` is said
+// once per call.
+//
+// THE SECOND BOUND IS NOT REDUNDANT, because fit and this walk disagree
+// about a zero-width cluster and `max(w, 1)` is the right advance. fit
+// budgets
 // with render.StringWidth, which charges a standalone combining mark, a
 // tab or a NUL zero columns; this walk charges each of them one,
 // because advancing 0 would leave the next cluster landing on a cell
@@ -499,7 +506,7 @@ func fit(s string, w int) string {
 // rewritten to retire. Measured in review of #524.
 func (o *Overlay) drawText(f *gooey.Frame, x, y int, s string, st render.Style, cols int) {
 	end := x + cols
-	render.EachCluster(s, func(cluster string, _, _, w int) bool {
+	render.EachCluster(fit(s, cols), func(cluster string, _, _, w int) bool {
 		adv := max(w, 1)
 		if x+adv > end {
 			return false
@@ -564,6 +571,37 @@ type mark struct {
 	cols int
 }
 
+// ours reports whether column c of this mark still holds what the
+// overlay put there.
+//
+// THE SEAM REPAIR'S OUTPUT IS STILL OURS, which is the arm a whole-cell
+// comparison misses. healSeam's `cont && !lead` arm blanks an orphaned
+// continuation using the style THAT CELL holds, and on a wide mark
+// whose lead a narrow foreign write has taken, that style is the
+// overlay's. The result is a blank carrying the guide's background on a
+// column the document owns, and the node beneath it is clean — so it
+// stays until something unrelated dirties the cell. Measured in review
+// of #524.
+//
+// BOTH ARMS, AND THE GUARD IS ON cols RATHER THAN ON c. healSeam
+// blanks the CONTINUATION when a foreign write takes the lead and the
+// LEAD when one takes the continuation (render/cell.go), so the injury
+// is symmetric. This said "only for c > 0: at c == 0 a blank in our own
+// style is what the overlay would have found and declined to write
+// over" — which reasons about the PRE-WRITE state. A blanked lead is
+// not a cell the overlay declined; it is the lead of its own mark. What
+// actually bounds the tolerance is that a seam repair can only blank a
+// cell that was half of a PAIR, and a narrow mark's own blank is
+// something the overlay wrote and owns outright. Raised in review of
+// #524.
+func (m mark) ours(got render.Cell, c int) bool {
+	if got == m.wrote[c] {
+		return true
+	}
+	return m.cols > 1 && got.Rune == ' ' && got.Cluster == "" &&
+		got.Style == m.wrote[c].Style
+}
+
 // restoreMarks puts back what the last frame's guide covered up.
 //
 // A mark is only lifted if the cell STILL HOLDS THE CELL THE OVERLAY
@@ -591,29 +629,6 @@ type mark struct {
 // own writes in place, which is what the composer's bounds sweep
 // repaints over (see Arrange's doc); the half-lift leaves a cell
 // neither side agrees about.
-// ours reports whether column c of this mark still holds what the
-// overlay put there.
-//
-// THE SEAM REPAIR'S OUTPUT IS STILL OURS, which is the arm a whole-cell
-// comparison misses. healSeam's `cont && !lead` arm blanks an orphaned
-// continuation using the style THAT CELL holds, and on a wide mark
-// whose lead a narrow foreign write has taken, that style is the
-// overlay's. The result is a blank carrying the guide's background on a
-// column the document owns, and the node beneath it is clean — so it
-// stays until something unrelated dirties the cell. Measured in review
-// of #524.
-//
-// Only for c > 0: at c == 0 a blank in our own style is what the
-// overlay would have found and declined to write over, so there is
-// nothing to reclaim.
-func (m mark) ours(got render.Cell, c int) bool {
-	if got == m.wrote[c] {
-		return true
-	}
-	return c > 0 && got.Rune == ' ' && got.Cluster == "" &&
-		got.Style == m.wrote[c].Style
-}
-
 func (o *Overlay) restoreMarks(f *gooey.Frame) {
 	// THE SAME TOLERANCE setCluster CARRIES, and it has to be here
 	// rather than only there: Render calls this as its second

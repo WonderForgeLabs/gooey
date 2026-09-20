@@ -460,6 +460,89 @@ func TestAFrameWithoutCellsIsToleratedEndToEnd(t *testing.T) {
 	o.setCell(nil, 0, 0, 'x', render.Style{})
 }
 
+// TestDrawTextEllipsisesWhatItCannotFit is the pin for the fit that
+// moved INSIDE drawText, and without it the move is invisible.
+//
+// The call sites used to pass fit(spec, w) and w — two arguments that
+// had to agree with nothing making them agree, held together only by
+// both sites repeating the width expression. Moving fit into drawText
+// says the width once, but drawText's own walk already stops at the
+// budget, so deleting the fit changes nothing the suite could see:
+// measured, the whole apps/wysiwyg tree stays green with it gone. What
+// it changes is the ANSWER — a hard truncation where the reader needs
+// to know something was cut. Raised in review of #524.
+func TestDrawTextEllipsisesWhatItCannotFit(t *testing.T) {
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	o := &Overlay{}
+	o.drawText(f, 0, 0, "abcdefgh", render.Style{}, 4)
+
+	got := strings.TrimRight(render.RowText(f.Cells, 0), " ")
+	const want = "abc…"
+	if got != want {
+		t.Errorf("drawText wrote %q into a four-column budget, want %q — a "+
+			"spec that did not fit must SAY so; the walk's own bound "+
+			"truncates without a mark, which reads as a shorter spec",
+			got, want)
+	}
+}
+
+// TestAForeignNarrowWriteOverAWideTailStillGivesTheLeadBack is the same
+// injury one column to the left, and the arm the c > 0 guard missed.
+//
+// healSeam has TWO arms. The test below covers `cont && !lead`: a
+// foreign write to the lead blanks our continuation. This one covers
+// `lead && !cont` (render/cell.go): a foreign write to the
+// CONTINUATION blanks our LEAD, again using the style that cell holds,
+// which is again the overlay's. The reclaim was restricted to c > 0 on
+// the reasoning that a blank in our own style at c == 0 is what the
+// overlay would have found and declined to write over — but that
+// reasons about the PRE-WRITE state, and this cell is not one the
+// overlay declined; it is the lead of its own mark that the buffer
+// blanked. The rule is "a seam repair can only blank a cell that was
+// half of a PAIR", so the guard belongs on m.cols.
+//
+// Reachable the way the sibling is: a neighbour whose clip starts at
+// x+1, since healSeam deliberately reaches one column past the clip.
+// Measured before the fix, same fixture:
+//
+//	after the foreign write: c0={Rune:' ' Bg:{9,9,9}}
+//	after restoreMarks:      c0={Rune:' ' Bg:{9,9,9}}   <- the guide's
+//
+// Raised in review of #524.
+func TestAForeignNarrowWriteOverAWideTailStillGivesTheLeadBack(t *testing.T) {
+	pre := render.Style{Bg: render.RGB(1, 2, 3)}
+	f := &gooey.Frame{Cells: render.NewBuffer(10, 1)}
+	for x := 0; x < 10; x++ {
+		f.Cells.SetCell(x, 0, render.Cell{Rune: ' ', Style: pre})
+	}
+	o := &Overlay{}
+	o.setCluster(f, 0, 0, "世", 2, render.Style{Bg: render.RGB(9, 9, 9)})
+	if len(o.marks) != 1 || o.marks[0].cols != 2 {
+		t.Fatalf("setCluster took %d marks for a wide write into blank cells, "+
+			"want 1 over two columns — this test is about the PAIR", len(o.marks))
+	}
+	snap := o.marks[0].prev
+
+	// The document repaints column 1 — our continuation — with a narrow
+	// glyph. The buffer's seam repair blanks our LEAD in column 0, in
+	// our style.
+	owner := render.Style{Bg: render.RGB(4, 5, 6)}
+	f.Cells.SetCell(1, 0, render.Cell{Rune: 'Z', Style: owner})
+	o.restoreMarks(f)
+
+	if got := f.Cells.At(1, 0).Style; got != owner {
+		t.Errorf("restoring put %+v into column 1, which the document had just "+
+			"taken with its own narrow glyph", got)
+	}
+	if got := f.Cells.At(0, 0); got != snap[0] {
+		t.Errorf("column 0 came back %+v, want the pre-clear %+v. The seam "+
+			"repair converted our lead to a blank IN OUR STYLE, so that "+
+			"column is still the overlay's to give back — and the mark is "+
+			"discarded after this frame, so a skip here is permanent",
+			got, snap[0])
+	}
+}
+
 // TestAForeignNarrowWriteOverAWideLeadStillGivesTheTailBack is the
 // per-column half of ownership, and the claim setCluster's doc used to
 // make for the whole pair.
