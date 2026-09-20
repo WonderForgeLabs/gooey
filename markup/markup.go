@@ -492,9 +492,9 @@ func quotedKeys(m map[string]bool) string {
 // Empty means no specialization: every document resolves to its base name.
 func VariantOf(protocol string) string { return protocol }
 
-// resolve picks the most specific file that exists: "page.kitty.gooey"
-// before "page.gooey". A missing variant is not an error — it is the
-// ordinary case, and falling back is the point.
+// resolveVariant picks the most specific file that exists:
+// "page.kitty.gooey" before "page.gooey". A missing variant is not an
+// error — it is the ordinary case, and falling back is the point.
 //
 // The suffix goes before the extension rather than after so the files sort
 // together and keep their .gooey type: page.gooey, page.kitty.gooey.
