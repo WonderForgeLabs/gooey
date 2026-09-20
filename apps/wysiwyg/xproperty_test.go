@@ -144,12 +144,13 @@ func TestASavedDeclarationCarriesTheBindingThatNamesIt(t *testing.T) {
 			// the moved set and envelopeAttrs keeps it. This document
 			// therefore takes bound == true and never reaches
 			// withDeclBinding; disabling that write leaves this arm
-			// green. The two arms that DO reach it are "bound as the
-			// declaration's own default xmlns" and "a minted prefix the
-			// declaration itself binds elsewhere" — measured by
-			// mutation in review of #522, which is also where the stale
-			// reason was found. What this arm is worth keeping for is
-			// the duplicate binding surviving the round trip at all.
+			// green. WHICH ARMS DO REACH IT IS NOT LISTED HERE: it was,
+			// and the decline-and-mint routes added later in this same
+			// branch made the list short by two without anything going
+			// red. Any arm whose declPrefix answers bound == false
+			// reaches the write, so run the arms and ask. What this arm
+			// is worth keeping for is the duplicate binding surviving
+			// the round trip at all.
 			"bound on both the envelope and the content root",
 			"x",
 			`<Gooey xmlns:x="` + markup.XNamespace + `">` + "\n" +
@@ -429,8 +430,9 @@ func TestTheRootCountRefusalSaysWhatItCounted(t *testing.T) {
 		},
 		{
 			// THE DECLARATION NAMED BY THE DEFAULT xmlns, which binds no
-			// prefix at all. declBinding's fallback is "x", and writing
-			// it here names an element this file does not contain.
+			// prefix at all, so the refusal must spell it <Property> —
+			// which is what the file contains. declElemName passes
+			// declSpelling an empty fallback for exactly this row.
 			name: "no prefix bound",
 			doc: `<Gooey xmlns="` + markup.XNamespace + `">` + "\n" +
 				`  <Property Name="Title" Type="string" Default="hi"/>` + "\n" +

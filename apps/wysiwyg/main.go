@@ -542,18 +542,27 @@ type node struct {
 	// until review of #522 and is wrong about every file the editor
 	// opens. nodeOf tracks the inherited default xmlns in its
 	// `defaults` stack precisely so it can resolve them. Measured on
-	// the shape every in-tree .gooey uses — all 16 of the apps/ ones
-	// declare a default xmlns:
+	// the shape every in-tree .gooey under apps/ uses — the count that
+	// stood here was wrong at the commit that wrote it, and the
+	// property is what matters: `find apps -name '*.gooey' | xargs
+	// grep -L 'xmlns='` comes back empty.
 	//
 	//	<Gooey xmlns="wonderforge.io/gooey/2026">   Gooey  Space="wonderforge.io/gooey/2026"
 	//	  <Canvas Name="Root">                      Canvas Space="wonderforge.io/gooey/2026"
 	//	    <Button Name="B"/>                      Button Space="wonderforge.io/gooey/2026"
 	//
-	// Space is empty only for a document with no default xmlns at all —
-	// palette seed strings and hand-written fixtures. So `n.Space == ""`
-	// does not mean "not namespaced"; it is true of a fixture and false
-	// of every real document, and this paragraph is the one place a
-	// reader learns what the field holds. Nothing is broken by the old
+	// Space is empty only for a document with no default xmlns at all,
+	// and that is NOT only fixtures — this said "palette seed strings
+	// and hand-written fixtures" until review of #522 listed three
+	// shipped, editor-openable documents with no default xmlns
+	// (cmd/typeahead, grpc/cmd/grpcdemo, presentations/the-rectangle;
+	// derive them with `grep -L 'xmlns='` over the tree's .gooey
+	// files). The workspace browser scans whatever directory it is
+	// pointed at, so all three open here with Space == "" on every
+	// node. So `n.Space == ""` does not mean "not namespaced" AND it
+	// does not mean "fixture"; it means the document declares no
+	// default xmlns, and this paragraph is the one place a reader
+	// learns what the field holds. Nothing is broken by the old
 	// sentence today because splitDecls keys on k.Elem == "Property"
 	// (matching markup's own c.Name == "Property") rather than on
 	// Space == "".
@@ -949,22 +958,31 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 // saveOpenFile is not gated on the build, so the editor reported
 // "✓ saved" over it.
 //
-// ONE DOCUMENT REACHES IT, and this paragraph named two until review of
-// #522 measured them. The one that does: a declaration binding the
-// namespace as its own default xmlns, so the envelope carries no
-// binding at all. The one that does NOT, and the correction is the
-// interesting half — a document binding the same prefix on <Gooey> AND
-// on the content root. That was true when this was written and stopped
-// being true at the base merge: carryDeclarations skips
+// WHICH DOCUMENTS REACH IT IS declPrefix'S ANSWER, NOT A LIST HERE.
+// Every shape whose declPrefix reports bound == false arrives at the
+// write: a declaration binding the namespace as its own default xmlns,
+// and each of the decline-and-mint routes — the envelope's prefix
+// spent by a sibling declaration, an adoptable declaration prefix
+// spent by another, a minted prefix the declaration itself binds.
+//
+// This paragraph named a fixed set twice and was short both times:
+// first "two", corrected to "one" at the base merge, then left at
+// "one" while f525472 and 5fa3a62 added the mint routes in this same
+// branch — four of the seven arms of
+// TestASavedDeclarationCarriesTheBindingThatNamesIt reach it today.
+// Nothing went red either time, because the behaviour is pinned by
+// other arms; what rotted was the reason, in the one file whose other
+// arms reason from these comments. So the rule is the bool, and the
+// population is a run of the fixture rather than a sentence.
+//
+// The correction that is still worth keeping is the one about a
+// document binding the same prefix on <Gooey> AND on the content root,
+// which does NOT reach it: carryDeclarations skips
 // v == markup.XNamespace, so the envelope's xmlns:x is never in the
 // moved SET, and envelopeAttrs — which since #501 takes that set rather
 // than re-deriving the answer — keeps it. Measured through
 // openWorkspaceFile: envAttrs holds xmlns:x, bound is true, and
 // withDeclBinding is not called.
-//
-// Nothing went red, because the behaviour is still pinned by two other
-// arms; what rotted was the reason, in the one file whose other arms
-// reason from these comments.
 func envelopeParts(attrs map[string]string, decls []*node) (map[string]string, string) {
 	prefix, bound := declPrefix(attrs, decls)
 	if len(decls) > 0 && !bound {
@@ -1442,12 +1460,18 @@ func alienDecls(decls []*node) []*node {
 // that question asked once, in one place, so the two messages cannot
 // drift again.
 //
-// NOT declBinding'S FALLBACK, which is a SAVE-path answer: its
-// bound=false means "the envelope needs a binding added at write time",
-// not "this element is written unprefixed". Spelling an element from it
-// names one the file does not contain — and a bare <Property> is what
-// bareDeclMsg in this same editor defines as the missing-namespace
-// typo, so it is not a neutral guess. Raised in review of #522.
+// A BARE <Property> IS THE ANSWER WHEN NOTHING BINDS THE NAMESPACE,
+// and it is the file's own spelling rather than a guess: this path
+// passes declSpelling an empty fallback, so an envelope that binds no
+// prefix produces exactly what the document contains. The arm is
+// pinned by TestTheRootCountRefusalSaysWhatItCounted's "no prefix
+// bound" row.
+//
+// This paragraph argued the opposite until review of #522 — against
+// spelling the element from "declBinding's fallback", which stopped
+// existing when 995eae8 retired the unobserved mint and left
+// declBinding returning ("", false). It was the site missed when
+// alienDeclMsg's sibling paragraph got the same correction.
 func declElemName(d *node, envelope map[string]string) string {
 	p, ok := declBinding(envelope)
 	return declSpelling(d, p, ok, "")

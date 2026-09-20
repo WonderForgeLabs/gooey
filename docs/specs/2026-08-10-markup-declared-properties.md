@@ -233,9 +233,20 @@ both, which is why the mint is left alone.
 
 **`node.Space` is not empty for ordinary components.** Its field doc
 said so for two rounds. `nodeOf` tracks the inherited default `xmlns`
-specifically so it can resolve them, every in-tree `apps/*.gooey`
-declares one, and `Space` is empty only for palette seed strings and
-hand-written fixtures. Nothing was broken by it — `splitDecls` keys on
+specifically so it can resolve them, and every in-tree `apps/*.gooey`
+declares one. Nothing was broken by it — `splitDecls` keys on
 `k.Elem == "Property"`, matching markup's own `c.Name == "Property"` —
-but the sentence invites `n.Space == ""` for "not namespaced", which is
-true of a fixture and false of every real document.
+but the sentence invites `n.Space == ""` for "not namespaced".
+
+**And an empty `Space` does not mean "fixture" either.** This section
+said it was true only of palette seed strings and hand-written
+fixtures; review of #522 found three shipped, editor-openable
+documents with no default `xmlns` — `cmd/typeahead/typeahead.gooey`,
+`grpc/cmd/grpcdemo/grpcdemo.gooey`, and
+`presentations/the-rectangle/deck.gooey`. The workspace browser scans
+whatever directory the user points it at, so all three open with
+`Space == ""` on every node. Derive the set rather than reading it
+here: `find . -name '*.gooey' -not -path './vendor/*' | xargs grep -L
+'xmlns='`. The guards decline correctly on that shape (`n.Space ==
+markup.XNamespace` and `n.Elem == "Property"` both say no); what was
+wrong was the inference the sentence invited.
