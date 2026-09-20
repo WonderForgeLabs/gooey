@@ -1340,12 +1340,6 @@ func TestAnOverlayPositionEpitaphDoesNotExemptTheOtherPlanes(t *testing.T) {
 	}
 }
 
-// TestTheContractGuardFiresOnAFixtureTree is the same arm for the
-// ancestor-clause guard, and it is here for the same reason: keyed on
-// "among those WHOSE", that guard could not see CLAUDE.md's "among those
-// CONTAINING" and reported nothing for two review rounds. Widening the
-// pattern against the repo alone proves nothing once the repo has been
-// corrected to the phrasing the pattern already matched.
 // guardPad is 25 lines of nothing, enough to push what follows it past
 // declaresItselfSuperseded's 20-line head window. Its content is inert:
 // no phrase in it is a claim, a qualifier or a prefilter word.
@@ -1363,6 +1357,12 @@ const guardPad = "A fixture document.\n\n" +
 	"Nothing here states a rule.\n\n" +
 	"Nothing here states a rule.\n\n"
 
+// TestTheContractGuardFiresOnAFixtureTree is the same arm for the
+// ancestor-clause guard, and it is here for the same reason: keyed on
+// "among those WHOSE", that guard could not see CLAUDE.md's "among those
+// CONTAINING" and reported nothing for two review rounds. Widening the
+// pattern against the repo alone proves nothing once the repo has been
+// corrected to the phrasing the pattern already matched.
 func TestTheContractGuardFiresOnAFixtureTree(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -3407,6 +3407,16 @@ func TestAReportNamesThePlaneItFound(t *testing.T) {
 	}
 }
 
+// guardedOtherwise is the rules that legitimately have no repo-wide
+// scanForRetiredRule guard, and what reaches them instead. Anything not
+// here must have exactly one.
+var guardedOtherwise = map[string]string{
+	"residueRule": "scanFilesForResidue, which TestNoFileTeachesTheRetiredInputRule " +
+		"calls beside its own guard: the residue is the half-finished correction " +
+		"a retired input claim leaves behind, so it is scanned with that rule " +
+		"rather than on its own",
+}
+
 // TestEveryRulePlaneIsScannedExactlyOnce closes the call-site mutation
 // that `rulePlane` did not, and it is strictly the worse of the two.
 //
@@ -3468,16 +3478,6 @@ func TestAReportNamesThePlaneItFound(t *testing.T) {
 // input walk's retired claim and the half-finished correction it leaves
 // behind. The uniqueness is asserted over what the repo-wide guards
 // scan, not over what the file declares.
-// guardedOtherwise is the rules that legitimately have no repo-wide
-// scanForRetiredRule guard, and what reaches them instead. Anything not
-// here must have exactly one.
-var guardedOtherwise = map[string]string{
-	"residueRule": "scanFilesForResidue, which TestNoFileTeachesTheRetiredInputRule " +
-		"calls beside its own guard: the residue is the half-finished correction " +
-		"a retired input claim leaves behind, so it is scanned with that rule " +
-		"rather than on its own",
-}
-
 func TestEveryRulePlaneIsScannedExactlyOnce(t *testing.T) {
 	// EVERY TEST FILE IN THIS PACKAGE, not this one by name. The
 	// hardcoded filename meant a rule and its guard moving to a sibling
@@ -3692,10 +3692,8 @@ func statesTheRetiredCostClaim(line string) bool {
 // without the word "motion" anywhere on the line.
 var costPrefilterWords = []string{"motion", "pointer"}
 
-// costQualifierRes takes the three words that SCOPE the claim, plus a
-// NARROWED epitaph set. A citation is deliberately not among them: #465
-// is cited by sentences that state this cost wrongly, so accepting it
-// would exempt exactly the lines this plane exists to find.
+// costEpitaphRes is the NARROWED epitaph set the cost plane accepts,
+// and costQualifierRes is what folds it in beside the scope words.
 //
 // IT DOES NOT USE epitaphRes, AND THAT IS MEASURED RATHER THAN
 // FASTIDIOUS. qualifiedIn clears a hit if any qualifier matches a window
@@ -3716,6 +3714,7 @@ var costPrefilterWords = []string{"motion", "pointer"}
 // epitaph. `stopped being`, `was never`, `not any more` and the
 // convention/position families go for the same reason `no longer` does:
 // they are sentences people write about behaviour, not markers.
+//
 // IT IS NARROWER THAN historyEpitaphRes, WHICH IS NOW THE OTHER TWO
 // PLANES' SET, and the difference is one pattern: the `no longer`
 // family. It is a mask here, for the reason measured above, and a live
@@ -3729,8 +3728,13 @@ var costEpitaphRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)superseded|retired`),
 }
 
-// costQualifierRes clears a cost sentence that scopes itself. There is
-// no `(?i)uncaptured` entry and that is deliberate: `captured` is an
+// costQualifierRes clears a cost sentence that scopes itself: the words
+// that SCOPE the claim, plus costEpitaphRes. A citation is deliberately
+// not among them — #465 is cited by sentences that state this cost
+// wrongly, so accepting it would exempt exactly the lines this plane
+// exists to find.
+//
+// There is no `(?i)uncaptured` entry either, and that is deliberate: `captured` is an
 // unanchored substring match, so it matches UNCAPTURED too and the
 // separate entry changed no outcome, including on the row written for
 // it. A dead entry in a negative assertion is indistinguishable from a

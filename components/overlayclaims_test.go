@@ -223,6 +223,14 @@ var hostByName = map[string]func() any{
 	"AdornmentLayer": func() any { return &AdornmentLayer{} },
 }
 
+// hostLiftedClaimMu guards hostLiftedClaimCache. A lock rather than a
+// package-level table built at init, because the hosts come from
+// hostsWhoseSurfaceCarriesTheMarker, which needs a *T.
+var (
+	hostLiftedClaimMu    sync.Mutex
+	hostLiftedClaimCache = map[string]*regexp.Regexp{}
+)
+
 // hostLiftedClaim matches "<Host> … lifted" or "<Host> … gooey.Overlay"
 // within a short run, in either order — "the MenuBar is lifted" and "a
 // gooey.Overlay, which the MenuBar is" both.
@@ -268,14 +276,6 @@ var hostByName = map[string]func() any{
 // #458, and the count and timings removed in review of #458 round 17 —
 // in the file that records that a lesson learned in one place does not
 // protect its sibling, landing on itself.
-//
-// The lock rather than a package-level table built at init, because the
-// hosts come from hostsWhoseSurfaceCarriesTheMarker, which needs a *T.
-var (
-	hostLiftedClaimMu    sync.Mutex
-	hostLiftedClaimCache = map[string]*regexp.Regexp{}
-)
-
 func hostLiftedClaim(host string) *regexp.Regexp {
 	hostLiftedClaimMu.Lock()
 	defer hostLiftedClaimMu.Unlock()
