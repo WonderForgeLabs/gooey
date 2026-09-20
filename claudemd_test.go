@@ -395,30 +395,6 @@ func TestModuleNamespacesCoversEveryLiveNamespace(t *testing.T) {
 // against the main its neighbour is about to create.
 var citationRe = regexp.MustCompile("`(" + rePath + "):(\\d+)(?:-(\\d+))?`")
 
-// citeForms are the spellings CLAUDE.md actually uses to attach an
-// identifier to a citation. Only these get the second check; a citation
-// in any other shape gets the mechanical half alone.
-//
-// NO COUNT, deliberately. This said "the three spellings" and the
-// paragraph below said "the two forms or nothing" — a count in prose
-// gone stale inside the guard written to stop counts in prose going
-// stale, and the two disagreed with each other as well as with the
-// slice. The honesty arm iterates this slice, so a fourth form is
-// covered by construction rather than by somebody remembering to add a
-// case. Raised in review of #475.
-//
-// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
-// guard took the nearest backticked identifier on either side, which
-// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
-// following sentence and `components/timer.go:55` against the word
-// `done` — a test that cries wolf gets suppressed, so the rule is one of
-// the forms below or nothing.
-//
-// Each carries its own field extractor rather than a shared one, because
-// the identifier and the path swap group positions between them and
-// deciding which is which by sniffing for ".go" is the kind of guess this
-// guard exists to remove.
-//
 // A NAMED TYPE, because citeRange restated this field list as an
 // anonymous struct and that is a second copy of a fact in the test whose
 // thesis is that second copies drift. Adding a field here would have
@@ -445,6 +421,29 @@ type citeForm struct {
 	sample func(ident, path string, line int) string
 }
 
+// citeForms are the spellings CLAUDE.md actually uses to attach an
+// identifier to a citation. Only these get the second check; a citation
+// in any other shape gets the mechanical half alone.
+//
+// NO COUNT, deliberately. This said "the three spellings" and the
+// paragraph below said "the two forms or nothing" — a count in prose
+// gone stale inside the guard written to stop counts in prose going
+// stale, and the two disagreed with each other as well as with the
+// slice. The honesty arm iterates this slice, so a fourth form is
+// covered by construction rather than by somebody remembering to add a
+// case. Raised in review of #475.
+//
+// MATCHED SYNTACTICALLY, not by proximity. An earlier version of this
+// guard took the nearest backticked identifier on either side, which
+// flagged `input/mouse.go:87` against `FocusManager.Dispatch` from the
+// following sentence and `components/timer.go:55` against the word
+// `done` — a test that cries wolf gets suppressed, so the rule is one of
+// the forms below or nothing.
+//
+// Each carries its own field extractor rather than a shared one, because
+// the identifier and the path swap group positions between them and
+// deciding which is which by sniffing for ".go" is the kind of guess this
+// guard exists to remove.
 var citeForms = []citeForm{
 	// `Ident` … (`path:NNN`) — prose may sit between, but no backticks,
 	// which is what keeps the identifier the one being cited.
@@ -524,10 +523,18 @@ func pathFirst(m []string) (ident, path string, lo, hi int) {
 	return m[4], m[1], lo, hi
 }
 
-// citeWindow is how far from the cited line the identifier may sit. Small
-// on purpose: the point of a line number is that it is precise, and a
-// window wide enough to always find the symbol is a window that has
-// stopped checking anything.
+// citeWindow is how far from the cited line the guard will LOOK for the
+// identifier, which is not the same as how far it may sit.
+//
+// It was the tolerance until review of #456: a symbol found anywhere in
+// the window satisfied the citation, so six composer.go citations that
+// were each short by exactly two stayed green from the edit that moved
+// them. A citation is either right or correctable, and this is what
+// decides which — inside the window the report names the line to write,
+// outside it the reader has to go looking. Small on purpose for the
+// second half: a window wide enough to always find the symbol finds the
+// WRONG one, which is what the word-boundary check one layer down is
+// also about.
 const citeWindow = 3
 
 // citationProblems is the check itself, over a document and a way to
@@ -740,6 +747,48 @@ func citationProblems(md string, read func(string) ([]string, error)) (problems,
 						"line %d holds %q. Any edit above a cited line moves it, so "+
 						"the citation rots without anyone touching what it describes.",
 					path, lo, ident, leaf, citeWindow, lo, strings.TrimSpace(s[lo-1])))
+				continue
+			}
+			// DRIFT INSIDE THE WINDOW, which is the state the window
+			// itself creates and could not report. citeWindow exists so
+			// a citation survives a line added next to what it names,
+			// and the cost of that tolerance is a citation that is
+			// WRONG BY ONE OR TWO and stays green forever — measured
+			// here in review of #456, where six composer.go citations
+			// were each short by exactly two and the guard had been
+			// passing over them since the edit that moved them.
+			//
+			// A drift the window can still see is a drift the guard can
+			// CORRECT, which is what separates this from the case
+			// above: the symbol was found, so the message can name the
+			// line to write. Outside the window there is nothing to
+			// suggest and the reader has to go looking.
+			//
+			// The exact place is the cited line for a single-line
+			// citation and the whole span for a range, because a range
+			// names a region deliberately and the symbol may sit
+			// anywhere in it.
+			exLo, exHi := lo, lo
+			if hi > lo {
+				exHi = hi
+			}
+			if !identRe(leaf).MatchString(codeOnly(code(path)[max(0, exLo-1):min(len(s), exHi)])) {
+				at := lo
+				for d := 1; d <= citeWindow; d++ {
+					if lo-d >= 1 && identRe(leaf).MatchString(codeOnly(code(path)[lo-1-d:lo-d])) {
+						at = lo - d
+						break
+					}
+					if lo+d <= len(s) && identRe(leaf).MatchString(codeOnly(code(path)[lo-1+d:lo+d])) {
+						at = lo + d
+						break
+					}
+				}
+				problems = append(problems, fmt.Sprintf(
+					"cites %s:%d for %s, and %q is at line %d — near enough that "+
+						"citeWindow accepts it, which is how a citation stays green "+
+						"while being wrong. Write %d.",
+					path, lo, ident, leaf, at, at))
 			}
 		}
 		if hits > 0 {
@@ -1067,7 +1116,32 @@ func TestCLAUDEMDCitationsResolve(t *testing.T) {
 // two, and it is a VALUE rather than a floor for the reason the
 // assertion above gives: a >= would let a demotion hide behind an
 // addition in the same commit.
-const wantIdentChecked = 21
+//
+// +2 with #439's overlay ranks: the z-order section gained lined
+// citations for appendByRank and for the rank-ordered hit walk, and a
+// lined citation in this file is a CHECKED one — the guard verifies the
+// line still holds the symbol. Raising the number is the half that says
+// so; the six numbers it sits beside all moved in the same change and
+// were corrected rather than stripped, for the same reason.
+//
+// THE BASE MOVED UNDER IT, which is why this says +2 rather than naming
+// the pair. #490 landed on main while this branch was open and retired
+// a lined citation in favour of a by-name one — the same trade this
+// guard exists to notice, made deliberately — so the number this
+// branch adds two to is main's, not the one it forked from. Stating
+// the delta rather than the arithmetic is what survives the next such
+// merge.
+//
+// IT WENT DOWN ONCE AND SHOULD NOT HAVE. An earlier round resolved a
+// stale `overlayOf` (`component.go:281`) citation by deleting the
+// number and lowering this constant to match — which drops the one
+// function this whole PR turns on out of the checked set, and is the
+// inverse of this branch's own recorded rule that an unlined citation
+// is not checked at all. overlayOf is at component.go:302 and the
+// sentence is about the two ifs at :303-308, so the citation is
+// repointable; it was repointed and the constant went back up. Raised
+// in review of #458.
+const wantIdentChecked = 24
 
 // TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor points the guard at documents
 // whose defects are known, and is the arm that keeps the guard honest.
@@ -1312,12 +1386,35 @@ func TestTheCLAUDEMDCitationGuardCatchesWhatItIsFor(t *testing.T) {
 				"is a broken one")
 	})
 
+	// THE WINDOW'S EDGE IS REPORTED NOW, NOT ACCEPTED, and this arm used
+	// to assert the opposite. citeWindow's reach is what lets the guard
+	// find the symbol at all, and finding it is what lets the report
+	// name the line to write — so its job changed from "how wrong a
+	// citation may be" to "how far the correction may be looked for".
+	// Six composer.go citations were each short by exactly two and had
+	// been green since the edit that moved them, which is what a
+	// tolerance buys you. Raised in review of #456.
+	//
+	// STILL PER FORM, for the reason the arms above give: hardcoding
+	// citeForms[0] leaves a fourth form's reach unpinned the day it is
+	// added, and reports it as a pass.
 	for _, form := range citeForms {
 		t.Run("the window's edge, "+form.name, func(t *testing.T) {
 			md := form.sample("Alpha", "fake.go", edgeLine)
-			accepts(t, md, read, fmt.Sprintf("`Alpha` is exactly citeWindow (%d) "+
-				"lines from the cited line — the window does not reach as far as "+
-				"it says", citeWindow))
+			problems, forms, _ := citationProblems(md, read)
+			if len(forms) == 0 {
+				t.Fatalf("the guard matched no citation form in %q, so it looked at "+
+					"nothing — which is indistinguishable from the accept this arm "+
+					"used to assert", md)
+			}
+			want := fmt.Sprintf("Write %d.", identLine)
+			if !strings.Contains(strings.Join(problems, "\n"), want) {
+				t.Errorf("the guard did not report %q as drifted, or reported it "+
+					"without the correction %q: %v\n`Alpha` is exactly citeWindow "+
+					"(%d) lines from the cited line — near enough for the window to "+
+					"find it, which is the whole reason the report can say where to "+
+					"point instead.", md, want, problems, citeWindow)
+			}
 		})
 	}
 
@@ -1976,6 +2073,19 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 	}
 }
 
+// ONCE PER BINARY, not once per caller. Two tests ask for each of these
+// indexes and each walk parses the whole tree (vendor/ included), which
+// put a substantial slice of pure duplicate work in the root suite. The
+// memo changes nothing either test asserts: the walk is over files on
+// disk, which no test here writes. Raised in review of #490.
+//
+// The memo stays even though buildDeclaredByPackage now delegates to a
+// memoized index of its own: this one is the SEAM, and a caller should
+// not have to know that the two indexes share a walk. Collapsing it
+// would make the sharing load-bearing for correctness rather than for
+// cost.
+var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
+
 // declaredByPackage maps a package NAME to every identifier declared at
 // the top level of one of its files, tests included: a doc may cite a
 // guard's table, and rowPartition lives in a _test.go file.
@@ -1997,19 +2107,6 @@ func TestEveryCitedSymbolResolves(t *testing.T) {
 // package name union their symbols, which is the only imprecision here
 // and a safe one: it can accept a citation that resolves in the wrong
 // copy, never reject one that resolves in the right one.
-// ONCE PER BINARY, not once per caller. Two tests ask for each of these
-// indexes and each walk parses the whole tree (vendor/ included), which
-// put a substantial slice of pure duplicate work in the root suite. The
-// memo changes nothing either test asserts: the walk is over files on
-// disk, which no test here writes. Raised in review of #490.
-//
-// The memo stays even though buildDeclaredByPackage now delegates to a
-// memoized index of its own: this one is the SEAM, and a caller should
-// not have to know that the two indexes share a walk. Collapsing it
-// would make the sharing load-bearing for correctness rather than for
-// cost.
-var declaredIndex = sync.OnceValues(buildDeclaredByPackage)
-
 func declaredByPackage(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	out, err := declaredIndex()
@@ -2277,9 +2374,45 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 	}
 }
 
-// vendoredByPackage indexes the EXPORTED declarations of vendored
-// packages whose short name collides with one of ours, which is the only
-// way a citation of `pkg.Name` can be read two ways.
+// Memoized for the reason declaredIndex gives. The parameter is not part
+// of the key because there is only one possible argument — declaredIndex
+// is itself memoized, so every caller passes the same map.
+var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
+	declared, err := declaredIndex()
+	if err != nil {
+		return nil, err
+	}
+	return buildVendoredByPackage(declared)
+})
+
+// The bool is whether there IS an index, and it is what the callers
+// branch on — this function no longer decides for them.
+//
+// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
+// condition justifies. t.Skip from a helper stops the caller, so a
+// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
+// whole — every one of the hundred-plus citations its own floor insists
+// on, silenced by a two-citation problem in this file's doc comment. The
+// skip replaced a silent empty map, which was worse in the other
+// direction (the empty map turned those two citations into errors about
+// the wrong thing); the answer to both is to report the condition and
+// let each caller narrow. Raised in review of #490, twice.
+func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
+	t.Helper()
+	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
+		return nil, false
+	}
+	out, err := vendoredIndex()
+	if err != nil {
+		t.Fatalf("walking vendor for declarations: %v", err)
+	}
+	return out, true
+}
+
+// buildVendoredByPackage indexes the EXPORTED declarations of vendored
+// packages whose short name collides with one of ours — the map
+// vendoredByPackage hands its callers — which is the only way a citation
+// of `pkg.Name` can be read two ways.
 //
 // THE COLLISION IS REAL AND ALREADY HERE. Three of this repo's package
 // names are also the last segment of a vendored import path — grpc
@@ -2339,41 +2472,6 @@ func TestAVendoredCollisionIsNotOurStaleCitation(t *testing.T) {
 // price is a page citing a vendored METHOD as `pkg.Name`, which would
 // still error and would have to be spelled with more of its import path
 // — and no page does today. Raised in review of #490.
-// Memoized for the reason declaredIndex gives. The parameter is not part
-// of the key because there is only one possible argument — declaredIndex
-// is itself memoized, so every caller passes the same map.
-var vendoredIndex = sync.OnceValues(func() (map[string]map[string]bool, error) {
-	declared, err := declaredIndex()
-	if err != nil {
-		return nil, err
-	}
-	return buildVendoredByPackage(declared)
-})
-
-// The bool is whether there IS an index, and it is what the callers
-// branch on — this function no longer decides for them.
-//
-// A SKIP HERE ENDED THE CALLING TEST, which is wider than anything the
-// condition justifies. t.Skip from a helper stops the caller, so a
-// standalone checkout with no vendor/ lost TestEveryCitedSymbolResolves
-// whole — every one of the hundred-plus citations its own floor insists
-// on, silenced by a two-citation problem in this file's doc comment. The
-// skip replaced a silent empty map, which was worse in the other
-// direction (the empty map turned those two citations into errors about
-// the wrong thing); the answer to both is to report the condition and
-// let each caller narrow. Raised in review of #490, twice.
-func vendoredByPackage(t *testing.T) (map[string]map[string]bool, bool) {
-	t.Helper()
-	if _, err := os.Stat("vendor"); errors.Is(err, fs.ErrNotExist) {
-		return nil, false
-	}
-	out, err := vendoredIndex()
-	if err != nil {
-		t.Fatalf("walking vendor for declarations: %v", err)
-	}
-	return out, true
-}
-
 func buildVendoredByPackage(collidesWith map[string]map[string]bool) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	err := filepath.WalkDir("vendor", func(p string, d fs.DirEntry, err error) error {

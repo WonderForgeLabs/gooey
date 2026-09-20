@@ -251,23 +251,6 @@ func TestTheCompanionSectionStatesTheInheritanceCondition(t *testing.T) {
 	}
 }
 
-// answersWhatCrosses is the trigger both boundary guards share: a
-// paragraph that makes a claim about what inherits across, or crosses, a
-// control boundary.
-//
-// TWO VOCABULARIES, ONE TRIGGER, because the question gets asked both
-// ways and a guard that hears one can be switched off by word choice.
-// The forbid guard heard only "inherit" until review of #490 measured
-// the hole: docs/architecture.md:1264 asks "which half of it CROSSES a
-// control boundary", contains no form of "inherit", and was written by
-// the same branch to replace a stale enumeration.
-//
-// \b, NOT strings.Contains, and that is not style. "across" contains
-// "cross": with a substring test, docs/markup-reference.md:889 —
-// "including across the control boundary", backticking `Components`,
-// `Handlers` and `Rules` as an ANALOGY — is reported as an enumeration
-// leaving out seven fields. Measured, one false positive across the
-// whole corpus, which is one more than a guard like this survives.
 // TestTheBoundaryGuardsPickTheirTable is the pin for partitionFor, and
 // it is a pin on the direction of the error rather than on the mapping.
 //
@@ -527,6 +510,23 @@ func inheritingFields(part partition) []string {
 	return out
 }
 
+// answersWhatCrosses is the trigger both boundary guards share: a
+// paragraph that makes a claim about what inherits across, or crosses, a
+// control boundary.
+//
+// TWO VOCABULARIES, ONE TRIGGER, because the question gets asked both
+// ways and a guard that hears one can be switched off by word choice.
+// The forbid guard heard only "inherit" until review of #490 measured
+// the hole: docs/architecture.md:1264 asks "which half of it CROSSES a
+// control boundary", contains no form of "inherit", and was written by
+// the same branch to replace a stale enumeration.
+//
+// \b, NOT strings.Contains, and that is not style. "across" contains
+// "cross": with a substring test, docs/markup-reference.md:889 —
+// "including across the control boundary", backticking `Components`,
+// `Handlers` and `Rules` as an ANALOGY — is reported as an enumeration
+// leaving out seven fields. Measured, one false positive across the
+// whole corpus, which is one more than a guard like this survives.
 var answersWhatCrosses = regexp.MustCompile(`(?i)\b(?:inherit|cross)`)
 
 // backtickedWord is hoisted for the reason partitionWords is, and this

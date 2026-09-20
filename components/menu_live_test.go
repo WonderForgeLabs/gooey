@@ -12,7 +12,8 @@ import (
 // the real event pipeline — input.Event through Composer.Handle, hit
 // testing, focus-follows-click, capture — on a page shaped like
 // cmd/toolkit, where a full-page ToastHost is declared AFTER the
-// MenuBar (document order is z-order, so the toast layer is topmost).
+// MenuBar (the toast layer outranks the popup layer, so it is topmost
+// wherever it is declared — see gooey.OverlayRanker and #439).
 //
 // Wave 2's tests synthesized events directly on the bar's handlers and
 // missed this: hit-testing used to treat any Bounded container as
@@ -37,8 +38,8 @@ func TestMenuClicksThroughLiveDispatchUnderToastLayer(t *testing.T) {
 	page := &Canvas{Children: []gooey.Component{
 		gooey.L(&Text{Content: Str(strings.Repeat("#", 30))}, gooey.Layout{Top: 1}),
 		gooey.L(btn, gooey.Layout{Top: 6, Left: 25}),
-		bar,          // late in document order: the dropdown paints above the content
-		&ToastHost{}, // LAST child, full page — the demo's notification layer
+		bar,          // anywhere: the dropdown's surface is an Overlay and is lifted
+		&ToastHost{}, // full page — the demo's notification layer
 	}}
 	c := gooey.NewComposer(page, 40, 10)
 	c.Frame()

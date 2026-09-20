@@ -355,12 +355,28 @@ func (m *FocusManager) Resync() {
 	for _, hw := range m.watchers {
 		wasOver[hw.w] = hw.over
 	}
+	// clearToCap, not [:0], for the reason composer.go gives at the
+	// function: these three are refilled by m.walk on every structural
+	// re-sync, which is the same event that drives orderPaint, and a
+	// tree that shrank leaves the departed components reachable past len
+	// until the slot is written again. A list that shrinks from ten
+	// thousand rows to ten never writes them again. Raised in review of
+	// #456, where the fix stopped at composer.go.
+	// m.order IS PUBLISHED, so it takes the after-the-refill form while
+	// its two neighbours do not. Order() returns this slice and its doc
+	// invites an app to hold one across a re-sync to restore focus;
+	// clearToCap zeroes [0, len) as well, so a stashed slice read nil
+	// where it had read a stale-but-live component, and an app that
+	// type-asserts or calls LayoutOf on an entry gets a nil deref rather
+	// than a harmless wrong restore. m.watchers and m.mnemonics go
+	// nowhere outside this type. Corrected in review of #456.
 	m.order = m.order[:0]
 	m.parent = map[Component]Component{}
 	m.bindings = map[Component][]*KeyBinding{}
-	m.watchers = m.watchers[:0]
-	m.mnemonics = m.mnemonics[:0]
+	m.watchers = clearToCap(m.watchers)
+	m.mnemonics = clearToCap(m.mnemonics)
 	m.walk(m.root, nil, AllowAll)
+	clear(m.order[len(m.order):cap(m.order)])
 	for _, hw := range m.watchers {
 		hw.over = wasOver[hw.w]
 	}
@@ -545,7 +561,7 @@ func (m *FocusManager) walk(w, parent Component, allow Allow) {
 			// mnemonic one, and the note matters because it is what stops
 			// the next reader deleting this line against a green suite.
 			// updateWatchers only ever sees the hit DispatchMouse already
-			// retargeted to the frozen host (mouse.go:176), so
+			// retargeted to the frozen host (frozenHostFor, below), so
 			// within(hw.host, hit) is false for every host inside the
 			// subtree whether or not this registration happened.
 			// Measured: deleting this category test leaves the whole
@@ -644,6 +660,20 @@ func (m *FocusManager) Focused() Component {
 
 // Order is the focus traversal order — tree order, filtered to focus
 // stops. Exposed for tests and for apps that want to restore focus.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT Resync, and holding one across a
+// structural change is the use this doc invites, so the limit belongs
+// here. Resync refills this array in place and then clears what the
+// rebuild did not reach, because a tree that shrinks from ten thousand
+// focus stops to ten would otherwise keep the departed components alive
+// for the manager's lifetime. A stashed slice keeps its OLD length, so
+// everything past the new one reads nil — copy what you need, or take a
+// fresh Order() after the change. The live slots are never nil — the
+// clear is placed after the walk that refills them, so not even a walk
+// that re-entered mid-Resync could read a hole.
+// TestTheFocusOrderReleasesItsTailAndKeepsItsLiveSlots pins the release;
+// the placement is argued in Resync and is not observable from outside
+// it, which that test's own comment records. Raised in review of #456.
 func (m *FocusManager) Order() []Component { return m.order }
 
 // PreviouslyFocused is the component that held focus before the last

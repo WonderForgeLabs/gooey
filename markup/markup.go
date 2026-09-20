@@ -19,6 +19,7 @@ package markup
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -79,6 +80,10 @@ type Context struct {
 	// textBindableTypes, not string alone; attributes that REQUIRE a
 	// binding are narrower and say so at their own call sites.
 	Values map[string]any
+	// catalogNoIncludes memoizes catalog(false) for the duration of one
+	// document.build, which clears and restores it. Not a cache across
+	// builds: Context.Elements is the host's to change between them.
+	catalogNoIncludes *[]ElementSpec
 	// Styles resolves Style="name" attributes.
 	Styles map[string]render.Style
 	// Components adds custom element builders (e.g. LogPane).
@@ -492,9 +497,9 @@ func quotedKeys(m map[string]bool) string {
 // Empty means no specialization: every document resolves to its base name.
 func VariantOf(protocol string) string { return protocol }
 
-// resolve picks the most specific file that exists: "page.kitty.gooey"
-// before "page.gooey". A missing variant is not an error — it is the
-// ordinary case, and falling back is the point.
+// resolveVariant picks the most specific file that exists:
+// "page.kitty.gooey" before "page.gooey". A missing variant is not an
+// error — it is the ordinary case, and falling back is the point.
 //
 // The suffix goes before the extension rather than after so the files sort
 // together and keep their .gooey type: page.gooey, page.kitty.gooey.
@@ -813,6 +818,29 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 	ctx.ns = d.ns
 	defer func() { ctx.ns = prev }()
 
+	// The catalog memo has the SAME lifetime and the same reason. It is
+	// an assembly of ctx.Elements, ctx.Components and the builtins, so
+	// it is stable for one build and not across two — and a nested Load
+	// may carry a different Context.Elements entirely. Re-armed on the
+	// way in and restored on the way out, so the outer build's answer
+	// survives the inner one.
+	//
+	// A POINTER, AND THE INDIRECTION IS THE ARMING. Non-nil means "a
+	// build is running, fill me"; nil means there is no build and
+	// catalog assembles fresh every time. A plain slice could not say
+	// that — filling it lazily from a call made OUTSIDE any build left
+	// a memo nothing would ever clear, so an element registered
+	// afterwards was missing from the next answer. Found by
+	// TestTheCatalogMemoDoesNotOutliveItsBuild, which was written for
+	// the restore and caught this instead. Empty-but-armed is the
+	// unfilled state, so the first asker inside a build still pays one
+	// assembly and a build that never asks pays none. See
+	// Context.catalog for what it costs without this. Raised in review
+	// of #486.
+	prevCat := ctx.catalogNoIncludes
+	ctx.catalogNoIncludes = new([]ElementSpec)
+	defer func() { ctx.catalogNoIncludes = prevCat }()
+
 	// THE WHOLE ARM SCOPE, saved and restored as ONE VALUE. It is
 	// page-wide and per top-level build: a nil sinks map means this is
 	// the outermost document, so it gets a fresh scope, while a nested
@@ -916,6 +944,17 @@ func (d *document) build(ctx *Context) (gooey.Component, error) {
 
 // Build parses markup and constructs the component tree.
 func Build(src []byte, ctx *Context) (gooey.Component, error) {
+	// THE SAME PRE-PARSE CHECK Load runs, because this is the other
+	// public way in and the ambiguity it refuses belongs to the
+	// CONTEXT rather than to the document. It was wired into Load
+	// alone, so a host that registered a mismatched key and built from
+	// bytes still got the map-order-dependent grant — measured, Build
+	// answered nil where Load named the key.
+	// TestBothEntryPointsRefuseAMismatchedElementName is what keeps the
+	// two in step. Raised in review of #486.
+	if err := ctx.checkElementNames(); err != nil {
+		return nil, err
+	}
 	doc, err := parseDocument(src)
 	if err != nil {
 		return nil, err
@@ -1049,6 +1088,13 @@ func parse(src []byte) (Element, map[string]string, error) {
 			stack = append(stack, &e)
 		case xml.EndElement:
 			e := stack[len(stack)-1]
+			// stack is a LOCAL parse stack whose last reference dies
+			// with this function, so the high-water mark is freed with
+			// the slice itself at return. Not spelled as the
+			// `retains nothing:` escape — the guard skips a local
+			// before it reads one, so the marker was inert here and
+			// pre-armed for the day the slice becomes a field. Raised
+			// in review of #456.
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
 				root = e
@@ -1079,6 +1125,20 @@ func parse(src []byte) (Element, map[string]string, error) {
 	return *root, ns, nil
 }
 
+// namespacedAttrError refuses a prefixed attribute, and the two
+// spellings it names the attribute with are a CONTRACT rather than
+// formatting: xml:local for the XML namespace, {uri}local for anything
+// else.
+//
+// apps/wysiwyg keeps a second copy of exactly this rule
+// (namespacedAttrName, main.go), because markup does not export it and
+// the editor is a nested module that cannot reach in. The copy is
+// downstream: markup can change its spelling and every check stays
+// green, since CI vets the app modules without running their suites. So the
+// tripwire has to be in this module, and it is
+// TestNamespacedAttributesAreLoadErrors — whose arms spell out both
+// forms. Changing either one means changing the copy in the same
+// commit. Raised in review of #501.
 func namespacedAttrError(element string, attr xml.Attr) error {
 	name := attr.Name.Local
 	if attr.Name.Space == "http://www.w3.org/XML/1998/namespace" {
@@ -1175,12 +1235,26 @@ func build(e Element, ctx *Context) (gooey.Component, error) {
 	}
 	defer pop()
 
-	if err := checkAttrs(e, ctx); err != nil {
-		return nil, err
+	// A MISPLACED ELEMENT'S ATTRIBUTE FAULT IS HELD, NOT DROPPED. See
+	// deferredFault: checkAttrs runs before Build, so the placement
+	// diagnosis has not been produced yet and cannot be compared against.
+	// Holding lets Build speak first and still reports the attribute when
+	// Build says nothing at all.
+	var held error
+	if err := checkAttrs(e, ctx, false); err != nil {
+		var d deferredFault
+		if errors.As(err, &d) {
+			held = d.err
+		} else {
+			return nil, err
+		}
 	}
 	w, err := buildComponent(e, ctx)
 	if err != nil {
 		return nil, err
+	}
+	if held != nil {
+		return nil, held
 	}
 	if err := applyLayout(e, w, ctx); err != nil {
 		return nil, err
@@ -1220,9 +1294,109 @@ func applyTooltipShorthand(e Element, w gooey.Component, ctx *Context) error {
 // resolves to a live handle at build time, lvalue semantics like every
 // other binding.
 func applyLayout(e Element, w gooey.Component, ctx *Context) error {
+	// NOTHING WAS BUILT IS ITS OWN SENTENCE, ON EVERY DOCUMENT. A Build
+	// returning (nil, nil) hands this function a nil gooey.Component,
+	// and the type assertion below answers the same ok=false a real
+	// Layout-less value does — so the refusal said "embed gooey.Base
+	// in what <Nada> builds" about an element that builds nothing, a
+	// remedy naming an edit that cannot be made.
+	//
+	// IT WAS SCOPED TO DOCUMENTS THAT WROTE A LAYOUT ATTRIBUTE, on the
+	// reasoning that a nil Build without one is somebody else's
+	// diagnosis. Nobody else diagnoses it. Measured in review of #486:
+	//
+	//	<Gooey><VStack><Nada/></VStack></Gooey>
+	//	  Build   -> err=<nil>, root=*components.VStack
+	//	  Measure -> PANIC: invalid memory address or nil pointer
+	//	             dereference
+	//	<Gooey><Nada/></Gooey>
+	//	  Build   -> err=<nil>, root=nil   handed to App.Run as the root
+	//
+	// So the scope was silence dressed as delegation, which is the
+	// failure mode this whole branch is about. A Build that returns
+	// neither a component nor an error is a HOST bug on every document
+	// — the same class noBuild turns into a sentence two functions up,
+	// reached by the other door — and the layout attributes, when there
+	// are any, only sharpen the sentence. Raised in review of #486.
+	if w == nil {
+		named := layoutNamesIn(e.Attrs)
+		if len(named) == 0 {
+			return fmt.Errorf("markup: <%s>: this element's Build returned no "+
+				"component and no error, so there is nothing to place. Fix "+
+				"<%s>'s Build to return a component or an error", e.Name, e.Name)
+		}
+		return fmt.Errorf("markup: <%s %s=%q>: this element's Build returned no "+
+			"component at all, so %s can be applied to nothing. Fix <%s>'s "+
+			"Build to return a component or an error",
+			e.Name, named[0], e.Attrs[named[0]], strings.Join(named, ", "), e.Name)
+	}
 	hl, ok := w.(gooey.HasLayout)
 	if !ok {
-		return nil
+		// A COMPONENT WITH NO LAYOUT REFUSES THE ATTRIBUTES RATHER THAN
+		// DROPPING THEM. This returned nil, so <Thing Margin="2"
+		// Grid.Row="0"/> loaded and meant nothing whenever Thing's
+		// Build returned a component that does not embed Base —
+		// accepted, dropped, reported nowhere, which is this package's
+		// definition of the defect. The attribute check cannot answer
+		// it: TakesLayout reads a catalog spec, and whether the built
+		// value implements gooey.HasLayout is known only here, after
+		// Build has run. Raised in review of #486, on the round that
+		// let an unknowable def through the check.
+		// A NAME THE ELEMENT DECLARES IS ITS OWN, and skipping it is
+		// the difference between a refusal and a lie. layoutOnlyName
+		// answers off a fixed table, so it says "Width" about a def
+		// that declares Width in its Attrs and reads e.Attrs["Width"]
+		// in its own Build — the attribute IS applied, and the remedy
+		// this error prescribes ("Remove Width") breaks a working
+		// element. That is the walk-from-a-refusal-into-a-worse-
+		// document shape the remedy discipline in this file exists to
+		// stop, arriving in the one place where the refusal is new.
+		//
+		// The collision is not hypothetical: Height sits in both
+		// tables on <Sparkline> in this tree today. Raised in review
+		// of #486.
+		//
+		// AND A SURFACE THAT IS NOT ENUMERABLE CANNOT SETTLE IT AT ALL,
+		// which is why the whole refusal is gated on AttrsKnown. The
+		// exemption above reads spec.Attrs, and that set is empty for a
+		// Context.Elements def with Known:false or Opaque and does not
+		// resolve at all for a Context.Components builder — the two
+		// surfaces the refusal was NEW for. Measured in review of #486
+		// round 12: a Known:false def whose Build reads
+		// e.Attrs["Width"] was refused with "Width would be accepted
+		// and never applied" while the builder demonstrably read "7".
+		//
+		// "Accepted and never applied" is a claim about who reads the
+		// name, and only an exhaustive Attrs makes it checkable.
+		// AttrsKnown is exactly that field, and gating on it is the
+		// rule checkAttrs already follows for the same reason. The
+		// silent drop stays open on the non-enumerable surfaces, and
+		// that is the honest trade: a false load error whose remedy
+		// breaks a working element is worse than the drop it replaces.
+		// Tracked in #550.
+		spec, specOK := ctx.spec(e.Name)
+		if !specOK || !spec.AttrsKnown {
+			return nil
+		}
+		declared := map[string]bool{}
+		for _, a := range spec.Attrs {
+			declared[a.Name] = true
+		}
+		var dropped []string
+		for k := range e.Attrs {
+			if layoutOnlyName(k) && !declared[k] {
+				dropped = append(dropped, k)
+			}
+		}
+		if len(dropped) == 0 {
+			return nil
+		}
+		sort.Strings(dropped)
+		return fmt.Errorf("markup: <%s %s=%q>: this element builds a component "+
+			"with no Layout, so %s would be accepted and never applied. Remove "+
+			"%s, or embed gooey.Base in what <%s> builds",
+			e.Name, dropped[0], e.Attrs[dropped[0]], strings.Join(dropped, ", "),
+			strings.Join(dropped, ", "), e.Name)
 	}
 	l := hl.LayoutProps()
 	for k, v := range e.Attrs {
@@ -1330,6 +1504,49 @@ func layoutInt(l *gooey.Layout, name string) *int {
 		return &l.Top
 	}
 	return nil
+}
+
+// layoutNamesIn is every layout-only name in attrs, sorted so a refusal
+// reads the same on every run.
+func layoutNamesIn(attrs map[string]string) []string {
+	var out []string
+	for k := range attrs {
+		if layoutOnlyName(k) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// layoutOnlyName reports whether name is in the universal LAYOUT row or
+// the attached properties — the names applyLayout consumes. Name and
+// Tooltip are deliberately absent: both are universal but neither goes
+// through the Layout, so a component with no Layout still honours them
+// and refusing them would be wrong.
+//
+// IT IS NOT "THE ONLY CONSUMER", which is what this doc used to claim,
+// and the caller is where that is settled rather than here: an element
+// may DECLARE one of these names in its own Attrs and read it in its
+// own Build, and this fixed table cannot see that. Height does exactly
+// that on <Sparkline> in this tree. applyLayout skips declared names
+// before it reports; a predicate answering off a name alone cannot.
+// Raised in review of #486.
+//
+// It is a switch over the same names layoutInt and applyLayout's own
+// switch already spell, rather than a derived set, because those two are
+// where the names are defined and a third table would be the drift this
+// package keeps removing. Raised in review of #486.
+func layoutOnlyName(name string) bool {
+	var probe gooey.Layout // layoutInt returns a field POINTER; it needs a struct
+	if layoutInt(&probe, name) != nil {
+		return true
+	}
+	switch name {
+	case "Margin", "HAlign", "VAlign", "Visibility":
+		return true
+	}
+	return false
 }
 
 // ParseThickness reads MAUI's Thickness syntax — "4", "4,2", or
@@ -1563,15 +1780,75 @@ func attachAll(e Element, w gooey.Component, attach []gooey.Component) error {
 	return nil
 }
 
+// noBuild is the error for a registered element with no Build, and it
+// exists because the alternative was a SEGV.
+//
+// A PSEUDO-ELEMENT'S NATURAL HOST DECLARATION HAS NO Build. ParsedBy
+// means "declared here, read there", so a host registering a <Row> its
+// <Table> parses has nothing to put in the field — and every builtin
+// pseudo-element carries one only because it is a placement refusal,
+// not because it builds anything. Reaching this call at all means the
+// document put the element somewhere that builds its children, and
+// `d.Build(e, ctx)` on a nil field panicked with a nil dereference
+// inside a load. Measured while reproducing #486's finding 1:
+// `<VStack><Row Label="a"/></VStack>` against a host <Row> with
+// ParsedBy and no Build took the process down.
+//
+// It is also what makes checkAttrs' placement stand-down honest. That
+// gate defers to "the element's own Build, which is about to say
+// something more useful"; for a host pseudo-element there was no Build
+// to defer TO, so the deferral handed a misplaced document to a panic
+// rather than to a diagnosis. The sentence below is the one the gate
+// promises, phrased from the catalog: the reader, and the placement
+// that follows from it.
+func noBuild(e Element, ctx *Context) error {
+	reader := ""
+	if spec, ok := ctx.spec(e.Name); ok {
+		reader = spec.ParsedBy
+		if reader == "" {
+			reader = namingParent(spec.Name, ctx)
+		}
+	}
+	if reader == "" {
+		return fmt.Errorf("markup: <%s> builds no component of its own — Context.Elements[%q] declares no Build", e.Name, e.Name)
+	}
+	// THE DOCUMENT MAY ALREADY BE RIGHT, and then the placement sentence
+	// prescribes no change at all. Reaching here means something built
+	// this element's parent's children; if that parent IS the declared
+	// reader, the document put the element exactly where the message
+	// would send it, and the author's next step is to do nothing. The
+	// fault is one layer up: the host's catalog says <reader> parses
+	// this element while <reader>'s own Build hands its children to
+	// BuildChildren, so the two halves of one registration contradict
+	// each other. Both remedies below are real edits, and either fixes
+	// it. Raised in review of #486.
+	if e.parent == reader {
+		return fmt.Errorf("markup: <%s> builds no component of its own, and it is already inside the <%s> that Context.Elements[%q].ParsedBy names — so the document is not the fault: <%s>'s Build hands its children to markup.BuildChildren instead of reading them. Either give <%s> a Build, or have <%s>'s Build read its <%s> children itself",
+			e.Name, reader, e.Name, reader, e.Name, reader, e.Name)
+	}
+	return fmt.Errorf("markup: <%s> builds no component of its own — <%s> reads <%s> as data, so a <%s> is only valid where <%s> parses one",
+		e.Name, reader, e.Name, e.Name, reader)
+}
+
 func buildComponent(e Element, ctx *Context) (gooey.Component, error) {
 	// A host DECLARATION outranks a host builder, and a name in both is
 	// refused rather than resolved. Two registrations for one element
 	// means one of them is unreachable, and which one wins would depend
 	// on the order these ifs happen to be written in — the same reason
 	// registerElements panics on a duplicate builtin.
-	if d, ok := ctx.Elements[e.Name]; ok {
+	// NIL IS NOT REGISTERED, the same answer Context.spec gives. A nil
+	// *ElementDef declares nothing — no Build to call and no duplicate
+	// to report — and reading d.Build off it is a nil dereference
+	// INSIDE A LOAD. Measured before: Context{Elements: {"Leafy": nil}}
+	// took the process down from here. Falling through leaves the
+	// element unknown, which is what a key declaring nothing amounts
+	// to, and the load fails by name. Raised in review of #486.
+	if d, ok := ctx.Elements[e.Name]; ok && d != nil {
 		if _, dup := ctx.Components[e.Name]; dup {
 			return nil, fmt.Errorf("markup: <%s> is registered in both Context.Elements and Context.Components; one of them is unreachable, so declare it once", e.Name)
+		}
+		if d.Build == nil {
+			return nil, noBuild(e, ctx)
 		}
 		w, err := d.Build(e, ctx)
 		return named(e, ctx, w, err)
@@ -1628,8 +1905,11 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		// It works with no other change because both elements declare
 		// Known: true, so ctx.spec finds an exhaustive Attrs set, and
 		// Element.parent is already stamped at parse time. Neither
-		// carries a Layout — a nil Proto makes TakesLayout false — so
-		// the layout half of the universal set is not offered on them.
+		// carries a Layout — both are Pseudo, which TakesLayout names as
+		// a conjunct of its own — so the layout half of the universal set
+		// is not offered on them. It said "a nil Proto makes TakesLayout
+		// false" until round 10 of #486: a nil Proto now means only that
+		// nobody can say, and Pseudo is the fact that answers.
 		//
 		// THAT WAS TRUE OF SEVEN UNIVERSALS AND FALSE OF THE EIGHTH.
 		// Name is hoisted ABOVE the TakesLayout gate in both vocabulary
@@ -1637,16 +1917,27 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 		// property — so <MenuItem Name="Save"> loaded clean while
 		// nothing here ever called named(), and ctx.Named stayed empty.
 		// Accepted, silently dropped: the exact class this declaration
-		// exists to close. Both gates now ask !spec.Pseudo, which is the
-		// declared form of "there is nothing to address". Found in
-		// review of #454.
+		// exists to close. Found in review of #454.
+		//
+		// THE TWO GATES NO LONGER ASK THE SAME QUESTION, and this
+		// sentence said they both ask !spec.Pseudo. Context.vocabulary
+		// now decides Name on the CALL SITE — its `builds` parameter,
+		// attrcheck.go — because a host's Context.Elements def may
+		// carry ParsedBy and a real Build at once, and buildComponent
+		// calls named() on what that Build returns. Grant.AttrsFor
+		// still asks Pseudo, and catalog.go documents why the two
+		// deliberately disagree;
+		// TestTheDesignerOffersNoNameRowWhereTheLoaderHonoursOne pins
+		// the divergence. This comment is two files from either of
+		// them, so it was the one place a reader of buildMenuBar would
+		// learn the opposite. Raised in review of #486 round 9.
 		//
 		// This is also what makes catalogen's half-check sound. Its
 		// comment says the under-declared direction "stays loud the
 		// ordinary way"; that sentence was false for exactly these two
 		// elements until now, which left them the only elements in the
 		// vocabulary with NEITHER direction guarded.
-		if err := checkAttrs(c, ctx); err != nil {
+		if err := checkAttrs(c, ctx, true); err != nil {
 			return nil, err
 		}
 		title := strings.TrimSpace(c.Attrs["Title"])
@@ -1660,7 +1951,7 @@ func buildMenuBar(e Element, ctx *Context) (gooey.Component, error) {
 			}
 			// Before the Separator short-circuit, so a typo on a
 			// separator is reported rather than skipped past.
-			if err := checkAttrs(ic, ctx); err != nil {
+			if err := checkAttrs(ic, ctx, true); err != nil {
 				return nil, err
 			}
 			// litBool, NOT == "true". The string compare is the idiom #470

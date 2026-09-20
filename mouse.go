@@ -57,10 +57,23 @@ func (h *HoverState) hover() *prop.Property[bool] {
 // component's own (often invisible) surface, not its subtree.
 //
 // The overlay hosts need this to exist at all: a ToastHost or an
-// AdornmentLayer spans the whole page as the root's last child, which
-// makes it the FIRST thing hit-testing finds — an invisible layer that
-// ate every click and starved every hover beneath it. Non-interactive
-// adornments (a tooltip's popup) are transparent for the same reason.
+// AdornmentLayer spans the whole page, so wherever the walk reaches it
+// it would be an invisible layer eating every click and starving every
+// hover beneath it. Non-interactive adornments (a tooltip's popup) are
+// transparent for the same reason.
+//
+// It also used to be what kept those two HOSTS safe under a
+// paint/input divergence, and that divergence is gone: this walk asks
+// overlayOf now (#465), so an overlay is hit where it paints rather than
+// where it was declared. Transparency is still the right answer for a
+// full-page host — it should not eat clicks it has no use for — but it
+// is no longer load-bearing for anyone else's correctness.
+//
+// Their CHILDREN were the case that actually bit: a Toast is hittable,
+// so a host declared first painted its toasts above a button and left
+// the click to the button. TestARankOrdersHitTestingAsWellAsPaint now
+// pins the agreement, and components/toast.go carries the author-facing
+// version.
 type HitTestTransparent interface{ HitTestTransparent() bool }
 
 // PointerFollower is implemented by a component whose arranged position
@@ -91,65 +104,424 @@ type HitTestTransparent interface{ HitTestTransparent() bool }
 // node: it schedules a frame and counts as no damage.
 type PointerFollower interface{ FollowsPointer() bool }
 
-// HitTest returns the deepest component whose arranged bounds contain the
-// cell, children before ancestors and later siblings before earlier ones.
-// Collapsed subtrees, zero-size components, and HitTestTransparent
-// components are not hit. The walk allocates nothing — it runs on every
-// motion event.
+// HitTest returns the component the pointer is over: THE ONE THAT PAINTS
+// LAST among those whose arranged bounds — AND EVERY ANCESTOR'S BOUNDS —
+// contain the cell. Collapsed subtrees, HIDDEN components, zero-size
+// components, and HitTestTransparent components are not hit.
 //
-// THIS IS DOCUMENT ORDER, AND SINCE #437 IT IS NO LONGER PAINT ORDER.
-// The reason given here used to be "they paint on top", which an Overlay
-// makes false: the marker lifts a subtree to a second paint layer above
-// the whole page, and this walk does not know about it. A later sibling
-// therefore takes the press even where an overlay paints above it.
+// The walk allocates nothing OF ITS OWN, which is the constraint the
+// design was built under — UNCAPTURED motion runs it, and ?1003h sends
+// one report per cell crossed. It still allocates whatever
+// ChildComponents allocates, and two shipped hosts build a fresh slice
+// per call, so a live toast or adornment costs one allocation per
+// motion event that reaches this function
+// (https://github.com/WonderForgeLabs/gooey/issues/513).
 //
-// It is not a defect for the overlay the framework ships — Popup holds
-// pointer capture for as long as it is open, so presses never reach this
-// walk — but Overlay is a public interface, and an overlay that does not
-// take capture is responsible for its own routing. See the Overlay
-// interface's comment. Corrected in review of #437.
-func (m *FocusManager) HitTest(x, y int) Component { return hitTest(m.root, x, y, 0) }
-
-// depth is threaded rather than counted in a package variable because
-// this walk returns early from the middle of a loop on every hit — the
-// deferred-decrement trick MeasureChild uses would cost a defer per
-// component per mouse move, and a parameter costs an increment.
-func hitTest(w Component, x, y, depth int) Component {
-	if depth > MaxLayoutDepth {
-		noteLayoutFaultAt("HitTest", w, depth)
+// A DRAG REACHES IT ON NO MOTION EVENT AT ALL, which is the scoping
+// this sentence lacked: while the pointer is captured, DispatchMouse
+// calls HitTest only for an unheld press and a release, so a captured
+// move runs no walk and allocates nothing. It said "it runs on every
+// motion event" and "costs one allocation per motion event for as long
+// as it is up" — false during a drag, which is the case the capture
+// skip was added for, and this godoc is the only statement of that cost
+// a downstream reader sees. docs/architecture.md retires the same
+// wording in this change. Raised in review of #458.
+//
+// THE ANCESTOR CLAUSE IS THE ONE PLACE THE TWO PLANES STILL DIVERGE, and
+// it is stated rather than fixed. This walk prunes on bounds at every
+// node; paint walks c.paint flat and clips each node to ITS OWN rect, so
+// a child arranged outside its parent's rectangle paints and can never
+// be hit. Measured, with an overlay child arranged one row below its
+// owner:
+//
+//	row 1 painted = the overlay's cells
+//	HitTest(0, 1) = the page underneath
+//
+// That is the dropdown shape — Popup.ArrangeSurface exists to place a
+// surface at a rect the owner chooses, and MenuBar.Arrange hands it a
+// popupRect() below the bar row. No live bug follows, because
+// popupSurface is the only non-transparent shipped Overlay whose bounds
+// can escape its parent and Popup.Open takes capture; the sentence had
+// to change anyway, because four files were claiming more than the code
+// does. Descending into a lifted subtree regardless of the ancestor
+// prune is the other resolution, and it is a behaviour change that wants
+// its own PR — filed as #482, with both candidate resolutions and what
+// each costs, because a deferral with no number cannot be checked for
+// having happened. Pinned by TestAnOverlayOutsideItsParentPaintsAndIsNotHit
+// so the divergence cannot quietly become something else.
+// Raised in review of #478.
+//
+// WHAT THIS COST. The walk no longer returns on the first hit: an
+// earlier sibling can out-rank a later one, so every subtree whose
+// bounds contain the point is visited. It is still pruned by bounds at
+// every node, which is where the work actually was — a sibling that does
+// not contain the point costs the same rectangle test it always did, and
+// siblings that do overlap were already both visited by the reverse
+// walk on a miss. What is gone is the early exit on a HIT.
+//
+// AND THAT IS NOT "one extra rectangle test per remaining sibling",
+// which is what this said and is an understatement. A sibling that does
+// not contain the point still costs one test. A sibling that DOES is now
+// descended in full — its whole subtree is visited to find whatever
+// out-ranks the hit already in hand — where the early exit used to stop
+// the walk dead. The cost is bounded by the containing subtrees, not by
+// the sibling count, and overlapping containers are exactly where it is
+// paid.
+//
+// HOW THE ORDER IS DERIVED and the #465 divergence that produced it are
+// on hitTest below, with the record in
+// docs/specs/2026-09-09-ranked-hit-testing.md. Moved off this doc in
+// review of #458: it is what go doc and pkg.go.dev render for a public
+// API, and it had grown a quoted block of unexported TEST types no
+// reader of the published doc can resolve, plus the review history the
+// spec already carries.
+func (m *FocusManager) HitTest(x, y int) Component {
+	// aborted is the bound on TOTAL WORK, and giving up the early return
+	// on a hit is what made it necessary. See hitTest.
+	var walk hitWalk
+	hitTest(m.root, x, y, 0, false, 0, &walk)
+	best := walk.best
+	if walk.aborted {
+		// NO ANSWER, rather than the answer from the prefix that was
+		// visited. best.w at this point is whatever out-ranked the
+		// candidates the walk happened to reach before it gave up, and
+		// what makes that different from an ordinary partial result is
+		// the ranking: an unvisited node can out-rank everything in
+		// hand, so the prefix is not a subset of the answer, it is a
+		// different question. DispatchMouse routes a press to whatever
+		// comes back (see below) and consults no LayoutFault first.
+		//
+		// The pre-#465 walk returned early on the first hit, so a
+		// faulting branch cost only that branch and the rest of the
+		// walk still answered. That is gone with the early exit, and
+		// pretending otherwise is what a partial return would do.
+		//
+		// Costs nothing on a legal tree: the cap never fires on one.
+		// What keeps a live composition off this branch is NOT
+		// Composer.build — build bounds by IDENTITY, so it refuses a
+		// control that includes itself and says nothing about depth.
+		// Depth is bounded by MeasureChild and ArrangeChild, which cap
+		// at MaxLayoutDepth (layout.go), so a tree deep enough to abort
+		// this walk has already failed to lay out. Citing build for it
+		// named the wrong mechanism, which is worse than naming none:
+		// somebody changing build's identity bound would read this as
+		// covering the walk. Read the report with Composer.LayoutFault.
+		// Raised in review of #458.
 		return nil
 	}
+	return best.w
+}
+
+// hitWalk is the state one HitTest threads through the whole walk: how
+// many nodes have been numbered, the best candidate so far, and whether
+// the depth cap has given up.
+//
+// ONE POINTER RATHER THAN THREE OUT-PARAMETERS, which is what hitTest's
+// signature was — nine parameters, three of them pointers written back
+// through. The three are one thing (the walk's own state) and were
+// threaded identically through every call, so the grouping is the
+// argument list saying what it is. It also gives `aborted`'s reasoning a
+// field to live on rather than a position. Free, and pinned free:
+// TestTheHitWalkAllocatesNothing is a zero this refactor could only lose
+// by escaping the struct. Raised in review of #458.
+type hitWalk struct {
+	order   int
+	best    hitCandidate
+	aborted bool
+}
+
+// hitCandidate is the running best of the walk: the component that paints
+// last among those found so far. Held by pointer through the recursion
+// rather than returned, so the walk still allocates nothing.
+//
+// order is the node's index in VISIT ORDER AMONG THE NODES THIS WALK
+// REACHES, and it is the LAST question asked rather than the rule: the
+// overlay layer decides first, then the rank within it, and position
+// separates only two components that tie on both.
+//
+// NOT an index into c.nodes, and this said it was. The increment sits
+// after the bounds test (see hitTest), so only nodes whose bounds
+// contain the point are numbered, while c.nodes numbers every composed
+// node. The two agree on RELATIVE order among the nodes both see, which
+// is all beatenBy needs and is why this walk can run forward where the
+// old one had to run in reverse — and the equivalence claim is exactly
+// what the comment at the increment calls the defect it removed. A
+// reader repairing this walk from the old wording moves the increment
+// above the bounds test to "restore the document index", and the suite
+// stays green, which that comment also records. Raised in review of
+// #458.
+type hitCandidate struct {
+	w       Component
+	rank    int
+	overlay bool
+	order   int
+}
+
+// beatenBy reports whether a candidate with these coordinates paints
+// above the one already held. It is appendByRank's ordering, asked one
+// pair at a time: the lifted layer is above the ordinary one, a higher
+// rank is above a lower one WITHIN that layer, and equal ranks fall back
+// to position — which is where document order still decides something,
+// and the only place it does.
+//
+// rank is not consulted for two ordinary components, because it is not
+// meaningful there — overlayOf returns 0 for them, so comparing it would
+// be reading a field that means nothing rather than a tie.
+func (h *hitCandidate) beatenBy(overlay bool, rank, order int) bool {
+	if h.w == nil {
+		return true
+	}
+	if h.overlay != overlay {
+		return overlay
+	}
+	if overlay && h.rank != rank {
+		return rank > h.rank
+	}
+	return order > h.order
+}
+
+// "Paints last" is one sentence and it is deliberately the SAME sentence
+// the Composer's paint order is derived from, because the two used to be
+// different rules that happened to agree. Document order gives you
+// children over ancestors and later siblings over earlier ones, which is
+// what this walk used to say directly; the overlay layer (#437) and its
+// ranks (#439) then made paint answer something else, and #465 was the
+// two planes disagreeing:
+//
+//	over  := &rankedStripe{stripe{ch: 'O', rank: OverlayRankToast}}
+//	under := &overlayStripe{stripe{ch: 'U'}}   // rank 0, declared later
+//
+// `over` painted over `under` and `under` took the click. Under the
+// retired "declare it last is z-order" rule that could not happen — the
+// thing on top was also the thing this walk found first — so the
+// divergence arrived with the freedom, not with the layer.
+//
+// The fix is not a second ordering; it is asking the ONE ordering.
+// overlayOf is the shared membership-and-rank rule (component.go),
+// orderPaint and gooey.Compose's collectPaint already call it, and a hit
+// candidate is now compared on exactly what appendByRank orders by:
+// the overlay layer above the ordinary one, then a higher rank within
+// it, and only then document order.
+// Nothing here consults the Composer, because it does not need to
+// — the rule is a function of the tree, which is the whole reason it was
+// extracted in #438.
+//
+// Popup never depended on any of this: it holds pointer capture while
+// open (Popup.Open), so presses never reach the walk. That is Popup's
+// mechanism, not something the Overlay marker provides — an overlay that
+// takes no capture is now routed correctly instead of being documented
+// as an exception in four files.
+//
+// depth is threaded rather than counted in a package variable because
+// this walk returns from the middle of a loop on every miss — the
+// deferred-decrement trick MeasureChild uses would cost a defer per
+// component per mouse move, and a parameter costs an increment.
+//
+// parentOverlay and parentRank are threaded for the same reason
+// orderPaint inherits them down c.nodes: membership moves a whole
+// SUBTREE, so a node's answer is its lifting ancestor's, and asking each
+// node on its own would let a nested Overlay sort out of its parent's
+// run.
+// THE DEPTH CAP ABORTS THE WHOLE WALK, not just the branch it fired on,
+// and that is the difference between a bound and a decoration.
+//
+// Every other walk in this package unwinds a cycle in MaxLayoutDepth
+// steps because it takes one branch at a time — Measure follows a
+// container's children in order and returns up; a cycle through a
+// single-child container is a LINE. This walk gave up the early return on
+// a hit (an earlier sibling can out-rank a later one, so every subtree
+// whose bounds contain the point has to be visited), and that early
+// return was the only thing bounding total work. On a container that is
+// its own child TWICE, each level then visits both children instead of
+// unwinding on the first hit: 2^MaxLayoutDepth visits.
+//
+// Measured in review of #478 — the base branch returned in 11ms, this
+// walk had not returned after 10 SECONDS, with the `depth >
+// MaxLayoutDepth` line below still present, still recording a fault, and
+// still looking like the bound. A cap that reports a fault and then hangs
+// is worse than no cap, because the fault says "handled".
+//
+// ON A LEGAL TREE THE CAP NEVER FIRES, so aborting everything costs
+// nothing and changes no answer. What it must NOT become is a budget on
+// total VISITS: a wide legal tree — 2^12 nodes at depth 12 — would then be
+// truncated, and every ordering assertion in this package would still
+// pass, because truncation drops candidates rather than mis-comparing
+// them. TestABranchingTreeUnderTheCapIsFullyVisited is what holds that
+// apart, and TestHitTestOnABranchingCycleTerminates the other side.
+//
+// CLAUDE.md's layout-cycle paragraph claims all seven ChildComponents
+// walks in this package are bounded, and this comment used to answer "it
+// was true of six". That is the wrong reading of what the other six buy,
+// and it flattered them.
+//
+// TWO of the seven — Compose and Focus — bound by IDENTITY: they already
+// key a map by component, so a cycle terminates however it is shaped.
+// The other five (Measure, Arrange, HitTest, Focusable, Render) bound by
+// DEPTH against MaxLayoutDepth, and a depth cap bounds the length of a
+// path, not the number of them. On a cycle that BRANCHES — a container
+// including itself twice — the visit count is exponential in the cap
+// rather than linear, so the walk terminates in the same sense that
+// 2^512 node visits terminate. TestHitTestOnABranchingCycleTerminates is
+// this walk's answer and TestABranchingTreeUnderTheCapIsFullyVisited is
+// what stops that answer from being truncation.
+//
+// So the scope of this change is "hitTest gained a whole-walk abort on
+// the depth cap", not "hitTest caught up with six walks that were
+// already safe". NOT a node budget, which is what this said until review
+// of #458: nothing here counts visits, and reading it as a budget is
+// exactly the claim TestABranchingTreeUnderTheCapIsFullyVisited exists
+// to forbid — a tree that branches under the cap is walked in full,
+// however many nodes that is. The other
+// four depth-bounded walks are unchanged and still explode on a
+// branching cycle; that is #375's seam, and the reason it is not fixed
+// here is that a budget belongs in one walk-the-children primitive
+// rather than in five copies. Raised in review of #458.
+func hitTest(w Component, x, y, depth int, parentOverlay bool, parentRank int, st *hitWalk) {
+	// ONE CHECK, HERE, and the sibling loop below deliberately has no
+	// second one. A `if st.aborted { return }` after each recursive call
+	// looks like the belt to this braces and is a SILENT mutation:
+	// measured, removing it fails nothing, because this line already
+	// turns every remaining sibling into an immediate return. What it
+	// would save is one no-op call per sibling on a walk that is
+	// unwinding anyway. Two mechanisms where removing either is silent is
+	// a state to resolve, not to ship.
+	if st.aborted {
+		return
+	}
+	if depth > MaxLayoutDepth {
+		noteLayoutFaultAt("HitTest", w, depth)
+		st.aborted = true
+		return
+	}
 	if l := LayoutOf(w); l != nil && l.Visibility == Collapsed {
-		return nil
+		return
 	}
 	b, ok := w.(Bounded)
 	if !ok {
-		return nil
+		return
 	}
 	r := b.Bounds()
 	if x < r.X || y < r.Y || x >= r.X+r.W || y >= r.Y+r.H {
-		return nil
+		return
 	}
+	// WHICH SIDE OF THE BOUNDS TEST THIS SITS ON DOES NOT MATTER, and
+	// that is worth writing down because it looks like it should. An
+	// earlier spelling numbered every visited node and carried a comment
+	// arguing the number had to be a document index rather than a count
+	// of hits; moving it here was measured and is SILENT across the
+	// suite, because it is an equivalent change. Nodes are numbered in
+	// visit order either way, a miss is never a candidate, and only
+	// candidates are ever compared — so the two spellings differ in the
+	// values and agree on every ordering. The comment was the defect,
+	// not the placement.
+	mine := st.order
+	st.order++
+	overlay, rank := overlayOf(w, parentOverlay, parentRank)
 	if c, ok := w.(Container); ok {
 		// DELIBERATELY no Frozen check here, and it is not an oversight.
 		// Freezing constrains DISPATCH, not this query: hit-testing must
-		// keep returning the deepest component so a design surface can
+		// keep descending INTO a frozen subtree so a design surface can
 		// call HitTest, find the actual <Button> under the pointer and
 		// select it, while DispatchMouse hands the press to the frozen
 		// host (see FocusManager.target). Stopping the descent here would
 		// make click-to-select impossible, and every freeze test would
 		// stay green while it broke.
-		kids := c.ChildComponents()
-		for i := len(kids) - 1; i >= 0; i-- {
-			if hit := hitTest(kids[i], x, y, depth+1); hit != nil {
-				return hit
-			}
+		//
+		// THE WORD "DEEPEST" CAME OUT OF THIS COMMENT in review of #478.
+		// It read "must keep returning the deepest component", which is
+		// the pre-#465 contract, twelve lines above the comparison that
+		// retired it — and the guard could not see it because
+		// deepestClaim matched `returns?` and not `returning`. The claim
+		// the sentence makes is fine; what a design surface recovers is
+		// the component the document put under the pointer, which is now
+		// the one that paints last there.
+		for _, kid := range c.ChildComponents() {
+			hitTest(kid, x, y, depth+1, overlay, rank, st)
 		}
 	}
 	if t, ok := w.(HitTestTransparent); ok && t.HitTestTransparent() {
-		return nil
+		return
 	}
-	return w
+	// A COMPONENT THAT RENDERS NO CONTENT IS NOT UNDER THE POINTER, and
+	// this walk let a Hidden one win. Measured, with a Hidden component
+	// declared after a visible sibling at the same rect:
+	//
+	//	later sibling Visible   → hit = the later one
+	//	later sibling Hidden    → hit = the later one   ← renders nothing
+	//	later sibling Collapsed → hit = the earlier, visible one
+	//
+	// The contract this branch wrote into six files turns on what a
+	// component CONTRIBUTES: paintable() is what every paint path gates
+	// the Render on, so a Hidden node contributes no content and cannot
+	// be the thing the user is pointing at. A Hidden button silently
+	// eating the presses on what is behind it is the shape that costs.
+	// Raised in review of #478.
+	//
+	// "RENDERS NO CONTENT", NOT "PAINTS NOTHING", and the earlier
+	// wording was false of the cell plane in a way that matters here.
+	// Composer.build pre-clears every LEAF's bounds unconditionally —
+	// before any paintable test — and marks the node covered, so a
+	// hidden leaf does write to its cells, and writes them LAST.
+	// Measured on this branch, same fixture, reading the cells rather
+	// than the hit:
+	//
+	//	later sibling Visible   → row0 "OOOOOOOOOOOO"  hit = the later one
+	//	later sibling Hidden    → row0 "            "  hit = the earlier one
+	//	later sibling Collapsed → row0 "UUUUUUUUUUUU"  hit = the earlier one
+	//
+	// So in the middle row this walk returns a component that owns NONE
+	// of the cells under the pointer, and the node that last wrote them
+	// is the one it skipped. The gate is still right — a hidden button
+	// must not take the press — but the erasure beneath it is a real
+	// defect in the damage model rather than a consequence of this
+	// walk, and forcing runs forward only so the node beneath cannot be
+	// repainted from here. It is
+	// https://github.com/WonderForgeLabs/gooey/issues/508. Raised in
+	// review of #458, which also measured the table above.
+	//
+	// THE NODE, NOT THE SUBTREE, and that difference is the whole reason
+	// this is not the Collapsed check thirty lines up. Collapsed is out
+	// of layout and takes its children with it. Hidden is one node's
+	// property: a hidden CONTAINER still has its children painted over
+	// its own erasure — apps/wysiwyg/dock.go's "one sharp edge"
+	// paragraph is about exactly that — so a Visible child of a Hidden
+	// parent is on screen and must stay hittable. Skipping the subtree
+	// here would take it out of input while it is still under the
+	// pointer.
+	//
+	// paintable() rather than a second Visibility test, because this is
+	// the same question the paint path asks and asking it the same way
+	// is what keeps the two from drifting — which is this branch's whole
+	// thesis.
+	if !paintable(w) {
+		return
+	}
+	// THE ONE CONSUMER THIS COSTS, decided rather than inherited. The
+	// comment above argues this walk must stay maximally permissive
+	// BECAUSE it is a query — it refuses a Frozen check so
+	// apps/wysiwyg's canvas can find the real <Button> under the pointer
+	// and select it — and the gate twelve lines up removes a whole class
+	// of component from that same query. Visibility is a first-class
+	// markup attribute with Hidden in its enum, so a designer canvas can
+	// hold one, and clicking it now selects the ancestor underneath.
+	//
+	// TAKEN: that is correct, and the two cases are not symmetric. A
+	// frozen subtree is on screen — the designer is pointing at pixels
+	// the user can see, and the walk owes them the component that drew
+	// them. A Hidden node draws nothing, so there are no pixels of its
+	// own to point at, and "select what is under the pointer" has no
+	// answer that names it. Selecting it would mean the canvas and the
+	// running app disagreeing about what a click means, which is the
+	// divergence this branch exists to remove.
+	//
+	// What a designer needs instead is a way to reach a component that
+	// is not on screen AT ALL, which is a tree-pane question rather than
+	// a pointer one and is the same need a Collapsed element already
+	// has — Collapsed has never been hittable and the canvas has always
+	// lived with it. Raised in review of #458.
+	if st.best.beatenBy(overlay, rank, mine) {
+		st.best = hitCandidate{w: w, rank: rank, overlay: overlay, order: mine}
+	}
 }
 
 // CaptureMouse routes every pointer event to w until ReleaseCapture,
@@ -219,8 +591,10 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// event back through the capture. Doing it once at the top is also why
 	// setHover does not repeat the check.
 	//
-	// HitTest itself still returns the deepest component — see the comment
-	// there. This is dispatch; that is a query.
+	// HitTest itself does not retarget: it answers with the component that
+	// paints last among those the walk reaches — the overlay layer first,
+	// then rank, then document order — see the comment there. This is
+	// dispatch; that is a query.
 	//
 	// TWO retargets now, because AllowPointer and AllowHover are separate
 	// categories and a design surface wants exactly that split: the
@@ -228,9 +602,59 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 	// hit is what ROUTES, hov is what HOVERS, and they are equal for every
 	// host that answers the bool — AllowNone withholds both, so both walks
 	// stop at the same ancestor.
-	deepest := m.HitTest(ev.X, ev.Y)
-	hit := m.frozenHostFor(deepest, AllowPointer)
-	hov := m.frozenHostFor(deepest, AllowHover)
+	//
+	// `under`, not `deepest`. #465 made HitTest answer by overlay layer
+	// first, then rank, then document order, and this PR took the word
+	// out of every comment in the tree and added deepestClaim to hunt it
+	// in prose — while the one production call site went on naming its
+	// result after the contract that had just been retired. No guard
+	// reaches it: they all scan prose, and an identifier is not prose.
+	// Raised in review of #478.
+	//
+	// NO WALK WHEN NOTHING READS IT. While the pointer is captured every
+	// event routes to the captor — target() returns m.captor whatever the
+	// hit is — and the hover update below is skipped too. So the walk was
+	// paid for and thrown away, and it got dearer with #465, which took
+	// away the early exit on the first hit so that ranks could be
+	// compared across the whole tree.
+	//
+	// AN UNHELD PRESS AND A RELEASE ARE THE TWO THAT READ IT, which is
+	// the whole condition: a press sets the IMPLICIT captor from the
+	// hit, and a release measures m.within(captor, hit) to decide
+	// whether a click is synthesized. Nothing else does.
+	//
+	// UNHELD, because a press arriving while something HOLDS an explicit
+	// capture reads nothing either: the `if !m.held` block that assigns
+	// m.captor from the hit is skipped, and target(hit) hands back the
+	// captor. This said "press and release" flat, and paid for the walk
+	// on a held-capture press — measured on the drag fixture, one walk
+	// where MouseTarget on the identical event walked zero and answered
+	// the same component. MouseTarget has spelled the condition with
+	// !m.held since it was written, so the two disagreed about when they
+	// walk while the comment gave a reason covering only the release.
+	// Reachable the way the wheel is: a press mid-drag, while a splitter
+	// or a scrollbar holds the pointer. Raised in review of #458.
+	//
+	// THE WHEEL WAS THE FIRST OF THE TWO. The first version of this skip
+	// took MouseMove alone and called it "exactly the case where both
+	// consumers are dead" — a captured WheelUp/WheelDown falls to the
+	// default arm, where target(hit) is the captor and setHover is never
+	// reached, so it discarded the walk too and went on paying for it.
+	// Scrolling during a splitter or scrollbar drag is the reachable
+	// case. Raised in review of #458.
+	//
+	// Nothing else changes: frozenHostFor(nil) is nil, and target(nil)
+	// with a captor is the captor. TestADragDoesNotWalkTheTreeOnEveryMove
+	// pins it by counting the walk, for a move and for a wheel.
+	//
+	// The COST that motivates it is still the move: ?1003h reports one
+	// per cell crossed, where a wheel is one per notch.
+	var under Component
+	if m.captor == nil || (ev.Kind == input.MousePress && !m.held) || ev.Kind == input.MouseRelease {
+		under = m.HitTest(ev.X, ev.Y)
+	}
+	hit := m.frozenHostFor(under, AllowPointer)
+	hov := m.frozenHostFor(under, AllowHover)
 	// Every kind carries a position, so every kind updates it — a drag
 	// ghost raised inside a press handler must find the pointer already
 	// where the press was, not one motion event later. MouseTarget
@@ -307,10 +731,11 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 // framework behaviours move it, and paraphrasing either one at the call
 // site is how a check drifts from the routing it claims to model:
 //
-//   - Frozen retargets. `HitTest` returns the deepest component on
-//     purpose (see the comment there), but a frozen subtree does not
-//     act, so dispatch routes to the frozen HOST. A check on the raw hit
-//     would clear an event whose delivery lands somewhere else entirely.
+//   - Frozen retargets. `HitTest` answers with the component that paints
+//     last under the cell, on purpose (see the comment there), but a
+//     frozen subtree does not act, so dispatch routes to the frozen
+//     HOST. A check on the raw hit would clear an event whose delivery
+//     lands somewhere else entirely.
 //   - Capture overrides. While the pointer is captured every event goes
 //     to the captor regardless of where it points — which is what makes
 //     a drag work outside the captor's bounds, and a check on the hit
@@ -325,6 +750,64 @@ func (m *FocusManager) DispatchMouse(ev input.MouseEvent) bool {
 //
 // UI-goroutine only, like every other query on this type.
 func (m *FocusManager) MouseTarget(ev input.MouseEvent) Component {
+	// A WIDER SKIP THAN DISPATCH TAKES, in this function's own terms.
+	// While the pointer is captured, target() answers with the captor
+	// whatever the hit is, so the only kind whose ANSWER here depends on
+	// the walk is the press that discards an implicit capture — the arm
+	// below. Every other kind returns the captor without reading a hit.
+	//
+	// THE TWO CONDITIONS DO NOT SKIP THE SAME SET, and "the same skip …
+	// discarded exactly as it is on the dispatch side" is what this said
+	// — refuted by the paragraph that already stood three lines under
+	// it. Read them side by side rather than from a sentence:
+	//
+	//	DispatchMouse walks when  m.captor == nil || (press && !m.held) || Kind == MouseRelease
+	//	this returns early when   m.captor != nil && !(press && !m.held)
+	//
+	// Under a held capture that is THREE kinds walking nowhere on the
+	// dispatch side — a move, a wheel, and a press arriving while the
+	// capture is held — against FOUR here, the fourth being the release.
+	//
+	// The condition is deliberately NOT spelled the way dispatch's is,
+	// and the release is the whole of the difference. A captured RELEASE
+	// reads the hit there — m.within(captor, hit) decides whether a
+	// click is synthesized — and reads nothing here, because a query
+	// synthesizes nothing. One condition shared between the two would
+	// make this function model a dispatch behaviour it does not have.
+	// Raised in review of #458.
+	//
+	// Mirroring it is what keeps this function the thing its own doc
+	// above calls it: "the query that models where an event would
+	// actually route". It also matters where it is called from.
+	// control/input.go's Service.mayPoint asks this per pointer event
+	// for every guest, so a guest dragging inside an island paid the
+	// whole-tree walk the local path had just stopped paying — the one
+	// path #465 made dearest, on the one caller furthest from the
+	// change. TestADragIsNotWalkedForByAQueryEither pins it.
+	//
+	// WHAT IT IS NOT is what makes docs/learn/concepts/input-routing.md's
+	// rule — while the pointer is captured, only an unheld press and a
+	// release hit-test at all — a statement about the framework rather
+	// than about one function. That rule is DISPATCH's, and the page
+	// states it as one: it is a clause of the hover bullet, and hover is
+	// something only dispatch moves. This function is strictly stricter,
+	// because the release it also skips is the one kind whose skip a
+	// query can afford. A reader who takes the rule as framework-wide
+	// budgets a walk per captured release in Service.mayPoint that never
+	// happens, and a second caller needing the release hit reads the
+	// page and gets the captor. Raised in review of #458.
+	//
+	// THE QUOTATION THAT WAS HERE NAMED ONE EVENT KIND, and the commit
+	// that broadened the rule rewrote that bullet without rewriting this
+	// quotation of it: `grep "performs no hit test at all"` over that
+	// file matched nothing. A quoted string attributed to a named file
+	// is a citation, and nothing in this repo checks prose quotations
+	// ACROSS files — so it is paraphrased rather than re-quoted, which
+	// is the form a rename or a rewording cannot silently falsify.
+	// Raised in review of #458.
+	if m.captor != nil && !(ev.Kind == input.MousePress && !m.held) {
+		return m.captor
+	}
 	hit := m.frozenHostFor(m.HitTest(ev.X, ev.Y), AllowPointer)
 	if ev.Kind == input.MousePress && !m.held {
 		return hit

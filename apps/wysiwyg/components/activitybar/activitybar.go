@@ -141,20 +141,6 @@ var (
 	markerBlurred = color.RGBA{0x36, 0x48, 0x74, 0xff}
 )
 
-// Builder registers the rail as <ActivityBar Sel="{{.Selected}}"/>.
-//
-// Built with the OBJECT MODEL, not a markup file: the rail is one
-// <Image>, and a .gooey holding a single element is a parse step and a
-// file to keep in sync in exchange for nothing. Markup is for layouts.
-//
-// ONE Image, not one per icon. A sixel band writes pixels into the cell
-// grid and damages the cells it covers as a unit, so four stacked bands
-// are four damage rects that can tear against each other when only the
-// selection moved. One band repaints once.
-//
-// Src is a COMPUTED image — a picture derived from the selection, which
-// redraws when the selection changes because a computed that reads a
-// property subscribes to it. No invalidate call, no clock.
 // Def is Builder plus the declaration, for hosts that register through
 // Context.Elements. It is what makes the rail DESCRIBABLE rather than
 // merely nameable, and the bug it fixes was reported from the running
@@ -244,6 +230,20 @@ func Def(fsys fs.FS, icons []Icon) *markup.ElementDef {
 	}
 }
 
+// Builder registers the rail as <ActivityBar Sel="{{.Selected}}"/>.
+//
+// Built with the OBJECT MODEL, not a markup file: the rail is one
+// <Image>, and a .gooey holding a single element is a parse step and a
+// file to keep in sync in exchange for nothing. Markup is for layouts.
+//
+// ONE Image, not one per icon. A sixel band writes pixels into the cell
+// grid and damages the cells it covers as a unit, so four stacked bands
+// are four damage rects that can tear against each other when only the
+// selection moved. One band repaints once.
+//
+// Src is a COMPUTED image — a picture derived from the selection, which
+// redraws when the selection changes because a computed that reads a
+// property subscribes to it. No invalidate call, no clock.
 func Builder(fsys fs.FS, icons []Icon) markup.Builder {
 	if len(icons) == 0 {
 		icons = DefaultIcons

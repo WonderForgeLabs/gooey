@@ -200,8 +200,9 @@ the wrong reading of the name, so the reference now says which it is.
 built with — from `ed.ctx.Values` and `ed.ctx.Styles` and never sets
 `Dispatcher`, so a document using `AllowError` loads in a real app and
 fails to load on the canvas, while the palette still offers the attribute.
-The class is not new (`markup/handlers.go:193` refuses `{{ns:Fn}}` the same
-way) but this is the first PLAIN attribute to trip it. Tracked as
+The class is not new (`handlerCommand` in `markup/handlers.go` refuses
+`{{ns:Fn}}` the same way, on its `ctx.Dispatcher == nil` arm) but this is
+the first PLAIN attribute to trip it. Tracked as
 [#462](https://github.com/WonderForgeLabs/gooey/issues/462) rather than
 fixed here, because the fix is in another module and the test worth writing
 pins the general property — that `docCtx` can build whatever a real app can

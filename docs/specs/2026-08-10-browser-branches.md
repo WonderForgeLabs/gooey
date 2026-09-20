@@ -4,6 +4,12 @@
 
 **Date:** 2026-08-10
 
+> **One line below is superseded:** "last child of the Grid — document
+> order is z-order". The picker's surface is a `gooey.Overlay` now and
+> is lifted whatever its position; see
+> `2026-08-30-overlay-layer.md` and `2026-09-05-overlay-ranks.md`. The
+> Collapsed-until-`b` shape and everything else here still holds.
+
 ## What was asked for
 
 The demo browser could only browse the tree it was launched from. The

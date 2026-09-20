@@ -5,6 +5,7 @@ import (
 	"testing/fstest"
 
 	"github.com/WonderForgeLabs/gooey"
+	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup/internal/catalogen"
 )
 
@@ -346,4 +347,166 @@ func keys(m map[string]ElementSpec) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestTheCatalogMemoDoesNotOutliveItsBuild is the staleness half of the
+// per-build memo, and it is the half that can break in silence.
+//
+// The speed-up is observable by timing and nothing else; a wrong answer
+// is observable here. The memo has exactly one way to go wrong TODAY —
+// surviving past the build that filled it, so a host that registers an
+// element between loads gets the previous load's vocabulary — and this
+// doc named two until round 10 of #486.
+//
+// The second was "leaking out of a NESTED load, so a UserControl
+// assembled against a different Context.Elements hands its answer back
+// to the page that instantiated it", and the arm written for it could
+// not fail from it: an <Include> builds against a FRESH child Context,
+// so it arms and restores a field on a struct nobody keeps. It is now
+// stated as the reachable shape it would take rather than as a mode
+// this tree has — see THE NESTED LOAD below for the measurement and for
+// what the arm pins instead.
+//
+// Context.catalog memoizes only the withIncludes=false form — the one
+// the load path asks for per element — so Catalog() is checked here too
+// rather than assumed unaffected. Raised in review of #486.
+func TestTheCatalogMemoDoesNotOutliveItsBuild(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{}}
+	doc := []byte(`<Gooey><VStack><Text>x</Text></VStack></Gooey>`)
+
+	if _, err := Build(doc, ctx); err != nil {
+		t.Fatalf("the fixture does not load, so nothing below is about the memo: %v", err)
+	}
+	if ctx.catalogNoIncludes != nil {
+		t.Error("the memo survived the build that armed it, so the next load " +
+			"against this Context answers from a catalog assembled before the " +
+			"host could change Context.Elements")
+	}
+
+	// AND IT IS ACTUALLY A MEMO, asserted by identity rather than by
+	// timing. Without this the restore check above passes against a
+	// field that is never filled — a cache that caches nothing restores
+	// correctly every time, and the 15x this exists for would be gone
+	// with nothing red.
+	//
+	// ARMED BY HAND, because arming is what document.build does and
+	// there is no seam to reach in from outside one. That is the
+	// mechanism under test, not a shortcut around it: the nil case
+	// below is the same function asked the same question unarmed.
+	ctx.catalogNoIncludes = new([]ElementSpec)
+	first := ctx.catalog(false)
+	if second := ctx.catalog(false); &first[0] != &second[0] {
+		t.Error("two catalog(false) calls inside one build returned different " +
+			"backing arrays, so the assembly is running per call — which is " +
+			"one full BuiltinElements plus markNested per element on the " +
+			"load path")
+	}
+	ctx.catalogNoIncludes = nil
+
+	// A REGISTRATION BETWEEN LOADS, which is the state the arming
+	// exists for: it must be in the second load's vocabulary.
+	ctx.Elements["Späth"] = &ElementDef{Name: "Späth", Known: true}
+	found := false
+	for _, sp := range ctx.catalog(false) {
+		if sp.Name == "Späth" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("an element registered after a build is missing from the next " +
+			"catalog, so the memo is answering from before it was registered")
+	}
+	// Catalog() is the withIncludes form and is not memoized; it must
+	// see the same registration.
+	found = false
+	for _, sp := range ctx.Catalog() {
+		if sp.Name == "Späth" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Catalog() does not see an element the unexported catalog does, " +
+			"so the memo has reached the form it was not meant to cover")
+	}
+
+	// THE NESTED LOAD, which is the second failure mode this test's own
+	// doc names — and the arm that named it could not fail from it.
+	//
+	// That arm asserted ctx.catalogNoIncludes == nil AFTER the outer
+	// Build returned, with an <Include> somewhere in the page. The
+	// OUTER build's own defer guarantees that whatever the inner one
+	// does, so the assertion passed against the defect. Measured in
+	// review of #486 round 10: replacing document.build's restore with
+	// one that fires only at the outermost level — `if prevCat == nil`,
+	// which is exactly "the include's arming was never restored" — left
+	// the whole markup suite green.
+	//
+	// AND THE REASON IT CANNOT FAIL IS WORTH MORE THAN THE ARM WAS. An
+	// <Include> does not build against the caller's Context at all:
+	// control() hands doc.build a FRESH child (usercontrol.go, `if
+	// child == nil { child = &Context{} }`), so the include arms and
+	// restores a field on a struct that is discarded when it returns.
+	// Measured with a Context.Elements probe on either side of a
+	// <Card/>, both of which saw the outer ctx and the SAME
+	// catalogNoIncludes pointer across it.
+	//
+	// So the arm below pins that fact instead, and it is a conjunction
+	// rather than a single bit: it goes red if an include starts
+	// sharing the caller's Context AND the restore stops running, which
+	// together are the leak the old arm was reaching for. Either alone
+	// leaves the pointer where it was — the shared-context half restores
+	// it, the broken-restore half never touches it — and that is stated
+	// rather than discovered later.
+	nested := &Context{
+		Elements: map[string]*ElementDef{},
+		Includes: fstest.MapFS{
+			"card.gooey": {Data: []byte(`<Gooey><Text>inner</Text></Gooey>`)},
+		},
+	}
+	var sawCtx []bool
+	var sawMemo []*[]ElementSpec
+	nested.Elements["Probe"] = &ElementDef{
+		Name: "Probe", Known: true, Proto: &components.Text{},
+		Build: func(e Element, c *Context) (gooey.Component, error) {
+			sawCtx = append(sawCtx, c == nested)
+			sawMemo = append(sawMemo, c.catalogNoIncludes)
+			return &components.Text{}, nil
+		},
+	}
+	page := []byte(`<Gooey><VStack><Probe/><Card/><Probe/></VStack></Gooey>`)
+	if _, err := Build(page, nested); err != nil {
+		t.Fatalf("the nested fixture does not load, so the arm below is about "+
+			"nothing: %v", err)
+	}
+	if len(sawMemo) != 2 || !sawCtx[0] || !sawCtx[1] {
+		t.Fatalf("the fixture did not straddle the include: %d probes built, "+
+			"against the outer Context %v", len(sawMemo), sawCtx)
+	}
+	if sawMemo[0] == nil {
+		t.Error("the element before the include saw no armed memo, so the " +
+			"assembly is running per element on the load path")
+	}
+	if sawMemo[0] != sawMemo[1] {
+		t.Errorf("the memo changed across a nested load (%p -> %p), so the "+
+			"include assembled against the outer Context and left its own "+
+			"arming installed — the rest of the outer build answers from a "+
+			"catalog that is not its own", sawMemo[0], sawMemo[1])
+	}
+	if nested.catalogNoIncludes != nil {
+		t.Error("the memo survived a build that contained a nested load")
+	}
+	// AND THE OUTER BUILD STILL SEES ITS OWN REGISTRATIONS afterwards,
+	// which is the consequence a nil field alone cannot show.
+	nested.Elements["Späth"] = &ElementDef{Name: "Späth", Known: true}
+	found = false
+	for _, sp := range nested.catalog(false) {
+		if sp.Name == "Späth" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("after a build containing a nested load, a newly registered " +
+			"element is missing from the catalog — the memo outlived the " +
+			"build through the include path")
+	}
 }

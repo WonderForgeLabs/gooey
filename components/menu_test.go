@@ -10,9 +10,11 @@ import (
 )
 
 // The standard page these tests share: full-width content on row 1, a
-// focusable button on row 2, and the MenuBar declared LAST — document
-// order is z-order, so being last is what puts its dropdown above the
-// content it drops over.
+// focusable button on row 2, and the MenuBar declared last. Last is no
+// longer what puts the dropdown above the content — the surface is a
+// gooey.Overlay and lifts from anywhere — so nothing in this file is
+// asserting z-order. popupzorder_test.go is where that is asserted, on
+// a page built the other way round on purpose.
 func menuPage(saved *int, can *prop.Property[bool]) (*MenuBar, *Button, gooey.Component) {
 	save := gooey.NewCommand(func() { *saved++ })
 	var saveAction gooey.Action = save
@@ -34,7 +36,7 @@ func menuPage(saved *int, can *prop.Property[bool]) (*MenuBar, *Button, gooey.Co
 	page := &Canvas{Children: []gooey.Component{
 		under,
 		gooey.L(btn, gooey.Layout{Top: 3, Left: 25}), // clear of the File dropdown
-		bar, // last = on top
+		bar, // position in this slice decides nothing; see the header
 	}}
 	return bar, btn, page
 }

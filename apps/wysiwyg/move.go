@@ -36,6 +36,13 @@ func unlink(p, n *node) int {
 		return -1
 	}
 	p.Kids = append(p.Kids[:i], p.Kids[i+1:]...)
+	// The splice shortens len and leaves the old last child in the
+	// vacated slot, so a subtree the user deleted stays reachable from
+	// its former parent for the document's lifetime — and in this editor
+	// a *node reaches a whole markup subtree. insertAt re-grows the slice
+	// immediately on a MOVE, which is what made this invisible; a delete
+	// does not. Found by the widened reset matcher in review of #456.
+	clear(p.Kids[len(p.Kids):cap(p.Kids)])
 	return i
 }
 
@@ -204,13 +211,25 @@ func (ed *editor) demoteSelected() bool {
 	if ed.remote == nil && ed.docRoot == nil {
 		refused := strings.TrimPrefix(ed.status.Get(), "✗ ")
 		host.Kids = host.Kids[:len(host.Kids)-1]
+		// THE POP RETAINS: the refused subtree stays in the vacated slot
+		// of a LIVE parent's children. Raised in review of #456.
+		clear(host.Kids[len(host.Kids):cap(host.Kids)])
 		insertAt(p, at, n)
 		// BEFORE the rebuild: the refused mutation must not stay on the
 		// undo stack, or one ctrl+z re-enters the docRoot==nil state this
 		// revert exists to prevent (#454 review).
 		ed.abortHistory()
 		ed.rebuild()
-		ed.status.Set("✗ <" + n.Elem + "> does not go inside <" + host.Elem +
+		// NEUTRAL VERB, for insertSubtree's reasons — the third of the
+		// three seams that asserted a parenting cause after a failed
+		// rebuild. The gate above this one is canHold, which passes
+		// ModeOne and ModeUnknown through by design, and the demote
+		// also breaks the container the child LEFT; neither fault is
+		// "<n> does not go inside <host>". The pre-check at the top of
+		// promoteSelected keeps that wording and is right to: there the
+		// catalog HAS refused, before anything was moved. Raised in
+		// review of #501.
+		ed.status.Set("✗ <" + n.Elem + "> was not moved into <" + host.Elem +
 			">: " + refused)
 		return false
 	}

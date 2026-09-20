@@ -312,6 +312,64 @@ func (h *history) abort(root *node) {
 	h.base = snapshot{root: root.clone(), sel: h.base.sel, hasSel: h.base.hasSel}
 }
 
+// reset drops the whole history and re-baselines on root. Opening a
+// file is the one caller: a new document starts with no past.
+//
+// UNDO MUST NOT CROSS AN OPEN, and it did. Review of #501 found that
+// opening a second file left the first file's snapshots in the stack, so
+// ctrl+z put the FIRST document's tree back under the SECOND document's
+// envelope — measured: open one carrying Graphics="halfblock", open a
+// plain one, undo, and the CODE tab reads <Gooey> with no Graphics over
+// Content="first". The envelope is the visible half and the smaller
+// half: openPath still names the second file, so a save would write one
+// document's content into the other's path.
+//
+// Carrying envAttrs in the snapshot would have fixed the envelope and
+// made the rest worse — undo would then restore the first file's
+// envelope too, and the mismatch between what is on screen and what
+// openPath names would be complete and invisible. The tree and the file
+// are what must not separate; the envelope moves with the tree because
+// it is part of it.
+//
+// RESET RELEASES BY DROPPING THE HEADERS, and it is the one site here
+// that may. This function used to zero all three slices element by
+// element first, citing the rule pop and the bound follow — a snapshot
+// holds a whole cloned tree, so leaving one reachable from the array's
+// tail keeps it alive "for as long as the slice is". That premise is
+// exactly what does not hold here: the assignment below drops all three
+// headers in the same straight-line block, nothing outside h aliases
+// the arrays (h.cleared aliases the old h.redo array, and both fields
+// are nil'd), and h.base takes a struct copy. The loops were O(len) of
+// work that freed nothing, and a reader could have taken the most
+// explicit spelling of the clear-to-cap rule in this file as its worked
+// example. The rule bites where the slice SURVIVES, and every other pop
+// in this file does keep its slice — so each zeroes the vacated slot
+// before the truncation, which is the shape the guard checks at each
+// site. Stated as a property rather than a roster: the round that wrote
+// this sentence named three symbols, two of which do not exist and the
+// third of which is spelled evict, and the roster was short by two
+// besides. Nothing red would have said so either way, because the guard
+// does not match `x = nil`. Raised in review of #501, twice.
+//
+// THE SELECTION IS PART OF THE BASELINE, and taking root alone was a
+// regression this function introduced. Every other site that establishes
+// a baseline carries sel/hasSel — record's !started branch, abort, and
+// restore — and the reason is record's sel-refresh two screens down: it
+// is guarded on the path still RESOLVING in the state being left, so
+// after an ADD it does not fire and the pushed snapshot keeps whatever
+// selection the base already had. Baseline with none and the first undo
+// after an open pushes hasSel:false, which restore turns into
+// `ed.sel = nil` unconditionally — the node goes away as it should and
+// the properties pane empties with it, so the user has to ctrl+n back to
+// where they were. Measured before the fix: open, paste a <Button>, undo,
+// and ed.sel is nil. Raised in review of #501; pinned by
+// TestUndoAfterAnOpenKeepsTheSelectionTheOpenMade.
+func (h *history) reset(root *node, sel []int, hasSel bool) {
+	h.undo, h.redo, h.cleared, h.stashed = nil, nil, nil, false
+	h.base = snapshot{root: root.clone(), sel: sel, hasSel: hasSel}
+	h.pending = ""
+}
+
 // recordHistory is the hook, and it runs at the TOP of rebuild.
 //
 // The top rather than the bottom, for two reasons that are both about

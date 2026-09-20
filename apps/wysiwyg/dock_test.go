@@ -40,14 +40,152 @@ func pane(t *testing.T, ed *editor, id string) *dockPane {
 	return p
 }
 
-// rowText reads w cells of row y — the assertion primitive for "is
-// anything drawn here".
+// rowText reads w CELLS of row y — the assertion primitive for "is
+// anything drawn here", and the only SPAN reader in this package.
+// designmode_test.go's screen() reads a whole plane and goes through
+// render.RowText, which is the whole-row form of the same read.
+//
+// Text(), NOT .Rune: a continuation cell — the second column of a wide
+// glyph — carries render.Continuation, and writing that rune out puts a
+// literal marker in the row. CLAUDE.md names that helper shape as the
+// reason no fixture in six packages could hold a wide glyph and be
+// asserted on, so a second copy reading .Rune reopens exactly that.
+// This package and apps/wysiwyg/components/panel are converted; the
+// rest are not, and the fixtures they cannot hold are #516.
+// HOW MANY READERS THERE ARE is deliberately not written. A count in
+// prose is a sample taken once, #516 exists to change this one, and
+// every conversion that lands makes such a number wrong with nothing
+// red. It cannot even be taken cleanly: whether a whole-plane reader
+// and a helper that slices a row by index count as span readers is an
+// argument a number invites and cannot settle. Raised in review of
+// #502.
+//
+// Derive the PLANE ACCESSES with
+//
+//	grep -rlE 'Cells(\(\))?\.At\(' --include='*_test.go' apps/wysiwyg
+//
+// AND READERS ARE A SUBSET OF THEM, which is the honest scope of that
+// command and the third spelling of this paragraph. Measured on this
+// tree it answers six files, of which two hold a span reader: this one
+// and components/panel/panel_test.go. The other four are single-cell
+// probes — noticeseparation_test.go and statusaddr_test.go and
+// tracks_test.go read a .Rune, railheight_test.go reads a Style.Bg and
+// no text at all — and a single-cell identity check against a literal
+// is not the shape #516 is about.
+//
+// IT MISSES IN THE OTHER DIRECTION TOO: docs_test.go binds
+// `b := f.Cells` and then walks `b.At(x, y).Rune` over the whole plane,
+// so a hand-rolled .Rune walk in this package is invisible to the
+// command offered for finding them — the receiver is an alias rather
+// than the `Cells` selector. A grep keys on a spelling; what #516 is
+// scoped by is what the code DOES.
+//
+// AND WHAT THAT ONE DOES IS WHY IT MUST NOT BE CONVERTED. It is a
+// control-character probe (docs_test.go, the loop under docsSel):
+//
+//	r := b.At(x, y).Rune
+//	if r == render.Continuation { continue }
+//	if (r < 0x20 && r != 0) || r == 0x7f { ... }
+//
+// Cell.Text() can express neither test — it answers "" for a
+// Continuation and a string for everything else, so the sentinel
+// comparison and the < 0x20 range check both disappear, and with them
+// the guard. Naming it as the walk the grep misses reads as pending
+// #516 work; it is the one site in this package whose .Rune is
+// LOAD-BEARING. Raised in review of #502.
+//
+// THE ALTERNATION HAS TO BE A GROUP, which is why the pattern is an
+// ERE and not either shorter spelling. `Cells\.At\(` misses
+// `c.Cells().At(` — how the panel package reads its plane, including
+// the copy of THIS helper named two lines up. And the BRE
+// `Cells()\?\.At(` is wrong the other way: in a basic regexp `\?`
+// applies to the single preceding character, so `()\?` is a literal `(`
+// followed by an OPTIONAL `)`, the parenthesised call becomes
+// mandatory, and the match drops from six files to two — measured.
+// Raised in review of #502.
+//
+// W IS A COLUMN COUNT. A caller with a string in hand wants
+// render.StringWidth of it, not len([]rune(…)) — those differ by one
+// per wide glyph, and the rune count reads short, dropping the end of
+// the very label being checked.
+//
+// IT RETURNS THE SPAN, TRAILING BLANKS AND ALL, and so does the
+// same-named reader in apps/wysiwyg/components/panel. A helper that
+// trimmed would decide part of every equality assertion made through it
+// — tracks_test.go's two gutter checks compare a rendered track spec
+// against that spec exactly — so the trim belongs at the call site that
+// wants it, where it is one visible call. Raised in review of #502.
 func rowText(f *gooey.Frame, y, x, w int) string {
 	var sb strings.Builder
 	for i := 0; i < w; i++ {
-		sb.WriteRune(f.Cells.At(x+i, y).Rune)
+		sb.WriteString(f.Cells.At(x+i, y).Text())
 	}
-	return strings.TrimRight(sb.String(), " ")
+	return sb.String()
+}
+
+// wideLabel is two glyphs and FOUR columns — the discriminating shape,
+// since a rune count answers 2 and a column count answers 4.
+//
+// ABOVE the next doc comment, not between it and its function. A
+// declaration inserted between a doc comment and the function it
+// documents STEALS it: godoc reads the paragraph as the declaration's
+// and leaves the function undocumented — measured with go/parser, and
+// the same fusion render/width.go records. Raised in review of #502.
+const wideLabel = "世界"
+
+// TestRowTextReturnsTheWholeSpan is the contract above, pinned. Every
+// other caller reads a span it expects to be full, so none of them can
+// tell a reader that returns the blanks from one that eats them — the
+// difference only shows where the span is WIDER than what was drawn into
+// it, which is why this fixture is eight cells holding two.
+func TestRowTextReturnsTheWholeSpan(t *testing.T) {
+	c := gooey.NewComposer(&components.Text{Content: components.Str("hi")}, 8, 1)
+	t.Cleanup(c.Close)
+	f, _ := c.Frame()
+	if got, want := rowText(f, 0, 0, 8), "hi      "; got != want {
+		t.Errorf("rowText read %q across eight cells holding %q, want %q. A span "+
+			"reader returns the span: trimming here decides part of every equality "+
+			"assertion made through it, at the one site that cannot see the decision",
+			got, "hi", want)
+	}
+
+	// AND A WIDE GLYPH, which is the OTHER half of this helper's contract
+	// and the half the ASCII fixture above cannot see. A continuation
+	// cell carries render.Continuation, so writing .Rune out puts a
+	// literal U+FFFD in the row — reverting both copies of this helper
+	// to WriteRune(….Rune) left the whole apps/wysiwyg tree GREEN,
+	// measured, because every fixture in it is ASCII and agrees with
+	// itself under either rule. CLAUDE.md's recipe exactly: a glyph
+	// whose column count and rune count differ, in a span wider than
+	// what was drawn into it, so the trim rule and the continuation rule
+	// are pinned by one read. Raised in review of #502.
+	//
+	// CLOSED, like every other Composer in this package. Nothing leaks
+	// today — Close is stopAll and a bare Text registers no Startable —
+	// so this is a convention being held rather than a leak being
+	// repaired, and a convention is cheapest to hold while the pair is
+	// being written. Raised in review of #502.
+	c2 := gooey.NewComposer(&components.Text{Content: components.Str(wideLabel)}, 8, 1)
+	t.Cleanup(c2.Close)
+	f, _ = c2.Frame()
+
+	// THE COUNTEREXAMPLE IS READ, NOT SPELLED. A literal for it is a
+	// second answer about the same eight cells, free to disagree with
+	// `want` the moment the fixture changes shape — which is the drift
+	// boxBefore's row return exists to prevent one file over. Reading it
+	// puts the claim and the cells on one source, where a hand-computed
+	// one has to get the trailing blanks right by hand and says so
+	// nowhere. Raised in review of #502.
+	var runeRead strings.Builder
+	for x := 0; x < 8; x++ {
+		runeRead.WriteRune(f.Cells.At(x, 0).Rune)
+	}
+	if got, want := rowText(f, 0, 0, 8), wideLabel+"    "; got != want {
+		t.Errorf("rowText read %q over a row holding %q, want %q. Under a .Rune "+
+			"read the same eight cells are %q — the continuation marker rendered "+
+			"as a literal rune, which is the defect this helper exists to avoid",
+			got, wideLabel, want, runeRead.String())
+	}
 }
 
 // TestHideIsNotCollapse is the central discrimination test, and it is
@@ -64,7 +202,9 @@ func TestHideIsNotCollapse(t *testing.T) {
 
 	// HIDE: the pane keeps its bounds. That is the user's rule ("it keeps
 	// its state and its size") and it is gooey.Hidden's definition —
-	// occupies space, does not paint.
+	// occupies space, renders no content, and is not hit-tested. This
+	// said "does not paint", the same retired wording dock.go quoted;
+	// raised in review of #458.
 	ed.dock.ToggleHidden(props)
 	settle(t, c)
 	if got := props.Bounds(); got != before {

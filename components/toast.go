@@ -11,12 +11,20 @@ import (
 // host nor the Show call says otherwise.
 const DefaultToastDuration = 3 * time.Second
 
-// ToastHost is the notification layer: a transparent overlay the app
-// places as the LAST child of its root, so document order — which is
-// z-order — puts every toast above the page. Show stacks a transient
-// message in the top-right corner; an auto-dismiss timer takes it down
-// again, and the Composer's restore pass repaints whatever the toast
-// was covering.
+// ToastHost is the notification layer: a transparent overlay that paints
+// above the page and above any open popup, wherever it is declared. Show
+// stacks a transient message in the top-right corner; an auto-dismiss
+// timer takes it down again, and the Composer's restore pass repaints
+// whatever the toast was covering.
+//
+// "PLACE IT AS THE LAST CHILD OF THE ROOT" is what this used to say, and
+// it stopped being either necessary or sufficient. #437 lifted overlays
+// out of document order into a layer of their own, so position no longer
+// decides; and because only popup surfaces adopted the marker, a
+// ToastHost declared last still landed BENEATH every open dropdown —
+// #439, where a toast raised while a menu was open was simply not seen.
+// It is an OverlayRanker now, at OverlayRankToast, which is above popups
+// unconditionally. Declaration position is free.
 //
 // The host paints nothing and declares no background, so a page that
 // never shows a toast pays nothing for hosting the layer. Each toast is
@@ -46,6 +54,17 @@ type ToastHost struct {
 	// the close-and-join contract this used to spell out by hand.
 	delays gooey.Delays
 }
+
+// OverlaysPage and OverlayRank put the host above the page and above any
+// open popup.
+//
+// ABOVE POPUPS SPECIFICALLY, and that is the whole ranking argument in
+// one case: a toast is a notification the user did not ask for and
+// cannot re-request. Hidden behind a dropdown they opened, it is not
+// merely delayed — nothing will tell them it happened. A dropdown, by
+// contrast, is something they are looking at on purpose and can dismiss.
+func (h *ToastHost) OverlaysPage()    {}
+func (h *ToastHost) OverlayRank() int { return gooey.OverlayRankToast }
 
 func (h *ToastHost) ChildComponents() []gooey.Component {
 	kids := make([]gooey.Component, len(h.toasts))
@@ -97,6 +116,14 @@ func (h *ToastHost) Dismiss(t *Toast) {
 	for i, x := range h.toasts {
 		if x == t {
 			h.toasts = append(h.toasts[:i], h.toasts[i+1:]...)
+			// The delete-splice shortens len and leaves the old last
+			// element in the vacated slot, so a host that peaked at N
+			// concurrent toasts kept up to N *Toast — each with a
+			// gooey.Base, a render.Style and a Delays closure — alive
+			// for the host's lifetime. Exactly what this PR's own
+			// clear-to-cap invariant forbids, in the one spelling the
+			// guard could not see. Raised in review of #456.
+			clear(h.toasts[len(h.toasts):cap(h.toasts)])
 			if h.structure != nil {
 				h.structure()
 			}
@@ -137,6 +164,46 @@ func (h *ToastHost) PassesCellsThrough() {}
 // hosting shape as AdornmentLayer), so the pointer must pass through it
 // — a page with a toast layer would otherwise never receive a click.
 // The toasts themselves stay hittable; they own visible cells.
+//
+// THE HOST'S POSITION IS FREE, FULL STOP — and this paragraph used to
+// carry the caveat that it was free for PAINT only. It said hit-testing
+// was a separate walk that took later siblings first and knew nothing
+// about ranks, so a host declared FIRST painted its toasts over a button
+// and left the click to the button. #465 closed that: FocusManager.HitTest
+// asks overlayOf, the same membership-and-rank rule the paint order is
+// derived from, so a toast that paints over a button now takes the press
+// as well. A clickable toast needs no declaration discipline, because
+// there is nothing left for position to decide.
+//
+// AND THE COST, WHICH IS THE SAME SENTENCE READ THE OTHER WAY. Toast is
+// an ordinary leaf and is NOT HitTestTransparent — only this host is —
+// so a toast NOBODY WANTS TO CLICK also takes the press on whatever it
+// covers, for its whole lifetime, and the button underneath does not get
+// it. That was true before #465 only when the host happened to be
+// declared last; it is true from everywhere now. A three-second toast
+// over a button is three seconds of that button being unclickable.
+//
+// AND UNHOVERABLE, which this paragraph said nothing about until review
+// of #458. DispatchMouse walks the tree ONCE and derives both answers
+// from it — `hit` for AllowPointer, `hov` for AllowHover, off the same
+// `under` — so a component that takes the press takes the hover with
+// it. The covered button does not light up, its tooltip never shows, and
+// unlike the swallowed click there is no gesture for a user to repeat
+// and notice. Press is the loud half of one fact, not the whole of it.
+//
+// This is deliberate and consistent with paint — a component that owns
+// the cells owns the clicks in them, which is the rule everywhere else
+// in the framework — so the transparency is not being widened here.
+// Making Toast itself HitTestTransparent is the alternative, and it is
+// the intended follow-up if the swallowing is reported: it would let a
+// press fall through to whatever the toast is covering while the toast
+// is still visible, which is a different semantic and wants its own
+// damage-count evidence and its own answer for a toast that IS meant to
+// be clicked. Named in review of #478, where the consequence was stated
+// nowhere and the upside was stated twice, and filed as #481 in the next
+// round — every other deferred decision in this file carries a number,
+// and a promise in prose with none is what CLAUDE.md's "A red suite is
+// yours" section calls a claim that outlives the thing it describes.
 func (h *ToastHost) HitTestTransparent() bool { return true }
 
 // Toast is one transient message — an ordinary leaf, so its paint node

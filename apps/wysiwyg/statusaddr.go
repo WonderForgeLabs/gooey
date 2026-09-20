@@ -524,8 +524,20 @@ func (s *addrStrip) popup() *components.Popup {
 	return s.pop
 }
 
+// ChildComponents is the notice, the service chips and the menu surface.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT CALL, the same claim
+// FocusManager.Order and AdornmentLayer.Adornments carry: this refills
+// s.kids in place and then clears what the refill did not reach, so a
+// stashed return keeps its OLD length and everything past the new one
+// reads nil. Copy what you need, or call again after the change. Raised
+// in review of #456.
 func (s *addrStrip) ChildComponents() []gooey.Component {
 	p := s.popup()
+	// Cleared to cap, not truncated: the tail holds components from the
+	// last call. See clearToCap in the gooey package, and
+	// StatusBar.ChildComponents for why the clear goes AFTER the refill
+	// rather than before it. Raised in review of #456.
 	s.kids = s.kids[:0]
 	// The notice first, which is document order and therefore the order
 	// the row reads: clipboard feedback at the far end, then the
@@ -534,15 +546,16 @@ func (s *addrStrip) ChildComponents() []gooey.Component {
 	for _, c := range s.chips {
 		s.kids = append(s.kids, c)
 	}
-	// APPENDED LAST AS HOUSE STYLE. This said "because document order is
-	// z-order", which stopped being the reason: what is appended here is
-	// a Popup surface, and a Popup surface implements gooey.Overlay, so
-	// it is lifted out of document order into the paint layer and paints
-	// above the page from any position. Kept last because a reader
-	// looking for the overlay expects it there, not because the position
-	// decides what paints over
-	// whatever it covers.
+	// Last by convention, not by necessity: the surface is a
+	// gooey.Overlay and paints over whatever it covers from anywhere in
+	// this slice. Since #465 the hit walk asks overlayOf as well, so
+	// membership and rank order it too and position is only the tiebreak
+	// inside one layer — this append decides nothing on either plane.
+	// What carries a press to the surface at all is the capture an open
+	// popup holds, because it is arranged outside this strip's rect
+	// (#482).
 	s.kids = append(s.kids, p.Surface())
+	clear(s.kids[len(s.kids):cap(s.kids)])
 	return s.kids
 }
 

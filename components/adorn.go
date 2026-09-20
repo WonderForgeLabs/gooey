@@ -60,11 +60,37 @@ type PersistentAdornment interface {
 }
 
 // AdornmentLayer hosts adornments above the whole page: the app declares
-// it as the LAST child of its root — document order is z-order, the same
-// hosting shape as ToastHost — and adorners are added and removed at
-// runtime through the Dynamic re-sync a list uses. The layer paints
-// nothing and declares no background, so a page that never shows an
-// adornment pays nothing for hosting the layer.
+// it anywhere spanning the page FOR PAINT, and adorners are added and
+// removed at runtime through the Dynamic re-sync a list uses. The layer
+// paints nothing and declares no background, so a page that never shows
+// an adornment pays nothing for hosting the layer.
+//
+// "THE SAME HOSTING SHAPE AS ToastHost" is what this said, and it is
+// the half that is not true. ToastHost really has no layout-order
+// dependency; this layer re-anchors during its own Arrange, and layout
+// still walks children in DOCUMENT ORDER because the overlay lift moves
+// paint only. So a layer declared before the content it adorns drops a
+// custom adornment that is neither a PersistentAdornment nor a
+// gooey.PointerFollower — orphaned on its first arrange, permanently,
+// with no error and no fault. Tooltip and ValidationMarker are exempt
+// by construction, which is why every doc scoped to those two is right
+// to say the position is free.
+//
+// docs/markup-reference.md carries the same caveat for the markup
+// surface and TestAnAdornmentLayerDeclaredBeforeItsAnchorLosesTheAdornment
+// pins the drop. This godoc is what a Go author writing a custom adorner
+// reads, and it licensed the order that loses their adornment; found in
+// review of #456.
+//
+// "AS THE LAST CHILD OF ITS ROOT, BECAUSE DOCUMENT ORDER IS Z-ORDER" is
+// what this used to say, and both halves stopped being true: #437 lifted
+// overlays into a layer of their own, and #439 — this change — gave that
+// layer ranks. The layer is at gooey.OverlayRankAdornment, the top, so a
+// validation marker or a tooltip is above the page, above any toast and
+// above any open dropdown. Correcting it here was missed on the first
+// pass, which left this file's godoc contradicting the docs/ edit in its
+// own commit; found in review of #456. Being above all of them is the
+// whole point of an adornment, and was not true while position decided.
 //
 // Anchoring is re-evaluated every frame, for free: layout runs
 // unconditionally, so Arrange re-reads every anchor's bounds and
@@ -116,6 +142,23 @@ type AdornmentLayer struct {
 	mgr       *gooey.FocusManager
 }
 
+// OverlaysPage and OverlayRank put the layer at the top of the overlay
+// layer — above toasts, which are above popups.
+//
+// TOP because an adornment describes something ALREADY ON SCREEN: a
+// tooltip names the control under the pointer, a validation marker
+// points at the field it is about. Covered by the thing it annotates it
+// says nothing, so of the three kinds it is the one with no reason ever
+// to be underneath. See gooey.OverlayRanker and #439.
+//
+// These live BELOW the struct on purpose. Inserted above it they sat
+// between the type's doc comment and the type, which left AdornmentLayer
+// undocumented and hung its sixty-line design block on OverlaysPage —
+// invisible to every reader who does not run `go doc`. Found in review
+// of #456.
+func (l *AdornmentLayer) OverlaysPage()    {}
+func (l *AdornmentLayer) OverlayRank() int { return gooey.OverlayRankAdornment }
+
 // SetStructureHook receives the composition's structural-change hook —
 // adding and removing adorners are child-set changes (gooey.Dynamic).
 func (l *AdornmentLayer) SetStructureHook(fn func()) { l.structure = fn }
@@ -133,6 +176,16 @@ func (l *AdornmentLayer) ChildComponents() []gooey.Component {
 }
 
 // Adornments is what the layer is currently showing, in z-order.
+//
+// THE SLICE IS INVALIDATED BY THE NEXT LAYOUT PASS, and this is the same
+// claim FocusManager.Order carries for the same reason. Arrange rebuilds
+// l.adorns in place and then clears what the rebuild did not reach, and
+// Remove clears the slot its splice vacates. A stashed return keeps its
+// OLD length, so everything past the new one now reads nil — a nil deref
+// on any method call, where before this change it read a stale-but-live
+// adornment. Copy what you need, or take a fresh Adornments() after the
+// change. The live slots are never nil: both clears are placed after the
+// writes that fill them. Raised in review of #456.
 func (l *AdornmentLayer) Adornments() []Adornment { return l.adorns }
 
 // Add puts an adornment up. UI goroutine only, like everything that
@@ -150,6 +203,71 @@ func (l *AdornmentLayer) Remove(a Adornment) {
 	for i, x := range l.adorns {
 		if x == a {
 			l.adorns = append(l.adorns[:i], l.adorns[i+1:]...)
+			// THE RETENTION WINDOW THIS CLOSES IS ONE LAYOUT PASS, and
+			// saying so is the correction. This read "Arrange runs
+			// unconditionally — but that is an accident of scheduling
+			// standing in for an invariant", which contradicts this
+			// type's own doc a hundred lines up, where unconditional
+			// layout is stated as the invariant that makes anchoring
+			// re-evaluate for free. It is the invariant, not an
+			// accident, and the two sentences could not both stand in
+			// one file. So Arrange's tail clear (below) does catch up,
+			// and the slot holds a dropped Adornment only until the
+			// next pass.
+			//
+			// Clearing here anyway is a judgement, not a necessity:
+			// a bounded retention is still a retention, and the three
+			// sibling sites named below take the same trade. What it
+			// costs is in the next paragraph, and the cost is why the
+			// honest version of this sentence matters — an "accident of
+			// scheduling" would have made the clear mandatory and hidden
+			// that there was a trade at all. Raised in review of #456.
+			//
+			// AND IT IS WHAT MAKES A MID-Arrange REMOVAL A PANIC rather
+			// than a wrong pixel, which is the cost of taking it and is
+			// written here because this is the line that creates the
+			// hazard. Arrange ranges over a slice header captured once,
+			// so a Remove reached from inside that loop — through
+			// a.Place, through the adornment's own Arrange under
+			// ArrangeChild, or through orphaned() below — shortens
+			// l.adorns while the range still has the old len. The clear
+			// then zeroes a slot the loop has yet to visit: at len 3
+			// with the last element removed, iteration 2 reads nil, the
+			// PointerFollower assertion answers ok=false, and a.Anchor()
+			// is called on a nil interface. Before the clear that read
+			// was a stale-but-live adornment — wrong, not fatal.
+			//
+			// The same trade is stated at StatusBar.ChildComponents
+			// (statusbar.go), ItemsView.sync (itemsview.go) and
+			// FocusManager.Resync (input.go), each for its own walk, and
+			// this was the one site that took it without saying so.
+			//
+			// NOT REACHABLE TODAY, and that is why it is written rather
+			// than guarded. All three routes, not one — the argument
+			// used to name three and discharge only the last, leaving a
+			// reader to redo the other two:
+			//
+			//   - a.Place: every implementor in the tree is PURE.
+			//     tipPopup.Place (tooltip.go), markerPopup.Place
+			//     (validation.go) and DragGhost.Place (dragghost.go)
+			//     compute a rect from their arguments and their own
+			//     fields — PlacePopup, clamp, min — and touch the layer
+			//     not at all.
+			//   - the adornment's own Arrange under ArrangeChild: same
+			//     three types, and none of them reaches the layer
+			//     either; ArrangeChild applies the layout sandwich and
+			//     calls Arrange, which is Base.Arrange for all of them.
+			//   - orphaned(): the only two `orphanable` implementors in
+			//     the tree (tooltip.go, validation.go) nil their
+			//     back-pointers and nothing else, and neither Tooltip
+			//     nor ValidationMarker calls Remove from layout.
+			//
+			// A custom
+			// adornment is app code and app code is what reaches Place
+			// and Arrange, so the next person to write one needs this
+			// sentence rather than a nil check standing in for it.
+			// Raised in review of #456.
+			clear(l.adorns[len(l.adorns):cap(l.adorns)])
 			if l.structure != nil {
 				l.structure()
 			}
@@ -186,6 +304,11 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		// observer, not from here.
 		pointer, seen = l.mgr.Pointer()
 	}
+	// FILTER IN PLACE, so the tail below len holds whatever was dropped
+	// — an orphaned tooltip, a finished drag ghost — until the slot is
+	// written again. Transience is the whole point of an adornment, so
+	// the tail is cleared after the assignment below rather than left.
+	// See clearToCap in the root package. Raised in review of #456.
 	live := l.adorns[:0]
 	dropped := false
 	for _, a := range l.adorns {
@@ -225,6 +348,7 @@ func (l *AdornmentLayer) Arrange(b gooey.Rect) {
 		gooey.ArrangeChild(a, a.Place(ab, b))
 	}
 	l.adorns = live
+	clear(l.adorns[len(l.adorns):cap(l.adorns)])
 	if dropped && l.structure != nil {
 		l.structure()
 	}
@@ -247,6 +371,70 @@ func (l *AdornmentLayer) PassesCellsThrough() {}
 // HitTestTransparent: the layer spans the whole page invisibly; the
 // pointer must pass through it to the content beneath, or hosting the
 // layer would starve every click and hover on the page.
+//
+// THE LAYER'S TRANSPARENCY DOES NOT REACH ITS CHILDREN, and this is the
+// cost paragraph ToastHost carries, read at the rank above it. Since
+// #465 FocusManager.HitTest answers by overlay layer first, then rank,
+// then document order — so an adornment takes the press, AND THE HOVER
+// WITH IT, from anything it covers no matter where either was declared.
+// One walk answers both: DispatchMouse derives `hit` and `hov` from the
+// same `under`, so an opaque adornment also costs the covered field its
+// tooltip and its hover highlight, which is the half of this nobody
+// sees happen. OverlayRankAdornment is the TOP rank (component.go),
+// above popups and above toasts. The layer being transparent only means
+// the layer's own empty cells are; each adornment decides for itself.
+//
+// Every adornment in this repo decides the same way, and that is now a
+// CHECK rather than a grep: TestEveryAdornmentIsHitTestTransparent reads
+// this package's source for the types whose METHOD SET holds both Anchor
+// and Place — which is what an Adornment is — and fails on one that
+// neither declares nor inherits HitTestTransparent. Declared OR embedded,
+// in both halves: the scan promotes an embedded struct field's methods to
+// a fixed point, so `type badge struct{ DragGhost }` is INSIDE the check.
+//
+// EMBEDDING BRINGS A TYPE IN; IT DOES NOT EXEMPT IT. The method set is
+// only the first arm. The second is a CALL TABLE — an adornment whose
+// HitTestTransparent nothing here constructs and calls is one whose
+// `return false` no test would see — so an inheriting embedder still
+// fails until `transparency` gains an entry for it. Measured, with
+// `type reviewProbeBadge struct{ DragGhost }` added to this package:
+//
+//	adornments found in source: [markerPopup reviewProbeBadge tipPopup DragGhost]
+//	reviewProbeBadge is an adornment and nothing here CALLS its
+//	HitTestTransparent, so a `return false` in it would pass this test.
+//
+// This paragraph first said "declaring", which answers a different
+// question; correcting it to "an embedder that inherits the method
+// PASSES" then answered a third. It is neither: inside the check, not
+// exempted, and still owing an entry. Raised in review of #458, twice.
+//
+// A fourth adornment comes under it on the commit that adds it, where
+// the sentence this replaces ("the grep to run rather than a count to
+// trust here") asked the reader to do the walk by hand and would have
+// gone on reading true while a new one shipped opaque.
+//
+// What the check cannot reach is a third-party adornment: Add is
+// exported and Adornment is an interface, so one written outside this
+// package that simply omits the method is opaque, and nothing says so at
+// the point of writing it — no load error, no vet, no test. It would
+// take the press and the hover over the field it is pinned beside, at
+// the top rank, silently. That residue is the reason the remedy below
+// is the right one; a guard over this package's own types is the half
+// that can be enforced here.
+//
+// And the duration is the half that is worse here than for a toast.
+// toast.go weighs its swallowing as "three seconds of that button being
+// unclickable". A PersistentAdornment (above) is up for exactly as long
+// as its anchor is invalid — a validation marker beside a TextBox stays
+// while the user tries to fix the field it is covering. There is no
+// timer to wait out.
+//
+// Named in review of #478, which read this method's three lines as the
+// same claim ToastHost makes at length and asked why only one of them
+// carries the consequence. The remedy is the same one #481 holds for
+// Toast: transparency belongs on the thing that owns the cells, and if
+// it is ever made a default rather than an opt-in it has to be made so
+// in one place for both.
 func (l *AdornmentLayer) HitTestTransparent() bool { return true }
 
 // attachAdornment is the attach half both AdornmentLayer customers share:
@@ -274,8 +462,12 @@ func attachAdornment(host gooey.Component, mgr *gooey.FocusManager, pop Adornmen
 	return layer
 }
 
-// findAdornmentLayer walks the live tree for the page's layer. Overlays
-// are declared last, so the walk searches later siblings first.
+// findAdornmentLayer walks the live tree for the page's layer,
+// searching later siblings first. That is a HEURISTIC and not a
+// requirement: it is where apps still put the layer, out of the habit
+// document-order z-order left behind, so looking there first usually
+// wins on the first probe. A layer declared anywhere is found just the
+// same, one subtree later.
 func findAdornmentLayer(w gooey.Component) *AdornmentLayer {
 	if l, ok := w.(*AdornmentLayer); ok {
 		return l

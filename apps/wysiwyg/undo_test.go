@@ -136,16 +136,8 @@ func TestCtrlZUndoesAnEditAndCtrlYRedoesIt(t *testing.T) {
 	}
 }
 
-// TestUndoCoversEveryMutatorTheEditorHas is the claim that matters most
-// for the seam: undo is not wired per mutator, so this is a table over
-// ALL of them and it is what would go red if one of them stopped going
-// through rebuild.
-//
-// It is deliberately written as "do the edit, assert the document
-// changed, undo, assert it came back" rather than as per-mutator expected
-// values: the point is coverage of the seam, and a table of expected
-// markup would be a table of things to update whenever a seed changes.
-// undoCase is one row of that table.
+// undoCase is one row of the table
+// TestUndoCoversEveryMutatorTheEditorHas drives.
 //
 // mutator names the *editor method the row drives, and it is not
 // decoration: TestTheUndoTableNamesEveryMutatorInTheSource reads these
@@ -295,6 +287,15 @@ func gridWithTracks(ed *editor) {
 	ed.setSelection(ed.doc())
 }
 
+// TestUndoCoversEveryMutatorTheEditorHas is the claim that matters most
+// for the seam: undo is not wired per mutator, so this is a table over
+// ALL of them and it is what would go red if one of them stopped going
+// through rebuild.
+//
+// It is deliberately written as "do the edit, assert the document
+// changed, undo, assert it came back" rather than as per-mutator expected
+// values: the point is coverage of the seam, and a table of expected
+// markup would be a table of things to update whenever a seed changes.
 func TestUndoCoversEveryMutatorTheEditorHas(t *testing.T) {
 	for _, tc := range undoCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
