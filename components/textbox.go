@@ -1316,10 +1316,9 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		// instead of the arrow. snapOut's own doc exempts setText, and
 		// that argument is about INSERTION: a pasted rune joining the
 		// PRECEDING cluster would be pulled backwards by a snap. These
-		// two arms insert nothing. Leftward, to the boundary before
-		// the glyph the splice left the caret inside, which is the
-		// position both further deletes and further typing behave
-		// from. Raised in review of #521.
+		// two arms insert nothing. Leftward here because backspace
+		// travels leftward; the delete arm below snaps the other way
+		// for the same rule. Raised in review of #521.
 		next := append(append([]rune{}, runes[:caret-1]...), runes[caret:]...)
 		t.setText(next, snapOut(next, caret-1, false))
 	case ev == input.Named(input.KeyDelete):
@@ -1331,9 +1330,18 @@ func (t *TextBox) editKey(ev input.KeyEvent) bool {
 		if caret >= len(runes) {
 			return true
 		}
-		// Snapped for the reason the backspace arm above gives.
+		// Snapped for the reason the backspace arm above gives, and
+		// RIGHTWARD, because this one travels rightward: snapOut's
+		// contract is "outward in the direction it was travelling",
+		// and leftward here walked the caret back over a glyph nothing
+		// had deleted, so the NEXT press destroyed a character the
+		// user had already moved past. Measured in review of #521 on
+		// "ab"+U+0301+"cd" with the caret at 1, a boundary the right
+		// arrow produces: delete gave "ácd" at caret 0, and a second
+		// delete gave an orphan mark leading the value — the state
+		// moveKey's doc names as the harm the cluster rule removes.
 		next := append(append([]rune{}, runes[:caret]...), runes[caret+1:]...)
-		t.setText(next, snapOut(next, caret, false))
+		t.setText(next, snapOut(next, caret, true))
 	case ev == ctrlRune('x'):
 		if !t.copySelection() {
 			return true

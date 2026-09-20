@@ -2158,10 +2158,28 @@ func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 		key   input.KeyEvent
 		want  string // after the delete, then typing Z
 	}{
+		// The delete arm snaps RIGHTWARD, so the caret ends after the
+		// "á" glyph and the typed rune lands behind it. Leftward put
+		// it before the glyph, which walked the caret back over
+		// something nothing had deleted — review of #521, round 13.
 		{"delete takes the base out from under a following mark",
-			"ab́", 1, input.Named(input.KeyDelete), "Zá"},
+			"ab́", 1, input.Named(input.KeyDelete), "áZ"},
 		{"backspace takes the base out from under a following mark",
 			"ab́", 2, input.Named(input.KeyBackspace), "Zá"},
+		// AND ONE THE UI CAN ACTUALLY PRODUCE. The row above starts at
+		// caret 2 in "ab"+U+0301, whose boundaries are [0 1 3] — a
+		// mid-cluster start, which is the position this branch taught
+		// the arrows, clicks, word motion and double-click NOT to
+		// produce, so only setCaret can reach it and a reader cannot
+		// tell whether the snap guards a reachable state. Three
+		// regional-indicator pairs have boundaries [0 2 4 6], so two
+		// right arrows land on 4 honestly; the backspace then re-pairs
+		// the flags — un-snapped the caret is 3, mid-cluster, which no
+		// other edit-path test reaches. Raised in review of #521.
+		{"backspace re-pairs regional indicators under the caret",
+			"🇺🇸🇺🇸🇺🇸", 4,
+			input.Named(input.KeyBackspace),
+			"🇺🇸Z🇺🇺🇸"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := prop.NewSource(tc.start)
@@ -2171,8 +2189,13 @@ func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 			tb.HandleKey(tc.key)
 
 			runes := []rune(v.Get())
-			if !slices.Contains(clusterBoundaries(runes, len(runes)), tb.Caret()) &&
-				tb.Caret() != len(runes) {
+			// NO `|| caret == len(runes)` HERE: clusterBoundaries ends
+			// with append(bs, end), so the end IS in the slice and a
+			// second conjunct guarding it could never change the
+			// answer — a conjunct no mutation can be caught removing,
+			// which is the rule round 9 of this branch wrote down.
+			// Raised in review of #521.
+			if !slices.Contains(clusterBoundaries(runes, len(runes)), tb.Caret()) {
 				t.Errorf("the caret is at %d in %q, whose cluster boundaries are "+
 					"%v — inside a cluster, which is the position the arrows "+
 					"were changed to stop reaching", tb.Caret(), v.Get(),
@@ -2185,5 +2208,46 @@ func TestADeleteNeverLeavesTheCaretInsideACluster(t *testing.T) {
 					"mid-cluster caret does", v.Get(), tc.want)
 			}
 		})
+	}
+}
+
+// TestAForwardDeleteNeverWalksTheCaretBackwards is the other half of
+// the snap, and the half a single press cannot see.
+//
+// Round 12's fix snapped both delete arms leftward. Backspace travels
+// left, so that is right there; `delete` travels right, and leftward
+// walked the caret back over a glyph nothing had deleted — so the NEXT
+// press destroyed a character the user had already moved past, and the
+// value was left opening with an orphan mark, which is the state
+// moveKey's doc names as the harm the cluster rule removes. Measured in
+// review of #521, round 13:
+//
+//	"ab" + U+0301 + "cd", right arrow -> caret 1 (a real boundary)
+//	delete  -> "ácd" caret 0   <- back over the á nothing deleted
+//	delete  -> "́cd"  caret 0   <- 'a' gone, orphan mark leads the value
+//
+// snapOut's own contract is "outward in the direction it was
+// travelling", and the delete arm was the one caller contradicting it.
+//
+// TWO PRESSES, because one cannot tell the two directions apart by
+// outcome: both leave the caret on a boundary, and only the second
+// press says which boundary was the right one.
+func TestAForwardDeleteNeverWalksTheCaretBackwards(t *testing.T) {
+	v := prop.NewSource("ab́cd")
+	tb := &TextBox{Text: v}
+	tb.SetFocused(true)
+	tb.HandleKey(input.Named(input.KeyRight)) // caret 1, a cluster boundary
+
+	before := tb.Caret()
+	tb.HandleKey(input.Named(input.KeyDelete))
+	if tb.Caret() < before {
+		t.Fatalf("a forward delete moved the caret from %d to %d, over a glyph "+
+			"it did not delete — the value is now %q", before, tb.Caret(), v.Get())
+	}
+	tb.HandleKey(input.Named(input.KeyDelete))
+	if got := []rune(v.Get()); len(got) > 0 && got[0] == '́' {
+		t.Errorf("after two forward deletes the value is %q, which OPENS with a "+
+			"combining mark: the second press consumed the base the caret had "+
+			"already moved past", v.Get())
 	}
 }

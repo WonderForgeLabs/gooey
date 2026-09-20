@@ -816,6 +816,8 @@ Keys:
 | `ctrl+←` / `ctrl+→` | move by word — words, punctuation runs and whitespace runs are separate |
 | `home` / `end` | jump to either end |
 | `shift+` any of the above | extend the selection from its anchor instead of moving |
+| `ctrl+x` / `ctrl+c` | cut / copy the selection to the process-local kill buffer |
+| `ctrl+v` | paste the kill buffer at the caret |
 
 The two units in that table are deliberate and they differ. An arrow
 steps over a whole `é` — base and combining mark together, so the caret
@@ -825,8 +827,6 @@ cost is that a stray combining mark can no longer be deleted by arrowing
 between it and its base; the caret is placed with the arrow and the mark
 is removed with `backspace`, which removes the rune immediately before
 the caret whatever cluster it belongs to.
-| `ctrl+x` / `ctrl+c` | cut / copy the selection to the process-local kill buffer |
-| `ctrl+v` | paste the kill buffer at the caret |
 
 `ctrl+c` is only consumed when there IS a selection, so the framework quit key still bubbles out of a focused field with nothing selected.
 
