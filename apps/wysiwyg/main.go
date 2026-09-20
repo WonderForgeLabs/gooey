@@ -1569,6 +1569,17 @@ func declSpelling(d *node, envPrefix string, envBound bool, unbound string) stri
 // namespace offers, not about what this element is called, and the
 // spelling an author would write a Property under is the document's
 // binding rather than the alien element's.
+//
+// WHICH SAYS WHICH SPELLING WINS, NOT WHAT TO DO WITH NO ENVELOPE
+// BINDING AT ALL. The tail fell straight to declFallbackPrefix there,
+// so a file binding the namespace only on the element — legal, and the
+// placement declPrefix exists for — was told the namespace "declares
+// <x:Property> only" while containing no x: anywhere. That is the same
+// invent-a-prefix harm the element half two paragraphs up was fixed
+// for, one step further out, and it reached the paste refusal too. The
+// ladder is now the same three steps declSpelling walks: the envelope's
+// binding, then the first alien element's, then markup's literal.
+// Raised in review of #522.
 func alienDeclMsg(alien []*node, prefix string, bound bool) string {
 	elems := make([]string, len(alien))
 	for i, d := range alien {
@@ -1576,6 +1587,12 @@ func alienDeclMsg(alien []*node, prefix string, bound bool) string {
 	}
 	if !bound {
 		prefix = declFallbackPrefix
+		for _, d := range alien {
+			if p, ok := declBinding(d.Attrs); ok {
+				prefix = p
+				break
+			}
+		}
 	}
 	verb := "is an unknown language element"
 	if len(elems) > 1 {
@@ -1725,6 +1742,7 @@ func nodeOf(src string) (*node, error) {
 			// same element name, so the rewrite preserves meaning. It is
 			// only the spelling that moves, and no spelling survives a
 			// document model that holds none.
+			//
 			// ONE NAMESPACE IS EXEMPT, AND ONLY AS A CHILD OF THE
 			// ENVELOPE. The refusal's premise is that the model cannot
 			// hold the namespace, so writing the element back out

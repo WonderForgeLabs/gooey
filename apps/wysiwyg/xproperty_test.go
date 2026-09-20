@@ -1171,6 +1171,24 @@ func TestAnXNamespacedElementThatIsNotPropertyGetsMarkupsOwnAnswer(t *testing.T)
 			elem:   "<d:Foo>",
 			absent: "<x:Foo>",
 		},
+		{
+			// AND THE ELEMENT BINDING WITH NOTHING ON THE ENVELOPE,
+			// which is the arm that reaches the message's TAIL. The
+			// element half was made per-element above; the tail was
+			// left normalising to declFallbackPrefix whenever the
+			// ENVELOPE bound nothing, so a file whose only binding is
+			// on the element was told the namespace "declares
+			// <x:Property> only" — a prefix it would have to invent,
+			// which is the defect the element half exists to prevent,
+			// one step further out. No arm above mixes an unbound
+			// envelope with an element-level binding, which is why
+			// they stayed green over it. Raised in review of #522.
+			name: "bound on the element, with the envelope binding nothing",
+			doc: `<Gooey>` + "\n" +
+				`  <d:Foo xmlns:d="` + markup.XNamespace + `" Name="Title"/>` + "\n</Gooey>\n",
+			elem:   "<d:Foo>",
+			absent: "<x:Property>",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := markupRefuses(t, tc.doc, "unknown language element", "<x:Foo>")
@@ -1489,8 +1507,14 @@ func TestEnvelopePartsNeverHandsBackTheEditorsOwnMap(t *testing.T) {
 // THIS PINS THE STATE OF PLAY RATHER THAN BLESSING IT. Giving these a
 // preview cannot come from AbsentValue — a Declaration does not know
 // its consumer — so it is a separate decision; when it is made, this
-// test goes red and the three paragraphs that describe the fourth case
-// go with it. Raised in review of #522.
+// test goes red and every page that describes the fourth case goes with
+// it: docs/architecture.md, docs/markup-reference.md and seedDeclared's
+// own doc, which this commit scoped, plus
+// docs/specs/2026-08-10-markup-declared-properties.md, which it did
+// not — that page's worked example is card.gooey, the one file in the
+// tree that demonstrates this exception rather than the rule, and it is
+// #556. A count in prose is a sample taken once, so this names them
+// instead of counting them. Raised in review of #522.
 func TestAnAnyDeclarationSeedsAHandleItsConsumersRefuse(t *testing.T) {
 	root := workspaceFixture(t)
 	const doc = `<Gooey xmlns="wonderforge.io/gooey/2026" xmlns:x="` +
