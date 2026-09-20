@@ -605,6 +605,72 @@ func TestTheDesignerAndTheLoaderAgreeAboutAnUnknowableDef(t *testing.T) {
 	}
 }
 
+// TestTheGridOffersLayoutRowsTheLoaderWillRefuse is the OTHER direction
+// of the same pair, and AttrsFor's doc claimed it could not happen.
+//
+// That doc said "nothing this offers fails to load, because the
+// TakesLayout gate here and Context.vocabulary's are the same predicate
+// on the same spec". Round 11 made them different predicates —
+// vocabulary gained a disjunct AttrsFor has no equivalent of — and
+// added applyLayout's refusal for a Build whose component has no
+// Layout, which the catalog cannot see at all: what Build RETURNS is
+// unknowable before it runs. So the grid offers the layout rows and the
+// loader refuses them, which is the shape TakesLayout's own doc names
+// as the thing the predicate exists to prevent — and it reaches a
+// surface, since apps/wysiwyg builds its property inspector from
+// exactly this call.
+//
+// NOT CLOSABLE FROM HERE, so it is pinned instead: this test goes red
+// the moment either gate moves, which is what the agreement test above
+// buys for the shapes where the two DO agree. The precedent is the Name
+// gap two paragraphs down in AttrsFor's own doc. Raised in review of
+// #486.
+func TestTheGridOffersLayoutRowsTheLoaderWillRefuse(t *testing.T) {
+	ctx := &Context{Elements: map[string]*ElementDef{"Bareish": {
+		Name:  "Bareish",
+		Known: true,
+		Doc:   "A host element whose Build returns a component with no Layout.",
+		Attrs: []AttrSpec{{Name: "Label", Kind: KindString, Origin: OriginBuiltin}},
+		Build: func(e Element, ctx *Context) (gooey.Component, error) {
+			return layoutlessComponent{}, nil
+		},
+	}}}
+	spec, ok := ctx.spec("Bareish")
+	if !ok {
+		t.Fatal("the fixture did not resolve")
+	}
+	// THE PARENT-RESOLVED FORM, because the attached rows are the
+	// parent's to offer: Grid.Row only appears under a Grid, and that is
+	// the call apps/wysiwyg's inspector makes.
+	offered := map[string]bool{}
+	for _, a := range AttrsFor(spec, "Grid") {
+		offered[a.Name] = true
+	}
+	for _, name := range []string{"Margin", "Width", "Height", "Grid.Row"} {
+		if !offered[name] {
+			t.Fatalf("the grid does not offer %s for this def, so the "+
+				"divergence this test pins is gone and AttrsFor's doc can "+
+				"go back to claiming the two gates agree", name)
+		}
+		_, err := Build([]byte(`<Gooey><Grid Cols="1fr" Rows="1fr">`+
+			`<Bareish Label="a" `+name+`="`+gridValue(name)+`"/></Grid></Gooey>`), ctx)
+		if err == nil {
+			t.Errorf("the loader accepts %s, which the grid offers — if the "+
+				"refusal has been removed, say so where the gap is recorded "+
+				"rather than leaving two tests disagreeing", name)
+		}
+	}
+}
+
+// gridValue is a value the attribute's own parser accepts, so the
+// refusal under test is the layout one rather than a parse error.
+func gridValue(name string) string {
+	if name == "Grid.Row" {
+		return "0"
+	}
+	return "2"
+}
+
 // layoutlessComponent is a gooey.Component that does NOT embed Base, so
 // it implements no gooey.HasLayout and applyLayout has nothing to write
 // to. Everything else in this package's fixtures embeds Base, which is
@@ -790,6 +856,34 @@ func TestAnUnknowableDefThatBuildsNoLayoutIsRefusedByName(t *testing.T) {
 	for _, want := range []string{"Margin", "Nada", "returned no component"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the nil-Build refusal does not name %s:\n\t%v", want, err)
+		}
+	}
+
+	// AND WITHOUT A LAYOUT ATTRIBUTE, which the refusal used to wave
+	// through on the reasoning that it was somebody else's diagnosis.
+	// Nobody else has one. Measured in review of #486 before this arm:
+	// <Gooey><VStack><Nada/></VStack></Gooey> loaded clean and the
+	// nil child panicked in Measure with a nil pointer dereference,
+	// and <Gooey><Nada/></Gooey> handed App.Run a nil root. Both
+	// documents are here because they fail differently — one inside a
+	// container's walk, one as the root itself.
+	for _, doc := range []string{
+		`<Gooey><VStack><Nada/></VStack></Gooey>`,
+		`<Gooey><Nada/></Gooey>`,
+	} {
+		_, err := Build([]byte(doc), &Context{
+			Elements: map[string]*ElementDef{"Nada": nada}})
+		if err == nil {
+			t.Errorf("%s loaded clean; its Build returned neither a component "+
+				"nor an error, so what reaches the tree is a nil child that "+
+				"panics on the first Measure", doc)
+			continue
+		}
+		for _, want := range []string{"Nada", "returned no component"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the no-attribute refusal for %s does not name %s:\n\t%v",
+					doc, want, err)
+			}
 		}
 	}
 }

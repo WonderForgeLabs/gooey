@@ -1273,19 +1273,36 @@ func applyTooltipShorthand(e Element, w gooey.Component, ctx *Context) error {
 // resolves to a live handle at build time, lvalue semantics like every
 // other binding.
 func applyLayout(e Element, w gooey.Component, ctx *Context) error {
-	// NOTHING WAS BUILT IS ITS OWN SENTENCE. A Build returning
-	// (nil, nil) hands this function a nil gooey.Component, and the
-	// type assertion below answers the same ok=false a real
+	// NOTHING WAS BUILT IS ITS OWN SENTENCE, ON EVERY DOCUMENT. A Build
+	// returning (nil, nil) hands this function a nil gooey.Component,
+	// and the type assertion below answers the same ok=false a real
 	// Layout-less value does — so the refusal said "embed gooey.Base
 	// in what <Nada> builds" about an element that builds nothing, a
-	// remedy naming an edit that cannot be made. Scoped to documents
-	// that actually wrote a layout attribute, because that is the
-	// refusal this arm belongs to; a nil Build with no such attribute
-	// is somebody else's diagnosis. Raised in review of #486.
+	// remedy naming an edit that cannot be made.
+	//
+	// IT WAS SCOPED TO DOCUMENTS THAT WROTE A LAYOUT ATTRIBUTE, on the
+	// reasoning that a nil Build without one is somebody else's
+	// diagnosis. Nobody else diagnoses it. Measured in review of #486:
+	//
+	//	<Gooey><VStack><Nada/></VStack></Gooey>
+	//	  Build   -> err=<nil>, root=*components.VStack
+	//	  Measure -> PANIC: invalid memory address or nil pointer
+	//	             dereference
+	//	<Gooey><Nada/></Gooey>
+	//	  Build   -> err=<nil>, root=nil   handed to App.Run as the root
+	//
+	// So the scope was silence dressed as delegation, which is the
+	// failure mode this whole branch is about. A Build that returns
+	// neither a component nor an error is a HOST bug on every document
+	// — the same class noBuild turns into a sentence two functions up,
+	// reached by the other door — and the layout attributes, when there
+	// are any, only sharpen the sentence. Raised in review of #486.
 	if w == nil {
 		named := layoutNamesIn(e.Attrs)
 		if len(named) == 0 {
-			return nil
+			return fmt.Errorf("markup: <%s>: this element's Build returned no "+
+				"component and no error, so there is nothing to place. Fix "+
+				"<%s>'s Build to return a component or an error", e.Name, e.Name)
 		}
 		return fmt.Errorf("markup: <%s %s=%q>: this element's Build returned no "+
 			"component at all, so %s can be applied to nothing. Fix <%s>'s "+

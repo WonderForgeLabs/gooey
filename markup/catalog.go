@@ -609,10 +609,28 @@ func (g Grant) AttachedAttrs() []AttrSpec {
 // resolved — the same join, reached without a registry lookup. See
 // AttachedAttrs above for why a Context consumer needs this form.
 //
-// THE AGREEMENT WITH THE LOADER RUNS BOTH WAYS FOR LAYOUT, and one
-// half of that is newer than the other. Nothing this offers fails to
-// load, because the TakesLayout gate here and Context.vocabulary's are
-// the same predicate on the same spec. The converse used to be
+// THE AGREEMENT WITH THE LOADER RUNS ONE WAY FOR LAYOUT, and the other
+// way is a gap rather than a guarantee. This paragraph used to say
+// "nothing this offers fails to load, because the TakesLayout gate here
+// and Context.vocabulary's are the same predicate on the same spec".
+// Both clauses stopped being true in round 11 of #486: vocabulary
+// gained a disjunct this has no equivalent of (attrcheck.go), and
+// applyLayout gained a refusal for a def whose Build returns a
+// component with no Layout — which nothing here can anticipate, because
+// what Build RETURNS is unknowable before it runs. Measured on the
+// Bareish fixture, parent Grid:
+//
+//	AttrsFor offers Margin, Width, Height, Grid.Row (among others)
+//	Build(<Bareish Label="a" Margin="2"/>) -> refused by name
+//
+// That is the catalog lying about the target, which is what TakesLayout
+// exists to prevent, and it reaches a surface: apps/wysiwyg builds its
+// property inspector from this call. It is not closable from here, so
+// it is stated like the Name gap below and pinned by
+// TestTheGridOffersLayoutRowsTheLoaderWillRefuse, which goes red the
+// moment either gate moves. Raised in review of #486.
+//
+// THE CONVERSE IS CLOSED. It used to be
 // unguarded: TakesLayout read HasLayout, which ElementDef.axes derives
 // from the PROTO, so a HOST's def with a real Build and no Proto
 // answered false while build() ran applyLayout on the component that

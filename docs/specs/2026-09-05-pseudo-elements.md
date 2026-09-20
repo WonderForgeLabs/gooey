@@ -368,14 +368,16 @@ holding a `<Row>` (`ParsedBy: "Table"`, `Known: true`, `Attrs: [Label]`):
 pseudo-element's attributes visible had made a host's invisible — #461,
 one registration tier over.
 
-`readerOf` is the repair and it takes two routes, because the parent's
+`readerOf` **was** the repair, and it took two routes, because the parent's
 `Children.Only` cannot answer for a parent that has none. Where the
 parent restricts its children that list *is* the placement rule and a
 miss is a genuine misplacement; where it restricts nothing, `ParsedBy` is
 the declaration left, and it is the same fact from the element's own
 side. Scoping it that way is what keeps `<MenuBar><MenuItem Name="x"/>`
 deferring to `defMenuItem.Build` even though `MenuItem.ParsedBy` is
-`<MenuBar>`.
+`<MenuBar>`. The live rule is `misplaced` + `declaredHome`
+(`markup/attrcheck.go`), with three answers rather than two — see the
+paragraph below that records the replacement.
 
 **The content remedy is decided per attribute, not per element.**
 `pseudoRemedy` asked whether the content inside was a pseudo-element,
