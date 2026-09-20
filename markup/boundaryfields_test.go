@@ -223,12 +223,40 @@ func TestEveryPartitionTableIsRegistered(t *testing.T) {
 		if !ok {
 			continue // reported by the arm below
 		}
+		// UNREADABLE IS ITS OWN ANSWER, and it has to be, because the
+		// comparison below has exactly one verdict. A spelling this
+		// walk does not parse — a keyed {inherit: true, why: "…"}
+		// with the why built from something other than string
+		// literals, or a const key — used to arrive as the empty why
+		// and be reported as a pairing fault, sending the reader to
+		// partitionTables, which had nothing wrong with it. That is
+		// the defect class this file's own header is about, inside
+		// the guard. Raised in review of #543.
+		if want.unreadKeys > 0 {
+			t.Errorf("%d of %s's entries are spelled in a way "+
+				"partitionTablesInSource cannot read the KEY of, so they are "+
+				"missing from the comparison below and this table is only "+
+				"partly checked. Teach exprText that spelling, or write the "+
+				"key as a plain string literal", want.unreadKeys, tb.name)
+		}
 		for key, entry := range tb.part {
-			if got := want[key]; got != entry.why {
+			got, ok := want.entries[key]
+			if !ok {
+				continue // the unreadKeys arm above owns this
+			}
+			if !got.read {
+				t.Errorf("the %q entry of %s is spelled in a way "+
+					"partitionTablesInSource cannot read the why of, so it "+
+					"cannot be compared. Teach partitionWhy that spelling, "+
+					"or write the why as a string literal or a + chain of "+
+					"them — this is NOT a pairing fault", key, tb.name)
+				break
+			}
+			if got.why != entry.why {
 				t.Errorf("partitionTables registers %s, but the map it hands "+
 					"over answers %q for %q where the declaration of %s in "+
 					"this package's source says %q. The name is paired with "+
-					"the wrong map", tb.name, entry.why, key, tb.name, got)
+					"the wrong map", tb.name, entry.why, key, tb.name, got.why)
 				break
 			}
 		}
@@ -264,20 +292,31 @@ func TestEveryPartitionTableIsRegistered(t *testing.T) {
 // that differs between two tables, and they are right there in the
 // literal. Raised in review of #543.
 //
-// PACKAGE markup ONLY, and the filter is load-bearing rather than
-// tidiness. The glob is *_test.go, which reaches markup/thirdparty_test.go
-// — that file is `package markup_test`, and a partition-shaped var
-// declared there would be reported as unregistered and COULD NOT BE
-// FIXED, because partitionTables() is in `package markup` and cannot
-// name it. Nothing is shaped that way today, which is what makes it the
-// silent kind. Raised in review of #543.
-func partitionTablesInSource(t *testing.T) map[string]map[string]string {
+// EVERY .go FILE, not just the tests. The glob was *_test.go, which
+// made the doc above wider than the walk: a partition table newly
+// declared in a non-test `package markup` file was invisible, so
+// `registered` never had to contain it and nothing went red — the
+// exact silent case the unregistered-table arm exists to catch.
+// (A table MOVED out of a test file was already caught, by the third
+// arm: partitionTables still names it and the walk stops finding it.)
+// Reproduced in review of #543: the same probe table reddens the test
+// as markup/zzprobe_test.go and is silent as markup/zzprobe.go.
+//
+// PACKAGE markup ONLY, and that filter is load-bearing rather than
+// tidiness — it is also what makes the wider glob safe. The glob
+// reaches markup/thirdparty_test.go, which is `package markup_test`,
+// and a partition-shaped var declared there would be reported as
+// unregistered and COULD NOT BE FIXED, because partitionTables() is in
+// `package markup` and cannot name it. Nothing is shaped that way
+// today, which is what makes it the silent kind. Raised in review of
+// #543.
+func partitionTablesInSource(t *testing.T) map[string]partitionSource {
 	t.Helper()
-	files, err := filepath.Glob("*_test.go")
+	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("globbing this package: %v", err)
 	}
-	out := map[string]map[string]string{}
+	out := map[string]partitionSource{}
 	for _, f := range files {
 		file, err := parser.ParseFile(gotoken.NewFileSet(), f, nil, parser.ParseComments)
 		if err != nil {
@@ -300,25 +339,38 @@ func partitionTablesInSource(t *testing.T) map[string]map[string]string {
 					if !isPartitionLiteral(typeOfSpec(vs, i)) {
 						continue
 					}
-					out[n.Name] = map[string]string{}
+					src := partitionSource{entries: map[string]partitionEntrySource{}}
 					if i >= len(vs.Values) {
+						out[n.Name] = src
 						continue
 					}
 					cl, ok := vs.Values[i].(*ast.CompositeLit)
 					if !ok {
+						out[n.Name] = src
 						continue
 					}
 					for _, el := range cl.Elts {
 						kv, ok := el.(*ast.KeyValueExpr)
 						if !ok {
+							src.unreadKeys++
 							continue
 						}
-						key, kerr := strconv.Unquote(exprText(kv.Key))
-						if kerr != nil {
+						key, kok := exprText(kv.Key)
+						if !kok {
+							// A KEY THIS WALK CANNOT READ IS COUNTED,
+							// not dropped. Dropped, it was simply
+							// absent from the map below, and the
+							// comparison read that absence as the
+							// empty why — a PAIRING fault, which is a
+							// different and false accusation. Raised
+							// in review of #543.
+							src.unreadKeys++
 							continue
 						}
-						out[n.Name][key] = partitionWhy(kv.Value)
+						why, wok := partitionWhy(kv.Value)
+						src.entries[key] = partitionEntrySource{why: why, read: wok}
 					}
+					out[n.Name] = src
 				}
 			}
 		}
@@ -326,44 +378,93 @@ func partitionTablesInSource(t *testing.T) map[string]map[string]string {
 	return out
 }
 
-// partitionWhy is the `why` text of one partition entry: the second
-// element of a {inherit, why} literal, with the file's own line
-// continuations joined back together.
-func partitionWhy(e ast.Expr) string {
+// partitionSource is one table as the source walk read it.
+//
+// THE BOOLS ARE THE POINT. "unreadable" and "empty" are different
+// answers, and folding them into one string made every spelling this
+// walk does not parse arrive at the comparison as an empty why — i.e.
+// as a PAIRING fault, which is false and sends the reader to
+// partitionTables. Raised in review of #543.
+type partitionSource struct {
+	entries map[string]partitionEntrySource
+	// unreadKeys is entries whose KEY this walk could not read, which
+	// cannot be recorded in entries because there is no key to record
+	// them under.
+	unreadKeys int
+}
+
+// partitionEntrySource is one entry's why text and whether the literal
+// spelling it came from is one this walk understands.
+type partitionEntrySource struct {
+	why  string
+	read bool
+}
+
+// partitionWhy is the `why` text of one partition entry, with the
+// file's own line continuations joined back together, and whether the
+// literal was a spelling this reader understands.
+//
+// BOTH SPELLINGS, keyed and positional, because gofmt accepts both and
+// {inherit: true, why: "…"} is not a mistake — it read only the
+// positional {true, "…"} until review of #543 wrote one existing entry
+// the other way and watched a correctly paired table be reported as
+// mis-paired.
+func partitionWhy(e ast.Expr) (string, bool) {
 	cl, ok := e.(*ast.CompositeLit)
-	if !ok || len(cl.Elts) != 2 {
-		return ""
+	if !ok {
+		return "", false
+	}
+	for _, el := range cl.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "why" {
+			return concatText(kv.Value)
+		}
+	}
+	if len(cl.Elts) != 2 {
+		return "", false
 	}
 	return concatText(cl.Elts[1])
 }
 
 // concatText unquotes a string literal, or a `"a" + "b" + …` chain of
 // them — the shape a 72-column comment width forces on every reason
-// long enough to be worth reading.
-func concatText(e ast.Expr) string {
+// long enough to be worth reading — and reports whether every leaf was
+// one it could read.
+func concatText(e ast.Expr) (string, bool) {
 	switch v := e.(type) {
 	case *ast.BasicLit:
 		s, err := strconv.Unquote(v.Value)
 		if err != nil {
-			return ""
+			return "", false
 		}
-		return s
+		return s, true
 	case *ast.BinaryExpr:
 		if v.Op != gotoken.ADD {
-			return ""
+			return "", false
 		}
-		return concatText(v.X) + concatText(v.Y)
+		x, xok := concatText(v.X)
+		y, yok := concatText(v.Y)
+		return x + y, xok && yok
 	}
-	return ""
+	return "", false
 }
 
-// exprText is an expression's source spelling, for the BasicLit keys
-// partitionTablesInSource unquotes.
-func exprText(e ast.Expr) string {
-	if lit, ok := e.(*ast.BasicLit); ok {
-		return lit.Value
+// exprText is the unquoted value of a BasicLit string key, and whether
+// the expression was one: a const key, or any other expression, is not
+// something this walk can resolve, and saying so is the caller's job.
+func exprText(e ast.Expr) (string, bool) {
+	lit, ok := e.(*ast.BasicLit)
+	if !ok {
+		return "", false
 	}
-	return ""
+	s, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return s, true
 }
 
 // typeOfSpec is the type expression for the i'th name in a var spec:
@@ -421,7 +522,7 @@ type namedPartition struct {
 
 // partitionTables is EVERY partition table, declared beside them and
 // read by everything that has to cover all of them — partitionWords'
-// union and TestThePartitionTablesShareOneKeySet today.
+// union and `TestThePartitionTablesShareOneKeySet` today.
 //
 // It exists because the union was a two-element literal in
 // referencedoc_test.go, which moved the coupling rather than removing
@@ -432,8 +533,8 @@ type namedPartition struct {
 // CLAUDE.md refuses, at a two-element sample.
 //
 // IT IS STILL A LITERAL, and that is a convention rather than a check —
-// so TestEveryPartitionTableIsRegistered derives the set from the
-// package source, the way TestTheControlBoundaryPartitionsEveryContextField
+// so `TestEveryPartitionTableIsRegistered` derives the set from the
+// package source, the way `TestTheControlBoundaryPartitionsEveryContextField`
 // derives Context's fields, and goes red when a table is declared here
 // and left out of this function. Raised in review of #543, twice: the
 // first round relocated the enumeration and the doc above said why

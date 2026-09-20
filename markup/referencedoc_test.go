@@ -782,10 +782,14 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // was written: backtickedPartition, two declarations above, compiled its
 // own pattern per call on a larger population, and went on doing so for
 // a round because this sentence said there was nothing left. Both are
-// hoisted now. The cost this one carried: ~12 compiles per call, once per
-// trigger-matching paragraph of the whole ../docs walk and TWICE for
-// every paragraph that clears the bar, since enumeratesThePartition and
-// the namedPartitionFields beside it each re-derive the run. Measured:
+// hoisted now. The cost this one carried is a RATIO, not a count: one
+// compile per partition key, once per trigger-matching paragraph of the
+// whole ../docs walk and TWICE for every paragraph that clears the bar,
+// since enumeratesThePartition and the namedPartitionFields beside it
+// each re-derive the run. This said "~12 compiles per call" — the
+// exported half of boundaryPartition, counted while the same #490 round
+// was adding the seven unexported entries that took the table to 19, so
+// the figure was stale in the review that wrote it. Measured:
 // TestNoPageEnumeratesTheBoundaryPartition 0.46s -> 0.21s and
 // TestEveryPageThatAnswersWhatCrossesCitesThePartition 0.10s -> 0.05s,
 // against a 4.5s markup suite. Raised in review of #490.
