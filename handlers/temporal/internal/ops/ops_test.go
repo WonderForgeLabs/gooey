@@ -196,6 +196,31 @@ func (h *fakeHandle) Describe(context.Context, client.DescribeActivityOptions) (
 func (h *fakeHandle) Cancel(context.Context, client.CancelActivityOptions) error       { return nil }
 func (h *fakeHandle) Terminate(context.Context, client.TerminateActivityOptions) error { return nil }
 
+// Pause, Unpause, UpdateOptions and RestoreOriginalOptions arrived on
+// client.ActivityHandle in go.temporal.io/sdk v1.49.0 and are marked
+// Experimental there. Nothing in this package calls them; they are here
+// because the interface is satisfied by a VALUE, so a fake that omits a
+// method stops compiling rather than stops working — which is how the
+// SDK bump surfaced, as a vet failure in a module whose own go.mod was
+// not touched (the workspace resolves every module to the one shared
+// vendor/).
+//
+// THEY RETURN ZEROES DELIBERATELY. A fake that invented a plausible
+// answer here would be asserting something about an API this repo does
+// not use, and the tests that would then depend on it do not exist. If
+// a caller appears, it needs a fixture of its own and these bodies are
+// the wrong place for it.
+func (h *fakeHandle) Pause(context.Context, client.PauseActivityOptions) error     { return nil }
+func (h *fakeHandle) Unpause(context.Context, client.UnpauseActivityOptions) error { return nil }
+
+func (h *fakeHandle) UpdateOptions(context.Context, client.ActivityOptionsUpdate) (*client.ActivityExecutionOptions, error) {
+	return nil, nil
+}
+
+func (h *fakeHandle) RestoreOriginalOptions(context.Context) (*client.ActivityExecutionOptions, error) {
+	return nil, nil
+}
+
 // ---- harness ----
 
 const cols, rows = 100, 30
