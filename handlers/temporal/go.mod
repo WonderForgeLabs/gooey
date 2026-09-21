@@ -17,7 +17,7 @@ require (
 	go.temporal.io/api v1.63.4
 	go.temporal.io/sdk v1.47.0
 	google.golang.org/grpc v1.83.2
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
