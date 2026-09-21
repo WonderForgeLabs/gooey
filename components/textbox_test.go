@@ -2160,6 +2160,21 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 		}
 		return d
 	}
+	// costRepeats is how many times each side is measured before the
+	// smallest is taken. Five is enough that a single preemption cannot
+	// decide the result, and cheap: the whole test stays under a
+	// handful of seconds because `cost` is already batched.
+	const costRepeats = 5
+	best := func(t *testing.T, n, caret int) time.Duration {
+		t.Helper()
+		lo := measure(t, n, caret)
+		for range costRepeats - 1 {
+			if d := measure(t, n, caret); d < lo {
+				lo = d
+			}
+		}
+		return lo
+	}
 	for _, tc := range []struct {
 		name  string
 		caret func(n int) int
@@ -2168,8 +2183,30 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 		{"caret at the end", func(n int) int { return n }, "windowFloor's left expansion"},
 		{"caret at the start", func(int) int { return 0 }, "spanForCols' doubling"},
 	} {
-		short := measure(t, 1000, tc.caret(1000))
-		long := measure(t, 50000, tc.caret(50000))
+		// THE MINIMUM OF SEVERAL RUNS, NOT ONE SAMPLE, and minimum
+		// rather than mean because interference is one-directional:
+		// a preempted goroutine measures SLOWER and never faster, so
+		// the smallest observation is the closest this can get to the
+		// cost without the runner's other tenants in it. `cost` already
+		// averages 40 frames, and a mean is exactly the estimator a
+		// single long preemption moves — averaging spreads the outlier
+		// over the sample instead of discarding it.
+		//
+		// MEASURED, and that is why this is here rather than a
+		// robustness flourish: on the shared vSphere pool this arm
+		// reported 5.2x and 10.8x against a ~600µs baseline while the
+		// same commit measured ~1x locally, and reddened a PR whose
+		// diff touched neither this package nor anything it imports
+		// (#563). A 600µs baseline cannot carry a 4x threshold off one
+		// observation.
+		//
+		// WHAT THE 4x ENCODES is the noise budget and nothing else. A
+		// walk that terminates on the bound is O(1) in n and should
+		// measure ~1x for a fifty-fold value; the defect this catches
+		// is O(len(value)) and measures in the tens. Everything between
+		// 1 and 4 is headroom, not tolerance for a partial fix.
+		short := best(t, 1000, tc.caret(1000))
+		long := best(t, 50000, tc.caret(50000))
 		if long > 4*short {
 			t.Errorf("with the %s, a repaint costs %v over a 50,000-rune "+
 				"zero-width run against %v over a 1,000-rune one — %.1fx for "+

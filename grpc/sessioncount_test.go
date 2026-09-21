@@ -438,25 +438,44 @@ func TestClosingTheServerNumbersItsZero(t *testing.T) {
 	// is reached by one of them alone. Waiting for the SEQUENCE to grow
 	// by two is the only edge that needs both. With the zero delivered
 	// straight to the callback it never arrives and this times out.
+	//
+	// AND IT WAITS FOR `last` TOO, because the sequence and the callback
+	// are different observables behind different mutexes. b.seq growing
+	// says the broker NUMBERED two changes; it says nothing about the
+	// callback that carries the second one having run, and `last` is
+	// written in OnSessions under `mu` while this loop polls b.seq under
+	// b.mu. So the loop could exit with `last` still holding the
+	// previous value and the assertion below would report it as a
+	// defect. It did: `the host was last told 1 after the endpoint
+	// closed` on the race tier, on a PR whose diff touched only
+	// apps/wysiwyg (#564). -race widens the window, which is why that
+	// tier is where it surfaced.
+	//
+	// BOTH CONDITIONS, NOT `last` ALONE. Waiting only for the zero would
+	// weaken the claim to "the host was told 0", which the paragraph
+	// above says is reached by either change on its own — the
+	// two-changes edge is the whole point. The wait is the conjunction;
+	// the timeout still reports both numbers so a genuine miss says
+	// which half is missing.
 	h.srv.Close()
 	deadline := time.After(3 * time.Second)
 	for {
 		b.mu.Lock()
 		after := b.seq
 		b.mu.Unlock()
-		if after >= before+2 {
+		mu.Lock()
+		got := last
+		mu.Unlock()
+		if after >= before+2 && got == 0 {
 			break
 		}
 		select {
 		case <-deadline:
-			mu.Lock()
-			n := last
-			mu.Unlock()
 			t.Fatalf("the sequence went %d -> %d across a detach and a shutdown, want at "+
 				"least %d — the detach numbers one change and the shutdown zero must "+
 				"number another. A zero delivered straight to the callback numbers "+
 				"nothing, so a lagging remove has nothing to lose to. Last count %d",
-				before, after, before+2, n)
+				before, after, before+2, got)
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
