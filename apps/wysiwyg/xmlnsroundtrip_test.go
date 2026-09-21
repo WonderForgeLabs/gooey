@@ -628,6 +628,92 @@ func TestAnAmpersandInAnAttributeSurvivesASave(t *testing.T) {
 	}
 }
 
+// TestANewlineInAnAttributeSurvivesASaveAsACharacterReference is the
+// OTHER half of #509, and it is the half the ampersand arm above cannot
+// see. `&` fails LOUDLY — the document stops parsing — so any emitter
+// that escapes it at all is caught by the sibling. A newline fails
+// QUIETLY: under the `%q` this replaced, "line1\nline2" went to disk as
+// a literal backslash-n, which is valid XML, reopens without complaint,
+// and comes back as a four-character string that is not what the author
+// wrote.
+//
+// THE ON-DISK SPELLING IS ASSERTED, NOT JUST THE ROUND TRIP, and that
+// is not belt-and-braces — it is the only thing here that can fail.
+// Go's encoding/xml does NOT do XML attribute-value normalisation:
+// measured, a LITERAL newline inside an attribute comes back from
+// xml.Unmarshal as a newline, where a conforming parser must hand back
+// a space (XML 1.0 §3.3.3). So an emitter that escaped `&<>"` by hand
+// and left whitespace alone would round trip perfectly through this
+// editor and write a file that every other reader mis-reads. A test
+// that only opened what it saved would certify that emitter. The
+// character reference is what makes the bytes portable, so the bytes
+// are what this reads.
+//
+// TAB TOO, in the same value rather than a second arm: xml.EscapeText
+// covers \n, \r and \t together, and a fixture holding one of the
+// three pins the family the same way two strings of equal COLUMN width
+// pin a rune-vs-cell count. Raised in review of #501 and filed as #509.
+func TestANewlineInAnAttributeSurvivesASaveAsACharacterReference(t *testing.T) {
+	const want = "line1\nline2\tx"
+	const onDiskWant = `Content="line1&#xA;line2&#x9;x"`
+
+	root := workspaceFixture(t)
+	doc := `<Gooey xmlns="wonderforge.io/gooey/2026">` + "\n" +
+		`  <Canvas Name="Root">` + "\n" +
+		`    <Button Name="B" ` + onDiskWant + `/>` + "\n" +
+		`  </Canvas>` + "\n" +
+		`</Gooey>` + "\n"
+	path := filepath.Join(root, "nl.gooey")
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("nl.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("a document with an escaped newline does not open: %q", got)
+	}
+	if n := findNode(ed, "B"); n == nil || n.Attrs["Content"] != want {
+		t.Fatalf("the loader handed the model %q, want %q — the rest of this "+
+			"test is about what the EMITTER does with that value, so it has to "+
+			"start from the right one", nodeAttr(n, "Content"), want)
+	}
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatalf("saving the open document: %v", err)
+	}
+
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(onDisk), onDiskWant) {
+		t.Errorf("the saved file does not carry the newline as a character "+
+			"reference, so a conforming parser will not hand back what the "+
+			"author wrote:\nwant a value spelled %s\nfile:\n%s", onDiskWant, onDisk)
+	}
+
+	ed.openWorkspaceFile("nl.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("the designer cannot reopen what it just wrote: %q\nfile:\n%s",
+			got, onDisk)
+	}
+	if n := findNode(ed, "B"); n == nil || n.Attrs["Content"] != want {
+		t.Errorf("after a save and a reopen the value is %q, want %q",
+			nodeAttr(n, "Content"), want)
+	}
+}
+
+// nodeAttr is nil-tolerant so the failure messages above can name what
+// they got without a second nil test at every site.
+func nodeAttr(n *node, k string) string {
+	if n == nil {
+		return "<no such node>"
+	}
+	return n.Attrs[k]
+}
+
 // TestABothLevelsDeclarationKeepsTheEnvelopesCopy pins the complement
 // envelopeAttrs claims against carryDeclarations.
 //
