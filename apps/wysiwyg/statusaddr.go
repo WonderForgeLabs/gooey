@@ -87,21 +87,29 @@ import (
 // file comment describes, and a notice that grew a dot would put the
 // clipboard back on a connection light by a different route.
 //
-// NOTHING IN THIS REPO IS RUNE-WIDTH AWARE. render.Buffer.SetString
-// advances x by exactly one per rune (render/cell.go), Text.Measure
-// sizes with len([]rune(line)) (components/text.go), and there is no
-// import of any width table anywhere in render/, components/ or term/.
-// A two-cell emoji written into a one-cell slot therefore desynchronises
-// the cell plane from the terminal's cursor for the rest of the row —
-// and by the damage model the cells it corrupts belong to clean nodes
-// that will not repaint, so the corruption persists until something
-// unrelated dirties them.
+// THE DOT MUST BE ONE CELL, and the reason is arithmetic rather than
+// taste: Render places it at b.X and the address at b.X+2, so a
+// two-cell dot would put the address's first column on the dot's own
+// continuation cell and every cell after it one short of where this
+// function thinks it is.
+//
+// This paragraph used to argue the point from "nothing in this repo is
+// rune-width aware", naming render.Buffer.SetString as advancing one
+// cell per rune and components.Text as measuring with len([]rune(line)).
+// All of that stopped being true: SetString walks grapheme clusters and
+// lays a render.Continuation marker (render/cell.go), Text.Measure sizes
+// with render.StringWidth, and render/width.go imports uniseg. The
+// CONCLUSION survived the reasoning it was derived from, which is the
+// shape a stale comment takes here — a reader following it would go
+// looking for a missing width table and find one.
 //
 // U+25CF BLACK CIRCLE is East Asian Ambiguous, i.e. one cell outside a
 // CJK locale, and this app already ships two glyphs of exactly that
 // class in the same frame: "•" in the attribute pane's modified marker
 // and "✓" in the build status. Colour, not shape, carries the meaning,
 // which also keeps it legible where the terminal has no colour at all.
+// TestTheStateDotIsNarrow measures it with the same function the painter
+// uses rather than against a table of blocks written down here.
 const addrDot = '●'
 
 // addrGap is the run of spaces between two chips — the same three the
@@ -250,7 +258,7 @@ func (c *addrChip) idleText() string { return c.label + " " + c.addr }
 // text. Now that the flash lives in copyNotice there is nothing else a
 // chip could be sized by, which turns the file comment's rule from a
 // discipline into a structural fact.
-func (c *addrChip) chipWidth() int { return 2 + len([]rune(c.idleText())) }
+func (c *addrChip) chipWidth() int { return 2 + render.StringWidth(c.idleText()) }
 
 func (c *addrChip) Measure(avail gooey.Size) gooey.Size {
 	return gooey.Size{W: min(c.chipWidth(), avail.W), H: min(1, avail.H)}
@@ -645,7 +653,7 @@ func (s *addrStrip) menuRect() gooey.Rect {
 	b := s.Bounds()
 	w := 4
 	for _, it := range s.items {
-		if n := len([]rune(it.Text)) + 4; n > w {
+		if n := render.StringWidth(it.Text) + 4; n > w {
 			w = n
 		}
 	}
@@ -1030,22 +1038,35 @@ func (ed *editor) copyEndpoint(label string) {
 // `go vet` reports the SYMBOL, which is the one thing the two bodies
 // agree on, so the collision report cannot say which answer is right.
 // Reading both bodies is the only thing that can.
+// COLUMNS, not runes, on both halves. This sliced []rune and compared
+// its length against w, which is the CLAUDE.md trap verbatim: a wide
+// glyph is one rune and two cells, so a message of thirteen CJK
+// characters measured as thirteen against the notice's reserved
+// twenty-four, was let through untouched, and the composer's clip cut
+// it at twenty-four cells with no ellipsis. The one outcome this
+// function exists to prevent — a hard cut, the thing dock.go's clipTo
+// does and this does not — was what it produced.
+//
+// render.ClipCols stops BEFORE a glyph that would overrun, so it can
+// return a column short; padTo makes the slot up either way.
 func ellipsize(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= w {
+	if render.StringWidth(s) <= w {
 		return s
 	}
 	if w == 1 {
 		return "…"
 	}
-	return string(r[:w-1]) + "…"
+	return render.ClipCols(s, w-1) + "…"
 }
 
+// padTo fills the rest of a reserved slot. It does NOT truncate — every
+// call site pipes ellipsize into it, and that is where a long message is
+// shortened and told it was shortened.
 func padTo(s string, w int) string {
-	if n := w - len([]rune(s)); n > 0 {
+	if n := w - render.StringWidth(s); n > 0 {
 		return s + strings.Repeat(" ", n)
 	}
 	return s

@@ -354,10 +354,3 @@ func MirrorBuilder(style render.Style) markup.Builder {
 		return &Mirror{style: style}, nil
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // The correction, asserted: the copy is not a service state.
@@ -134,8 +136,14 @@ func TestTheNoticeSaysWhatItIsAbout(t *testing.T) {
 					"phrase in the status bar that does not name the clipboard is a "+
 					"phrase about whatever is nearest it", got)
 			}
-			if n := len([]rune(got)); n > copyNoticeWidth {
-				t.Errorf("the %s message is %d runes and will be clipped into %d: %q\n"+
+			// COLUMNS. copyNoticeWidth is a cell budget and `got` carries
+			// caveatFn()'s text and a clipboard error, neither of which
+			// this package chooses the characters of — so a rune count
+			// here is the same pairing #524 removed from ellipsize's own
+			// guard one file over, and it passes for a message two cells
+			// too wide the moment one of those strings holds a wide glyph.
+			if n := render.StringWidth(got); n > copyNoticeWidth {
+				t.Errorf("the %s message is %d columns and will be clipped into %d: %q\n"+
 					"The reserved width has to hold the messages this app actually "+
 					"produces, or the ellipsis lands exactly where the information is.",
 					tc.name, n, copyNoticeWidth, got)

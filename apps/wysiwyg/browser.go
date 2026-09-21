@@ -51,6 +51,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // maxWorkspaceFiles caps the scan. A workspace is somebody's home
@@ -302,10 +303,39 @@ func (ed *editor) browserItems() components.ItemSource {
 // here; the highlight is a known gap, not an oversight.
 func fileRow(p string) map[string]any {
 	return map[string]any{
-		"Name": shortPath(p, 30),
+		"Name": shortPath(p, browserNameCols),
 		"Path": p,
 	}
 }
+
+// browserNameCols is the budget shortPath shortens a row's Name to, in
+// CELLS. It was written as a bare 30 at the call above, which is the
+// spelling that let shortPath measure in runes without the disagreement
+// being visible from either end.
+//
+// IT IS THE DECLARED PANE, NOT THE LIVE ONE, and the first version of
+// this comment called it "the explorer column's budget" as though it
+// tracked the column. It does not: the number is fitted to
+// <DockPane Id="explorer" … Size="34"> in wysiwyg.gooey less its chrome,
+// and dockModel.Resize (dock.go) moves that width at run time. Drag the
+// splitter narrower and the row is 30 columns inside a Text arranged in
+// fewer, so the composer's clip takes the TAIL — which is the half
+// shortPath exists to keep, and is #523's symptom reproduced with
+// nothing but ASCII.
+//
+// Pre-existing: the bare 30 had it too, and shortening against the
+// ARRANGED width means moving the call out of fileRow, which builds a
+// row's values before anything is laid out. TRACKED AS [#528], not as
+// this paragraph — a live defect whose only record is a comment in a
+// file nobody opens unless they are already editing shortPath spends
+// the attention that would have caught it, which is CLAUDE.md's "A red
+// suite is yours" argument applied to prose. The issue carries the
+// acceptance criterion: the fixing commit deletes this constant and this
+// comment, because a budget that follows the pane has no constant to
+// name. Raised in review of #524.
+//
+// [#528]: https://github.com/WonderForgeLabs/gooey/issues/528
+const browserNameCols = 30
 
 // shortPath fits a path into w cells by dropping LEADING segments, not
 // trailing characters.
@@ -319,20 +349,119 @@ func fileRow(p string) map[string]any {
 //
 // Truncating from the right — which is what letting the cell buffer clip
 // would do — keeps exactly the part every candidate shares.
+// Measured in COLUMNS. Every comparison here was a rune count, so a
+// workspace holding `apps/世界/世界.gooey` reported a name that fits a
+// budget it overruns by the number of wide glyphs in it — and the clip
+// that then bounds it takes the TAIL, which is the exact part the
+// paragraph above exists to keep. A file system supplies these names,
+// so this is the one caller in the app that cannot choose its own
+// characters.
 func shortPath(p string, w int) string {
-	if len([]rune(p)) <= w {
+	if render.StringWidth(p) <= w {
 		return p
 	}
 	segs := strings.Split(p, "/")
 	out := segs[len(segs)-1]
 	for i := len(segs) - 2; i >= 0; i-- {
 		next := segs[i] + "/" + out
-		if len([]rune(next))+1 > w {
-			return "…/" + out
+		// TWO COLUMNS RESERVED, because "…/" is what elide renders in
+		// front of what this loop keeps. It reserved one, which was not a
+		// bounds bug — elide bounds the result — but it produced a format
+		// that alternated with the budget: `shortPath("aa/bbbb/cc", 9)`
+		// gave `…/bbbb/cc` and `…bbbb/cc` at 8, and the second reads as
+		// "a character was cut out of bbbb" when what actually went was
+		// the whole leading `aa/`. Reserving two also makes this
+		// condition and elide's first branch the SAME predicate — but
+		// only from the SECOND iteration on, where `out` is the previous
+		// `next` and has already passed this test.
+		//
+		// WHICH ARM THE FIRST ITERATION REACHES IS THE LAST SEGMENT'S
+		// WIDTH, not this condition. `out` is then that segment straight
+		// out of Split with nothing having measured it, so it takes
+		// elide's "…/" arm whenever the segment fits in w-2 and the cut
+		// arm only when it does not:
+		//
+		//	shortPath("aa/bbbb/cc", 7) = "…/cc"   first iteration, FIRST arm
+		//	shortPath("aa/bbbb/cc", 3) = "…cc"    first iteration, CUT arm
+		//
+		// An earlier version of this comment said the first iteration and
+		// the return below BOTH reach the cut arm. Only the second does
+		// unconditionally — and that return is reached only when the path
+		// holds no "/" at all: any separator makes this loop run, and its
+		// last pass has `next == p`, which cannot satisfy this condition
+		// because `render.StringWidth(p) > w` is already established
+		// above. The cut arm is live either way, which is what the wide
+		// half of TestShortPathStillKeepsTheTail exercises; it is not
+		// dead code.
+		//
+		// AND THE FORMAT IT BUYS HAS A FLOOR. "…/" + the last segment is
+		// what says leading SEGMENTS went, and it is the answer only
+		// while that string fits in w. Below it there is no room for the
+		// separator and the row degrades to elide's cut arm —
+		// shortPath("aa/bbbb/cc", 3) = "…cc", the only answer that fits
+		// three columns, and the one the format exists to avoid.
+		// TestAShortenedPathSaysWhatItDropped runs down to that boundary
+		// and asserts both sides of it. Found in review of #524, twice.
+		if render.StringWidth(next)+2 > w {
+			return elide(out, w)
 		}
 		out = next
 	}
-	return out
+	return elide(out, w)
+}
+
+// elide answers in ONE OF THREE SHAPES, and which one is the difference
+// between "there is more path above this", "this name itself was cut",
+// and "nothing of it fits at all":
+//
+//	"…/" + s          when s fits in w-2 — the common path, and what
+//	                  every ordinary row in the explorer gets
+//	"…" + a tail of s when it does not, keeping AT MOST the last w-1
+//	                  columns — the walk stops at a cluster boundary, so
+//	                  it comes up short whenever no cluster begins exactly
+//	                  there: elide("世世世世世", 6) = "…世世", five of six
+//	"…" alone         when even the trailing CLUSTER is wider than w-1,
+//	                  so no tail fits beside the ellipsis — and, below
+//	                  w == 2, whatever ClipCols can lay of it
+//
+// The third is the one a caller is likeliest to be surprised by:
+// elide("世", 2) answers "…", discarding a string that fits the budget.
+// Reaching elide at all means leading segments were dropped, so the
+// ellipsis is the part that has to survive; a lone glyph where a path
+// was is a worse answer than a mark saying a path was cut. The reason
+// used to be written only inside the body, where this doc's reader does
+// not look.
+//
+// Clipping from the left would keep the leading characters of one long
+// name instead, which is the answer this whole function rejects for a
+// list of paths. The doc named one arm, then two, while the fix for that
+// added a third in the same commit (#524's review, twice).
+func elide(s string, w int) string {
+	if render.StringWidth(s) <= w-2 {
+		return "…/" + s
+	}
+	if w <= 1 {
+		return render.ClipCols("…", w)
+	}
+	drop := render.StringWidth(s) - (w - 1)
+	cut, room := 0, false
+	// EachCluster stops where the callback says so, so cut lands on the
+	// first cluster starting at or past drop. WHEN THERE IS NO SUCH
+	// CLUSTER the walk runs to the end and leaves cut on the last one,
+	// whose start column is below drop — and the result overran w by the
+	// difference: elide("世", 2) answered "…世", three columns, for a
+	// string that already fitted in two. `room` is the discriminator.
+	render.EachCluster(s, func(_ string, off, col, _ int) bool {
+		cut, room = off, col >= drop
+		return !room
+	})
+	if !room {
+		// The trailing cluster alone is wider than w-1, so nothing of s
+		// fits beside the ellipsis. The ellipsis alone is the honest
+		// answer and the only one inside the budget.
+		return render.ClipCols("…", w)
+	}
+	return "…" + s[cut:]
 }
 
 // openWorkspaceFile loads a document out of the workspace. It reads

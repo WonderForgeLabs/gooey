@@ -746,8 +746,8 @@ func TestANarrowedHeaderLeavesNoStaleGlyph(t *testing.T) {
 	// the wide one stops at 2 and leaves column 2 unwritten.
 	p.Base.Arrange(gooey.Rect{X: 0, Y: 0, W: 3, H: headerH})
 	p.Render(f)
-	stale := buf.At(2, 0).Rune
-	if stale == ' ' || stale == 0 {
+	stale := buf.At(2, 0).Text()
+	if stale == " " || stale == "\x00" {
 		t.Fatalf("the ASCII header left column 2 as %q, so there is nothing for "+
 			"the second paint to fail to overwrite", stale)
 	}
@@ -759,11 +759,22 @@ func TestANarrowedHeaderLeavesNoStaleGlyph(t *testing.T) {
 	}
 	p.Render(f)
 
-	if got := buf.At(2, 0).Rune; got == stale {
-		t.Errorf("column 2 still holds %q from the previous title. ClipCols "+
-			"returned 2 columns for a 3-column pane, and a chrome-only container "+
-			"pre-clears nothing — so the old glyph sits on the header row under "+
-			"the new one until something else happens to repaint that cell", got)
+	// WHAT THE CELL HOLDS, not "not what it held", and the difference is
+	// a fail-open. `got == stale` reports green for EVERY value but the
+	// stale one — including render.Continuation, which is what column 2
+	// would hold if the clip ever stopped letting half a wide glyph
+	// through, the exact injury this test is named for. It was also
+	// comparing a captured value rather than a literal, which is the one
+	// shape statusaddr_test.go's readback sentence does not cover.
+	// Cell.Text() answers "" for a continuation, so a blank column and a
+	// half-written glyph are distinguishable here rather than merged
+	// into "not stale". Raised in review of #524.
+	if got := buf.At(2, 0).Text(); got != " " {
+		t.Errorf("column 2 holds %q, want a blank: ClipCols returned 2 columns "+
+			"for a 3-column pane, and a chrome-only container pre-clears nothing "+
+			"— so whatever the second paint did not write stays on the header "+
+			"row until something else happens to repaint that cell. %q is what "+
+			"the previous title left there", got, stale)
 	}
 }
 
