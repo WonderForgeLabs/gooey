@@ -811,13 +811,22 @@ Keys:
 | Key | Effect |
 |---|---|
 | printable rune | insert at the caret, replacing the selection if there is one |
-| `backspace` / `delete` | remove the selection, or the character on either side of the caret |
-| `←` / `→` | move the caret one character, or collapse a selection to that edge |
+| `backspace` / `delete` | remove the selection, or one **rune** on either side of the caret |
+| `←` / `→` | move the caret one **grapheme cluster**, or collapse a selection to that edge |
 | `ctrl+←` / `ctrl+→` | move by word — words, punctuation runs and whitespace runs are separate |
 | `home` / `end` | jump to either end |
 | `shift+` any of the above | extend the selection from its anchor instead of moving |
 | `ctrl+x` / `ctrl+c` | cut / copy the selection to the process-local kill buffer |
 | `ctrl+v` | paste the kill buffer at the caret |
+
+The two units in that table are deliberate and they differ. An arrow
+steps over a whole `é` — base and combining mark together, so the caret
+never lands inside a glyph — while `backspace` and `delete` still remove
+one rune, so they can take the mark off a base and leave the base. The
+cost is that a stray combining mark can no longer be deleted by arrowing
+between it and its base; the caret is placed with the arrow and the mark
+is removed with `backspace`, which removes the rune immediately before
+the caret whatever cluster it belongs to.
 
 `ctrl+c` is only consumed when there IS a selection, so the framework quit key still bubbles out of a focused field with nothing selected.
 
@@ -1722,6 +1731,10 @@ Each declaration resolves one of three ways:
 - **Attribute bound** (`Value="{{.Reqs}}"`) — the parent's existing handle passes straight through, type-checked against `Type`. Nothing is copied, so the control and the page share one node.
 - **Attribute literal** (`Title="requests"`) — coerced by `Type` and wrapped as a fresh source.
 - **Attribute absent** — a fresh **per-instance** source carrying the declared `Default`: markup-defined, typed, bindable local state. Two instances of the control do not share it. Absent plus `Required` is a load error.
+
+There is a fourth case, and it is not an instantiation site: a tool holding the control **file itself** has no parent to take a handle from and no attribute to coerce, so `Declaration.AbsentValue` gives it the absent-optional answer for every declaration — including a `Required` one, which previews as the type's zero rather than as an error nobody can act on. That is what the designer seeds a control's own names with, so `{{.Title}}` renders in the editor instead of failing the build. The three above stay the whole of what a *page* sees.
+
+**`Type="any"` is the exception, and the sentence above said "every" until it was measured.** The absent-optional answer for `any` is a `*prop.Property[any]`, which every consumer refuses — `<Sparkline Values="{{.Trend}}">` wants `*prop.Property[[]float64]`, `<Text Style="{{.Tint}}">` wants `*prop.Property[render.Style]`, a `Click` wants a command, and `<Text>{{.V}}</Text>` wants something it can render. So a control whose declarations use the escape hatch opens in the designer and does not build. It is not a defect in `AbsentValue`, which returns exactly what an absent optional `any` resolves to; a `Declaration` does not know its consumer, so a preview for these would be a separate decision.
 
 ### Strict mode
 
