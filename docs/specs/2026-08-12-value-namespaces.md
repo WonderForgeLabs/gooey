@@ -348,7 +348,11 @@ component and belongs to the component pipeline, not here (issue #225).
   `Visibility=`, `Style=` or any typed attribute, because those resolve
   through `boundProp[T]`/`BindingValue` rather than `bindText`.
   Extending them means a kinded `NewValue`, against `propKinds` — issue
-  #222.
+  #222. That is `ValueProvider.NewValue(*Call)`, not
+  `markup.Declaration.AbsentValue`, which already reads `propKinds` for
+  a different question (the handle a declaration takes where there is no
+  instantiation site). The two were briefly both called `NewValue`;
+  whoever lands #222 is extending the provider one.
 - **`<x:Property Default="{{ns:Fn …}}">`.** A declaration's `Default`
   is coerced from a literal at parse time and never sees a context, so
   a value call there is not resolvable. Left alone.

@@ -40,6 +40,16 @@ import (
 //     declared Default (markup-defined, typed, bindable local state);
 //     absent + Required is a load error.
 //
+// AND THERE IS A FOURTH CASE WITH NO SITE AT ALL. A tool holding the
+// control file ITSELF — the wysiwyg editor previewing card.gooey — has
+// no parent to read attributes from, so none of the three above applies
+// and the control's own {{.Title}} would fail to resolve.
+// Declaration.AbsentValue answers it with the third case's handle, and
+// a Required declaration gets its type's zero rather than the load
+// error, because Required is a contract with a site and there is none.
+// The rule belongs here rather than only on the method, because this is
+// where a reader looks for it. Raised in review of #522.
+//
 // Declaring anything at all makes the control STRICT: an undeclared
 // attribute at the instantiation site is a load error, because the
 // declarations are now the control's public surface. A file with no
@@ -256,6 +266,51 @@ func Declarations(src []byte) ([]Declaration, error) {
 		return nil, err
 	}
 	return doc.decls.list, nil
+}
+
+// AbsentValue is the handle this declaration resolves to where there is
+// NO instantiation site: a fresh per-call source carrying Default, which
+// is exactly what Declaration.resolve makes for an absent optional
+// attribute. Two calls return two handles, for the same reason two
+// <Card/> elements do not share one.
+//
+// IT IS NOT NAMED NewValue, and the near-miss is worth the longer name.
+// ValueProvider.NewValue(*Call) is already exported from this package
+// (values.go), and docs/specs/2026-08-12-value-namespaces.md records the
+// plan to key THAT one against propKinds — the table this method reads.
+// Two exported methods sharing one name in one package, one of them
+// slated to be defined against the other's table, is the drift propKinds'
+// own doc warns about, moved into the identifier. The name here says
+// which case it answers: the attribute is ABSENT, because there is no
+// site for it to be present at. Raised in review of #522.
+//
+// It exists because a host can hold a control file with nothing above
+// it. declarations.instantiate runs from the page that writes
+// <Card Title="…"/> (usercontrol.go), so a tool building card.gooey
+// ITSELF has no site to read attributes from, the declared names never
+// reach Context.Values, and the control's own {{.Title}} fails to
+// resolve — which is the whole of the wysiwyg editor's #517. The
+// alternative was a fourth table keyed by the Type spellings, and
+// propKinds' own doc already names two that drift for exactly that
+// reason.
+//
+// A Required declaration has no Default and gets the type's ZERO handle
+// rather than an error. Required is a contract with an instantiation
+// site; a caller that has none is not in breach of it, and it is the
+// caller that knows whether a zero is a usable stand-in or something to
+// say out loud. Bind-only types land here too, by the same rule that
+// already gives them the zero handle when the attribute is absent.
+//
+// The zero Declaration is refused rather than dereferenced. Every field
+// that names the type is exported, so a caller can build one that was
+// never parsed, and such a value carries no row of the type table at
+// all — a nil-map read would panic inside this package with the caller
+// off the stack.
+func (d Declaration) AbsentValue() (any, error) {
+	if d.kind.source == nil {
+		return nil, fmt.Errorf("markup: dependency property %q — no type table row for Type %q: a Declaration carries one only when it came from Declarations or from a loaded document", d.Name, d.Type)
+	}
+	return d.kind.source(d.Default)
 }
 
 // DeclaredSurface is one control instance's markup-declared dependency
