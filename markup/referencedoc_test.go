@@ -392,31 +392,52 @@ func TestTheBoundaryGuardsPickTheirTable(t *testing.T) {
 	}
 }
 
-// TestThePartitionTablesShareOneKeySet is what lets partitionWords hold
-// one cache for both tables.
+// TestThePartitionTablesShareOneKeySet is a claim ABOUT the two tables,
+// and no longer a precondition anything rests on.
 //
 // The two partitions are separate declarations that describe the same
-// context struct from two seams, so they are expected to hold the same
-// field names and to disagree only about which of them cross. A field
-// added to one alone is the silent case: partitionWords is built from
-// boundaryPartition, so a name added only to rowPartition gets no
-// pattern, partitionRunSide's bare-name half never looks for it, and a
-// row-seam page can enumerate it with nothing red. The guard is cheap
-// and the failure it replaces is invisible.
+// Context struct from two seams, so they are expected to hold the same
+// field names and to disagree only about which of them cross. A key set
+// that splits is a partition that has silently stopped being one — that
+// is the whole of what this guard says, and it is worth saying because
+// the two tables are edited independently.
+//
+// It used to be load-bearing, and this header said so: partitionWords
+// was built from boundaryPartition alone, so a name added only to
+// rowPartition got no pattern and partitionRunSide's bare-name half
+// reached a nil *regexp.Regexp. partitionWords now takes the UNION, so
+// the cache serves both tables whatever this guard says. The sentence
+// describing the coupling outlived the coupling for exactly one commit,
+// which is the defect class this branch exists to fix. Raised in review
+// of #543.
 func TestThePartitionTablesShareOneKeySet(t *testing.T) {
-	for name := range boundaryPartition {
-		if _, ok := rowPartition[name]; !ok {
-			t.Errorf("boundaryPartition has %q and rowPartition does not; the "+
-				"two describe one context struct from two seams, so a name in "+
-				"one is a name in both", name)
-		}
-	}
-	for name := range rowPartition {
-		if _, ok := boundaryPartition[name]; !ok {
-			t.Errorf("rowPartition has %q and boundaryPartition does not, so "+
-				"partitionWords — built from boundaryPartition — holds no "+
-				"pattern for it and partitionRunSide cannot see it spelled "+
-				"bare on a row-seam page", name)
+	// EVERY PAIR, from partitionTables, rather than the two spelled out
+	// here — so a third table joins this guard by being declared, not by
+	// somebody remembering this function. Both arms said the same thing
+	// in slightly different words until review of #543 read them side by
+	// side; deriving them is also what keeps one message from carrying
+	// more of the reason than the other.
+	tables := partitionTables()
+	for i, a := range tables {
+		for j, b := range tables {
+			// BY INDEX, because the skip means "not itself" and
+			// nothing else. Keyed by NAME, a copy-paste that
+			// duplicated a name in partitionTables — the realistic
+			// slip, since the name is hand-written beside the map —
+			// would make this skip that table against its namesake
+			// too. Raised in review of #543.
+			if i == j {
+				continue
+			}
+			for name := range a.part {
+				if _, ok := b.part[name]; !ok {
+					t.Errorf("%s has %q and %s does not; they describe one "+
+						"Context struct from as many seams, so a name in one "+
+						"is a name in all of them, and a key set that splits "+
+						"is a partition that has stopped being one",
+						a.name, name, b.name)
+				}
+			}
 		}
 	}
 }
@@ -761,26 +782,70 @@ func TestNoPageEnumeratesTheBoundaryPartition(t *testing.T) {
 // was written: backtickedPartition, two declarations above, compiled its
 // own pattern per call on a larger population, and went on doing so for
 // a round because this sentence said there was nothing left. Both are
-// hoisted now. The cost this one carried: ~12 compiles per call, once per
-// trigger-matching paragraph of the whole ../docs walk and TWICE for
-// every paragraph that clears the bar, since enumeratesThePartition and
-// the namedPartitionFields beside it each re-derive the run. Measured:
+// hoisted now. The cost this one carried is a RATIO, not a count: one
+// compile per partition key, once per trigger-matching paragraph of the
+// whole ../docs walk and TWICE for every paragraph that clears the bar,
+// since enumeratesThePartition and the namedPartitionFields beside it
+// each re-derive the run. This said "~12 compiles per call" — the
+// exported half of boundaryPartition, counted while the same #490 round
+// was adding the seven unexported entries that took the table to 19, so
+// the figure was stale in the review that wrote it. Measured:
 // TestNoPageEnumeratesTheBoundaryPartition 0.46s -> 0.21s and
 // TestEveryPageThatAnswersWhatCrossesCitesThePartition 0.10s -> 0.05s,
 // against a 4.5s markup suite. Raised in review of #490.
+//
 // ONE CACHE FOR BOTH TABLES, and that is a measurement rather than an
 // oversight. Everything else that reads a partition had to be
 // parameterised when partitionFor landed, because it reads the
-// `inherit` bit and the two tables disagree. This reads only the KEYS,
-// and the two hold the same nineteen —
-// TestThePartitionTablesShareOneKeySet is what keeps that true, since
-// a key added to one table alone would leave this cache missing a
-// pattern for it and the bare-name half of the guard silently blind to
-// that field. Raised in review of #490.
+// `inherit` bit and the two tables disagree. This reads only the KEYS.
+//
+// BUILT FROM THE UNION, NOT FROM ONE TABLE, and the difference is which
+// thing goes red. It read boundaryPartition alone and leant on
+// TestThePartitionTablesShareOneKeySet to keep the two key sets equal —
+// but partitionRunSide indexes this map with names from WHICHEVER table
+// it was handed, so an exported field added to rowPartition alone
+// yields a nil *regexp.Regexp and FindAllStringIndex nil-derefs.
+// Measured in review of #490 by adding one key to rowPartition: a
+// nil-pointer stack trace in a test about table dispatch, with nothing
+// naming the real fault.
+//
+// The guard written for exactly that condition cannot report it: Go
+// runs tests in declaration order, `TestTheBoundaryGuardsPickTheirTable`
+// passes rowPartition down this path, and it is declared EARLIER in
+// this file than `TestThePartitionTablesShareOneKeySet` — so the panic
+// aborts the binary first and the key-set guard's carefully written
+// message never prints. Order is the load-bearing fact and the two
+// names carry it; the line numbers this comment first pinned were
+// accurate and unchecked.
+//
+// The names are BACKTICKED because that is the only reason they are
+// checked at all: `TestEveryCitedTestNameResolves` reads Go comments
+// through a backtick-anchored pattern, so the bare spelling this
+// comment first used bought nothing and claimed otherwise, and one of
+// the two names stayed bare through the round that said so. Measured in
+// review of #543 by renaming the test.
+//
+// Taking the union removes the dependency rather than documenting it.
+// The key-set test stays, and is now a claim ABOUT the tables rather
+// than a precondition this cache rests on.
+//
+// The set of tables comes from partitionTables (boundaryfields_test.go),
+// declared beside the tables themselves, because a literal here is a
+// hand-maintained list of every partition in the package — which is the
+// coupling moved rather than removed. Raised in review of #543.
 var partitionWords = sync.OnceValue(func() map[string]*regexp.Regexp {
 	out := map[string]*regexp.Regexp{}
-	for name := range boundaryPartition {
-		out[name] = regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
+	for _, tb := range partitionTables() {
+		for name := range tb.part {
+			// The `seen` guard saves a duplicate MustCompile and
+			// nothing else — the assignment is idempotent, since the
+			// pattern is derived from the name. It is not here for
+			// correctness, and saying so stops the next reader looking
+			// for the reason it is.
+			if _, seen := out[name]; !seen {
+				out[name] = regexp.MustCompile(`\b` + strings.ToLower(name) + `\b`)
+			}
+		}
 	}
 	return out
 })
