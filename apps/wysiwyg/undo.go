@@ -716,7 +716,7 @@ func (n *node) clone() *node {
 	if n == nil {
 		return nil
 	}
-	c := &node{Elem: n.Elem, Body: n.Body}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
@@ -755,7 +755,7 @@ func (n *node) equal(o *node) bool {
 	if n == nil || o == nil {
 		return n == o
 	}
-	if n.Elem != o.Elem || n.Body != o.Body {
+	if n.Elem != o.Elem || n.Space != o.Space || n.Body != o.Body {
 		return false
 	}
 	if len(n.Attrs) != len(o.Attrs) {

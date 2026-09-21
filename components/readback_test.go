@@ -62,11 +62,13 @@ import (
 //
 // NO COUNT AND NO LIST, and that is the point rather than terseness.
 // The sentence said FOUR and listed four, and the first reader added
-// after it made both wrong at once with nothing to go red. Removing the
-// number and leaving the list it counted — which is what the round
-// before this one did — buys nothing: a list decays exactly the way a
-// count does, silently, on the sixth reader. The declarations are the
-// inventory.
+// after it made both wrong at once with nothing to go red — and it was
+// wrong TWICE over by the time it was removed, because frameRows and
+// reversedText arrived on two different branches and neither knew about
+// the other. Removing the number and leaving the list it counted —
+// which is what the round before this one did — buys nothing: a list
+// decays exactly the way a count does, silently, on the sixth reader.
+// The declarations are the inventory.
 //
 // [#358]: https://github.com/WonderForgeLabs/gooey/issues/358
 // [#516]: https://github.com/WonderForgeLabs/gooey/issues/516
@@ -150,6 +152,47 @@ func frameRows(f *gooey.Frame) []string {
 // frameText: the two differ by where the buffer comes from, not by what
 // is done with it.
 func screen(c *gooey.Composer) string { return render.BufferText(c.Cells()) }
+
+// reversedText is the text of the reversed cells of row 0, in order.
+//
+// Cell.Text() rather than Cell.Rune, because a reversed cell may hold a
+// multi-rune cluster and a rune would report only its lead — which is
+// the distinction three tests in textbox_test.go exist to make. A wide
+// cluster's continuation cell carries no text, so a two-column glyph
+// still contributes its cluster once.
+//
+// THE EXTENT COMES FROM THE FRAME, per this file's own header. It took
+// a width, written at each call site beside the term.Caps that had
+// already said the same number — `reversedText(f, 2)` under
+// `Cols: 2` — which is the written-down-window class the header is
+// about, and a read wider than the buffer is phantom blanks rather than
+// an error. There are no reversed cells in phantom blanks, so the
+// failure would have been a SILENTLY shorter answer.
+func reversedText(t *testing.T, f *gooey.Frame) string {
+	t.Helper()
+	// THE ROW IS ASSERTED, NOT ASSUMED, and it is the same defect the
+	// width had one round earlier: a written-down constant that some
+	// caller's frame will not match, answering "" — which every
+	// assertion through here reads as "no caret". Taking a y would push
+	// the same guess onto eight call sites; the shape this helper is
+	// for is a single field composed alone, so a multi-row frame is a
+	// caller using the wrong tool and says so here rather than
+	// returning an empty string. Raised in review of #521.
+	if f.Cells.H != 1 {
+		t.Fatalf("reversedText got a %d-row frame and reads row 0 only. An "+
+			"empty answer from the wrong row is indistinguishable from no "+
+			"reversed cells, which is what every caller of this asserts on — "+
+			"read the row you mean with render.RowText and scan it yourself",
+			f.Cells.H)
+	}
+	var b strings.Builder
+	for x := 0; x < f.Cells.W; x++ {
+		if c := f.Cells.At(x, 0); c.Style.Reverse {
+			b.WriteString(c.Text())
+		}
+	}
+	return b.String()
+}
 
 // rowMatch is one row that held a needle and the byte offset it held it
 // at.

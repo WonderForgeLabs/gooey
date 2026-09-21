@@ -217,14 +217,13 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 // that.
 //
 // THOSE THREE ARE NOT THE LENGTH OF silentlyBindable, and the sentence
-// this replaced said "the ones that remain" against a list holding
-// six. The
-// other three are the Validate entries, which did not survive #488's
-// eleven — they arrived afterwards, from the harness reaching further
-// rather than from anything changing in the loader, and carry their own
-// justification at the list. A count scoped to one history, read as a
-// count of the list, is the shape this file's own doc argues a reader
-// should not have to reconstruct. Raised in review of #490.
+// this replaced said "the ones that remain" against a list holding six.
+// The other three are the Validate entries, which did not survive
+// #488's eleven — they arrived afterwards, from the harness reaching
+// further rather than from anything changing in the loader, and carry
+// their own justification at the list. A count scoped to one history,
+// read as a count of the list, is the shape this file's own doc argues
+// a reader should not have to reconstruct. Raised in review of #490.
 //
 // "DROP IT" IS TOO NARROW A NAME FOR WHAT THEY DO. Measured on
 // ButtonBar.Separator, whose three states are visible on the row:
