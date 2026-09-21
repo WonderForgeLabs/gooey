@@ -6,14 +6,14 @@
 // which is the mechanical proof that core still builds without it.
 module github.com/WonderForgeLabs/gooey/apps/dynamic-activities
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/WonderForgeLabs/gooey v0.0.0-20260913132232-e5cdb56ececd
 	github.com/WonderForgeLabs/gooey/grpc v0.0.0-20260913132232-e5cdb56ececd
 	github.com/WonderForgeLabs/gooey/handlers/temporal v0.0.0-20260913132232-e5cdb56ececd
 	github.com/WonderForgeLabs/gooey/mcp v0.0.0-20260913132232-e5cdb56ececd
-	go.temporal.io/sdk v1.47.0
+	go.temporal.io/sdk v1.49.0
 )
 
 require (
@@ -34,7 +34,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.7.0 // indirect
 	github.com/nexus-rpc/nexus-proto-annotations v0.1.0 // indirect
-	github.com/nexus-rpc/sdk-go v0.6.0 // indirect
+	github.com/nexus-rpc/sdk-go v0.7.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
@@ -42,7 +42,7 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	go.temporal.io/api v1.63.4 // indirect
+	go.temporal.io/api v1.63.5 // indirect
 	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
