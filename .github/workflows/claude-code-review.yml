@@ -179,6 +179,12 @@ jobs:
         # outputs are always available (avoids auto-fix-ci re-runs of a review that
         # merely found issues).
         continue-on-error: true
+        # Hard ceiling on the review. The Scope section of the prompt is what
+        # keeps a review short; this is what bounds one that ignores it — gooey
+        # reviews that explored the whole repo ran 21+ min. A timeout here is a
+        # step failure, so (continue-on-error) the restore and verify steps still
+        # run and merge-gate fails closed on "review did not complete".
+        timeout-minutes: 30
         uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         env:
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
@@ -289,8 +295,12 @@ jobs:
             ## Output
 
             Post inline comments for specific code issues with
-            `mcp__github_inline_comment__create_inline_comment`, passing
-            `confirmed: true` so each one posts immediately.
+            `mcp__github_inline_comment__create_inline_comment`. Before posting,
+            list the existing ones with
+            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate`
+            and do not re-post a finding already commented on at the same file and
+            line — this review runs on every push, and inline comments are never
+            updated in place.
             Use a top-level summary comment listing all findings grouped by concern.
             Every inline comment must ALSO appear as a finding in that summary: the
             merge gate reads only the summary, never inline comments, so a finding
