@@ -206,6 +206,11 @@ func (ed *editor) carryUsedNamespaces(c *node) {
 			continue
 		}
 		if uri, ok := doc[k]; ok {
+			// deepCopy leaves Attrs nil when the source's was, and the
+			// prefix may be used only by a DESCENDANT.
+			if c.Attrs == nil {
+				c.Attrs = map[string]string{}
+			}
 			c.Attrs[k] = uri
 		}
 	}

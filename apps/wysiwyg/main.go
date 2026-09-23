@@ -652,8 +652,13 @@ type node struct {
 // more well-formed to a strict parser after the save than it was
 // before.
 func commentMarkup(indent, c string) string {
-	return indent + "<!--" + c + "-->\n"
+	return indent + comment(c) + "\n"
 }
+
+// comment is one comment's delimited text, and the one place that spells
+// the delimiters: commentMarkup puts it on its own line, the inline body
+// arm of node.markup puts it after the body.
+func comment(c string) string { return "<!--" + c + "-->" }
 
 // bodySpec is the catalog's answer to "is this element's content its
 // body", and nil means it is not.
@@ -777,7 +782,7 @@ func (n *node) markup(indent string) string {
 		// on its own line it would put a newline into the body the
 		// next read collects.
 		for _, c := range n.Tail {
-			esc.WriteString("<!--" + c + "-->")
+			esc.WriteString(comment(c))
 		}
 		b.WriteString(">" + esc.String() + "</" + n.Elem + ">\n")
 		return b.String()

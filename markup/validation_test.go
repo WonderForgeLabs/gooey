@@ -506,12 +506,21 @@ func TestValidationErrorBindingTypeChecked(t *testing.T) {
 // #569.
 func TestAPatternMayHoldBraces(t *testing.T) {
 	ctx := &Context{Values: map[string]any{"Name": prop.NewSource("")}}
-	if _, err := Build([]byte(`<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="^{{.*}}$"/></TextBox></Gooey>`), ctx); err != nil {
-		t.Errorf("a pattern matching template text was refused: %v", err)
+	// Every one a legal regex for "looks like template text", the
+	// unanchored forms included — the first predicate refused those.
+	for _, pat := range []string{"^{{.*}}$", "{{.*}}", "{{.+}}", "{{ab}}|{{cd}}"} {
+		src := `<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="` + pat + `"/></TextBox></Gooey>`
+		if _, err := Build([]byte(src), ctx); err != nil {
+			t.Errorf("Pattern=%q, a legal regex, was refused: %v", pat, err)
+		}
 	}
-	_, err := Build([]byte(`<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="{{.Name}}"/></TextBox></Gooey>`), ctx)
-	if err == nil || !strings.Contains(err.Error(), "not bindable") {
-		t.Errorf("a Pattern that is a whole binding expression loaded (err %v); "+
-			"it would compile the template text as the regex", err)
+	// And what the loader would read as an expression is refused.
+	for _, pat := range []string{"{{.Name}}", " {{ .Name }} ", "{{t:Fire}}"} {
+		src := `<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="` + pat + `"/></TextBox></Gooey>`
+		_, err := Build([]byte(src), ctx)
+		if err == nil || !strings.Contains(err.Error(), "not bindable") {
+			t.Errorf("Pattern=%q is an expression and loaded (err %v); it would "+
+				"compile the template text as the regex", pat, err)
+		}
 	}
 }

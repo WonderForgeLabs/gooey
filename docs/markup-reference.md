@@ -855,7 +855,7 @@ The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input ex
 |---|---|---|---|
 | `Required` | bool | `[Required]` | `required` |
 | `MinLen` / `MaxLen` | int | `[StringLength]`, `[MinLength]`, `[MaxLength]` | `at least N characters` / `at most N characters` / `must be N–M characters` |
-| `Pattern` | regex, literal — a value that is wholly a `{{…}}` binding is a load error; braces elsewhere in the pattern are regex | `[RegularExpression]` | `invalid format` |
+| `Pattern` | regex, literal — a value the loader would read as an expression (wholly one `{{.Path}}`, `{{ns:Func …}}` or conditional) is a load error; any other braces, such as `{{.*}}`, are regex | `[RegularExpression]` | `invalid format` |
 | `EmailAddress` | bool | `[EmailAddress]` | `not a valid email address` |
 | `Url` | bool | `[Url]` | `not a valid URL` |
 | `Phone` | bool | `[Phone]` | `not a valid phone number` |

@@ -2015,20 +2015,20 @@ func litString(e Element, name string) (string, error) {
 	return raw, nil
 }
 
-// litStringNotBound refuses only a value that IS a binding expression —
-// the whole of it one {{…}} — and lets a `{{` elsewhere through.
+// litStringNotBound refuses only a value the loader would READ AS an
+// expression — the whole of it one {{.Path}}, one {{ns:Func …}} or one
+// conditional — and lets every other `{{` through.
 //
 // It exists for <Validate Pattern>, which is a regular expression, and
 // regexp/syntax reads a `{` that opens no valid repetition as a literal
-// brace: `^{{.*}}$` — "looks like a Go template" — is a legal pattern
-// that litString's any-`{{` rule would refuse, with no escape spelling.
-// The trade is stated rather than hidden: `a{{.X}}` in a Pattern is now
-// a regex with braces in it, not a refused half-binding. Raised in
-// review of #569.
+// brace: `{{.*}}`, `^{{.+}}$` and `{{ab}}|{{cd}}` are all legal patterns
+// for "looks like template text". The first version tested "starts with
+// {{ and ends with }}", which refused the unanchored forms with no escape
+// spelling; asking the package's own recognizers is the predicate its
+// doc claimed. Raised in review of #569, twice.
 func litStringNotBound(e Element, name string) (string, error) {
 	raw := e.Attrs[name]
-	t := strings.TrimSpace(raw)
-	if strings.HasPrefix(t, "{{") && strings.HasSuffix(t, "}}") {
+	if wholeBindRe.MatchString(raw) || isHandlerExpr(raw) || isCondExpr(raw) {
 		return "", fmt.Errorf("markup: <%s %s=%q>: %s is written literally — it "+
 			"is not bindable, and a binding here would reach the element as its "+
 			"own text", e.Name, name, raw, name)

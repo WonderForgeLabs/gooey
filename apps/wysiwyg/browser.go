@@ -312,11 +312,13 @@ func (ed *editor) browserItems() components.ItemSource {
 // is the half shortPath exists to keep. A projection runs before
 // anything is laid out and cannot know the width; the row's own paint
 // node can. #528.
+//
+// ONE KEY. It projected "Name" too, the shortened label the old template
+// bound; nothing reads it since <PathText>, and a key called Name holding
+// a whole path is the trap for the next row template. Each projected key
+// is a source and a closure per row. Raised in review of #569.
 func fileRow(p string) map[string]any {
-	return map[string]any{
-		"Name": p,
-		"Path": p,
-	}
+	return map[string]any{"Path": p}
 }
 
 // pathText is <PathText Path="…"/>: a one-row path that shortens itself
