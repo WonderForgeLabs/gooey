@@ -172,14 +172,14 @@ jobs:
         # outputs are always available (avoids auto-fix-ci re-runs of a review that
         # merely found issues).
         continue-on-error: true
-        uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678 # v1.0.201
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         env:
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude[bot],copilot[bot]'
           claude_args: |
-            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*)" --model "claude-opus-5"
+            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),mcp__github_inline_comment__create_inline_comment" --model "claude-opus-5-5"
 
           # Enable progress tracking
           track_progress: true
@@ -201,9 +201,28 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
+            ## Scope — review the diff, not the repository
+
+            Review ONLY what this pull request changes. Read unchanged files just
+            far enough to understand a changed line (a caller, a type, an invariant
+            the change relies on); do not audit code the diff does not touch.
+
+            - Get the change set from the API: `gh pr diff ${{ github.event.pull_request.number }} --name-only`
+              for the file list, then `gh pr diff ${{ github.event.pull_request.number }}` for the patch.
+              Do NOT rely on `git diff origin/<base>...HEAD`: the checkout is
+              shallow and has no base-branch history, so that command fails or
+              compares against the wrong commit.
+            - Vendored dependency trees, lockfiles and generated code are checked
+              for consistency with the change that produced them, never read line
+              by line.
+            - Do NOT run whole-repository builds, test suites or multi-module
+              verification loops, even when a CLAUDE.md tells contributors to —
+              CI runs those on this PR. A single targeted command against a package
+              the diff changes is fine when it settles a specific question.
+
             ## Review Process
 
-            Perform a comprehensive code review with the following focus areas:
+            Perform a comprehensive code review of the changes with the following focus areas:
 
             1. **Framework Invariants**
                - The cell plane (`render`) and pixel plane (`graphics`) stay separate
@@ -245,7 +264,9 @@ jobs:
                  about them. `CLAUDE.md`'s verify loop is the authority on which
                  modules get `-race` and why; naming a few here would be the same
                  enumeration that let whole modules go untested behind green
-                 checks (#207)
+                 checks (#207). That loop is CI's job, not the reviewer's: do not
+                 run it. Flag a change that would take a module out of CI's
+                 discovery, or add one it would miss
 
             5. **Documentation**
                - `docs/architecture.md` quotes real code — flag quotes that drift
@@ -633,7 +654,7 @@ jobs:
         if: >-
           !cancelled() && steps.ctx.outputs.force_pass != 'true' && github.actor != 'dependabot[bot]' &&
           !(steps.ctx.outputs.mode == 'recheck' && github.event.action == 'labeled')
-        uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678 # v1.0.201
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally
@@ -781,7 +802,7 @@ jobs:
         # a real verdict, a genuine evaluator failure, a skip — is left alone, so
         # this can never turn a fail-closed into a second chance at passing.
         if: ${{ !cancelled() && steps.gate_triage.outputs.retry == 'true' }}
-        uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678 # v1.0.201
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally
