@@ -297,16 +297,17 @@ jobs:
 
             Post inline comments for specific code issues with
             `mcp__github_inline_comment__create_inline_comment`, and begin every
-            inline comment body with this hidden marker as its first line:
+            inline comment body with this line, exactly as written, followed by a
+            blank line (a markdown link definition: it renders as nothing):
 
-            <!-- pr-review-inline -->
+            [pr-review-inline]: #
 
             This review runs on every push and inline comments are never updated in
             place, so first list the inline comments earlier runs of this review
             posted (the marker is what tells them apart from the interactive @claude
             bot, which posts under the same identity):
 
-            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.body | contains("<!-- pr-review-inline -->")) | {path, line, original_line, body}'`
+            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.user.login == "claude[bot]") | select(.body | contains("[pr-review-inline]: #")) | {path, line, original_line, body}'`
 
             Skip an inline comment only when one of those already makes the SAME
             point in the same file. Match on the file and the point, not the line
