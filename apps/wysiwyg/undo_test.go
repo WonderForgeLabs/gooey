@@ -1357,13 +1357,22 @@ func TestAnUndoThatDoesNothingLeavesTheSelectionPointerALONE(t *testing.T) {
 //
 // It works because recordHistory runs at the TOP of rebuild, before the
 // early return. A hook at the bottom would record nothing here.
+//
+// THE MUTATION IS MADE ON THE MODEL, not through the properties pane,
+// since #531: the pane now reverts a value the loader refuses against a
+// document that built, so it can no longer carry an edit onto this exit.
+// The exit itself is still reachable — a file opened with a bad value,
+// an edit into an already-broken document, remote-free paths that skip
+// the revert — and what this pins is rebuild's recording, which is the
+// same whoever mutated.
 func TestAnEditThatBreaksTheBuildIsStillUndoable(t *testing.T) {
 	ed, _ := undoFixture(t)
 	before := docState(ed)
 
 	ed.sel = ed.doc().Kids[0]
 	// "abc" is not an int, so the document no longer loads.
-	editAttr(t, ed, "Canvas.Left", "abc")
+	ed.sel.Attrs["Canvas.Left"] = "abc"
+	ed.rebuild()
 
 	if !strings.HasPrefix(ed.status.Get(), "✗") {
 		t.Fatalf("the document still builds (%q); this test is not on the failed-build exit",

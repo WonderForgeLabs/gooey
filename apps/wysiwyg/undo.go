@@ -296,7 +296,7 @@ func (h *history) abort(root *node) {
 	// GUARDED, like the undo half below. record's "changed no document
 	// state" early return never reaches the line that nils redo, so an
 	// unconditional swap here would assign h.redo = nil and throw away a
-	// branch the attempt did not clear. Unreachable through today's six
+	// branch the attempt did not clear. Unreachable through today's
 	// call sites — each reverts a mutation that did change the tree — but
 	// the asymmetry is the shape the last two rounds were about.
 	if h.stashed {

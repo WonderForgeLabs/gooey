@@ -380,13 +380,12 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		//     … undeclared namespace prefix \"t\"". <Button> goes
 		//     inside <Canvas> perfectly well.
 		//   - A FAULT ALREADY IN THE DOCUMENT, because docRoot is the
-		//     signal and nothing resets it. The properties pane has no
-		//     revert of its own, so a value it refuses leaves the build
-		//     failed and the next paste is reverted and blamed for it.
-		//     That is #531, filed rather than left here: six mutators
-		//     share this revert and commitEdit is the seventh with none,
-		//     and a live defect recorded only in a comment dies with the
-		//     comment. Raised in review of #501.
+		//     signal and nothing resets it. The properties pane used to
+		//     be the common way in — it had no revert, so a value it
+		//     refused left the build failed and the next paste was
+		//     blamed. #531 gave it one (valueEditor.Write); a file
+		//     OPENED with a bad value still arrives here that way.
+		//     Raised in review of #501.
 		//
 		// The neutral verb is the only clause true of all three, and it
 		// still names both elements so an author with several panes

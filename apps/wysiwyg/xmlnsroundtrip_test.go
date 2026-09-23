@@ -2769,20 +2769,17 @@ func TestTheOtherTwoSeamsDoNotClaimAParentingCause(t *testing.T) {
 				t.Fatalf("the fixture does not build: %q", ed.status.Get())
 			}
 
-			// THE THIRD PARTY. A value the loader refuses, committed
-			// through the properties pane, which does not revert — on a
-			// node neither gesture below goes near. That missing revert
-			// is #531; commitEdit is the one mutator of seven without
-			// it, and the skip below is what retires this arm when it
-			// gains one.
-			ed.sel = broken
-			editAttr(t, ed, "Canvas.Left", "not-a-number")
+			// THE THIRD PARTY. A value the loader refuses, on a node
+			// neither gesture below goes near. Planted on the MODEL
+			// since #531: the properties pane now reverts its own
+			// refusals, so it can no longer leave this fault behind —
+			// but a file opened with a bad value still does, and that
+			// is the state the backstop's neutral wording is for.
+			broken.Attrs["Canvas.Left"] = "not-a-number"
+			ed.rebuild()
 			if ed.docRoot != nil {
-				t.Skipf("the properties pane now reverts its own refusals "+
-					"(status %q), so this seam can no longer be reached with a "+
-					"fault the insert did not cause — #531 is the issue that "+
-					"asked for that revert, and closing it is what retires "+
-					"this arm", ed.status.Get())
+				t.Fatalf("the planted value built (status %q); this arm is "+
+					"not on the already-broken state", ed.status.Get())
 			}
 
 			elem, into := seam.gesture(t, ed, host, after)
