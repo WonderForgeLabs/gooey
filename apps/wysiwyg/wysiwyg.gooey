@@ -359,7 +359,7 @@
                      Activate="{{.OpenFile}}">
             <ItemsView.ItemTemplate>
               <HStack Gap="1">
-                <Text>{{.Name}}</Text>
+                <PathText Path="{{.Path}}"/>
               </HStack>
             </ItemsView.ItemTemplate>
           </ItemsView>

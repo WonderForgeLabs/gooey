@@ -2967,6 +2967,9 @@ func newEditor(fsys fs.FS) *editor {
 			"Panel": panel.Builder(ed.art),
 			// The status bar's endpoint strip — chrome, so ctx only.
 			"ServeAddrs": serveAddrsBuilder(ed),
+			// The explorer's row: a path shortened to its ARRANGED
+			// width, so a narrowed pane keeps the file name. #528.
+			"PathText": pathTextBuilder,
 		},
 	}
 
