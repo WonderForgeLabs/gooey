@@ -864,7 +864,7 @@ The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input ex
 | `Integer` | bool | — (numeric-string guard) | `must be a whole number` |
 | `MinValue` / `MaxValue` | number | `[Range]` over a text field | `must be at least N` / `must be at most N` / `must be between N and M` |
 | `Compare` | field path | `[Compare]` | `does not match` |
-| `Message` | string, literal — a binding is a load error | `ErrorMessage` | — (overrides every rule on this behavior) |
+| `Message` | string, literal — a value the loader would read as an expression (wholly one `{{.Path}}`, `{{ns:Func …}}` or conditional) is a load error; other braces are text | `ErrorMessage` | — (overrides every rule on this behavior) |
 | `Into` | name | — | — |
 
 **The `Type` column is the grammar, and it is the house one.** A `bool` rule

@@ -211,7 +211,7 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 // detail of the consumer; what an entry here shares with the rest is
 // that a document the catalog says cannot bind is accepted as if it
 // could.
-var silentlyBindable = []string{}
+var silentlyBindable []string
 
 // unseedable is every element probeElement cannot construct, with the
 // reason: AttrSpec.Required does not match what the loader actually

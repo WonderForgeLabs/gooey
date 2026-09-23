@@ -2009,8 +2009,8 @@ func litString(e Element, name string) (string, error) {
 	raw := e.Attrs[name]
 	if strings.Contains(raw, "{{") {
 		return "", fmt.Errorf("markup: <%s %s=%q>: %s is written literally — it "+
-			"is not bindable, and a binding here would reach the element as its "+
-			"own text", e.Name, name, raw, name)
+			"is not bindable, and the element would use the template text "+
+			"itself rather than the bound value", e.Name, name, raw, name)
 	}
 	return raw, nil
 }
@@ -2019,7 +2019,8 @@ func litString(e Element, name string) (string, error) {
 // expression — the whole of it one {{.Path}}, one {{ns:Func …}} or one
 // conditional — and lets every other `{{` through.
 //
-// It exists for <Validate Pattern>, which is a regular expression, and
+// It exists for <Validate Pattern> and <Validate Message>. A message is
+// free prose, which may hold anything. A pattern is a regular expression, and
 // regexp/syntax reads a `{` that opens no valid repetition as a literal
 // brace: `{{.*}}`, `^{{.+}}$` and `{{ab}}|{{cd}}` are all legal patterns
 // for "looks like template text". The first version tested "starts with
@@ -2030,8 +2031,8 @@ func litStringNotBound(e Element, name string) (string, error) {
 	raw := e.Attrs[name]
 	if wholeBindRe.MatchString(raw) || isHandlerExpr(raw) || isCondExpr(raw) {
 		return "", fmt.Errorf("markup: <%s %s=%q>: %s is written literally — it "+
-			"is not bindable, and a binding here would reach the element as its "+
-			"own text", e.Name, name, raw, name)
+			"is not bindable, and the element would use the template text "+
+			"itself rather than the bound value", e.Name, name, raw, name)
 	}
 	return raw, nil
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey/markup"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -93,4 +94,13 @@ func explorerRow(b *render.Buffer, needle string) string {
 		}
 	}
 	return ""
+}
+
+// TestAPathTextWithoutAPathIsALoadError: the element's whole job is its
+// Path, and an absent one painted an empty row in silence.
+func TestAPathTextWithoutAPathIsALoadError(t *testing.T) {
+	if _, err := pathTextBuilder(markup.Element{Name: "PathText", Attrs: map[string]string{}}, &markup.Context{}); err == nil ||
+		!strings.Contains(err.Error(), "needs a Path") {
+		t.Errorf("<PathText/> built (err %v); want a load error naming Path", err)
+	}
 }

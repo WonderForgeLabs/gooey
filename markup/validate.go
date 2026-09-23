@@ -177,7 +177,11 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 	// reports it instead of its own default, which is how a form says
 	// "e-mail address, please" once rather than leaking which check
 	// tripped. Per-rule messages are a Go-side validate.Field away.
-	msg, err := litString(e, "Message")
+	// litStringNotBound, as Pattern: a message is free prose shown to a
+	// person, so a literal brace pair in it has to be spellable, and only
+	// a value the loader would read as an expression is refused. Raised
+	// in review of #569.
+	msg, err := litStringNotBound(e, "Message")
 	if err != nil {
 		return nil, err
 	}
@@ -256,8 +260,11 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 	if minLen > 0 || maxLen > 0 {
 		v.rules = append(v.rules, validate.Len(minLen, maxLen, msg))
 	}
-	if raw, ok := e.Attrs["Pattern"]; ok {
-		if _, err := litStringNotBound(e, "Pattern"); err != nil {
+	if _, ok := e.Attrs["Pattern"]; ok {
+		// THE CHECKED VALUE IS THE COMPILED VALUE: raw comes from the
+		// helper, not from a second read of the map.
+		raw, err := litStringNotBound(e, "Pattern")
+		if err != nil {
 			return nil, err
 		}
 		// THE EMPTY EXPRESSION COMPILES, and it matches at every

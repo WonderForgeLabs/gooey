@@ -524,3 +524,18 @@ func TestAPatternMayHoldBraces(t *testing.T) {
 		}
 	}
 }
+
+// TestAMessageMayHoldBraces: a Message is prose shown to a person, so a
+// literal brace pair in it loads, and only a value the loader would read
+// as an expression is refused. Raised in review of #569.
+func TestAMessageMayHoldBraces(t *testing.T) {
+	ctx := &Context{Values: map[string]any{"Name": prop.NewSource(""), "M": prop.NewSource("")}}
+	ok := `<Gooey><TextBox Text="{{.Name}}"><Validate Required="true" Message="expected {{key}} placeholders"/></TextBox></Gooey>`
+	if _, err := Build([]byte(ok), ctx); err != nil {
+		t.Errorf("a Message holding literal braces was refused: %v", err)
+	}
+	bad := `<Gooey><TextBox Text="{{.Name}}"><Validate Required="true" Message="{{.M}}"/></TextBox></Gooey>`
+	if _, err := Build([]byte(bad), ctx); err == nil || !strings.Contains(err.Error(), "not bindable") {
+		t.Errorf("a Message that is wholly a binding loaded (err %v)", err)
+	}
+}

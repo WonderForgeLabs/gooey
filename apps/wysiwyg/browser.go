@@ -41,6 +41,7 @@ package main
 // honest; a watcher that silently misses the first write is not.
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -344,6 +345,12 @@ func (t *pathText) Render(f *gooey.Frame) {
 }
 
 func pathTextBuilder(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+	// REQUIRED, and refused like <TypeAhead Key>: BoundText reads an
+	// absent attribute as "", so <PathText/> loaded and painted an empty
+	// row with nothing said. Raised in review of #569.
+	if _, ok := e.Attrs["Path"]; !ok {
+		return nil, fmt.Errorf("markup: <PathText> needs a Path (e.g. Path=\"{{.Path}}\")")
+	}
 	p, err := markup.BoundText(e, ctx, "Path")
 	if err != nil {
 		return nil, err
