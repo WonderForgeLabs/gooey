@@ -135,9 +135,74 @@ func (ed *editor) copySelected() {
 		ed.status.Set("✗ the design surface is not part of the document")
 		return
 	}
-	src := n.markup("")
-	ed.clip = clipboard{node: n.deepCopy(), markup: src}
+	c := n.deepCopy()
+	ed.carryUsedNamespaces(c)
+	src := c.markup("")
+	ed.clip = clipboard{node: c, markup: src}
 	ed.status.Set("copied " + describeNode(n) + ed.sayCopiedOut(src))
+}
+
+// handlerPrefixRe is markup's handlerExprRe (markup/expr.go), reduced to
+// the one group this file needs: the PREFIX of a whole-attribute
+// {{ns:Func …}} expression, which is the only place markup resolves a
+// prefix against the document's xmlns table. A second copy of one rule,
+// for the reason namespacedAttrName gives — markup does not export it and
+// this nested module cannot reach inside — and
+// TestTheCopiedPrefixIsTheOneMarkupResolves keeps the two in step.
+var handlerPrefixRe = regexp.MustCompile(`^\s*\{\{\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*[A-Za-z_][A-Za-z0-9_]*\s*.*\}\}\s*$`)
+
+// handlerPrefix is the namespace prefix v's handler expression uses, if
+// v is one.
+func handlerPrefix(v string) (string, bool) {
+	m := handlerPrefixRe.FindStringSubmatch(v)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// carryUsedNamespaces puts on c's root the declarations its own
+// expressions need and nothing else. #525.
+//
+// A copied subtree referenced {{t:Fire}} while xmlns:t lived on the
+// content root (or the envelope), so the text on the system clipboard —
+// the whole point of OSC 52 — pasted into any other document as
+// "undeclared namespace prefix". This is reconcileNamespaces' question
+// asked in the other direction: which of THIS document's bindings does
+// the subtree need?
+//
+// FROM THE EXPRESSIONS, NOT FROM THE DOCUMENT: a copy out of a document
+// declaring five prefixes carries the ones it uses, and a copy that uses
+// none carries none — otherwise every copy grows an xmlns the paste
+// target has to reconcile away. A prefix the subtree already declares
+// itself is left alone.
+func (ed *editor) carryUsedNamespaces(c *node) {
+	used := map[string]bool{}
+	walkNode(c, func(k *node) {
+		for _, v := range k.Attrs {
+			if p, ok := handlerPrefix(v); ok {
+				used[p] = true
+			}
+		}
+		if p, ok := handlerPrefix(k.Body); ok {
+			used[p] = true
+		}
+	})
+	if len(used) == 0 {
+		return
+	}
+	own := map[string]string{}
+	collectNamespaces(c, own)
+	doc := ed.docNamespaces()
+	for _, p := range sortedKeys(used) {
+		k := "xmlns:" + p
+		if _, declared := own[k]; declared {
+			continue
+		}
+		if uri, ok := doc[k]; ok {
+			c.Attrs[k] = uri
+		}
+	}
 }
 
 // sayCopiedOut is the SYSTEM half of a copy, rendered as the tail of the
@@ -177,7 +242,11 @@ func (ed *editor) cutSelected() {
 		ed.status.Set("✗ " + describeNode(n) + " cannot be cut: a document must keep its root")
 		return
 	}
-	src := n.markup("")
+	// Decorated BEFORE the delete, for the same reason as a copy (#525):
+	// the bindings are read from the document it is leaving.
+	c := n.deepCopy()
+	ed.carryUsedNamespaces(c)
+	src := c.markup("")
 	// NEITHER CLIPBOARD IS WRITTEN UNLESS THE DELETE STANDS. deletable()
 	// above answers the refusals deleteSelected can see BEFORE trying, but
 	// not the one only the loader can: removing a child can make its
@@ -208,7 +277,7 @@ func (ed *editor) cutSelected() {
 		// would replace a specific message with a vaguer one.
 		return
 	}
-	ed.clip = clipboard{node: n.deepCopy(), markup: src}
+	ed.clip = clipboard{node: c, markup: src}
 	ed.status.Set("cut " + describeNode(n) + ed.sayCopiedOut(src))
 }
 
@@ -1022,6 +1091,14 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // declaration is the later one and markup.parse's last-wins is what
 // this has to agree with.
 func (ed *editor) reconcileNamespaces(n *node) error {
+	return reconcileNamespacesInto(n, ed.docNamespaces(), map[string]string{})
+}
+
+// docNamespaces is every prefix binding the saved document carries, as
+// xmlns:p → uri, in the order markup.parse would merge them: the three
+// scopes reconcileNamespaces' doc names, and the envelope's property
+// elements since #510.
+func (ed *editor) docNamespaces() map[string]string {
 	doc := map[string]string{}
 	envelopeNamespaces(ed.envAttrs, ed.envDecls, doc)
 	// THE ENVELOPE'S PROPERTY ELEMENTS, in the order envelopeHead writes
@@ -1032,7 +1109,7 @@ func (ed *editor) reconcileNamespaces(n *node) error {
 		collectNamespaces(ed.envSlots[name], doc)
 	}
 	collectNamespaces(ed.doc(), doc)
-	return reconcileNamespacesInto(n, doc, map[string]string{})
+	return doc
 }
 
 // SORTED for the same reason collectNamespaces is, and for a different
