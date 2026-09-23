@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -83,7 +84,8 @@ func (n *node) deepCopy() *node {
 	if n == nil {
 		return nil
 	}
-	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body,
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail)}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {

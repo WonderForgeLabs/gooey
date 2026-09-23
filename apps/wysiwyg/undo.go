@@ -1,6 +1,9 @@
 package main
 
-import "strconv"
+import (
+	"slices"
+	"strconv"
+)
 
 // Undo and redo, over the DOCUMENT MODEL.
 //
@@ -716,7 +719,8 @@ func (n *node) clone() *node {
 	if n == nil {
 		return nil
 	}
-	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body,
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail)}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
@@ -756,6 +760,9 @@ func (n *node) equal(o *node) bool {
 		return n == o
 	}
 	if n.Elem != o.Elem || n.Space != o.Space || n.Body != o.Body {
+		return false
+	}
+	if !slices.Equal(n.Lead, o.Lead) || !slices.Equal(n.Tail, o.Tail) {
 		return false
 	}
 	if len(n.Attrs) != len(o.Attrs) {

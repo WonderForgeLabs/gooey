@@ -615,6 +615,27 @@ type node struct {
 	// block only to lose it at the envelope unwrap. How many children a
 	// slot may hold is the loader's rule per slot, not this model's.
 	Slots map[string]*node
+	// Lead and Tail are the XML COMMENTS the author wrote around this
+	// element, and they are here so node.markup can write them back.
+	// Lead is every comment between the previous sibling (or the
+	// parent's start tag) and this element's start tag; Tail is every
+	// comment after this element's last child or body, before its end
+	// tag. nodeOf fell through the switch on xml.Comment until #529, so
+	// the first save of a hand-written layout deleted every comment in
+	// it — usually the author's note on why a row is sized the way it
+	// is — under a "✓ saved".
+	//
+	// They belong to the element, so they go where it goes: a moved
+	// element takes its Lead with it, and a deleted one takes it away.
+	Lead []string
+	Tail []string
+}
+
+// commentMarkup writes one comment line. The text is the author's,
+// verbatim: encoding/xml has already refused a comment containing "--",
+// so anything in hand is writable between the delimiters as it stands.
+func commentMarkup(indent, c string) string {
+	return indent + "<!--" + c + "-->\n"
 }
 
 // bodySpec is the catalog's answer to "is this element's content its
@@ -718,6 +739,9 @@ func attrValue(v string) string {
 
 func (n *node) markup(indent string) string {
 	var b strings.Builder
+	for _, c := range n.Lead {
+		b.WriteString(commentMarkup(indent, c))
+	}
 	b.WriteString(indent + "<" + n.Elem)
 	for _, k := range sortedKeys(n.Attrs) {
 		fmt.Fprintf(&b, " %s=%s", k, attrValue(n.Attrs[k]))
@@ -732,10 +756,16 @@ func (n *node) markup(indent string) string {
 		// rather than as anything pointing at the character.
 		var esc strings.Builder
 		xml.EscapeText(&esc, []byte(n.Body))
+		// A Tail comment stays INLINE after the body, where it was:
+		// on its own line it would put a newline into the body the
+		// next read collects.
+		for _, c := range n.Tail {
+			esc.WriteString("<!--" + c + "-->")
+		}
 		b.WriteString(">" + esc.String() + "</" + n.Elem + ">\n")
 		return b.String()
 	}
-	if len(n.Kids) == 0 && len(n.Slots) == 0 {
+	if len(n.Kids) == 0 && len(n.Slots) == 0 && len(n.Tail) == 0 {
 		b.WriteString("/>\n")
 		return b.String()
 	}
@@ -747,6 +777,9 @@ func (n *node) markup(indent string) string {
 	}
 	for _, k := range n.Kids {
 		b.WriteString(k.markup(indent + "  "))
+	}
+	for _, c := range n.Tail {
+		b.WriteString(commentMarkup(indent+"  ", c))
 	}
 	b.WriteString(indent + "</" + n.Elem + ">\n")
 	return b.String()
@@ -1699,6 +1732,10 @@ func nodeOf(src string) (*node, error) {
 	// there.
 	defaults := []string{""}
 	var root *node
+	// Comments read since the last element boundary, waiting for the
+	// element they lead (a start tag) or trail (an end tag). See
+	// node.Lead.
+	var pending []string
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -1852,7 +1889,8 @@ func nodeOf(src string) (*node, error) {
 			if t.Name.Space != def && !(envelopeChild && t.Name.Space == markup.XNamespace) {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
-			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
+			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}, Lead: pending}
+			pending = nil
 			for _, a := range t.Attr {
 				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
 				// ATTRIBUTE, and that spelling is the whole fix for
@@ -1950,6 +1988,8 @@ func nodeOf(src string) (*node, error) {
 			if len(stack) > 0 {
 				stack[len(stack)-1].Body += string(t)
 			}
+		case xml.Comment:
+			pending = append(pending, string(t))
 		case xml.EndElement:
 			if len(defaults) > 1 {
 				defaults = defaults[:len(defaults)-1]
@@ -1958,6 +1998,7 @@ func nodeOf(src string) (*node, error) {
 				return nil, fmt.Errorf("unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
+			n.Tail, pending = pending, nil
 			// stack is a LOCAL parse stack whose last reference dies
 			// with this function. The high-water mark it leaves behind
 			// is freed with the slice itself at return, so there is
@@ -2013,6 +2054,10 @@ func nodeOf(src string) (*node, error) {
 	if root == nil {
 		return nil, fmt.Errorf("no root element")
 	}
+	// A comment AFTER the root's end tag has no element to lead, and
+	// the model holds nothing outside the root, so it becomes the
+	// root's last Tail comment: one line up from where it was, and kept.
+	root.Tail = append(root.Tail, pending...)
 	return root, nil
 }
 

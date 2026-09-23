@@ -44,6 +44,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -743,6 +744,14 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// the open blamed the first Style= that used it and the save
 		// deleted the block. #510.
 		slots = n.Slots
+		// AND ITS COMMENTS COME DOWN, because the envelope is not a node
+		// and has nowhere of its own to keep them: a header comment above
+		// <Gooey> comes to lead the content root, just inside the
+		// envelope, and one after the content root becomes its last line.
+		// Each moves inward on the first save and is stable after —
+		// rather than being deleted, which is what #529 measured.
+		n.Kids[0].Lead = append(slices.Clone(n.Lead), n.Kids[0].Lead...)
+		n.Kids[0].Tail = append(n.Kids[0].Tail, n.Tail...)
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}
