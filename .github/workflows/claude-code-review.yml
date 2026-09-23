@@ -192,7 +192,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude[bot],copilot[bot]'
           claude_args: |
-            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),Bash(gh pr diff:*),Bash(gh api:*),mcp__github_inline_comment__create_inline_comment" --model "claude-opus-5-5"
+            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),Bash(gh pr diff:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),mcp__github_inline_comment__create_inline_comment" --model "claude-opus-5-5"
 
           # Enable progress tracking
           track_progress: true
@@ -322,12 +322,13 @@ jobs:
             the summary entry. The merge gate reads only the summary and treats a
             finding it no longer lists as fixed.
 
-            Begin that top-level summary comment with the following hidden marker,
-            exactly as written, as its very first line. The workflow uses it to tell
+            Begin that top-level summary comment with the following line, exactly
+            as written, as its very first line (a markdown link definition: it
+            renders as nothing). The workflow uses it to tell
             your review summary apart from other comments posted under the same
             `claude[bot]` identity (the interactive `@claude` bot posts there too):
 
-            <!-- pr-review-summary -->
+            [pr-review-summary]: #
 
             Do NOT create GitHub issues — use the `claude-make-follow-up-issues` label on the PR to trigger follow-up issue creation separately.
 
@@ -347,9 +348,12 @@ jobs:
       # script itself no-ops unless the comment is actually the error stub.
       #
       # Only the sticky summary is restored. Inline review comments are NOT
-      # reconciled: those the action had already flushed stay on the PR even
-      # when the run died (or hit the review step's timeout). They cannot move
-      # the gate, which fails closed on the review outcome regardless.
+      # reconciled. The action buffers them and flushes the buffer in an
+      # always() step, so a run that died (or hit the review step's timeout)
+      # still posts whatever it buffered. They post unclassified, too: the
+      # action's probe-comment classifier needs an anthropic_api_key, and this
+      # step authenticates with the OAuth token only. They cannot move the gate,
+      # which fails closed on the review outcome regardless.
       - name: Restore the previous review if this run destroyed it
         if: always()
         env:
@@ -427,7 +431,7 @@ jobs:
           #
           # Bodies are written to files and only ever matched with grep -F/-q —
           # never interpolated into a command.
-          SUMMARY_MARKER='<!-- pr-review-summary -->'
+          SUMMARY_MARKER='[pr-review-summary]: #'
 
           # Slurping is load-bearing: with --paginate alone the filter is applied
           # once PER PAGE, so `last` yields one body per page rather than one
@@ -729,7 +733,7 @@ jobs:
                  code-review summary (it lists findings grouped by concern). Ignore
                  progress-tracking checklist comments.
                - Reviews are asked to open their summary with a hidden
-                 `<!-- pr-review-summary -->` marker. If any comment carries it, prefer
+                 `[pr-review-summary]: #` marker. If any comment carries it, prefer
                  the most recent one that does — `claude[bot]` is also the identity of
                  the interactive `@claude` bot, whose replies are NOT review summaries.
                  Older summaries predate the marker, so its absence rules nothing out.
@@ -877,7 +881,7 @@ jobs:
                  code-review summary (it lists findings grouped by concern). Ignore
                  progress-tracking checklist comments.
                - Reviews are asked to open their summary with a hidden
-                 `<!-- pr-review-summary -->` marker. If any comment carries it, prefer
+                 `[pr-review-summary]: #` marker. If any comment carries it, prefer
                  the most recent one that does — `claude[bot]` is also the identity of
                  the interactive `@claude` bot, whose replies are NOT review summaries.
                  Older summaries predate the marker, so its absence rules nothing out.
