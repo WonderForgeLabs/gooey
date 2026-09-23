@@ -222,9 +222,10 @@ jobs:
 
             - Get the change set from the API: `gh pr diff ${{ github.event.pull_request.number }} --name-only`
               for the file list, then `gh pr diff ${{ github.event.pull_request.number }}` for the patch.
-              Do NOT rely on `git diff origin/<base>...HEAD`: the checkout is
-              shallow and has no base-branch history, so that command fails or
-              compares against the wrong commit.
+              Do NOT rely on `git diff origin/<base>...HEAD`, even though the
+              harness instructions above tell you to use it: that advice is wrong
+              here, because the checkout is shallow and only the head branch is
+              fetched, so the command fails or compares against the wrong commit.
             - Vendored dependency trees, lockfiles and generated code are checked
               for consistency with the change that produced them, never read line
               by line.
@@ -295,14 +296,23 @@ jobs:
             ## Output
 
             Post inline comments for specific code issues with
-            `mcp__github_inline_comment__create_inline_comment`. This review runs on
-            every push and inline comments are never updated in place, so first list
-            the inline comments this reviewer already posted:
+            `mcp__github_inline_comment__create_inline_comment`, and begin every
+            inline comment body with this hidden marker as its first line:
 
-            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.user.login == "claude[bot]") | {path, line, body}'`
+            <!-- pr-review-inline -->
 
-            and skip an inline comment only when one of those already makes the SAME
-            point at the same place. Comments from anyone else never suppress yours.
+            This review runs on every push and inline comments are never updated in
+            place, so first list the inline comments earlier runs of this review
+            posted (the marker is what tells them apart from the interactive @claude
+            bot, which posts under the same identity):
+
+            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.body | contains("<!-- pr-review-inline -->")) | {path, line, original_line, body}'`
+
+            Skip an inline comment only when one of those already makes the SAME
+            point in the same file. Match on the file and the point, not the line
+            number: a comment whose code has since changed comes back with `line`
+            null, and it still counts. Comments without the marker never suppress
+            yours.
 
             Use a top-level summary comment listing ALL findings grouped by concern.
             The summary is always complete: every finding still present belongs in
