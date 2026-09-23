@@ -177,7 +177,10 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 	// reports it instead of its own default, which is how a form says
 	// "e-mail address, please" once rather than leaking which check
 	// tripped. Per-rule messages are a Go-side validate.Field away.
-	msg := e.Attrs["Message"]
+	msg, err := litString(e, "Message")
+	if err != nil {
+		return nil, err
+	}
 	if raw, ok := e.Attrs["Required"]; ok {
 		req, err := parseRuleBool("Required", raw)
 		if err != nil {
@@ -195,7 +198,6 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 	// declared KindInt/BindsLiteral attribute to disagree with every
 	// other one. Found while fixing the leading-+ finding in review of
 	// #470, which is the same defect one element over.
-	var err error
 	for _, b := range []struct {
 		name string
 		into *int
@@ -255,6 +257,9 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		v.rules = append(v.rules, validate.Len(minLen, maxLen, msg))
 	}
 	if raw, ok := e.Attrs["Pattern"]; ok {
+		if _, err := litString(e, "Pattern"); err != nil {
+			return nil, err
+		}
 		// THE EMPTY EXPRESSION COMPILES, and it matches at every
 		// position of every string — so <Validate Pattern=""/> is a rule
 		// that can never fire, installed and running. It is the same

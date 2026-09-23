@@ -302,7 +302,17 @@ func validateBuiltinAttrs() []AttrSpec {
 		if !ok {
 			k = KindString
 		}
-		out = append(out, AttrSpec{Name: n, Kind: k, Binds: BindsLiteral, Origin: OriginBuiltin})
+		binds := BindsLiteral
+		if n == "Compare" {
+			// Compare NAMES a property — the other field — and both
+			// spellings of that name are honoured: Compare=".Password"
+			// and Compare="{{.Password}}" (comparePath;
+			// docs/markup-reference.md says so). BindsLiteral told every
+			// catalog consumer the second was not allowed, which is the
+			// "the spec lies" half of #488 rather than a dropped value.
+			binds = BindsEither
+		}
+		out = append(out, AttrSpec{Name: n, Kind: k, Binds: binds, Origin: OriginBuiltin})
 	}
 	return out
 }
@@ -1291,7 +1301,10 @@ var defButtonBar = &ElementDef{
 		if err != nil {
 			return nil, err
 		}
-		bar := &components.ButtonBar{Children: kids, Separator: e.Attrs["Separator"]}
+		bar := &components.ButtonBar{Children: kids}
+		if bar.Separator, err = litString(e, "Separator"); err != nil {
+			return nil, err
+		}
 		if bar.Gap, err = litInt(e, "Gap"); err != nil {
 			return nil, err
 		}
@@ -1979,6 +1992,26 @@ func litBool(e Element, name string) (bool, error) {
 		"silently mean \"false\"", e.Name, name, raw, name)
 }
 
+// litString reads a string attribute that is used VERBATIM, and refuses
+// a binding expression in it.
+//
+// A literal-only string has no grammar to fail, which is how six of them
+// outlived the int and bool sweep: <ButtonBar Separator="{{.S}}"> loaded
+// and painted the template text as the separator, <TypeAhead
+// Key="{{.K}}"> searched an item field literally named "{{.K}}", and
+// neither said a word. #488. The rule is the one attrcheck applies to an
+// unknown name — a value the loader cannot honour is a load error, not a
+// drop — keyed on the one thing that distinguishes the mistake: `{{`.
+func litString(e Element, name string) (string, error) {
+	raw := e.Attrs[name]
+	if strings.Contains(raw, "{{") {
+		return "", fmt.Errorf("markup: <%s %s=%q>: %s is written literally — it "+
+			"is not bindable, and a binding here would reach the element as its "+
+			"own text", e.Name, name, raw, name)
+	}
+	return raw, nil
+}
+
 var defTypeAhead = &ElementDef{
 	Name:  "TypeAhead",
 	Icon:  "search",
@@ -1996,7 +2029,11 @@ var defTypeAhead = &ElementDef{
 	Build: func(e Element, ctx *Context) (gooey.Component, error) {
 		// Non-visual like Timer: buildChildren routes it to the parent as
 		// an attachment, and the Composer starts its idle clock.
-		key := strings.TrimSpace(e.Attrs["Key"])
+		key, err := litString(e, "Key")
+		if err != nil {
+			return nil, err
+		}
+		key = strings.TrimSpace(key)
 		if key == "" {
 			return nil, fmt.Errorf("markup: <TypeAhead> needs a Key naming the item value to search (e.g. Key=\"Title\")")
 		}
