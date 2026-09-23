@@ -192,7 +192,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude[bot],copilot[bot]'
           claude_args: |
-            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),mcp__github_inline_comment__create_inline_comment" --model "claude-opus-5-5"
+            --allowedTools "Read,Glob,Grep,LS,Bash(git:*),Bash(gh:*),Bash(go:*),Bash(gofmt:*),Bash(jq:*),Bash(yq:*),Bash(gh pr diff:*),Bash(gh api:*),mcp__github_inline_comment__create_inline_comment" --model "claude-opus-5-5"
 
           # Enable progress tracking
           track_progress: true
@@ -295,16 +295,21 @@ jobs:
             ## Output
 
             Post inline comments for specific code issues with
-            `mcp__github_inline_comment__create_inline_comment`. Before posting,
-            list the existing ones with
-            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate`
-            and do not re-post a finding already commented on at the same file and
-            line — this review runs on every push, and inline comments are never
-            updated in place.
-            Use a top-level summary comment listing all findings grouped by concern.
-            Every inline comment must ALSO appear as a finding in that summary: the
-            merge gate reads only the summary, never inline comments, so a finding
-            that exists only inline lets the gate pass with it unaddressed.
+            `mcp__github_inline_comment__create_inline_comment`. This review runs on
+            every push and inline comments are never updated in place, so first list
+            the inline comments this reviewer already posted:
+
+            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.user.login == "claude[bot]") | {path, line, body}'`
+
+            and skip an inline comment only when one of those already makes the SAME
+            point at the same place. Comments from anyone else never suppress yours.
+
+            Use a top-level summary comment listing ALL findings grouped by concern.
+            The summary is always complete: every finding still present belongs in
+            it, including one whose inline comment you skipped as a duplicate and
+            one that exists only inline. Dedup suppresses the inline comment, never
+            the summary entry. The merge gate reads only the summary and treats a
+            finding it no longer lists as fixed.
 
             Begin that top-level summary comment with the following hidden marker,
             exactly as written, as its very first line. The workflow uses it to tell
@@ -329,6 +334,11 @@ jobs:
       # `always()` rather than `failure()`: the review step is continue-on-error,
       # so the job is still green here and `failure()` would never fire. The
       # script itself no-ops unless the comment is actually the error stub.
+      #
+      # Only the sticky summary is restored. Inline review comments are NOT
+      # reconciled: those the action had already flushed stay on the PR even
+      # when the run died (or hit the review step's timeout). They cannot move
+      # the gate, which fails closed on the review outcome regardless.
       - name: Restore the previous review if this run destroyed it
         if: always()
         env:
