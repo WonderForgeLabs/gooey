@@ -116,3 +116,122 @@ func TestTheNextFileDoesNotInheritTheEnvelopesResources(t *testing.T) {
 		t.Errorf("the previous file's <Gooey.Resources> was written into this one:\n%s", got)
 	}
 }
+
+// TestSlotArityIsTheLoadersAnswer is the other half of #510's model
+// change. nodeOf used to refuse a slot that did not hold exactly one
+// child, which is right for <ItemsView.ItemTemplate> and wrong for
+// every list slot; it now keeps whatever the author wrote and the
+// loader answers per slot. These rows pin that the author actually SEES
+// the loader's sentence — the hand-off node.Slots' doc argues for — and
+// that the save keeps what the file held rather than normalising it.
+//
+// The slot-attribute row is a change from main, where the property
+// element's Attrs were discarded at the read (Slots held its child), so
+// the file opened clean and saved without them. Now the attribute
+// survives and the loader refuses it by name.
+func TestSlotArityIsTheLoadersAnswer(t *testing.T) {
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	spec := ed.specOrBare("ItemsView")
+	if spec.Seed == "" {
+		t.Skip("no <ItemsView> in this build's palette")
+	}
+	// Seeded, so its bindings are registered and the build reaches the
+	// template check rather than stopping on an unknown {{.Items}}.
+	n, err := ed.seed(spec, "L")
+	if err != nil {
+		t.Fatalf("seed <ItemsView>: %v", err)
+	}
+	n.Attrs["Name"] = "L"
+	good := n.markup("    ")
+	const tpl = "<ItemsView.ItemTemplate>"
+	start := strings.Index(good, tpl)
+	end := strings.Index(good, "</ItemsView.ItemTemplate>")
+	if start < 0 || end < 0 {
+		t.Fatalf("the seed carries no ItemTemplate:\n%s", good)
+	}
+	end += len("</ItemsView.ItemTemplate>")
+
+	for _, tc := range []struct {
+		name, slot, status, saved string
+	}{
+		{
+			name:   "no child",
+			slot:   "<ItemsView.ItemTemplate/>",
+			status: "needs exactly one child element, got 0",
+			saved:  "<ItemsView.ItemTemplate/>",
+		},
+		{
+			name:   "two children",
+			slot:   "<ItemsView.ItemTemplate><Text>a</Text><Text>b</Text></ItemsView.ItemTemplate>",
+			status: "needs exactly one child element, got 2",
+			saved:  "<Text>a</Text>\n        <Text>b</Text>",
+		},
+		{
+			name:   "an attribute on the slot",
+			slot:   `<ItemsView.ItemTemplate Foo="1"><Text>a</Text></ItemsView.ItemTemplate>`,
+			status: "takes no attributes; it is a slot, not an element",
+			saved:  `<ItemsView.ItemTemplate Foo="1">`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workspaceFixture(t)
+			doc := "<Gooey>\n  <Canvas Name=\"Root\">\n" + good[:start] + tc.slot + good[end:] +
+				"  </Canvas>\n</Gooey>\n"
+			path := filepath.Join(root, "slot.gooey")
+			if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ed.setWorkspace(root)
+			ed.openWorkspaceFile("slot.gooey")
+			if got := ed.status.Get(); !strings.Contains(got, tc.status) {
+				t.Fatalf("opening\n%s\nreports %q, want the loader's %q", doc, got, tc.status)
+			}
+			if err := ed.saveOpenFile(); err != nil {
+				t.Fatal(err)
+			}
+			saved, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(saved), tc.saved) {
+				t.Errorf("the save did not keep %q:\n%s", tc.saved, saved)
+			}
+		})
+	}
+}
+
+// TestAPasteCannotRebindAPrefixTheEnvelopesResourcesHold is the scope
+// #510 opened. Since the envelope's <Gooey.Resources> is written into
+// every save, a prefix bound inside it is in markup.parse's flat table,
+// so reconcileNamespaces has to see it — or a paste binding the same
+// prefix elsewhere lands a second binding the editor never compared.
+func TestAPasteCannotRebindAPrefixTheEnvelopesResourcesHold(t *testing.T) {
+	root := workspaceFixture(t)
+	const doc = `<Gooey>
+  <Gooey.Resources>
+    <Style Key="panel" Bold="true" xmlns:t="urn:gooey:test:510:a"/>
+  </Gooey.Resources>
+  <Canvas Name="Root">
+    <Button Name="Existing" Content="go"/>
+  </Canvas>
+</Gooey>
+`
+	if err := os.WriteFile(filepath.Join(root, "res.gooey"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("res.gooey")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✓") {
+		t.Fatalf("opening the fixture reports %q, want a build", got)
+	}
+	ed.pasteMarkup(`<Gooey xmlns:t="urn:gooey:test:510:b">` + "\n" +
+		`  <Button Name="Pasted" Content="go"/>` + "\n" +
+		`</Gooey>` + "\n")
+	if got := ed.status.Get(); !strings.HasPrefix(got, "✗") {
+		t.Errorf("a paste binding t: to a different uri than the envelope's "+
+			"<Gooey.Resources> does reports %q; the conflict went unseen", got)
+	}
+}

@@ -619,8 +619,14 @@ type node struct {
 	// element, and they are here so node.markup can write them back.
 	// Lead is every comment between the previous sibling (or the
 	// parent's start tag) and this element's start tag; Tail is every
-	// comment after this element's last child or body, before its end
-	// tag. nodeOf fell through the switch on xml.Comment until #529, so
+	// comment inside this element that no child start tag followed.
+	//
+	// THAT IS NOT QUITE "AFTER THE LAST CHILD", and the difference is a
+	// relocation: Body is one string, with nowhere to mark a position
+	// in it, so a comment BEFORE or INSIDE a body — <Text><!--c-->hi
+	// </Text>, <Text>a<!--c-->b</Text> — lands in Tail too and is saved
+	// after the body. Kept, moved once, stable after;
+	// TestCommentsSurviveTheRoundTrip pins where it goes. nodeOf fell through the switch on xml.Comment until #529, so
 	// the first save of a hand-written layout deleted every comment in
 	// it — usually the author's note on why a row is sized the way it
 	// is — under a "✓ saved".
@@ -2056,7 +2062,9 @@ func nodeOf(src string) (*node, error) {
 	}
 	// A comment AFTER the root's end tag has no element to lead, and
 	// the model holds nothing outside the root, so it becomes the
-	// root's last Tail comment: one line up from where it was, and kept.
+	// root's last Tail comment: moved inside the root, and kept. For a
+	// <Gooey> file openWorkspaceFile then moves the envelope's Tail onto
+	// the content root, so an epilog lands two levels in.
 	root.Tail = append(root.Tail, pending...)
 	return root, nil
 }

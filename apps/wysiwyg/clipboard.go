@@ -1025,6 +1025,13 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 func (ed *editor) reconcileNamespaces(n *node) error {
 	doc := map[string]string{}
 	envelopeNamespaces(ed.envAttrs, ed.envDecls, doc)
+	// THE ENVELOPE'S PROPERTY ELEMENTS, in the order envelopeHead writes
+	// them — after the declarations, before the content root — because
+	// since #510 they are in every save, and a prefix bound inside
+	// <Gooey.Resources> is in markup.parse's flat table like any other.
+	for _, name := range sortedKeys(ed.envSlots) {
+		collectNamespaces(ed.envSlots[name], doc)
+	}
 	collectNamespaces(ed.doc(), doc)
 	return reconcileNamespacesInto(n, doc, map[string]string{})
 }

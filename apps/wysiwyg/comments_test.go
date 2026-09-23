@@ -31,6 +31,7 @@ func TestCommentsSurviveTheRoundTrip(t *testing.T) {
     <!-- leads B -->
     <Button Name="B" Content="go"/>
     <Text Name="T">hi<!-- inline --></Text>
+    <Text Name="P"><!-- before -->pre</Text>
     <!-- trails the canvas -->
   </Canvas>
   <!-- after the root -->
@@ -56,7 +57,7 @@ func TestCommentsSurviveTheRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []string{"header", "in a slot", "keep me", "leads B",
-		"inline", "trails the canvas", "after the root", "epilog"} {
+		"inline", "before", "trails the canvas", "after the root", "epilog"} {
 		if !strings.Contains(string(first), "<!-- "+c+" -->") {
 			t.Errorf("the save deleted <!-- %s -->:\n%s", c, first)
 		}
@@ -68,6 +69,17 @@ func TestCommentsSurviveTheRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(string(first), "hi<!-- inline --></Text>") {
 		t.Errorf("the inline comment moved out of <Text>'s body line:\n%s", first)
+	}
+	// THE RELOCATIONS, pinned so they are decisions rather than
+	// accidents (node.Tail and openWorkspaceFile state them). A comment
+	// before a body is saved after it: Body is one string with no
+	// position in it. And an epilog after </Gooey> ends as the content
+	// root's last line.
+	if !strings.Contains(string(first), "pre<!-- before --></Text>") {
+		t.Errorf("a comment before a body did not land after it, where node.Tail says:\n%s", first)
+	}
+	if !strings.Contains(string(first), "<!-- epilog -->\n  </Canvas>") {
+		t.Errorf("the epilog did not land as the content root's last line:\n%s", first)
 	}
 
 	// Stable from the first save on: the envelope's comments move one

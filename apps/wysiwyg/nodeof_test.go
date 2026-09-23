@@ -42,7 +42,7 @@ func TestNodeOfRejectsMalformedSeeds(t *testing.T) {
 			want: "inside",
 		},
 		{
-			// The loader refuses this too ("markup: <X.Y> appears twice"),
+			// The loader refuses this too ("markup: <X.Y> given twice", in attachProp),
 			// and letting the map keep the second would save a document
 			// without the first.
 			name: "one property element written twice",
