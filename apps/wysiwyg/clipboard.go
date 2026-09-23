@@ -998,6 +998,7 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 	// carrying the envelope's binding onto a declaration and returning a
 	// declaration as the pasted element. Raised in review of #522.
 	carryDeclarations(n, kids[0])
+	carryComments(n, kids[0])
 	return kids[0], true, ""
 }
 
@@ -1062,8 +1063,8 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // AND A FOURTH, WHICH IS ed.envDecls AND THE BINDING MINTED BESIDE IT.
 // The third-scope paragraph above was written when the saved envelope
 // was gooeyOpen(ed.envAttrs) and nothing else. It is now
-// envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) (main.go), which writes two
-// bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
+// envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) (main.go), which
+// writes two bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
 // re-emitted by declAttrs, and a freshly minted xmlns:<prefix> on
 // <Gooey> whenever declPrefix reports the document binds the namespace
 // nowhere the save will still carry. Both land in the file and both

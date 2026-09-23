@@ -260,6 +260,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -617,6 +618,11 @@ type node struct {
 	Slots map[string]*node
 	// Lead and Tail are the XML COMMENTS the author wrote around this
 	// element, and they are here so node.markup can write them back.
+	// nodeOf fell through the switch on xml.Comment until #529, so the
+	// first save of a hand-written layout deleted every comment in it —
+	// usually the author's note on why a row is sized the way it is —
+	// under a "✓ saved".
+	//
 	// Lead is every comment between the previous sibling (or the
 	// parent's start tag) and this element's start tag; Tail is every
 	// comment inside this element that no child start tag followed.
@@ -626,13 +632,12 @@ type node struct {
 	// in it, so a comment BEFORE or INSIDE a body — <Text><!--c-->hi
 	// </Text>, <Text>a<!--c-->b</Text> — lands in Tail too and is saved
 	// after the body. Kept, moved once, stable after;
-	// TestCommentsSurviveTheRoundTrip pins where it goes. nodeOf fell through the switch on xml.Comment until #529, so
-	// the first save of a hand-written layout deleted every comment in
-	// it — usually the author's note on why a row is sized the way it
-	// is — under a "✓ saved".
+	// TestCommentsSurviveTheRoundTrip pins where it goes.
 	//
 	// They belong to the element, so they go where it goes: a moved
 	// element takes its Lead with it, and a deleted one takes it away.
+	// A DUPLICATE does not take the original's Lead — see clone in
+	// duplicate.go.
 	Lead []string
 	Tail []string
 }
@@ -640,6 +645,12 @@ type node struct {
 // commentMarkup writes one comment line. The text is the author's,
 // verbatim: encoding/xml has already refused a comment containing "--",
 // so anything in hand is writable between the delimiters as it stands.
+//
+// One spelling Go admits that the XML spec does not: a comment whose
+// text ENDS in "-" (<!--a--->). It is read as "a-" and written back the
+// same way, so this editor round-trips it stably, but the file is no
+// more well-formed to a strict parser after the save than it was
+// before.
 func commentMarkup(indent, c string) string {
 	return indent + "<!--" + c + "-->\n"
 }
@@ -776,10 +787,17 @@ func (n *node) markup(indent string) string {
 		return b.String()
 	}
 	b.WriteString(">\n")
-	// A slot IS its property element (see node.Slots), so it writes its
-	// own <Owner.Slot> tag and every child under it.
+	// A slot IS its property element (see node.Slots) and writes its own
+	// children, attributes and comments — but its TAG IS DERIVED FROM
+	// THE OWNER, n.Elem + "." + slot, never read from the slot's stored
+	// Elem. That name is frozen at parse time, and retype renames the
+	// owner without touching it: a <Canvas> retyped to <VStack> wrote
+	// <Canvas.Resources> inside <VStack>, which the loader refuses and
+	// the next open refused too. Raised in review of #569.
 	for _, s := range sortedKeys(n.Slots) {
-		b.WriteString(n.Slots[s].markup(indent + "  "))
+		q := *n.Slots[s]
+		q.Elem = n.Elem + "." + s
+		b.WriteString(q.markup(indent + "  "))
 	}
 	for _, k := range n.Kids {
 		b.WriteString(k.markup(indent + "  "))
@@ -789,6 +807,24 @@ func (n *node) markup(indent string) string {
 	}
 	b.WriteString(indent + "</" + n.Elem + ">\n")
 	return b.String()
+}
+
+// carryComments moves a <Gooey> envelope's comments onto the content
+// root about to be promoted in its place. The envelope is not a node
+// and has nowhere of its own to keep them: a header comment above
+// <Gooey> comes to lead the content root, just inside the envelope, and
+// one after the content root — or after </Gooey> itself, which nodeOf
+// has already put on the envelope's Tail — becomes the content root's
+// last line. Each moves inward once and is stable after, rather than
+// being deleted, which is what #529 measured.
+//
+// ONE FUNCTION FOR BOTH UNWRAPS, openWorkspaceFile and unwrapGooey, for
+// the reason carryDeclarations gives: the loop was written inline at
+// the open and the paste lost the comments, the same way the
+// declarations had. Raised in review of #569.
+func carryComments(env, root *node) {
+	root.Lead = append(slices.Clone(env.Lead), root.Lead...)
+	root.Tail = append(root.Tail, env.Tail...)
 }
 
 // carryDeclarations copies a <Gooey> envelope's namespace declarations

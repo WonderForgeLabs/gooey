@@ -44,7 +44,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -756,16 +755,10 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// the open blamed the first Style= that used it and the save
 		// deleted the block. #510.
 		slots = n.Slots
-		// AND ITS COMMENTS COME DOWN, because the envelope is not a node
-		// and has nowhere of its own to keep them: a header comment above
-		// <Gooey> comes to lead the content root, just inside the
-		// envelope, and one after the content root — or after </Gooey>
-		// itself, which nodeOf has already put on the envelope's Tail —
-		// becomes the content root's last line. Each moves inward on the
-		// first save (an epilog by two levels) and is stable after,
-		// rather than being deleted, which is what #529 measured.
-		n.Kids[0].Lead = append(slices.Clone(n.Lead), n.Kids[0].Lead...)
-		n.Kids[0].Tail = append(n.Kids[0].Tail, n.Tail...)
+		// AND ITS COMMENTS COME DOWN — carryComments, beside
+		// carryDeclarations and for the same reason: paste unwraps an
+		// envelope too.
+		carryComments(n, n.Kids[0])
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}

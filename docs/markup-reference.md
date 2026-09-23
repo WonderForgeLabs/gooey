@@ -1537,7 +1537,7 @@ A palette was the one thing a designer edits and the one thing markup could not 
 </Gooey>
 ```
 
-`<Gooey.Resources>` is the root's only property element. `<Resource>` declares a typed value; `<Style>` declares a `render.Style` recipe, either as attributes or as `<Setter>` children that can themselves reference a `Resource` by key.
+`<Gooey.Resources>` is the root's only property element. `<Resource>` declares a typed value; `<Style>` declares a `render.Style` recipe, either as attributes or as `<Setter>` children that can themselves reference a `Resource` by key. A resource block holds a **list** — any number of `<Resource>` and `<Style>` declarations — unlike `<ItemsView.ItemTemplate>`, which takes exactly one child; how many children a property element may hold is each slot's own rule.
 
 Three properties, all inherited from how the rest of this page already works (see `docs/specs/2026-08-10-styles-and-resources.md`):
 
