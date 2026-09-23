@@ -111,3 +111,58 @@ func TestADuplicateDoesNotCopyTheOriginalsComment(t *testing.T) {
 		t.Errorf("a comment inside the copied subtree appears %d times, want 2:\n%s", n, src)
 	}
 }
+
+// TestARefusedEditRestoresAnEmptyAttributeExactly. The revert used the
+// forward write's rule, which reads "" as "delete", so an attribute the
+// file held as Content="" came back deleted — under a status saying
+// nothing changed, with the undo entry already aborted. Raised in
+// review of #569.
+func TestARefusedEditRestoresAnEmptyAttributeExactly(t *testing.T) {
+	ed, path := openFixture(t, `<Gooey>
+  <Canvas Name="Root">
+    <Button Name="B" Content="" Canvas.Top="2"/>
+  </Canvas>
+</Gooey>
+`)
+	ed.sel = findNode(ed, "B")
+	editAttr(t, ed, "Canvas.Top", "not-a-number")
+	if ed.docRoot == nil {
+		t.Fatalf("the refused edit was not reverted: %q", ed.status.Get())
+	}
+	ed.sel = findNode(ed, "B")
+	editAttr(t, ed, "Content", "{{")
+	if v, ok := findNode(ed, "B").Attrs["Content"]; !ok || v != "" {
+		t.Errorf("after a refused Content edit, Content = %q (present %v); want the "+
+			"empty value the file held", v, ok)
+	}
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := os.ReadFile(path)
+	if !strings.Contains(string(saved), `Content=""`) {
+		t.Errorf("the save lost Content=\"\":\n%s", saved)
+	}
+}
+
+// TestACopyLeavesTheLeadingCommentACutCarriesIt: one rule with duplicate
+// for a copy, and the move reading for a cut.
+func TestACopyLeavesTheLeadingCommentACutCarriesIt(t *testing.T) {
+	const doc = `<Gooey>
+  <Canvas Name="Root">
+    <!-- about V -->
+    <VStack Name="V"/>
+  </Canvas>
+</Gooey>
+`
+	ed, _ := openFixture(t, doc)
+	ed.sel = findNode(ed, "V")
+	ed.copySelected()
+	if strings.Contains(ed.clip.markup, "about V") {
+		t.Errorf("a copy carried the original's leading comment:\n%s", ed.clip.markup)
+	}
+	ed.sel = findNode(ed, "V")
+	ed.cutSelected()
+	if !strings.Contains(ed.clip.markup, "about V") {
+		t.Errorf("a cut — a move — dropped the element's leading comment:\n%s", ed.clip.markup)
+	}
+}

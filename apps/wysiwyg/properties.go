@@ -841,21 +841,28 @@ func (p *valueEditor) Write(v string) {
 	} else {
 		old, had = target.Attrs[p.name]
 	}
-	put := func(v string, present bool) {
-		switch {
-		case p.body:
-			target.Body = v
-		case !present || v == "":
-			delete(target.Attrs, p.name)
-		default:
-			target.Attrs[p.name] = v
-		}
+	switch {
+	case p.body:
+		target.Body = v
+	case v == "":
+		delete(target.Attrs, p.name)
+	default:
+		target.Attrs[p.name] = v
 	}
-	put(v, true)
 	p.ed.rebuild()
 	if built && p.ed.remote == nil && p.ed.docRoot == nil {
 		refused := strings.TrimPrefix(p.ed.status.Get(), "✗ ")
-		put(old, had)
+		// EXACTLY WHAT WAS THERE, which is not the forward write's rule:
+		// that one reads "" as "delete", and an attribute the file held
+		// as Content="" would come back deleted. Raised in review of #569.
+		switch {
+		case p.body:
+			target.Body = old
+		case had:
+			target.Attrs[p.name] = old
+		default:
+			delete(target.Attrs, p.name)
+		}
 		// BEFORE the rebuild, as at the other six: the refused write must
 		// not stay on the undo stack, or one ctrl+z re-enters the state
 		// this revert exists to prevent.

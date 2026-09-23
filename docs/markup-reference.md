@@ -603,7 +603,7 @@ It paints nothing of its own, and has no `Background`. A container's bounds encl
 |---|---|
 | `Gap` | Cells between members. A bar with a `Separator` forces at least 3, since the rule needs air either side. Anything else — an empty value, a negative, `8px`, a binding — is a load error, not a silent 0. |
 | `Uniform` | `"true"` gives every member the width of the widest one. Only `"true"` or `"false"`, written literally; anything else, an empty value included, is a load error rather than a silent `"false"`. |
-| `Separator` | The rune drawn between members; absent draws none. |
+| `Separator` | The rune drawn between members; absent draws none. Written literally — a binding is a load error, not a stray `{` painted between members. |
 
 ```xml
 <ButtonBar Gap="3" Uniform="true" Separator="│">
@@ -855,7 +855,7 @@ The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input ex
 |---|---|---|---|
 | `Required` | bool | `[Required]` | `required` |
 | `MinLen` / `MaxLen` | int | `[StringLength]`, `[MinLength]`, `[MaxLength]` | `at least N characters` / `at most N characters` / `must be N–M characters` |
-| `Pattern` | regex | `[RegularExpression]` | `invalid format` |
+| `Pattern` | regex, literal — a value that is wholly a `{{…}}` binding is a load error; braces elsewhere in the pattern are regex | `[RegularExpression]` | `invalid format` |
 | `EmailAddress` | bool | `[EmailAddress]` | `not a valid email address` |
 | `Url` | bool | `[Url]` | `not a valid URL` |
 | `Phone` | bool | `[Phone]` | `not a valid phone number` |
@@ -864,7 +864,7 @@ The vocabulary is .NET's `DataAnnotations` set. Every rule passes empty input ex
 | `Integer` | bool | — (numeric-string guard) | `must be a whole number` |
 | `MinValue` / `MaxValue` | number | `[Range]` over a text field | `must be at least N` / `must be at most N` / `must be between N and M` |
 | `Compare` | field path | `[Compare]` | `does not match` |
-| `Message` | string | `ErrorMessage` | — (overrides every rule on this behavior) |
+| `Message` | string, literal — a binding is a load error | `ErrorMessage` | — (overrides every rule on this behavior) |
 | `Into` | name | — | — |
 
 **The `Type` column is the grammar, and it is the house one.** A `bool` rule
@@ -1008,7 +1008,7 @@ rows := prop.NewComputed(func() components.ItemSource {
 
 | Attribute | Meaning |
 | --- | --- |
-| `Key` | **Required.** Which projected item value to match. A projection is a `map[string]any` and, with no reflection anywhere, nothing else can say which entry is the label. |
+| `Key` | **Required.** Which projected item value to match. A projection is a `map[string]any` and, with no reflection anywhere, nothing else can say which entry is the label. Written literally — a binding is a load error, not a search on a field named after the template. |
 | `Search` | Binding to a `string`: the live buffer. |
 | `NoMatch` | Binding to a `bool`: the last keystroke matched nothing. |
 | `Timeout` | Idle reset, any `time.ParseDuration` string; absent = 1s. Empty, unparseable, or non-positive is a load error. |
@@ -1133,7 +1133,7 @@ An `embed.FS` reports a constant zero `ModTime` for every file, so a watcher ove
 | `Name` | **Required.** The companion's label in errors, and the element's `Name=` identity for `markup.Find` and tree snapshots. |
 | `Path` | **Required.** The executable. A bare name (`python3`) is resolved on `PATH` **at load time**; a path containing a separator resolves against the PAGE's directory (`Context.Dir`). Either way the result is made **absolute**, because `exec.Cmd` resolves a relative `Path` against `Dir` — so a relative one would silently mean two different files depending on whether `Dir` was also set. A binary that is not installed is a load error, not a start failure behind a screen that is already up. |
 | `Dir` | Working directory, resolved against the PAGE's directory (`Context.Dir`). Must exist at load time. |
-| `Log` | Output file, resolved against the PAGE's directory (`Context.Dir`). Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. |
+| `Log` | Output file, resolved against the PAGE's directory (`Context.Dir`). Truncated and opened when the child starts, closed after it stops. **Absent means `os.DevNull`.** The file need not exist at load time, but its directory must — and the path itself must not already *be* a directory. Written literally — a binding is a load error. |
 | `KillDelay` | `time.ParseDuration`; the grace between the stop signal and `SIGKILL`. Default 5s. Empty, unparseable, or non-positive is a load error. |
 | `StopTimeout` | `time.ParseDuration`; how long stopping waits for the child after cancelling it. Default 10s; past it `Leaked()` reports that the wait gave up. Empty, unparseable, or non-positive is a load error. |
 | `CleanEnv` | Starts the child from an **empty** environment. `"true"` or `"false"`, and nothing else — `CleanEnv="1"` is a **load error**, as it is on every other literal bool. This row documented the `strconv.ParseBool` spellings (`1`, `TRUE`, `T`) until [#460](https://github.com/WonderForgeLabs/gooey/issues/460): on a security switch the laxer grammar is the worse one, because a value that quietly fell back to "inherit" would hand the child every secret in the launching shell, and five spellings of "yes" is five chances for a near-miss. Default is inherit-and-override. |

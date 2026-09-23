@@ -130,7 +130,8 @@ func (ed *editor) duplicateSelected() bool {
 	// on purpose — uniqueName mints it a new Name — so the same sentence
 	// above both reads as true of each. Descendants keep theirs: inside
 	// the copy they still sit above the element they describe. Raised in
-	// review of #569.
+	// review of #569. copySelected follows the same rule; cutSelected,
+	// which is a move, does not.
 	c.Lead = nil
 	// TRANSACTIONAL, and here there is NO catalog gate to lean on — unlike
 	// promote and demote, the copy goes in beside the original, so whatever

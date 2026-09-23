@@ -1026,8 +1026,12 @@ func envelopeHead(attrs map[string]string, decls []*node, slots map[string]*node
 	// dropping them from both, which is what happened, made the open
 	// report "no style named panel is registered" about a style the
 	// author had registered, and the save made that true on disk.
+	// The tag is the owner's name plus the slot, as node.markup derives
+	// it — never the slot's stored Elem. See there.
 	for _, s := range sortedKeys(slots) {
-		b.WriteString(slots[s].markup("  "))
+		q := *slots[s]
+		q.Elem = "Gooey." + s
+		b.WriteString(q.markup("  "))
 	}
 	return b.String()
 }

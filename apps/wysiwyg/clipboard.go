@@ -137,6 +137,12 @@ func (ed *editor) copySelected() {
 	}
 	c := n.deepCopy()
 	ed.carryUsedNamespaces(c)
+	// A COPY LEAVES THE ORIGINAL'S LEADING COMMENT BEHIND, for the reason
+	// duplicateSelected does: it is the author's note about THAT element,
+	// and a paste beside it would put the same sentence above two
+	// differently-named ones. A CUT keeps it — a cut and paste is a move,
+	// and the note goes where its element goes. Raised in review of #569.
+	c.Lead = nil
 	src := c.markup("")
 	ed.clip = clipboard{node: c, markup: src}
 	ed.status.Set("copied " + describeNode(n) + ed.sayCopiedOut(src))

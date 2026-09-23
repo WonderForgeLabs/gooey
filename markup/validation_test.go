@@ -499,3 +499,19 @@ func TestValidationErrorBindingTypeChecked(t *testing.T) {
 		t.Fatalf("error %q does not name the wanted type", err)
 	}
 }
+
+// TestAPatternMayHoldBraces is the carve-out litStringNotBound exists
+// for: a regular expression with `{{` in it is a legal pattern, and only
+// a value that IS a binding expression is refused. Raised in review of
+// #569.
+func TestAPatternMayHoldBraces(t *testing.T) {
+	ctx := &Context{Values: map[string]any{"Name": prop.NewSource("")}}
+	if _, err := Build([]byte(`<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="^{{.*}}$"/></TextBox></Gooey>`), ctx); err != nil {
+		t.Errorf("a pattern matching template text was refused: %v", err)
+	}
+	_, err := Build([]byte(`<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="{{.Name}}"/></TextBox></Gooey>`), ctx)
+	if err == nil || !strings.Contains(err.Error(), "not bindable") {
+		t.Errorf("a Pattern that is a whole binding expression loaded (err %v); "+
+			"it would compile the template text as the regex", err)
+	}
+}

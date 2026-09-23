@@ -257,7 +257,7 @@ func buildValidate(e Element, ctx *Context) (*Validate, error) {
 		v.rules = append(v.rules, validate.Len(minLen, maxLen, msg))
 	}
 	if raw, ok := e.Attrs["Pattern"]; ok {
-		if _, err := litString(e, "Pattern"); err != nil {
+		if _, err := litStringNotBound(e, "Pattern"); err != nil {
 			return nil, err
 		}
 		// THE EMPTY EXPRESSION COMPILES, and it matches at every

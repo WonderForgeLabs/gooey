@@ -570,6 +570,40 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 		}
 	}
 
+	// THE CONTROL ARM, which keeps the instrument honest while the list
+	// is empty. A known-BINDABLE attribute goes through the same harness
+	// and the same three shots, and must come out the way an honoured
+	// binding does: the bound arm paints like the literal holding the
+	// handle's value, and unlike absence. If the harness rots — the
+	// probe stops binding, the shots stop differing — this goes red
+	// instead of the next #488-class entry being measured by a broken
+	// ruler. Raised in review of #569.
+	var control *attrProbe
+	for _, a := range bindableAttrs(t) {
+		if a.el == "Button" && a.attr.Name == "Content" {
+			control = &a
+			break
+		}
+	}
+	if control == nil {
+		t.Fatal("the control attribute <Button Content> is no longer declared " +
+			"bindable; pick another painted BindsEither text attribute")
+	}
+	cAbsent, err1 := shot(t, bindsHarness(t, *control, "", ""))
+	cHeld, err2 := shot(t, bindsHarness(t, *control, "Content", held))
+	cBound, err3 := shot(t, bindsHarness(t, *control, "Content", "{{.S}}"))
+	if err1 != nil || err2 != nil || err3 != nil {
+		t.Fatalf("the control <Button Content> does not build: %v / %v / %v", err1, err2, err3)
+	}
+	if _, _, d := cellsDiffer(cHeld, cBound); d {
+		t.Error("the control <Button Content=\"{{.S}}\"> paints differently from " +
+			"the literal it holds: the harness no longer measures an honoured binding")
+	}
+	if _, _, d := cellsDiffer(cAbsent, cBound); !d {
+		t.Error("the control <Button Content=\"{{.S}}\"> paints like its absence: " +
+			"the harness cannot see a bound value arrive")
+	}
+
 	// NOTHING TO MEASURE is not the fixture failing: with the list empty
 	// there is no accepted binding whose arrival could be checked, and a
 	// new one reaches this test only after the sweep above makes it name

@@ -2002,9 +2002,33 @@ func litBool(e Element, name string) (bool, error) {
 // neither said a word. #488. The rule is the one attrcheck applies to an
 // unknown name — a value the loader cannot honour is a load error, not a
 // drop — keyed on the one thing that distinguishes the mistake: `{{`.
+//
+// litStringNotBound is the narrower form for an attribute whose GRAMMAR
+// can hold braces: see there.
 func litString(e Element, name string) (string, error) {
 	raw := e.Attrs[name]
 	if strings.Contains(raw, "{{") {
+		return "", fmt.Errorf("markup: <%s %s=%q>: %s is written literally — it "+
+			"is not bindable, and a binding here would reach the element as its "+
+			"own text", e.Name, name, raw, name)
+	}
+	return raw, nil
+}
+
+// litStringNotBound refuses only a value that IS a binding expression —
+// the whole of it one {{…}} — and lets a `{{` elsewhere through.
+//
+// It exists for <Validate Pattern>, which is a regular expression, and
+// regexp/syntax reads a `{` that opens no valid repetition as a literal
+// brace: `^{{.*}}$` — "looks like a Go template" — is a legal pattern
+// that litString's any-`{{` rule would refuse, with no escape spelling.
+// The trade is stated rather than hidden: `a{{.X}}` in a Pattern is now
+// a regex with braces in it, not a refused half-binding. Raised in
+// review of #569.
+func litStringNotBound(e Element, name string) (string, error) {
+	raw := e.Attrs[name]
+	t := strings.TrimSpace(raw)
+	if strings.HasPrefix(t, "{{") && strings.HasSuffix(t, "}}") {
 		return "", fmt.Errorf("markup: <%s %s=%q>: %s is written literally — it "+
 			"is not bindable, and a binding here would reach the element as its "+
 			"own text", e.Name, name, raw, name)
