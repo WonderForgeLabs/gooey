@@ -992,7 +992,7 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // AND A FOURTH, WHICH IS ed.envDecls AND THE BINDING MINTED BESIDE IT.
 // The third-scope paragraph above was written when the saved envelope
 // was gooeyOpen(ed.envAttrs) and nothing else. It is now
-// envelopeHead(ed.envAttrs, ed.envDecls) (main.go), which writes two
+// envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) (main.go), which writes two
 // bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
 // re-emitted by declAttrs, and a freshly minted xmlns:<prefix> on
 // <Gooey> whenever declPrefix reports the document binds the namespace

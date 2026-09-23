@@ -2239,11 +2239,23 @@ func TestEnvAttrsIsAssignedWhereTheDocumentIs(t *testing.T) {
 		_, ok := onEd(e, "envDecls", eds)
 		return ok
 	})
+	// ENVSLOTS IS THE FOURTH, added with it for #510: the envelope's
+	// <Gooey.Resources>. Left behind by a site that replaced the rest,
+	// the last file's styles would be written into the next one's save.
+	envSlots := assignedIn(t, "envSlots", func(e ast.Expr, eds map[string]bool) bool {
+		_, ok := onEd(e, "envSlots", eds)
+		return ok
+	})
 
-	if len(kids) == 0 || len(envAttrs) == 0 || len(envDecls) == 0 {
+	if len(kids) == 0 || len(envAttrs) == 0 || len(envDecls) == 0 || len(envSlots) == 0 {
 		t.Fatalf("the walk found envAttrs assigned in %v, ed.root.Kids in %v and "+
 			"envDecls in %v; an empty side means the matcher stopped matching and "+
-			"every assertion below would pass vacuously", envAttrs, kids, envDecls)
+			"every assertion below would pass vacuously (envSlots in %v)", envAttrs, kids, envDecls, envSlots)
+	}
+	if strings.Join(envSlots, ",") != strings.Join(kids, ",") {
+		t.Errorf("ed.envSlots is assigned in %v and ed.root.Kids in %v. These must "+
+			"be the same set: a <Gooey.Resources> left over from the last file is "+
+			"written into the next one's save", envSlots, kids)
 	}
 	if strings.Join(envAttrs, ",") != strings.Join(kids, ",") {
 		t.Errorf("ed.envAttrs is assigned in %v and the document in %v. These must "+
@@ -2452,7 +2464,7 @@ func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
 			}
 			// And the saved envelope must actually bind it, or there is
 			// nothing for the paste to conflict with.
-			if head := envelopeHead(ed.envAttrs, ed.envDecls); !strings.Contains(
+			if head := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots); !strings.Contains(
 				head, `xmlns:p="`+markup.XNamespace+`"`) {
 				t.Fatalf("the saved envelope binds p: nowhere:\n%s", head)
 			}

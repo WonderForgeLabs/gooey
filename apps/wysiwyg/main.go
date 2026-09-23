@@ -605,6 +605,15 @@ type node struct {
 	// Slots are property elements — <ItemsView.ItemTemplate> — which
 	// are structured attributes rather than children, and which the
 	// catalog can report as REQUIRED.
+	//
+	// THE VALUE IS THE PROPERTY ELEMENT ITSELF, keyed by its slot name:
+	// Elem is the dotted "ItemsView.ItemTemplate" and Kids are what the
+	// author wrote inside it. It held the ONE child until #510, which
+	// is the shape <X.Resources> and <X.Behaviors> do not have — they
+	// hold a list — so nodeOf refused every document declaring two
+	// styles ("slot needs exactly one child"), and kept a one-style
+	// block only to lose it at the envelope unwrap. How many children a
+	// slot may hold is the loader's rule per slot, not this model's.
 	Slots map[string]*node
 }
 
@@ -731,10 +740,10 @@ func (n *node) markup(indent string) string {
 		return b.String()
 	}
 	b.WriteString(">\n")
+	// A slot IS its property element (see node.Slots), so it writes its
+	// own <Owner.Slot> tag and every child under it.
 	for _, s := range sortedKeys(n.Slots) {
-		fmt.Fprintf(&b, "%s  <%s.%s>\n", indent, n.Elem, s)
-		b.WriteString(n.Slots[s].markup(indent + "    "))
-		fmt.Fprintf(&b, "%s  </%s.%s>\n", indent, n.Elem, s)
+		b.WriteString(n.Slots[s].markup(indent + "  "))
 	}
 	for _, k := range n.Kids {
 		b.WriteString(k.markup(indent + "  "))
@@ -925,7 +934,7 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // editor's document is the content root, so a declaration has nowhere
 // in the tree to live and rides with envAttrs instead, written back
 // here. Added for #517.
-func envelopeHead(attrs map[string]string, decls []*node) string {
+func envelopeHead(attrs map[string]string, decls []*node, slots map[string]*node) string {
 	attrs, prefix := envelopeParts(attrs, decls)
 	var b strings.Builder
 	b.WriteString(gooeyOpen(attrs))
@@ -934,6 +943,16 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 		q.Elem = prefix + ":" + d.Elem
 		q.Attrs = declAttrs(d.Attrs, prefix)
 		b.WriteString(q.markup("  "))
+	}
+	// THE ENVELOPE'S PROPERTY ELEMENTS — <Gooey.Resources> — and they
+	// are written into the BUILD as well as the save, because the
+	// document's content resolves Style="panel" against them. Dropping
+	// them only from the save would have been the quiet half of #510;
+	// dropping them from both, which is what happened, made the open
+	// report "no style named panel is registered" about a style the
+	// author had registered, and the save made that true on disk.
+	for _, s := range sortedKeys(slots) {
+		b.WriteString(slots[s].markup("  "))
 	}
 	return b.String()
 }
@@ -1974,10 +1993,18 @@ func nodeOf(src string) (*node, error) {
 				if p.Slots == nil {
 					p.Slots = map[string]*node{}
 				}
-				if len(n.Kids) != 1 {
-					return nil, fmt.Errorf("slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
+				// A REPEATED SLOT IS REFUSED rather than letting the
+				// second overwrite the first in the map, which would
+				// save a document missing whatever the first held.
+				if _, dup := p.Slots[slot]; dup {
+					return nil, fmt.Errorf("<%s> appears twice on one <%s>", n.Elem, p.Elem)
 				}
-				p.Slots[slot] = n.Kids[0]
+				// The whole property element, not its one child: see
+				// node.Slots. How many children it may hold is the
+				// loader's question — <ItemsView.ItemTemplate> takes
+				// one, <X.Resources> a list — and markup.Build answers
+				// it with the slot's own message.
+				p.Slots[slot] = n
 				continue
 			}
 			p.Kids = append(p.Kids, n)
@@ -2338,6 +2365,12 @@ type editor struct {
 	// assigned at the one site that assigns those, for the reason
 	// TestEnvAttrsIsAssignedWhereTheDocumentIs exists. Added for #517.
 	envDecls []*node
+	// envSlots are the property elements the opened file's <Gooey>
+	// carried — <Gooey.Resources>, the document's own style and resource
+	// scope. Assigned beside envAttrs and envDecls, for the same reason,
+	// and written by envelopeHead into both the build and the save.
+	// #510.
+	envSlots map[string]*node
 	// seededDecls are the declared names seedDeclared most recently put
 	// into ed.docCtx.Values, so the next rebuild can take exactly those
 	// back out and no others. See seedDeclared for why the map is shared and
@@ -3548,8 +3581,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
-	full := envelopeHead(ed.envAttrs, ed.envDecls) + ed.root.markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below
