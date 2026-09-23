@@ -99,6 +99,13 @@ jobs:
     runs-on: forge-runners-default-vsphere
     permissions:
       contents: read
+      # read suffices even though the review posts inline PR comments: with no
+      # `github_token` input, claude-code-action writes them with its
+      # OIDC-exchanged App token (id-token: write below), whose permissions are
+      # the App installation's, not this job's. Passing `github_token:` to the
+      # review step would move those writes onto this token and they would 403
+      # SILENTLY — the post step only logs a failed inline comment — so that
+      # change needs pull-requests: write as well.
       pull-requests: read
       id-token: write
       # issues: write covers the claude-code-action review/progress-tracking comments
@@ -281,8 +288,13 @@ jobs:
 
             ## Output
 
-            Provide detailed inline comments on the PR for specific code issues.
+            Post inline comments for specific code issues with
+            `mcp__github_inline_comment__create_inline_comment`, passing
+            `confirmed: true` so each one posts immediately.
             Use a top-level summary comment listing all findings grouped by concern.
+            Every inline comment must ALSO appear as a finding in that summary: the
+            merge gate reads only the summary, never inline comments, so a finding
+            that exists only inline lets the gate pass with it unaddressed.
 
             Begin that top-level summary comment with the following hidden marker,
             exactly as written, as its very first line. The workflow uses it to tell
