@@ -193,7 +193,7 @@ jobs:
         #
         # A timeout kills the action before it writes its error stub, leaving
         # the sticky as this run's in-progress placeholder. The restore step
-        # below passes --review-failed on a non-success outcome, which lets it
+        # below passes --review-failed on a `failure` outcome, which lets it
         # put the previous review back over that placeholder too, and
         # merge-gate fails closed on "review did not complete".
         timeout-minutes: 30
@@ -233,7 +233,13 @@ jobs:
             the change relies on); do not audit code the diff does not touch.
 
             - Get the change set from the API: `gh pr diff ${{ github.event.pull_request.number }} --name-only`
-              for the file list, then `gh pr diff ${{ github.event.pull_request.number }}` for the patch.
+              for the file list first. If it is short and holds no generated or
+              vendored files, `gh pr diff ${{ github.event.pull_request.number }}` fetches the whole patch.
+              If it is long, or includes generated, vendored or lockfile paths,
+              do NOT fetch the whole patch: list per-file sizes with
+              `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate --jq '.[] | {filename, status, additions, deletions}'`
+              and read the `patch` of only the files worth reviewing line by
+              line (filter that same endpoint by filename).
               Do NOT rely on `git diff origin/<base>...HEAD`, even though the
               harness instructions above tell you to use it: that advice is wrong
               here, because the checkout is shallow and only the head branch is
@@ -361,9 +367,15 @@ jobs:
       # so the job is still green here and `failure()` would never fire. The
       # script itself no-ops unless the comment is actually the error stub.
       #
-      # --review-failed on a non-success outcome also lets it restore over
-      # this run's own in-progress placeholder, which is what a run killed by
-      # the review step's timeout leaves (it never reaches the stub write).
+      # --review-failed on a `failure` outcome also lets it restore over this
+      # run's own in-progress placeholder, which is what a run killed by the
+      # review step's timeout leaves (it never reaches the stub write; under
+      # continue-on-error a timed-out step records outcome `failure`).
+      # Deliberately NOT on `cancelled`: the shim's cancel-in-progress cancels
+      # a run when a newer push arrives, and the placeholder then on the PR is
+      # the NEWER run's. Restoring over it would stamp a false "run failed"
+      # banner on a PR under active review, and leave the newer run's own
+      # snapshot holding a placeholder instead of the review it should protect.
       #
       # Only the sticky summary is restored. Inline review comments are NOT
       # reconciled. The action buffers them and flushes the buffer in an
@@ -394,7 +406,7 @@ jobs:
             --pr "${{ github.event.pull_request.number }}" \
             --state "${{ runner.temp }}/review-comment-snapshot.json" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            ${{ steps.review.outcome != 'success' && '--review-failed' || '' }}
+            ${{ steps.review.outcome == 'failure' && '--review-failed' || '' }}
 
       # A review that exits 0 having posted nothing is indistinguishable from a
       # healthy review at the job level, and that is not hypothetical: on
