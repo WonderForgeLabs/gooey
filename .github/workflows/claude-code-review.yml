@@ -412,12 +412,15 @@ jobs:
       # what makes it so misleading — it reads as a network, size, or credential
       # problem and is none of those.
       #
-      # Detection is deliberately narrow: tag mode's in-progress comment opens
-      # with "Review in progress" and carries unticked task boxes, and a finished
+      # Detection is deliberately narrow: tag mode's in-progress comment carries
+      # the action's fixed spinner image and unticked task boxes, and a finished
       # review has neither (verified against a known-bad and a known-good sticky
-      # on that PR). False-positive risk is a completed summary that happens to
-      # write an unticked checkbox in its findings prose — hence the detector
-      # only warns until `enforce_review_summary` is turned on.
+      # on that PR). Not its heading — that is model-authored and varies per
+      # run ("Review in progress", "Reviewing PR #N", ...); the same rule as
+      # preserve-review-comment.sh's is_progress_placeholder. False-positive
+      # risk is a completed summary that happens to write an unticked checkbox
+      # in its findings prose — hence the detector only warns until
+      # `enforce_review_summary` is turned on.
       #
       # The marker check below adds a second precondition: the review agent has to
       # actually emit the hidden marker it is asked for in the prompt. That is the
@@ -525,7 +528,7 @@ jobs:
           reason=""
           if ! has_content "$body_file"; then
             reason="no claude[bot] comment exists on this PR"
-          elif grep -qF 'Review in progress' "$body_file"; then
+          elif grep -qF '<img src="https://github.com/user-attachments/assets/5ac382c7-e004-429b-8e35-7feb3e8f9c6f"' "$body_file"; then
             reason="the review comment is still tag mode's in-progress placeholder"
           elif grep -qE '^[[:space:]]*-[[:space:]]\[[[:space:]]\]' "$body_file"; then
             reason="the review comment still has unticked task boxes, so the review did not finish"
