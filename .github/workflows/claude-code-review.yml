@@ -371,9 +371,11 @@ jobs:
       # run's own in-progress placeholder, which is what a run killed by the
       # review step's timeout leaves (it never reaches the stub write; under
       # continue-on-error a timed-out step records outcome `failure`).
-      # Deliberately NOT on `cancelled`: the shim's cancel-in-progress cancels
-      # a run when a newer push arrives, and the placeholder then on the PR is
-      # the NEWER run's. Restoring over it would stamp a false "run failed"
+      # Deliberately NOT when the JOB is cancelled — checked on job.status, not
+      # just the step outcome, because a review step that failed fast keeps
+      # outcome `failure` even after the shim's cancel-in-progress cancels the
+      # job for a newer push. Either way the placeholder then on the PR is the
+      # NEWER run's. Restoring over it would stamp a false "run failed"
       # banner on a PR under active review, and leave the newer run's own
       # snapshot holding a placeholder instead of the review it should protect.
       #
@@ -406,7 +408,7 @@ jobs:
             --pr "${{ github.event.pull_request.number }}" \
             --state "${{ runner.temp }}/review-comment-snapshot.json" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            ${{ steps.review.outcome == 'failure' && '--review-failed' || '' }}
+            ${{ steps.review.outcome == 'failure' && job.status != 'cancelled' && '--review-failed' || '' }}
 
       # A review that exits 0 having posted nothing is indistinguishable from a
       # healthy review at the job level, and that is not hypothetical: on
@@ -469,6 +471,11 @@ jobs:
           #
           # Bodies are written to files and only ever matched with grep -F/-q —
           # never interpolated into a command.
+          # No transition spelling is accepted for the old HTML-comment marker:
+          # the action's sanitizeContent strips HTML comments from every body
+          # it posts, so that marker never reached a PR and no existing summary
+          # carries it. Older summaries simply have no marker, which every
+          # matcher already treats as "not proven", never as a pass.
           SUMMARY_MARKER='[pr-review-summary]: #'
 
           # Slurping is load-bearing: with --paginate alone the filter is applied
