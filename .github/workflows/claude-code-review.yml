@@ -179,11 +179,23 @@ jobs:
         # outputs are always available (avoids auto-fix-ci re-runs of a review that
         # merely found issues).
         continue-on-error: true
-        # Hard ceiling on the review. The Scope section of the prompt is what
-        # keeps a review short; this is what bounds one that ignores it — gooey
-        # reviews that explored the whole repo ran 21+ min. A timeout here is a
-        # step failure, so (continue-on-error) the restore and verify steps still
-        # run and merge-gate fails closed on "review did not complete".
+        # Runaway backstop, not a bound on the gooey incident. The Scope section
+        # of the prompt is what keeps a review short (the worst observed run,
+        # gooey#566, was 21 min / 59 turns); this ceiling sits above that and
+        # only catches something worse — a review that never ends. It is set
+        # well above a normal review so it never fires on one.
+        #
+        # Nothing ENFORCES the Scope section: the build tools stay in
+        # allowed_tools (Bash(go:*), Bash(dotnet:*), ...) because a targeted
+        # check on one changed package is legitimate review work. So a
+        # repo-wide build is prevented by instruction-following, and this
+        # ceiling is the only hard stop if the model ignores it.
+        #
+        # A timeout kills the action before it writes its error stub, leaving
+        # the sticky as this run's in-progress placeholder. The restore step
+        # below passes --review-failed on a non-success outcome, which lets it
+        # put the previous review back over that placeholder too, and
+        # merge-gate fails closed on "review did not complete".
         timeout-minutes: 30
         uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1.0.231
         env:
@@ -323,8 +335,10 @@ jobs:
             finding it no longer lists as fixed.
 
             Begin that top-level summary comment with the following line, exactly
-            as written, as its very first line (a markdown link definition: it
-            renders as nothing). The workflow uses it to tell
+            as written, as its very first line, followed by a blank line (a
+            markdown link definition: it renders as nothing, and without the
+            blank line a next line starting with a quote or parenthesis is
+            swallowed as its title). The workflow uses it to tell
             your review summary apart from other comments posted under the same
             `claude[bot]` identity (the interactive `@claude` bot posts there too):
 
@@ -347,13 +361,21 @@ jobs:
       # so the job is still green here and `failure()` would never fire. The
       # script itself no-ops unless the comment is actually the error stub.
       #
+      # --review-failed on a non-success outcome also lets it restore over
+      # this run's own in-progress placeholder, which is what a run killed by
+      # the review step's timeout leaves (it never reaches the stub write).
+      #
       # Only the sticky summary is restored. Inline review comments are NOT
       # reconciled. The action buffers them and flushes the buffer in an
-      # always() step, so a run that died (or hit the review step's timeout)
-      # still posts whatever it buffered. They post unclassified, too: the
-      # action's probe-comment classifier needs an anthropic_api_key, and this
-      # step authenticates with the OAuth token only. They cannot move the gate,
-      # which fails closed on the review outcome regardless.
+      # always() step, so a run whose action exits with an error still posts
+      # whatever it buffered — unclassified, since the action's probe-comment
+      # classifier needs an anthropic_api_key and this step authenticates with
+      # the OAuth token only. A run killed by the timeout is NOT known to
+      # flush: the flush's token falls back to github.token (read-only here)
+      # once the killed step never publishes its own, and whether a composite
+      # action's always() steps run after a step timeout is unverified. Either
+      # way inline comments cannot move the gate, which fails closed on the
+      # review outcome regardless.
       - name: Restore the previous review if this run destroyed it
         if: always()
         env:
@@ -371,7 +393,8 @@ jobs:
             --repo "${{ github.repository }}" \
             --pr "${{ github.event.pull_request.number }}" \
             --state "${{ runner.temp }}/review-comment-snapshot.json" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            ${{ steps.review.outcome != 'success' && '--review-failed' || '' }}
 
       # A review that exits 0 having posted nothing is indistinguishable from a
       # healthy review at the job level, and that is not hypothetical: on
