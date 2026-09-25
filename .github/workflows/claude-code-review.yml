@@ -97,6 +97,11 @@ jobs:
     # conclusion with no logs retained and merge-gate then fails CLOSED on a
     # review that never posted — a red required check with nothing to fix.
     runs-on: forge-runners-default-vsphere
+    # Job-level ceiling above the review step's own 30-minute timeout. A step
+    # timeout is enforced by the runner, so a LOST runner (the null-conclusion,
+    # no-logs failure above) enforces nothing and the required check would sit
+    # pending for GitHub's 360-minute default. This bounds that case.
+    timeout-minutes: 45
     permissions:
       contents: read
       # read suffices even though the review posts inline PR comments: with no
@@ -240,10 +245,11 @@ jobs:
               `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate --jq '.[] | {filename, status, additions, deletions}'`
               and read the `patch` of only the files worth reviewing line by
               line (filter that same endpoint by filename).
-              Do NOT rely on `git diff origin/<base>...HEAD`, even though the
-              harness instructions above tell you to use it: that advice is wrong
-              here, because the checkout is shallow and only the head branch is
-              fetched, so the command fails or compares against the wrong commit.
+              Use these, NOT the `git diff origin/<base>...HEAD` the harness
+              instructions above suggest: `gh pr diff` is the PR's change set
+              whatever the clone looks like, while this checkout is shallow and
+              `origin/<base>` is a one-commit graft, so what a three-dot diff
+              returns depends on whether the branch has merged the base in.
             - Vendored dependency trees, lockfiles and generated code are checked
               for consistency with the change that produced them, never read line
               by line.
@@ -322,10 +328,11 @@ jobs:
 
             This review runs on every push and inline comments are never updated in
             place, so first list the inline comments earlier runs of this review
-            posted (the marker is what tells them apart from the interactive @claude
-            bot, which posts under the same identity):
+            posted (the marker, on the comment's FIRST line, is what tells them
+            apart from the interactive @claude bot, which posts under the same
+            identity; a comment that only quotes it further down does not count):
 
-            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.user.login == "claude[bot]") | select(.body | contains("[pr-review-inline]: #")) | {path, line, original_line, body}'`
+            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate --jq '.[] | select(.user.login == "claude[bot]") | select((.body // "") | test("^\\s*\\[pr-review-inline\\]: #")) | {path, line, original_line, body}'`
 
             Skip an inline comment only when one of those already makes the SAME
             point in the same file. Match on the file and the point, not the line
@@ -352,6 +359,14 @@ jobs:
 
             Do NOT create GitHub issues — use the `claude-make-follow-up-issues` label on the PR to trigger follow-up issue creation separately.
 
+      # `cancelled()` is only defined in `if:`, so the restore step below cannot
+      # read it inline; this records it as an output for that step's
+      # --review-failed guard (see the comment there).
+      - name: Record whether this run was cancelled
+        id: run_state
+        if: cancelled()
+        run: echo "cancelled=true" >> "$GITHUB_OUTPUT"
+
       # Undo the destruction a failed run just caused. claude-code-action writes
       # its error stub into the same sticky comment that held the completed
       # review, preserving the old body nowhere — 19 confirmed reviews destroyed
@@ -371,13 +386,17 @@ jobs:
       # run's own in-progress placeholder, which is what a run killed by the
       # review step's timeout leaves (it never reaches the stub write; under
       # continue-on-error a timed-out step records outcome `failure`).
-      # Deliberately NOT when the JOB is cancelled — checked on job.status, not
+      # Deliberately NOT when the RUN is cancelled — checked on the run, not
       # just the step outcome, because a review step that failed fast keeps
       # outcome `failure` even after the shim's cancel-in-progress cancels the
       # job for a newer push. Either way the placeholder then on the PR is the
       # NEWER run's. Restoring over it would stamp a false "run failed"
       # banner on a PR under active review, and leave the newer run's own
       # snapshot holding a placeholder instead of the review it should protect.
+      # The run check is `cancelled()`, the documented primitive, recorded by
+      # the step above; status functions are only defined in `if:`, so it
+      # cannot be read inline in this step's `run:`. `job.status` is kept
+      # alongside it as a second signal, not as the guard.
       #
       # Only the sticky summary is restored. Inline review comments are NOT
       # reconciled. The action buffers them and flushes the buffer in an
@@ -408,7 +427,7 @@ jobs:
             --pr "${{ github.event.pull_request.number }}" \
             --state "${{ runner.temp }}/review-comment-snapshot.json" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            ${{ steps.review.outcome == 'failure' && job.status != 'cancelled' && '--review-failed' || '' }}
+            ${{ steps.review.outcome == 'failure' && steps.run_state.outputs.cancelled != 'true' && job.status != 'cancelled' && '--review-failed' || '' }}
 
       # A review that exits 0 having posted nothing is indistinguishable from a
       # healthy review at the job level, and that is not hypothetical: on
@@ -427,8 +446,9 @@ jobs:
       # problem and is none of those.
       #
       # Detection is deliberately narrow: tag mode's in-progress comment carries
-      # the action's fixed spinner image and unticked task boxes, and a finished
-      # review has neither (verified against a known-bad and a known-good sticky
+      # the action's fixed spinner image (or, before the model first edits it,
+      # opens with "Claude Code is working") and unticked task boxes, and a
+      # finished review has none of them (verified against a known-bad and a known-good sticky
       # on that PR). Not its heading — that is model-authored and varies per
       # run ("Review in progress", "Reviewing PR #N", ...); the same rule as
       # preserve-review-comment.sh's is_progress_placeholder. False-positive
@@ -436,11 +456,16 @@ jobs:
       # in its findings prose — hence the detector only warns until
       # `enforce_review_summary` is turned on.
       #
-      # The marker check below adds a second precondition: the review agent has to
-      # actually emit the hidden marker it is asked for in the prompt. That is the
-      # thing to confirm against real PRs (watch for the "carries the
-      # review-summary marker" warning) BEFORE turning enforcement on — with it on,
-      # an agent that reviews correctly but drops the marker would red the gate.
+      # The marker is what decides it. A claude[bot] comment whose first line
+      # (after the action's "**Claude finished**" header) is the marker counts
+      # as the summary on its own — the placeholder checks below are skipped
+      # for it. Without a marked comment, the newest claude[bot] comment is
+      # read only to NAME the reason (placeholder, unticked boxes, or simply
+      # no marker); it never passes. So enforcement requires the review agent
+      # to emit the marker it is asked for in the prompt. Confirm that against
+      # real PRs (watch for the "carries the review-summary marker" warning)
+      # BEFORE turning enforcement on — with it on, an agent that reviews
+      # correctly but drops the marker would red the gate.
       - name: Verify the review posted a summary
         id: verify
         if: always()
@@ -530,8 +555,15 @@ jobs:
           has_content() { grep -q '[^[:space:]]' "$1"; }
 
           body_file="$(mktemp)"
+          # Positional, not a substring: the marker must open the body once the
+          # action's own "**Claude finished**" header and `---` rule are
+          # skipped. An @claude reply that quotes a review carries the marker
+          # further down and must not count. This def is
+          # preserve-review-comment.sh's SUMMARY_MARKED_JQ verbatim, and
+          # scripts/ci/test-preserve-review-comment.sh asserts that it is.
           jq -r --arg m "$SUMMARY_MARKER" \
-            'map(select(contains($m))) | last // ""' "$comments_file" > "$body_file"
+            'def summary_marked($m): split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "" and . != "---" and (startswith("**Claude finished") | not))) | (.[0] // "") == $m;
+            map(select(summary_marked($m))) | last // ""' "$comments_file" > "$body_file"
 
           # No marked comment: fall back to the newest claude[bot] comment purely so
           # the reasons below can name what IS there (in-progress placeholder vs.
@@ -541,14 +573,25 @@ jobs:
             marked=true
           else
             marked=false
-            jq -r 'last // ""' "$comments_file" > "$body_file"
+            # Rank a placeholder- or stub-shaped comment above plain recency,
+            # as preserve-review-comment.sh's `pick` does: an @claude reply is
+            # also claude[bot], and naming ITS state would point the
+            # enforcement decision the wrong way. The def is the script's
+            # REVIEW_SHAPED_JQ verbatim, asserted by the test suite. It has no
+            # marker guard of its own: this branch only runs when no comment
+            # is marked, which is what makes it is_progress_placeholder's twin.
+            jq -r --arg sp '<img src="https://github.com/user-attachments/assets/5ac382c7-e004-429b-8e35-7feb3e8f9c6f"' \
+              'def review_shaped($sp): test("^\\s*Claude Code is working") or (contains($sp) and test("(^|\\n)[ \\t]*-[ \\t]\\[[ \\t]\\]")) or startswith("**Claude encountered an error");
+              ([.[] | select(review_shaped($sp))] | last) // last // ""' "$comments_file" > "$body_file"
           fi
 
           reason=""
           if ! has_content "$body_file"; then
             reason="no claude[bot] comment exists on this PR"
-          elif [ "$marked" != "true" ] && grep -qF '<img src="https://github.com/user-attachments/assets/5ac382c7-e004-429b-8e35-7feb3e8f9c6f"' "$body_file"; then
+          elif [ "$marked" != "true" ] && grep -qF '<img src="https://github.com/user-attachments/assets/5ac382c7-e004-429b-8e35-7feb3e8f9c6f"' "$body_file" && grep -qE '^[[:space:]]*-[[:space:]]\[[[:space:]]\]' "$body_file"; then
             reason="the review comment is still tag mode's in-progress placeholder"
+          elif [ "$marked" != "true" ] && grep -m1 '[^[:space:]]' "$body_file" | grep -q '^[[:space:]]*Claude Code is working'; then
+            reason="the review comment is still the action's initial 'Claude Code is working' placeholder"
           elif [ "$marked" != "true" ] && grep -qE '^[[:space:]]*-[[:space:]]\[[[:space:]]\]' "$body_file"; then
             reason="the review comment still has unticked task boxes, so the review did not finish"
           elif [ "$marked" != "true" ]; then
@@ -778,7 +821,8 @@ jobs:
                  code-review summary (it lists findings grouped by concern). Ignore
                  progress-tracking checklist comments.
                - Reviews are asked to open their summary with a hidden
-                 `[pr-review-summary]: #` marker. If any comment carries it, prefer
+                 `[pr-review-summary]: #` marker. If any comment carries it as its first
+                 line (after the action's "**Claude finished**" header and `---` rule), prefer
                  the most recent one that does — `claude[bot]` is also the identity of
                  the interactive `@claude` bot, whose replies are NOT review summaries.
                  Older summaries predate the marker, so its absence rules nothing out.
@@ -926,7 +970,8 @@ jobs:
                  code-review summary (it lists findings grouped by concern). Ignore
                  progress-tracking checklist comments.
                - Reviews are asked to open their summary with a hidden
-                 `[pr-review-summary]: #` marker. If any comment carries it, prefer
+                 `[pr-review-summary]: #` marker. If any comment carries it as its first
+                 line (after the action's "**Claude finished**" header and `---` rule), prefer
                  the most recent one that does — `claude[bot]` is also the identity of
                  the interactive `@claude` bot, whose replies are NOT review summaries.
                  Older summaries predate the marker, so its absence rules nothing out.
