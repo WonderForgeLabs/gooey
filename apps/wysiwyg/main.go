@@ -616,6 +616,18 @@ type node struct {
 	// block only to lose it at the envelope unwrap. How many children a
 	// slot may hold is the loader's rule per slot, not this model's.
 	Slots map[string]*node
+	// Order is the attribute names in the order the source wrote them,
+	// and node.markup writes Attrs in that order — every name Order does
+	// not hold (one added by an edit) after them, sorted. Without it a
+	// save wrote every element's attributes alphabetically, so the first
+	// save of a hand-written file rewrote nearly every line of it — the
+	// author's Name="Root" Rows=… Cols=… came back Cols=… Name=… Rows=…
+	// — and the diff of a one-attribute edit was the whole file.
+	//
+	// It is a HINT, never a second copy of the attribute set: a name here
+	// that Attrs no longer holds is skipped, so a delete needs no second
+	// write — and a name deleted and set again comes back where it was.
+	Order []string
 	// Lead and Tail are the XML COMMENTS the author wrote around this
 	// element, and they are here so node.markup can write them back.
 	// nodeOf fell through the switch on xml.Comment until #529, so the
@@ -765,7 +777,7 @@ func (n *node) markup(indent string) string {
 		b.WriteString(commentMarkup(indent, c))
 	}
 	b.WriteString(indent + "<" + n.Elem)
-	for _, k := range sortedKeys(n.Attrs) {
+	for _, k := range n.attrKeys() {
 		fmt.Fprintf(&b, " %s=%s", k, attrValue(n.Attrs[k]))
 	}
 	// A body and children are mutually exclusive here: no element in the
@@ -1003,6 +1015,27 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// attrKeys is the order node.markup writes Attrs in: Order's names that
+// are still set, then every other name sorted. See node.Order.
+func (n *node) attrKeys() []string {
+	keys := make([]string, 0, len(n.Attrs))
+	seen := make(map[string]bool, len(n.Attrs))
+	for _, k := range n.Order {
+		if _, ok := n.Attrs[k]; ok && !seen[k] {
+			keys = append(keys, k)
+			seen[k] = true
+		}
+	}
+	rest := len(keys)
+	for k := range n.Attrs {
+		if !seen[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys[rest:])
+	return keys
 }
 
 // envelopeHead is the document's opening <Gooey …> tag together with
@@ -1985,10 +2018,12 @@ func nodeOf(src string) (*node, error) {
 				// carries its declarations down.
 				if a.Name.Space == "xmlns" {
 					n.Attrs["xmlns:"+a.Name.Local] = a.Value
+					n.Order = append(n.Order, "xmlns:"+a.Name.Local)
 					continue
 				}
 				if a.Name.Local == "xmlns" && a.Name.Space == "" {
 					n.Attrs["xmlns"] = a.Value
+					n.Order = append(n.Order, "xmlns")
 					continue
 				}
 				// A PREFIXED ATTRIBUTE IS REFUSED, which is the same
@@ -2033,6 +2068,7 @@ func nodeOf(src string) (*node, error) {
 					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", namespacedAttrName(a.Name))
 				}
 				n.Attrs[a.Name.Local] = a.Value
+				n.Order = append(n.Order, a.Name.Local)
 			}
 			stack = append(stack, n)
 		case xml.CharData:

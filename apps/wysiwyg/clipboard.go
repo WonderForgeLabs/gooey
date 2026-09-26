@@ -85,7 +85,7 @@ func (n *node) deepCopy() *node {
 		return nil
 	}
 	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body,
-		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail)}
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order)}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
