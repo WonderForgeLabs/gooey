@@ -638,6 +638,8 @@ type node struct {
 	// Lead is every comment between the previous sibling (or the
 	// parent's start tag) and this element's start tag; Tail is every
 	// comment inside this element that no child start tag followed.
+	// Lead also holds a blankLine entry wherever the author left a blank
+	// line among those — see blankLine.
 	//
 	// THAT IS NOT QUITE "AFTER THE LAST CHILD", and the difference is a
 	// relocation: Body is one string, with nowhere to mark a position
@@ -664,8 +666,28 @@ type node struct {
 // more well-formed to a strict parser after the save than it was
 // before.
 func commentMarkup(indent, c string) string {
+	if c == blankLine {
+		return "\n"
+	}
 	return indent + comment(c) + "\n"
 }
+
+// blankLine is the entry nodeOf puts in a Lead where the author left a
+// blank line — one or more empty lines between two siblings, or between
+// a comment and what follows it — and commentMarkup writes it back as
+// one. Dropping them made the first save of a hand-written file shift
+// every line below the first blank one, which is most of the file.
+//
+// "--" BECAUSE NO COMMENT CAN HOLD IT: the XML spec forbids the sequence
+// inside a comment and encoding/xml refuses one that has it, so no
+// parsed comment's text ever equals this. It rides in Lead rather than
+// in a field of its own so that it is ordered against the comments it
+// sits between, and so that every copy and equal already carry it.
+//
+// A blank line BEFORE A CLOSING TAG is not kept. It would land in Tail,
+// and a body element writes its Tail inline after the body, where a
+// line break becomes part of the text the next read collects.
+const blankLine = "--"
 
 // comment is one comment's delimited text, and the one place that spells
 // the delimiters: commentMarkup puts it on its own line, the inline body
@@ -790,13 +812,24 @@ func (n *node) markup(indent string) string {
 		// rather than as anything pointing at the character.
 		var esc strings.Builder
 		xml.EscapeText(&esc, []byte(n.Body))
+		// A LINE BREAK IS WRITTEN AS ONE, not as the &#xA; EscapeText
+		// makes of it. That escape is what an ATTRIBUTE needs — a raw
+		// newline in an attribute value reads back as a space — and in
+		// character data it is only noise: both spellings read back as
+		// the same body, and markup.BodyText trims them alike. A
+		// multi-line <Text> came back from the first save as one long
+		// line of &#xA;, which is the author's paragraph made unreadable
+		// in their own file.
+		body := strings.ReplaceAll(esc.String(), "&#xA;", "\n")
 		// A Tail comment stays INLINE after the body, where it was:
 		// on its own line it would put a newline into the body the
 		// next read collects.
 		for _, c := range n.Tail {
-			esc.WriteString(comment(c))
+			if c != blankLine {
+				body += comment(c)
+			}
 		}
-		b.WriteString(">" + esc.String() + "</" + n.Elem + ">\n")
+		b.WriteString(">" + body + "</" + n.Elem + ">\n")
 		return b.String()
 	}
 	if len(n.Kids) == 0 && len(n.Slots) == 0 && len(n.Tail) == 0 {
@@ -1820,6 +1853,7 @@ func nodeOf(src string) (*node, error) {
 	// element they lead (a start tag) or trail (an end tag). See
 	// node.Lead.
 	var pending []string
+	blank := false
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -1973,6 +2007,9 @@ func nodeOf(src string) (*node, error) {
 			if t.Name.Space != def && !(envelopeChild && t.Name.Space == markup.XNamespace) {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
+			if blank {
+				pending, blank = append(pending, blankLine), false
+			}
 			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}, Lead: pending}
 			pending = nil
 			for _, a := range t.Attr {
@@ -2075,7 +2112,16 @@ func nodeOf(src string) (*node, error) {
 			if len(stack) > 0 {
 				stack[len(stack)-1].Body += string(t)
 			}
+			// Whitespace holding two line breaks or more is a blank
+			// line the author left, and it belongs to whatever comes
+			// next — see blankLine.
+			if strings.TrimSpace(string(t)) == "" && strings.Count(string(t), "\n") >= 2 {
+				blank = true
+			}
 		case xml.Comment:
+			if blank {
+				pending, blank = append(pending, blankLine), false
+			}
 			pending = append(pending, string(t))
 		case xml.EndElement:
 			if len(defaults) > 1 {
@@ -2085,7 +2131,7 @@ func nodeOf(src string) (*node, error) {
 				return nil, fmt.Errorf("unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
-			n.Tail, pending = pending, nil
+			n.Tail, pending, blank = pending, nil, false
 			// stack is a LOCAL parse stack whose last reference dies
 			// with this function. The high-water mark it leaves behind
 			// is freed with the slice itself at return, so there is
