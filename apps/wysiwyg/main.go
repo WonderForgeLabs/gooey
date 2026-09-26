@@ -2285,6 +2285,17 @@ type editor struct {
 	fits    *prop.Property[bool]
 	cramped *prop.Property[bool]
 	fitMsg  *prop.Property[string]
+	// buildErr is why the open document does not build, in full, and ""
+	// while it does. It is the one diagnostic about the DOCUMENT rather
+	// than about the editor, and it has its own property because the
+	// status bar is not a place to read it: status is one row shared with
+	// every save, paste and hint, and it is clipped to whatever width the
+	// bar's other sections leave it — a markup error names the element
+	// and its attributes before it gets to the reason, so the reason is
+	// the half that went off the edge. problems is what the PROBLEMS pane
+	// shows: this and fitMsg, whichever are non-empty.
+	buildErr *prop.Property[string]
+	problems *prop.Property[string]
 	// design is the mode switch, and it is the editor's first consumer of
 	// gooey.Frozen. True (the default) means the designer pane is a
 	// PICTURE: the document lays out and paints exactly as it will, and
@@ -2605,6 +2616,7 @@ func newEditor(fsys fs.FS) *editor {
 		treeText:    prop.NewSource(""),
 		fits:        prop.NewSource(true),
 		fitMsg:      prop.NewSource(""),
+		buildErr:    prop.NewSource(""),
 		design:      prop.NewSource(true),
 		rev:         prop.NewSource(0),
 		serveInfo:   prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
@@ -2650,6 +2662,19 @@ func newEditor(fsys fs.FS) *editor {
 			return hint
 		}
 		return build
+	})
+
+	// The PROBLEMS pane's text. Both Gets hoisted, for the reason
+	// statusText gives above.
+	ed.problems = prop.NewComputed(func() string {
+		build, fit := ed.buildErr.Get(), ed.fitMsg.Get()
+		switch {
+		case build == "":
+			return fit
+		case fit == "":
+			return "✗ " + build
+		}
+		return "✗ " + build + "\n\n" + fit
 	})
 
 	// The pane is the frozen host. Binding it here rather than at its
@@ -2913,6 +2938,7 @@ func newEditor(fsys fs.FS) *editor {
 			"Fits":        ed.fits,
 			"Cramped":     ed.cramped,
 			"FitMsg":      ed.fitMsg,
+			"Problems":    ed.problems,
 			"ModeText":    ed.modeText,
 			"ToggleMode":  gooey.Command(func() { ed.toggleMode() }),
 			"ToggleTheme": gooey.Command(func() { ed.themeDark.Set(!ed.themeDark.Get()) }),
@@ -3725,8 +3751,10 @@ func (ed *editor) rebuild() {
 		// A load error is normal while editing and must never take the
 		// editor down with it. The previous preview stays on screen.
 		ed.status.Set("✗ " + err.Error())
+		ed.sayBuildErr(err.Error())
 		return
 	}
+	ed.sayBuildErr("")
 	ed.status.Set("✓ builds" + shadowedNote(ed.shadowedDecls))
 	ed.pv.Swap(w)
 	// The one moment the document and the built tree are known to
@@ -3738,6 +3766,16 @@ func (ed *editor) rebuild() {
 	ed.nodeOf = map[gooey.Component]*node{}
 	ed.compOf = map[*node]gooey.Component{}
 	ed.mapNodes(ed.root, w)
+}
+
+// sayBuildErr is the one writer of buildErr: why the open document does
+// not build, or "" once it does. Guarded because it runs on every
+// rebuild and prop.Set does not compare — an unguarded "" over "" would
+// repaint the PROBLEMS pane on every edit of a healthy document.
+func (ed *editor) sayBuildErr(msg string) {
+	if ed.buildErr.Get() != msg {
+		ed.buildErr.Set(msg)
+	}
 }
 
 // seedDeclared gives the open document's own <x:Property> declarations
@@ -3884,6 +3922,7 @@ func (ed *editor) seedDeclared(src string) bool {
 			// nothing will ever have seen this message, so it must
 			// carry its own cause. Raised in review of #522.
 			ed.status.Set("✗ " + err.Error())
+			ed.sayBuildErr(err.Error())
 			return false
 		}
 		ed.docCtx.Values[d.Name] = v
