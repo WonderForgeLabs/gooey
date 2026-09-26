@@ -8,6 +8,7 @@ import (
 
 	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/prop"
+	"github.com/WonderForgeLabs/gooey/render"
 )
 
 // TestTheProblemsPaneSaysWhyTheDocumentDoesNotBuild: the PROBLEMS pane
@@ -104,5 +105,81 @@ func TestAHealthyRebuildDoesNotTouchProblems(t *testing.T) {
 	obs.Get()
 	if evals == settled {
 		t.Fatal("setting buildErr did not invalidate the observer; this test cannot see a write")
+	}
+}
+
+// TestAFileThatDoesNotBuildDoesNotShowThePreviousOne: the canvas kept
+// the last good preview across a failed build, which is right while
+// editing and wrong across an open. Measured in the real binary: opening
+// a form whose <TextBox> had no Text left the starting document's "T1"
+// and "[ click ]" on the canvas under simple.gooey's name — elements the
+// open file does not contain, which a press could not select.
+//
+// Three arms, because blanking is only half the rule: once the new file
+// has built, a later failure is an EDIT, and the last good preview of
+// THIS document stays up exactly as before.
+func TestAFileThatDoesNotBuildDoesNotShowThePreviousOne(t *testing.T) {
+	root := t.TempDir()
+	const bad = `<Gooey>
+  <Canvas Name="Root">
+    <Text Name="L" Style="nosuchstyle">hello</Text>
+  </Canvas>
+</Gooey>
+`
+	if err := os.WriteFile(filepath.Join(root, "bad.gooey"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ed, page := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	c := gooey.NewComposer(page, 160, 48)
+	c.Frame()
+	canvas := func() string {
+		b := ed.pv.Bounds()
+		var s strings.Builder
+		for y := b.Y; y < b.Y+b.H; y++ {
+			s.WriteString(render.SpanText(c.Cells(), b.X, y, b.W))
+			s.WriteByte('\n')
+		}
+		return s.String()
+	}
+	if !strings.Contains(canvas(), "[ click ]") {
+		t.Fatalf("the starting document's button is not on the canvas, so this test "+
+			"cannot see it go:\n%s", canvas())
+	}
+
+	ed.openWorkspaceFile("bad.gooey")
+	if !strings.HasPrefix(ed.status.Get(), "✗") {
+		t.Fatalf("the fixture builds (%q); it must not", ed.status.Get())
+	}
+	c.Frame()
+	if got := canvas(); strings.Contains(got, "T1") || strings.Contains(got, "[ click ]") {
+		t.Errorf("after opening a file that does not build, the canvas still shows the "+
+			"previous document:\n%s", got)
+	}
+
+	// Repaired in place: the preview comes back, and it is this file's.
+	l := ed.doc().Kids[0]
+	delete(l.Attrs, "Style")
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the repaired document does not build: %q", ed.status.Get())
+	}
+	c.Frame()
+	if got := canvas(); !strings.Contains(got, "hello") {
+		t.Errorf("the repaired document is not on the canvas:\n%s", got)
+	}
+
+	// And broken again by an edit: the last good preview of THIS
+	// document stays, which is the behaviour the blanking must not take.
+	l.Attrs["Style"] = "nosuchstyle"
+	ed.rebuild()
+	if !strings.HasPrefix(ed.status.Get(), "✗") {
+		t.Fatalf("the re-broken document builds: %q", ed.status.Get())
+	}
+	c.Frame()
+	if got := canvas(); !strings.Contains(got, "hello") {
+		t.Errorf("a failed build mid-edit blanked the canvas; the last good preview of "+
+			"the open document should stay:\n%s", got)
 	}
 }

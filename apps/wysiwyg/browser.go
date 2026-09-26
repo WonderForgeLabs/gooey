@@ -784,6 +784,9 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// the selection the open just made, or the first undo drops it.
 	sel, hasSel := ed.selPath()
 	ed.history().reset(ed.root, sel, hasSel)
+	// Until this file builds, the preview is the previous file's. See
+	// editor.foreign.
+	ed.foreign = true
 	ed.rebuild()
 }
 

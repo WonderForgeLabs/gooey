@@ -2359,6 +2359,15 @@ type editor struct {
 	// file at all.
 	hitTest func(x, y int) gooey.Component
 	docRoot gooey.Component
+	// foreign is true from the moment a file is opened until that file
+	// first builds: the picture on the canvas, if any, is ANOTHER
+	// DOCUMENT'S. Keeping the last good preview across a failed build is
+	// right while editing — it is this document one keystroke ago — and
+	// wrong across an open, where it showed the previous file's elements
+	// under the new file's name, unselectable, with nothing in the open
+	// file to explain them. So a failed build blanks the canvas while this
+	// is set; see rebuild.
+	foreign bool
 	nodeOf  map[gooey.Component]*node
 	// compOf is nodeOf INVERTED, built in the same walk rather than
 	// searched for afterwards.
@@ -3740,6 +3749,7 @@ func (ed *editor) rebuild() {
 	// seedDeclared. Before the Build, because that is what consumes
 	// them.
 	if !ed.seedDeclared(full) {
+		ed.blankIfForeign()
 		return
 	}
 
@@ -3752,8 +3762,10 @@ func (ed *editor) rebuild() {
 		// editor down with it. The previous preview stays on screen.
 		ed.status.Set("✗ " + err.Error())
 		ed.sayBuildErr(err.Error())
+		ed.blankIfForeign()
 		return
 	}
+	ed.foreign = false
 	ed.sayBuildErr("")
 	ed.status.Set("✓ builds" + shadowedNote(ed.shadowedDecls))
 	ed.pv.Swap(w)
@@ -3766,6 +3778,14 @@ func (ed *editor) rebuild() {
 	ed.nodeOf = map[gooey.Component]*node{}
 	ed.compOf = map[*node]gooey.Component{}
 	ed.mapNodes(ed.root, w)
+}
+
+// blankIfForeign takes the previous document's picture off the canvas
+// when the one just opened has never built. See editor.foreign.
+func (ed *editor) blankIfForeign() {
+	if ed.foreign && ed.pv.Child() != nil {
+		ed.pv.Swap(nil)
+	}
 }
 
 // sayBuildErr is the one writer of buildErr: why the open document does
