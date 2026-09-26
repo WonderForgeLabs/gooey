@@ -260,6 +260,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -605,8 +606,93 @@ type node struct {
 	// Slots are property elements — <ItemsView.ItemTemplate> — which
 	// are structured attributes rather than children, and which the
 	// catalog can report as REQUIRED.
+	//
+	// THE VALUE IS THE PROPERTY ELEMENT ITSELF, keyed by its slot name:
+	// Elem is the dotted "ItemsView.ItemTemplate" and Kids are what the
+	// author wrote inside it. It held the ONE child until #510, which
+	// is the shape <X.Resources> and <X.Behaviors> do not have — they
+	// hold a list — so nodeOf refused every document declaring two
+	// styles ("slot needs exactly one child"), and kept a one-style
+	// block only to lose it at the envelope unwrap. How many children a
+	// slot may hold is the loader's rule per slot, not this model's.
 	Slots map[string]*node
+	// Order is the attribute names in the order the source wrote them,
+	// and node.markup writes Attrs in that order — every name Order does
+	// not hold (one added by an edit) after them, sorted. Without it a
+	// save wrote every element's attributes alphabetically, so the first
+	// save of a hand-written file rewrote nearly every line of it — the
+	// author's Name="Root" Rows=… Cols=… came back Cols=… Name=… Rows=…
+	// — and the diff of a one-attribute edit was the whole file.
+	//
+	// It is a HINT, never a second copy of the attribute set: a name here
+	// that Attrs no longer holds is skipped, so a delete needs no second
+	// write — and a name deleted and set again comes back where it was.
+	Order []string
+	// Lead and Tail are the XML COMMENTS the author wrote around this
+	// element, and they are here so node.markup can write them back.
+	// nodeOf fell through the switch on xml.Comment until #529, so the
+	// first save of a hand-written layout deleted every comment in it —
+	// usually the author's note on why a row is sized the way it is —
+	// under a "✓ saved".
+	//
+	// Lead is every comment between the previous sibling (or the
+	// parent's start tag) and this element's start tag; Tail is every
+	// comment inside this element that no child start tag followed.
+	// Lead also holds a blankLine entry wherever the author left a blank
+	// line among those — see blankLine.
+	//
+	// THAT IS NOT QUITE "AFTER THE LAST CHILD", and the difference is a
+	// relocation: Body is one string, with nowhere to mark a position
+	// in it, so a comment BEFORE or INSIDE a body — <Text><!--c-->hi
+	// </Text>, <Text>a<!--c-->b</Text> — lands in Tail too and is saved
+	// after the body. Kept, moved once, stable after;
+	// TestCommentsSurviveTheRoundTrip pins where it goes.
+	//
+	// They belong to the element, so they go where it goes: a moved
+	// element takes its Lead with it, and a deleted one takes it away.
+	// A DUPLICATE does not take the original's Lead — see clone in
+	// duplicate.go.
+	Lead []string
+	Tail []string
 }
+
+// commentMarkup writes one comment line. The text is the author's,
+// verbatim: encoding/xml has already refused a comment containing "--",
+// so anything in hand is writable between the delimiters as it stands.
+//
+// One spelling Go admits that the XML spec does not: a comment whose
+// text ENDS in "-" (<!--a--->). It is read as "a-" and written back the
+// same way, so this editor round-trips it stably, but the file is no
+// more well-formed to a strict parser after the save than it was
+// before.
+func commentMarkup(indent, c string) string {
+	if c == blankLine {
+		return "\n"
+	}
+	return indent + comment(c) + "\n"
+}
+
+// blankLine is the entry nodeOf puts in a Lead where the author left a
+// blank line — one or more empty lines between two siblings, or between
+// a comment and what follows it — and commentMarkup writes it back as
+// one. Dropping them made the first save of a hand-written file shift
+// every line below the first blank one, which is most of the file.
+//
+// "--" BECAUSE NO COMMENT CAN HOLD IT: the XML spec forbids the sequence
+// inside a comment and encoding/xml refuses one that has it, so no
+// parsed comment's text ever equals this. It rides in Lead rather than
+// in a field of its own so that it is ordered against the comments it
+// sits between, and so that every copy and equal already carry it.
+//
+// A blank line BEFORE A CLOSING TAG is not kept. It would land in Tail,
+// and a body element writes its Tail inline after the body, where a
+// line break becomes part of the text the next read collects.
+const blankLine = "--"
+
+// comment is one comment's delimited text, and the one place that spells
+// the delimiters: commentMarkup puts it on its own line, the inline body
+// arm of node.markup puts it after the body.
+func comment(c string) string { return "<!--" + c + "-->" }
 
 // bodySpec is the catalog's answer to "is this element's content its
 // body", and nil means it is not.
@@ -709,8 +795,11 @@ func attrValue(v string) string {
 
 func (n *node) markup(indent string) string {
 	var b strings.Builder
+	for _, c := range n.Lead {
+		b.WriteString(commentMarkup(indent, c))
+	}
 	b.WriteString(indent + "<" + n.Elem)
-	for _, k := range sortedKeys(n.Attrs) {
+	for _, k := range n.attrKeys() {
 		fmt.Fprintf(&b, " %s=%s", k, attrValue(n.Attrs[k]))
 	}
 	// A body and children are mutually exclusive here: no element in the
@@ -723,24 +812,69 @@ func (n *node) markup(indent string) string {
 		// rather than as anything pointing at the character.
 		var esc strings.Builder
 		xml.EscapeText(&esc, []byte(n.Body))
-		b.WriteString(">" + esc.String() + "</" + n.Elem + ">\n")
+		// A LINE BREAK IS WRITTEN AS ONE, not as the &#xA; EscapeText
+		// makes of it. That escape is what an ATTRIBUTE needs — a raw
+		// newline in an attribute value reads back as a space — and in
+		// character data it is only noise: both spellings read back as
+		// the same body, and markup.BodyText trims them alike. A
+		// multi-line <Text> came back from the first save as one long
+		// line of &#xA;, which is the author's paragraph made unreadable
+		// in their own file.
+		body := strings.ReplaceAll(esc.String(), "&#xA;", "\n")
+		// A Tail comment stays INLINE after the body, where it was:
+		// on its own line it would put a newline into the body the
+		// next read collects.
+		for _, c := range n.Tail {
+			if c != blankLine {
+				body += comment(c)
+			}
+		}
+		b.WriteString(">" + body + "</" + n.Elem + ">\n")
 		return b.String()
 	}
-	if len(n.Kids) == 0 && len(n.Slots) == 0 {
+	if len(n.Kids) == 0 && len(n.Slots) == 0 && len(n.Tail) == 0 {
 		b.WriteString("/>\n")
 		return b.String()
 	}
 	b.WriteString(">\n")
+	// A slot IS its property element (see node.Slots) and writes its own
+	// children, attributes and comments — but its TAG IS DERIVED FROM
+	// THE OWNER, n.Elem + "." + slot, never read from the slot's stored
+	// Elem. That name is frozen at parse time, and retype renames the
+	// owner without touching it: a <Canvas> retyped to <VStack> wrote
+	// <Canvas.Resources> inside <VStack>, which the loader refuses and
+	// the next open refused too. Raised in review of #569.
 	for _, s := range sortedKeys(n.Slots) {
-		fmt.Fprintf(&b, "%s  <%s.%s>\n", indent, n.Elem, s)
-		b.WriteString(n.Slots[s].markup(indent + "    "))
-		fmt.Fprintf(&b, "%s  </%s.%s>\n", indent, n.Elem, s)
+		q := *n.Slots[s]
+		q.Elem = n.Elem + "." + s
+		b.WriteString(q.markup(indent + "  "))
 	}
 	for _, k := range n.Kids {
 		b.WriteString(k.markup(indent + "  "))
 	}
+	for _, c := range n.Tail {
+		b.WriteString(commentMarkup(indent+"  ", c))
+	}
 	b.WriteString(indent + "</" + n.Elem + ">\n")
 	return b.String()
+}
+
+// carryComments moves a <Gooey> envelope's comments onto the content
+// root about to be promoted in its place. The envelope is not a node
+// and has nowhere of its own to keep them: a header comment above
+// <Gooey> comes to lead the content root, just inside the envelope, and
+// one after the content root — or after </Gooey> itself, which nodeOf
+// has already put on the envelope's Tail — becomes the content root's
+// last line. Each moves inward once and is stable after, rather than
+// being deleted, which is what #529 measured.
+//
+// ONE FUNCTION FOR BOTH UNWRAPS, openWorkspaceFile and unwrapGooey, for
+// the reason carryDeclarations gives: the loop was written inline at
+// the open and the paste lost the comments, the same way the
+// declarations had. Raised in review of #569.
+func carryComments(env, root *node) {
+	root.Lead = append(slices.Clone(env.Lead), root.Lead...)
+	root.Tail = append(root.Tail, env.Tail...)
 }
 
 // carryDeclarations copies a <Gooey> envelope's namespace declarations
@@ -916,6 +1050,27 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 	return out
 }
 
+// attrKeys is the order node.markup writes Attrs in: Order's names that
+// are still set, then every other name sorted. See node.Order.
+func (n *node) attrKeys() []string {
+	keys := make([]string, 0, len(n.Attrs))
+	seen := make(map[string]bool, len(n.Attrs))
+	for _, k := range n.Order {
+		if _, ok := n.Attrs[k]; ok && !seen[k] {
+			keys = append(keys, k)
+			seen[k] = true
+		}
+	}
+	rest := len(keys)
+	for k := range n.Attrs {
+		if !seen[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys[rest:])
+	return keys
+}
+
 // envelopeHead is the document's opening <Gooey …> tag together with
 // the declarations that belong to the envelope rather than to the tree.
 //
@@ -925,7 +1080,7 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 // editor's document is the content root, so a declaration has nowhere
 // in the tree to live and rides with envAttrs instead, written back
 // here. Added for #517.
-func envelopeHead(attrs map[string]string, decls []*node) string {
+func envelopeHead(attrs map[string]string, decls []*node, slots map[string]*node) string {
 	attrs, prefix := envelopeParts(attrs, decls)
 	var b strings.Builder
 	b.WriteString(gooeyOpen(attrs))
@@ -933,6 +1088,20 @@ func envelopeHead(attrs map[string]string, decls []*node) string {
 		q := *d
 		q.Elem = prefix + ":" + d.Elem
 		q.Attrs = declAttrs(d.Attrs, prefix)
+		b.WriteString(q.markup("  "))
+	}
+	// THE ENVELOPE'S PROPERTY ELEMENTS — <Gooey.Resources> — and they
+	// are written into the BUILD as well as the save, because the
+	// document's content resolves Style="panel" against them. Dropping
+	// them only from the save would have been the quiet half of #510;
+	// dropping them from both, which is what happened, made the open
+	// report "no style named panel is registered" about a style the
+	// author had registered, and the save made that true on disk.
+	// The tag is the owner's name plus the slot, as node.markup derives
+	// it — never the slot's stored Elem. See there.
+	for _, s := range sortedKeys(slots) {
+		q := *slots[s]
+		q.Elem = "Gooey." + s
 		b.WriteString(q.markup("  "))
 	}
 	return b.String()
@@ -1680,6 +1849,11 @@ func nodeOf(src string) (*node, error) {
 	// there.
 	defaults := []string{""}
 	var root *node
+	// Comments read since the last element boundary, waiting for the
+	// element they lead (a start tag) or trail (an end tag). See
+	// node.Lead.
+	var pending []string
+	blank := false
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -1833,7 +2007,11 @@ func nodeOf(src string) (*node, error) {
 			if t.Name.Space != def && !(envelopeChild && t.Name.Space == markup.XNamespace) {
 				return nil, fmt.Errorf("element %q is namespaced, and the designer's document model holds only plain element names; it would be written back out as <%s>, which is a different element", namespacedAttrName(t.Name), t.Name.Local)
 			}
-			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}}
+			if blank {
+				pending, blank = append(pending, blankLine), false
+			}
+			n := &node{Elem: t.Name.Local, Space: t.Name.Space, Attrs: map[string]string{}, Lead: pending}
+			pending = nil
 			for _, a := range t.Attr {
 				// A NAMESPACE DECLARATION IS KEPT, AS AN ORDINARY
 				// ATTRIBUTE, and that spelling is the whole fix for
@@ -1877,10 +2055,12 @@ func nodeOf(src string) (*node, error) {
 				// carries its declarations down.
 				if a.Name.Space == "xmlns" {
 					n.Attrs["xmlns:"+a.Name.Local] = a.Value
+					n.Order = append(n.Order, "xmlns:"+a.Name.Local)
 					continue
 				}
 				if a.Name.Local == "xmlns" && a.Name.Space == "" {
 					n.Attrs["xmlns"] = a.Value
+					n.Order = append(n.Order, "xmlns")
 					continue
 				}
 				// A PREFIXED ATTRIBUTE IS REFUSED, which is the same
@@ -1925,12 +2105,24 @@ func nodeOf(src string) (*node, error) {
 					return nil, fmt.Errorf("attribute %q is namespaced, and the designer's document model holds only plain attributes; markup's own loader refuses these too", namespacedAttrName(a.Name))
 				}
 				n.Attrs[a.Name.Local] = a.Value
+				n.Order = append(n.Order, a.Name.Local)
 			}
 			stack = append(stack, n)
 		case xml.CharData:
 			if len(stack) > 0 {
 				stack[len(stack)-1].Body += string(t)
 			}
+			// Whitespace holding two line breaks or more is a blank
+			// line the author left, and it belongs to whatever comes
+			// next — see blankLine.
+			if strings.TrimSpace(string(t)) == "" && strings.Count(string(t), "\n") >= 2 {
+				blank = true
+			}
+		case xml.Comment:
+			if blank {
+				pending, blank = append(pending, blankLine), false
+			}
+			pending = append(pending, string(t))
 		case xml.EndElement:
 			if len(defaults) > 1 {
 				defaults = defaults[:len(defaults)-1]
@@ -1939,6 +2131,7 @@ func nodeOf(src string) (*node, error) {
 				return nil, fmt.Errorf("unbalanced </%s>", t.Name.Local)
 			}
 			n := stack[len(stack)-1]
+			n.Tail, pending, blank = pending, nil, false
 			// stack is a LOCAL parse stack whose last reference dies
 			// with this function. The high-water mark it leaves behind
 			// is freed with the slice itself at return, so there is
@@ -1974,10 +2167,18 @@ func nodeOf(src string) (*node, error) {
 				if p.Slots == nil {
 					p.Slots = map[string]*node{}
 				}
-				if len(n.Kids) != 1 {
-					return nil, fmt.Errorf("slot <%s> needs exactly one child, got %d", n.Elem, len(n.Kids))
+				// A REPEATED SLOT IS REFUSED rather than letting the
+				// second overwrite the first in the map, which would
+				// save a document missing whatever the first held.
+				if _, dup := p.Slots[slot]; dup {
+					return nil, fmt.Errorf("<%s> appears twice on one <%s>", n.Elem, p.Elem)
 				}
-				p.Slots[slot] = n.Kids[0]
+				// The whole property element, not its one child: see
+				// node.Slots. How many children it may hold is the
+				// loader's question — <ItemsView.ItemTemplate> takes
+				// one, <X.Resources> a list — and markup.Build answers
+				// it with the slot's own message.
+				p.Slots[slot] = n
 				continue
 			}
 			p.Kids = append(p.Kids, n)
@@ -1986,6 +2187,12 @@ func nodeOf(src string) (*node, error) {
 	if root == nil {
 		return nil, fmt.Errorf("no root element")
 	}
+	// A comment AFTER the root's end tag has no element to lead, and
+	// the model holds nothing outside the root, so it becomes the
+	// root's last Tail comment: moved inside the root, and kept. For a
+	// <Gooey> file openWorkspaceFile then moves the envelope's Tail onto
+	// the content root, so an epilog lands two levels in.
+	root.Tail = append(root.Tail, pending...)
 	return root, nil
 }
 
@@ -2160,6 +2367,17 @@ type editor struct {
 	fits    *prop.Property[bool]
 	cramped *prop.Property[bool]
 	fitMsg  *prop.Property[string]
+	// buildErr is why the open document does not build, in full, and ""
+	// while it does. It is the one diagnostic about the DOCUMENT rather
+	// than about the editor, and it has its own property because the
+	// status bar is not a place to read it: status is one row shared with
+	// every save, paste and hint, and it is clipped to whatever width the
+	// bar's other sections leave it — a markup error names the element
+	// and its attributes before it gets to the reason, so the reason is
+	// the half that went off the edge. problems is what the PROBLEMS pane
+	// shows: this and fitMsg, whichever are non-empty.
+	buildErr *prop.Property[string]
+	problems *prop.Property[string]
 	// design is the mode switch, and it is the editor's first consumer of
 	// gooey.Frozen. True (the default) means the designer pane is a
 	// PICTURE: the document lays out and paints exactly as it will, and
@@ -2223,6 +2441,15 @@ type editor struct {
 	// file at all.
 	hitTest func(x, y int) gooey.Component
 	docRoot gooey.Component
+	// foreign is true from the moment a file is opened until that file
+	// first builds: the picture on the canvas, if any, is ANOTHER
+	// DOCUMENT'S. Keeping the last good preview across a failed build is
+	// right while editing — it is this document one keystroke ago — and
+	// wrong across an open, where it showed the previous file's elements
+	// under the new file's name, unselectable, with nothing in the open
+	// file to explain them. So a failed build blanks the canvas while this
+	// is set; see rebuild.
+	foreign bool
 	nodeOf  map[gooey.Component]*node
 	// compOf is nodeOf INVERTED, built in the same walk rather than
 	// searched for afterwards.
@@ -2338,6 +2565,12 @@ type editor struct {
 	// assigned at the one site that assigns those, for the reason
 	// TestEnvAttrsIsAssignedWhereTheDocumentIs exists. Added for #517.
 	envDecls []*node
+	// envSlots are the property elements the opened file's <Gooey>
+	// carried — <Gooey.Resources>, the document's own style and resource
+	// scope. Assigned beside envAttrs and envDecls, for the same reason,
+	// and written by envelopeHead into both the build and the save.
+	// #510.
+	envSlots map[string]*node
 	// seededDecls are the declared names seedDeclared most recently put
 	// into ed.docCtx.Values, so the next rebuild can take exactly those
 	// back out and no others. See seedDeclared for why the map is shared and
@@ -2474,6 +2707,7 @@ func newEditor(fsys fs.FS) *editor {
 		treeText:    prop.NewSource(""),
 		fits:        prop.NewSource(true),
 		fitMsg:      prop.NewSource(""),
+		buildErr:    prop.NewSource(""),
 		design:      prop.NewSource(true),
 		rev:         prop.NewSource(0),
 		serveInfo:   prop.NewSource("no control plane: started with -serve \"\" -mcp \"\""),
@@ -2519,6 +2753,19 @@ func newEditor(fsys fs.FS) *editor {
 			return hint
 		}
 		return build
+	})
+
+	// The PROBLEMS pane's text. Both Gets hoisted, for the reason
+	// statusText gives above.
+	ed.problems = prop.NewComputed(func() string {
+		build, fit := ed.buildErr.Get(), ed.fitMsg.Get()
+		switch {
+		case build == "":
+			return fit
+		case fit == "":
+			return "✗ " + build
+		}
+		return "✗ " + build + "\n\n" + fit
 	})
 
 	// The pane is the frozen host. Binding it here rather than at its
@@ -2782,6 +3029,7 @@ func newEditor(fsys fs.FS) *editor {
 			"Fits":        ed.fits,
 			"Cramped":     ed.cramped,
 			"FitMsg":      ed.fitMsg,
+			"Problems":    ed.problems,
 			"ModeText":    ed.modeText,
 			"ToggleMode":  gooey.Command(func() { ed.toggleMode() }),
 			"ToggleTheme": gooey.Command(func() { ed.themeDark.Set(!ed.themeDark.Get()) }),
@@ -2881,6 +3129,9 @@ func newEditor(fsys fs.FS) *editor {
 			"Panel": panel.Builder(ed.art),
 			// The status bar's endpoint strip — chrome, so ctx only.
 			"ServeAddrs": serveAddrsBuilder(ed),
+			// The explorer's row: a path shortened to its ARRANGED
+			// width, so a narrowed pane keeps the file name. #528.
+			"PathText": pathTextBuilder,
 		},
 	}
 
@@ -3548,8 +3799,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
-	full := envelopeHead(ed.envAttrs, ed.envDecls) + ed.root.markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below
@@ -3580,6 +3831,7 @@ func (ed *editor) rebuild() {
 	// seedDeclared. Before the Build, because that is what consumes
 	// them.
 	if !ed.seedDeclared(full) {
+		ed.blankIfForeign()
 		return
 	}
 
@@ -3591,8 +3843,12 @@ func (ed *editor) rebuild() {
 		// A load error is normal while editing and must never take the
 		// editor down with it. The previous preview stays on screen.
 		ed.status.Set("✗ " + err.Error())
+		ed.sayBuildErr(err.Error())
+		ed.blankIfForeign()
 		return
 	}
+	ed.foreign = false
+	ed.sayBuildErr("")
 	ed.status.Set("✓ builds" + shadowedNote(ed.shadowedDecls))
 	ed.pv.Swap(w)
 	// The one moment the document and the built tree are known to
@@ -3604,6 +3860,24 @@ func (ed *editor) rebuild() {
 	ed.nodeOf = map[gooey.Component]*node{}
 	ed.compOf = map[*node]gooey.Component{}
 	ed.mapNodes(ed.root, w)
+}
+
+// blankIfForeign takes the previous document's picture off the canvas
+// when the one just opened has never built. See editor.foreign.
+func (ed *editor) blankIfForeign() {
+	if ed.foreign && ed.pv.Child() != nil {
+		ed.pv.Swap(nil)
+	}
+}
+
+// sayBuildErr is the one writer of buildErr: why the open document does
+// not build, or "" once it does. Guarded because it runs on every
+// rebuild and prop.Set does not compare — an unguarded "" over "" would
+// repaint the PROBLEMS pane on every edit of a healthy document.
+func (ed *editor) sayBuildErr(msg string) {
+	if ed.buildErr.Get() != msg {
+		ed.buildErr.Set(msg)
+	}
 }
 
 // seedDeclared gives the open document's own <x:Property> declarations
@@ -3750,6 +4024,7 @@ func (ed *editor) seedDeclared(src string) bool {
 			// nothing will ever have seen this message, so it must
 			// carry its own cause. Raised in review of #522.
 			ed.status.Set("✗ " + err.Error())
+			ed.sayBuildErr(err.Error())
 			return false
 		}
 		ed.docCtx.Values[d.Name] = v

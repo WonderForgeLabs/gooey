@@ -359,7 +359,7 @@
                      Activate="{{.OpenFile}}">
             <ItemsView.ItemTemplate>
               <HStack Gap="1">
-                <Text>{{.Name}}</Text>
+                <PathText Path="{{.Path}}"/>
               </HStack>
             </ItemsView.ItemTemplate>
           </ItemsView>
@@ -481,12 +481,14 @@
             <Text Style="dim">{{.Source}}</Text>
           </Tab>
 
-          <!-- 3 — PROBLEMS. FitMsg is what the fit watcher says about the
-               current terminal size, and it is empty when everything fits —
-               which is why the tab reads as blank most of the time. That is the
-               honest state and not a missing view. -->
+          <!-- 3 — PROBLEMS. Why the open document does not build, and what
+               the fit watcher says about the current terminal size — both
+               empty while the document builds and everything fits, which is
+               why the tab reads as blank most of the time. That is the honest
+               state and not a missing view. The build error is here in full
+               because the status bar clips it: see buildErr in main.go. -->
           <Tab Header="ISSUES">
-            <Text Style="dim">{{.FitMsg}}</Text>
+            <Text Style="dim">{{.Problems}}</Text>
           </Tab>
 
           <!-- 4 — DOCS. The platform's own docs/ tree, inside the editor
@@ -713,11 +715,11 @@
       <DockPane Id="panel" Title="PANEL" Slot="Bottom" Size="10" Pinned="false">
         <Panel Name="Output" Style="dim">
           <Tabs Name="PanelTabs">
-            <!-- PROBLEMS is first, as it is in VS Code: FitMsg is what the fit
-                 watcher says about the current terminal size, which is the one
-                 diagnostic this editor produces about itself. -->
+            <!-- PROBLEMS is first, as it is in VS Code: why the document does
+                 not build, in full, and what the fit watcher says about the
+                 current terminal size. -->
             <Tab Header="PROBLEMS">
-              <Text Style="dim">{{.FitMsg}}</Text>
+              <Text Style="dim">{{.Problems}}</Text>
             </Tab>
             <Tab Header="OUTPUT">
               <Text Style="dim">{{.Source}}</Text>

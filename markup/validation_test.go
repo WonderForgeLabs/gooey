@@ -499,3 +499,43 @@ func TestValidationErrorBindingTypeChecked(t *testing.T) {
 		t.Fatalf("error %q does not name the wanted type", err)
 	}
 }
+
+// TestAPatternMayHoldBraces is the carve-out litStringNotBound exists
+// for: a regular expression with `{{` in it is a legal pattern, and only
+// a value that IS a binding expression is refused. Raised in review of
+// #569.
+func TestAPatternMayHoldBraces(t *testing.T) {
+	ctx := &Context{Values: map[string]any{"Name": prop.NewSource("")}}
+	// Every one a legal regex for "looks like template text", the
+	// unanchored forms included — the first predicate refused those.
+	for _, pat := range []string{"^{{.*}}$", "{{.*}}", "{{.+}}", "{{ab}}|{{cd}}"} {
+		src := `<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="` + pat + `"/></TextBox></Gooey>`
+		if _, err := Build([]byte(src), ctx); err != nil {
+			t.Errorf("Pattern=%q, a legal regex, was refused: %v", pat, err)
+		}
+	}
+	// And what the loader would read as an expression is refused.
+	for _, pat := range []string{"{{.Name}}", " {{ .Name }} ", "{{t:Fire}}"} {
+		src := `<Gooey><TextBox Text="{{.Name}}"><Validate Pattern="` + pat + `"/></TextBox></Gooey>`
+		_, err := Build([]byte(src), ctx)
+		if err == nil || !strings.Contains(err.Error(), "not bindable") {
+			t.Errorf("Pattern=%q is an expression and loaded (err %v); it would "+
+				"compile the template text as the regex", pat, err)
+		}
+	}
+}
+
+// TestAMessageMayHoldBraces: a Message is prose shown to a person, so a
+// literal brace pair in it loads, and only a value the loader would read
+// as an expression is refused. Raised in review of #569.
+func TestAMessageMayHoldBraces(t *testing.T) {
+	ctx := &Context{Values: map[string]any{"Name": prop.NewSource(""), "M": prop.NewSource("")}}
+	ok := `<Gooey><TextBox Text="{{.Name}}"><Validate Required="true" Message="expected {{key}} placeholders"/></TextBox></Gooey>`
+	if _, err := Build([]byte(ok), ctx); err != nil {
+		t.Errorf("a Message holding literal braces was refused: %v", err)
+	}
+	bad := `<Gooey><TextBox Text="{{.Name}}"><Validate Required="true" Message="{{.M}}"/></TextBox></Gooey>`
+	if _, err := Build([]byte(bad), ctx); err == nil || !strings.Contains(err.Error(), "not bindable") {
+		t.Errorf("a Message that is wholly a binding loaded (err %v)", err)
+	}
+}

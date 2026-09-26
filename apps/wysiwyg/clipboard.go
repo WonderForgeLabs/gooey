@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/WonderForgeLabs/gooey"
@@ -83,7 +84,8 @@ func (n *node) deepCopy() *node {
 	if n == nil {
 		return nil
 	}
-	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body,
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order)}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
@@ -133,9 +135,85 @@ func (ed *editor) copySelected() {
 		ed.status.Set("✗ the design surface is not part of the document")
 		return
 	}
-	src := n.markup("")
-	ed.clip = clipboard{node: n.deepCopy(), markup: src}
+	c := n.deepCopy()
+	ed.carryUsedNamespaces(c)
+	// A COPY LEAVES THE ORIGINAL'S LEADING COMMENT BEHIND, for the reason
+	// duplicateSelected does: it is the author's note about THAT element,
+	// and a paste beside it would put the same sentence above two
+	// differently-named ones. A CUT keeps it — a cut and paste is a move,
+	// and the note goes where its element goes. Raised in review of #569.
+	c.Lead = nil
+	src := c.markup("")
+	ed.clip = clipboard{node: c, markup: src}
 	ed.status.Set("copied " + describeNode(n) + ed.sayCopiedOut(src))
+}
+
+// handlerPrefixRe is markup's handlerExprRe (markup/expr.go), reduced to
+// the one group this file needs: the PREFIX of a whole-attribute
+// {{ns:Func …}} expression, which is the only place markup resolves a
+// prefix against the document's xmlns table. A second copy of one rule,
+// for the reason namespacedAttrName gives — markup does not export it and
+// this nested module cannot reach inside — and
+// TestTheCopiedPrefixIsTheOneMarkupResolves keeps the two in step.
+var handlerPrefixRe = regexp.MustCompile(`^\s*\{\{\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*[A-Za-z_][A-Za-z0-9_]*\s*.*\}\}\s*$`)
+
+// handlerPrefix is the namespace prefix v's handler expression uses, if
+// v is one.
+func handlerPrefix(v string) (string, bool) {
+	m := handlerPrefixRe.FindStringSubmatch(v)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// carryUsedNamespaces puts on c's root the declarations its own
+// expressions need and nothing else. #525.
+//
+// A copied subtree referenced {{t:Fire}} while xmlns:t lived on the
+// content root (or the envelope), so the text on the system clipboard —
+// the whole point of OSC 52 — pasted into any other document as
+// "undeclared namespace prefix". This is reconcileNamespaces' question
+// asked in the other direction: which of THIS document's bindings does
+// the subtree need?
+//
+// FROM THE EXPRESSIONS, NOT FROM THE DOCUMENT: a copy out of a document
+// declaring five prefixes carries the ones it uses, and a copy that uses
+// none carries none — otherwise every copy grows an xmlns the paste
+// target has to reconcile away. A prefix the subtree already declares
+// itself is left alone.
+func (ed *editor) carryUsedNamespaces(c *node) {
+	used := map[string]bool{}
+	walkNode(c, func(k *node) {
+		for _, v := range k.Attrs {
+			if p, ok := handlerPrefix(v); ok {
+				used[p] = true
+			}
+		}
+		if p, ok := handlerPrefix(k.Body); ok {
+			used[p] = true
+		}
+	})
+	if len(used) == 0 {
+		return
+	}
+	own := map[string]string{}
+	collectNamespaces(c, own)
+	doc := ed.docNamespaces()
+	for _, p := range sortedKeys(used) {
+		k := "xmlns:" + p
+		if _, declared := own[k]; declared {
+			continue
+		}
+		if uri, ok := doc[k]; ok {
+			// deepCopy leaves Attrs nil when the source's was, and the
+			// prefix may be used only by a DESCENDANT.
+			if c.Attrs == nil {
+				c.Attrs = map[string]string{}
+			}
+			c.Attrs[k] = uri
+		}
+	}
 }
 
 // sayCopiedOut is the SYSTEM half of a copy, rendered as the tail of the
@@ -175,7 +253,11 @@ func (ed *editor) cutSelected() {
 		ed.status.Set("✗ " + describeNode(n) + " cannot be cut: a document must keep its root")
 		return
 	}
-	src := n.markup("")
+	// Decorated BEFORE the delete, for the same reason as a copy (#525):
+	// the bindings are read from the document it is leaving.
+	c := n.deepCopy()
+	ed.carryUsedNamespaces(c)
+	src := c.markup("")
 	// NEITHER CLIPBOARD IS WRITTEN UNLESS THE DELETE STANDS. deletable()
 	// above answers the refusals deleteSelected can see BEFORE trying, but
 	// not the one only the loader can: removing a child can make its
@@ -206,7 +288,7 @@ func (ed *editor) cutSelected() {
 		// would replace a specific message with a vaguer one.
 		return
 	}
-	ed.clip = clipboard{node: n.deepCopy(), markup: src}
+	ed.clip = clipboard{node: c, markup: src}
 	ed.status.Set("cut " + describeNode(n) + ed.sayCopiedOut(src))
 }
 
@@ -378,13 +460,12 @@ func (ed *editor) insertSubtree(n *node, verb string) {
 		//     … undeclared namespace prefix \"t\"". <Button> goes
 		//     inside <Canvas> perfectly well.
 		//   - A FAULT ALREADY IN THE DOCUMENT, because docRoot is the
-		//     signal and nothing resets it. The properties pane has no
-		//     revert of its own, so a value it refuses leaves the build
-		//     failed and the next paste is reverted and blamed for it.
-		//     That is #531, filed rather than left here: six mutators
-		//     share this revert and commitEdit is the seventh with none,
-		//     and a live defect recorded only in a comment dies with the
-		//     comment. Raised in review of #501.
+		//     signal and nothing resets it. The properties pane used to
+		//     be the common way in — it had no revert, so a value it
+		//     refused left the build failed and the next paste was
+		//     blamed. #531 gave it one (valueEditor.Write); a file
+		//     OPENED with a bad value still arrives here that way.
+		//     Raised in review of #501.
 		//
 		// The neutral verb is the only clause true of all three, and it
 		// still names both elements so an author with several panes
@@ -928,6 +1009,7 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 	// carrying the envelope's binding onto a declaration and returning a
 	// declaration as the pasted element. Raised in review of #522.
 	carryDeclarations(n, kids[0])
+	carryComments(n, kids[0])
 	return kids[0], true, ""
 }
 
@@ -992,8 +1074,8 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // AND A FOURTH, WHICH IS ed.envDecls AND THE BINDING MINTED BESIDE IT.
 // The third-scope paragraph above was written when the saved envelope
 // was gooeyOpen(ed.envAttrs) and nothing else. It is now
-// envelopeHead(ed.envAttrs, ed.envDecls) (main.go), which writes two
-// bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
+// envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) (main.go), which
+// writes two bindings ed.envAttrs does not hold: each declaration's own xmlns:*,
 // re-emitted by declAttrs, and a freshly minted xmlns:<prefix> on
 // <Gooey> whenever declPrefix reports the document binds the namespace
 // nowhere the save will still carry. Both land in the file and both
@@ -1021,10 +1103,25 @@ func unwrapGooey(n *node) (inner *node, ok bool, why string) {
 // declaration is the later one and markup.parse's last-wins is what
 // this has to agree with.
 func (ed *editor) reconcileNamespaces(n *node) error {
+	return reconcileNamespacesInto(n, ed.docNamespaces(), map[string]string{})
+}
+
+// docNamespaces is every prefix binding the saved document carries, as
+// xmlns:p → uri, in the order markup.parse would merge them: the three
+// scopes reconcileNamespaces' doc names, and the envelope's property
+// elements since #510.
+func (ed *editor) docNamespaces() map[string]string {
 	doc := map[string]string{}
 	envelopeNamespaces(ed.envAttrs, ed.envDecls, doc)
+	// THE ENVELOPE'S PROPERTY ELEMENTS, in the order envelopeHead writes
+	// them — after the declarations, before the content root — because
+	// since #510 they are in every save, and a prefix bound inside
+	// <Gooey.Resources> is in markup.parse's flat table like any other.
+	for _, name := range sortedKeys(ed.envSlots) {
+		collectNamespaces(ed.envSlots[name], doc)
+	}
 	collectNamespaces(ed.doc(), doc)
-	return reconcileNamespacesInto(n, doc, map[string]string{})
+	return doc
 }
 
 // SORTED for the same reason collectNamespaces is, and for a different

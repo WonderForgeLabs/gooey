@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -70,7 +71,8 @@ func uniqueName(root *node, base string) string {
 // because the copy's own descendants are minted during it and are not
 // yet in the document.
 func clone(n *node, used map[string]bool) *node {
-	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body, Attrs: map[string]string{}}
+	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body, Attrs: map[string]string{},
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order)}
 	for k, v := range n.Attrs {
 		c.Attrs[k] = v
 	}
@@ -123,6 +125,14 @@ func (ed *editor) duplicateSelected() bool {
 		return false
 	}
 	c := clone(ed.sel, namesInUse(ed.root))
+	// THE ORIGINAL'S LEADING COMMENT STAYS WITH THE ORIGINAL. It is the
+	// author's note about that element, and the copy is distinguishable
+	// on purpose — uniqueName mints it a new Name — so the same sentence
+	// above both reads as true of each. Descendants keep theirs: inside
+	// the copy they still sit above the element they describe. Raised in
+	// review of #569. copySelected follows the same rule; cutSelected,
+	// which is a move, does not.
+	c.Lead = nil
 	// TRANSACTIONAL, and here there is NO catalog gate to lean on — unlike
 	// promote and demote, the copy goes in beside the original, so whatever
 	// the parent is, it demonstrably already holds one of these and canHold

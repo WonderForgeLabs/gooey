@@ -41,6 +41,7 @@ package main
 // honest; a watcher that silently misses the first write is not.
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,8 +50,10 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/markup"
+	"github.com/WonderForgeLabs/gooey/prop"
 	"github.com/WonderForgeLabs/gooey/render"
 )
 
@@ -301,41 +304,59 @@ func (ed *editor) browserItems() components.ItemSource {
 // component in the row template, and markup has no way to spell one
 // without registering a builder. The ranking is the substance and it is
 // here; the highlight is a known gap, not an oversight.
+//
+// THE PATH IS PROJECTED WHOLE, and shortened by <PathText> at paint
+// time against the width it was ARRANGED. It was shortened here, to a
+// static 30 fitted to the explorer pane's DECLARED Size, and
+// dockModel.Resize moves that width at run time — so a narrowed pane
+// clipped a 30-column row from the right, taking the file name, which
+// is the half shortPath exists to keep. A projection runs before
+// anything is laid out and cannot know the width; the row's own paint
+// node can. #528.
+//
+// ONE KEY. It projected "Name" too, the shortened label the old template
+// bound; nothing reads it since <PathText>, and a key called Name holding
+// a whole path is the trap for the next row template. Each projected key
+// is a source and a closure per row. Raised in review of #569.
 func fileRow(p string) map[string]any {
-	return map[string]any{
-		"Name": shortPath(p, browserNameCols),
-		"Path": p,
-	}
+	return map[string]any{"Path": p}
 }
 
-// browserNameCols is the budget shortPath shortens a row's Name to, in
-// CELLS. It was written as a bare 30 at the call above, which is the
-// spelling that let shortPath measure in runes without the disagreement
-// being visible from either end.
-//
-// IT IS THE DECLARED PANE, NOT THE LIVE ONE, and the first version of
-// this comment called it "the explorer column's budget" as though it
-// tracked the column. It does not: the number is fitted to
-// <DockPane Id="explorer" … Size="34"> in wysiwyg.gooey less its chrome,
-// and dockModel.Resize (dock.go) moves that width at run time. Drag the
-// splitter narrower and the row is 30 columns inside a Text arranged in
-// fewer, so the composer's clip takes the TAIL — which is the half
-// shortPath exists to keep, and is #523's symptom reproduced with
-// nothing but ASCII.
-//
-// Pre-existing: the bare 30 had it too, and shortening against the
-// ARRANGED width means moving the call out of fileRow, which builds a
-// row's values before anything is laid out. TRACKED AS [#528], not as
-// this paragraph — a live defect whose only record is a comment in a
-// file nobody opens unless they are already editing shortPath spends
-// the attention that would have caught it, which is CLAUDE.md's "A red
-// suite is yours" argument applied to prose. The issue carries the
-// acceptance criterion: the fixing commit deletes this constant and this
-// comment, because a budget that follows the pane has no constant to
-// name. Raised in review of #524.
-//
-// [#528]: https://github.com/WonderForgeLabs/gooey/issues/528
-const browserNameCols = 30
+// pathText is <PathText Path="…"/>: a one-row path that shortens itself
+// with shortPath to whatever width it is arranged, dropping LEADING
+// segments first. Editor chrome, registered on ctx only.
+type pathText struct {
+	gooey.Base
+	path *prop.Property[string]
+}
+
+// Measure asks for the whole path, capped by what is on offer. The
+// shortening happens in Render, against the width layout actually gave.
+func (t *pathText) Measure(avail gooey.Size) gooey.Size {
+	return gooey.Size{W: min(render.StringWidth(t.path.Get()), avail.W), H: min(1, avail.H)}
+}
+
+func (t *pathText) Render(f *gooey.Frame) {
+	b := t.Bounds()
+	if b.W <= 0 || b.H <= 0 {
+		return
+	}
+	f.Cells.SetString(b.X, b.Y, shortPath(t.path.Get(), b.W), render.Style{})
+}
+
+func pathTextBuilder(e markup.Element, ctx *markup.Context) (gooey.Component, error) {
+	// REQUIRED, and refused like <TypeAhead Key>: BoundText reads an
+	// absent attribute as "", so <PathText/> loaded and painted an empty
+	// row with nothing said. Raised in review of #569.
+	if _, ok := e.Attrs["Path"]; !ok {
+		return nil, fmt.Errorf("markup: <PathText> needs a Path (e.g. Path=\"{{.Path}}\")")
+	}
+	p, err := markup.BoundText(e, ctx, "Path")
+	if err != nil {
+		return nil, err
+	}
+	return &pathText{path: p}, nil
+}
 
 // shortPath fits a path into w cells by dropping LEADING segments, not
 // trailing characters.
@@ -619,6 +640,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// root. Unwrapping here rather than in nodeOf keeps nodeOf usable for
 	// the seed strings, which have no envelope.
 	var decls []*node
+	var slots map[string]*node
 	if n.Elem == "Gooey" {
 		// DECLARATIONS FIRST, because they are not root elements and
 		// counting them as such refused a well-formed document. markup
@@ -737,11 +759,21 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// markup.parse skips a plain xmlns outright, so moving it bought
 		// nothing but a diff on the first save of every existing file.
 		env = envelopeAttrs(n, moved)
+		// AND ITS PROPERTY ELEMENTS STAY TOO. <Gooey.Resources> is the
+		// document's style scope; unwrapping to Kids[0] dropped it, so
+		// the open blamed the first Style= that used it and the save
+		// deleted the block. #510.
+		slots = n.Slots
+		// AND ITS COMMENTS COME DOWN — carryComments, beside
+		// carryDeclarations and for the same reason: paste unwraps an
+		// envelope too.
+		carryComments(n, n.Kids[0])
 		n = n.Kids[0]
 	}
 	ed.root.Kids = []*node{n}
 	ed.envAttrs = env
 	ed.envDecls = decls
+	ed.envSlots = slots
 	ed.sel = n
 	ed.openPath.Set(rel)
 	// A NEW DOCUMENT STARTS WITH NO PAST. Without this the previous
@@ -752,6 +784,9 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	// the selection the open just made, or the first undo drops it.
 	sel, hasSel := ed.selPath()
 	ed.history().reset(ed.root, sel, hasSel)
+	// Until this file builds, the preview is the previous file's. See
+	// editor.foreign.
+	ed.foreign = true
 	ed.rebuild()
 }
 
@@ -774,7 +809,7 @@ func (ed *editor) saveOpenFile() error {
 	if ed.ws == nil || ed.ws.dir == "" || rel == "" {
 		return nil
 	}
-	src := envelopeHead(ed.envAttrs, ed.envDecls) + ed.doc().markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
 	full := filepath.Join(ed.ws.dir, filepath.FromSlash(rel))
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		ed.status.Set("✗ save " + rel + ": " + err.Error())
