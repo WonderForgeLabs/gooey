@@ -326,8 +326,15 @@ jobs:
           # checked out, its bin/ lands on PATH and this collapses further to
           # the bare `Bash(project-ops:*)` — not used here because the plugin
           # repo is private.)
+          #
+          # `mcp__github__list_sub_issues` and `mcp__github__get_pull_request`
+          # are read-only and are here because the agent reaches for them
+          # unprompted — to inspect an epic's existing children and to read a PR
+          # linked from the issue. In eh-homelab/ScadBuddy, whose intake is a
+          # copy of this one, their absence produced a permission denial on
+          # nearly every run.
           claude_args: |
-            --allowedTools "Bash(gh:*),Bash(yq:*),Bash(date:*),Bash(./.project-ops/plugins/project-ops/bin/project-ops:*),mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues,mcp__github__update_issue,mcp__github__add_issue_comment,mcp__github__get_issue_comments,mcp__github__create_issue" --model "claude-sonnet-5" --max-turns 100
+            --allowedTools "Bash(gh:*),Bash(yq:*),Bash(date:*),Bash(./.project-ops/plugins/project-ops/bin/project-ops:*),mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues,mcp__github__update_issue,mcp__github__add_issue_comment,mcp__github__get_issue_comments,mcp__github__create_issue,mcp__github__list_sub_issues,mcp__github__get_pull_request" --model "claude-sonnet-5" --max-turns 100
           prompt: |
             You are an issue intake agent for gooey. Your job is to fully process a new (or re-triaged) GitHub issue: check for duplicates, apply labels, populate the GitHub Projects V2 board, wire up epic/sub-issue relationships, and evaluate blockers.
 
@@ -620,9 +627,10 @@ jobs:
       # failed:issue-intake` instead of cross-referencing Actions run history
       # by hand (that manual cross-reference is how WonderForgeLabs/forge#3053
       # itself was found). claude-code-action does not propagate the agent's own
-      # error (turn-cap exhaustion, permission denials) into the step exit code,
-      # so an aborted run otherwise reports green and looks like intake never
-      # triggered.
+      # error (e.g. turn-cap exhaustion) into the step exit code, so an aborted
+      # run otherwise reports green and looks like intake never triggered.
+      # Permission denials the agent recovered from are only a ::warning:: —
+      # they do not label the issue or fail the step (WonderForgeLabs/forge#3219).
       - name: Verify intake completed
         id: verify
         if: always() && steps.intake.outcome != 'skipped'
@@ -645,7 +653,7 @@ jobs:
       # and the issue wasn't closed (e.g. as a duplicate, which legitimately
       # leaves the label in place), intake silently no-op'd — apply the same
       # failed:issue-intake label (this is still "issue-intake failed", just a
-      # different symptom than is_error/denials).
+      # different symptom than is_error).
       - name: Verify needs-triage was resolved
         id: triage-check
         if: always() && steps.intake.outcome != 'skipped' && contains(github.event.issue.labels.*.name, 'needs-triage')
@@ -668,7 +676,7 @@ jobs:
 
           if [ "$still_present" = "true" ]; then
             gh label create "failed:issue-intake" --repo "$REPO" --color "b60205" \
-              --description "failed:issue-intake: the workflow errored or hit a tool permission denial while processing this issue/PR" >/dev/null 2>&1 || true
+              --description "failed:issue-intake: the workflow's agent aborted while processing this issue/PR — it needs re-driving" >/dev/null 2>&1 || true
             gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" -f "labels[]=failed:issue-intake" >/dev/null \
               || echo "::warning::Failed to apply failed:issue-intake"
             echo "::error::Issue #$ISSUE_NUMBER still carries needs-triage after intake ran — the agent made no visible progress despite reporting success. Check the uploaded execution transcript, or re-add the needs-triage label to retry."

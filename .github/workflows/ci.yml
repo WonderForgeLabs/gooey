@@ -134,6 +134,28 @@ jobs:
           fi
           echo "gofmt clean across $n .go files"
 
+      # The composite actions' shell bodies live in <action>/*.sh with a
+      # sibling *.test.sh (WonderForgeLabs/forge#3219), and nothing else
+      # executes them: label-on-agent-failure's labelling rule regressing is
+      # invisible on a green run. Here in discover for the same reasons as
+      # gofmt above — once, early, cheap tier, and gated by `modules`.
+      - name: Run composite-action shell tests
+        run: |
+          shopt -s nullglob
+          tests=(.github/actions/*/*.test.sh)
+          # EXACT, not a floor: a rename of a suite or its action directory
+          # would otherwise leave this green having run nothing. Bump when an
+          # action gains or loses a suite.
+          expected=1
+          if [ ${#tests[@]} -ne "$expected" ]; then
+            echo "::error::Expected ${expected} composite-action shell test suite(s), found ${#tests[@]}: ${tests[*]:-none}. A suite was added, renamed or removed without updating this guard."
+            exit 1
+          fi
+          for t in "${tests[@]}"; do
+            echo "==> ${t}"
+            bash "${t}"
+          done
+
       - name: Discover modules
         id: mods
         run: |
