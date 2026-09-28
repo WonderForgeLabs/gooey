@@ -762,8 +762,10 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		env = envelopeAttrs(n, moved)
 		// Its layout only — a copy of the whole node would keep the
 		// content root it is about to unwrap alive under a field no
-		// edit ever updates.
-		layout = &node{Order: n.Order, Seps: n.Seps}
+		// edit ever updates. The comments above <Gooey> are layout
+		// too, and stay above it rather than moving in with the rest.
+		layout = &node{Order: n.Order, Seps: n.Seps, Lead: n.Lead}
+		n.Lead = nil
 		// AND ITS PROPERTY ELEMENTS STAY TOO. <Gooey.Resources> is the
 		// document's style scope; unwrapping to Kids[0] dropped it, so
 		// the open blamed the first Style= that used it and the save

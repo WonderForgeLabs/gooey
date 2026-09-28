@@ -81,9 +81,15 @@ func TestCommentsSurviveTheRoundTrip(t *testing.T) {
 	if !strings.Contains(string(first), "<!-- epilog -->\n  </Canvas>") {
 		t.Errorf("the epilog did not land as the content root's last line:\n%s", first)
 	}
+	// A HEADER STAYS A HEADER. It used to move one line inward, to lead
+	// the content root, which rewrote the top of every file in the repo
+	// that opens with a comment block. editor.envLayout now keeps it.
+	if !strings.HasPrefix(string(first), "<!-- header -->\n<Gooey>") {
+		t.Errorf("the header comment no longer sits above <Gooey>:\n%s", first)
+	}
 
-	// Stable from the first save on: the envelope's comments move one
-	// line inward once, and nothing moves again.
+	// Stable from the first save on: the envelope's trailing comments
+	// move inward once, and nothing moves again.
 	ed.openWorkspaceFile("c.gooey")
 	if err := ed.saveOpenFile(); err != nil {
 		t.Fatal(err)

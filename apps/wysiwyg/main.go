@@ -828,7 +828,14 @@ func (n *node) markup(indent string) string {
 		// multi-line <Text> came back from the first save as one long
 		// line of &#xA;, which is the author's paragraph made unreadable
 		// in their own file.
-		body := strings.ReplaceAll(esc.String(), "&#xA;", "\n")
+		//
+		// AND THE REST OF EscapeText'S ATTRIBUTE RULE IS UNDONE WITH IT:
+		// a quote, an apostrophe, a tab and a ">" are all legal in
+		// character data, and escaping them turned a page documenting
+		// StrokeThickness="1" into StrokeThickness=&#34;1&#34; on its
+		// first save. "]]>" is the one place ">" must stay escaped.
+		body := bodyUnescaper.Replace(esc.String())
+		body = strings.ReplaceAll(body, "]]>", "]]&gt;")
 		// A Tail comment stays INLINE after the body, where it was:
 		// on its own line it would put a newline into the body the
 		// next read collects.
@@ -870,7 +877,9 @@ func (n *node) markup(indent string) string {
 // carryComments moves a <Gooey> envelope's comments onto the content
 // root about to be promoted in its place. The envelope is not a node
 // and has nowhere of its own to keep them: a header comment above
-// <Gooey> comes to lead the content root, just inside the envelope, and
+// <Gooey> comes to lead the content root, just inside the envelope —
+// on a PASTE; a file's open keeps its header in editor.envLayout
+// first, and envelopeHead writes it back above <Gooey> — and
 // one after the content root — or after </Gooey> itself, which nodeOf
 // has already put on the envelope's Tail — becomes the content root's
 // last line. Each moves inward once and is stable after, rather than
@@ -1116,6 +1125,10 @@ func attrSeps(src string, from, to int) map[string]string {
 
 func isXMLSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
+// bodyUnescaper reverses the escapes xml.EscapeText makes that
+// character data does not need. See node.markup.
+var bodyUnescaper = strings.NewReplacer("&#xA;", "\n", "&#34;", `"`, "&#39;", "'", "&#x9;", "\t", "&gt;", ">")
+
 // writeAttrs writes n's attributes the way the source laid them out:
 // in attrKeys order, each after its node.Seps separator or one space.
 // indent is the column the tag's "<" sits at, which a wrap's relative
@@ -1166,6 +1179,11 @@ func (n *node) attrKeys() []string {
 func envelopeHead(attrs map[string]string, layout *node, decls []*node, slots map[string]*node) string {
 	attrs, prefix := envelopeParts(attrs, decls)
 	var b strings.Builder
+	if layout != nil {
+		for _, c := range layout.Lead {
+			b.WriteString(commentMarkup("", c))
+		}
+	}
 	b.WriteString(gooeyOpen(attrs, layout))
 	for _, d := range decls {
 		q := *d
@@ -2663,8 +2681,9 @@ type editor struct {
 	// and written by envelopeHead into both the build and the save.
 	// #510.
 	envSlots map[string]*node
-	// envLayout is the opened file's <Gooey> node itself, kept for the
-	// attribute Order and Seps gooeyOpen writes the envelope back in;
+	// envLayout is the LAYOUT of the opened file's <Gooey>, kept for the
+	// comments above it (Lead), which envelopeHead writes back there,
+	// and the attribute Order and Seps gooeyOpen writes the envelope in;
 	// envAttrs, not its Attrs, is what the envelope holds. nil when the
 	// file had no envelope. Assigned beside envAttrs.
 	envLayout *node

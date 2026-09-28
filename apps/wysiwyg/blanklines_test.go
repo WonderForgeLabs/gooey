@@ -76,3 +76,29 @@ second line</Text>
 		t.Errorf("the save changed the file:\n--- wrote\n%s--- want\n%s", b, want)
 	}
 }
+
+// TestABodyKeepsItsQuotes: a body was escaped with xml.EscapeText,
+// which is the ATTRIBUTE rule — it wrote every " as &#34; and every '
+// as &#39;, both legal and both noise in character data, so a page
+// documenting StrokeThickness="1" came back from its first save as
+// StrokeThickness=&#34;1&#34;. Only what character data cannot hold is
+// escaped now; the "<" and "&" arms are what keep the save parseable.
+func TestABodyKeepsItsQuotes(t *testing.T) {
+	n := &node{Elem: "Text", Body: `Width="1" it's a < b & c`}
+	const want = `<Text>Width="1" it's a &lt; b &amp; c</Text>` + "\n"
+	if got := n.markup(""); got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	back, err := nodeOf(n.markup(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Body != n.Body {
+		t.Errorf("the body read back as %q, want %q", back.Body, n.Body)
+	}
+	// "]]>" is illegal in character data, so its ">" keeps its escape.
+	cdata := &node{Elem: "Text", Body: "a ]]> b"}
+	if back, err := nodeOf(cdata.markup("")); err != nil || back.Body != cdata.Body {
+		t.Errorf("%q wrote %q, which read back as %v, %v", cdata.Body, cdata.markup(""), back, err)
+	}
+}
