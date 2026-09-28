@@ -628,6 +628,16 @@ type node struct {
 	// that Attrs no longer holds is skipped, so a delete needs no second
 	// write — and a name deleted and set again comes back where it was.
 	Order []string
+	// Seps is the whitespace the source wrote BEFORE an attribute, for
+	// every attribute where that was not a single space: alignment
+	// padding kept as written, or a line wrap stored as "\n" and the
+	// continuation's indent RELATIVE to the element's own, so a subtree
+	// moved to another depth keeps its continuation lines where they
+	// sat against it. A save used to join every wrapped tag onto one
+	// line and drop every column of padding — the largest class of what
+	// an unedited save still rewrote in the repo's own files. A hint,
+	// like Order: an attribute it does not name gets one space.
+	Seps map[string]string
 	// Lead and Tail are the XML COMMENTS the author wrote around this
 	// element, and they are here so node.markup can write them back.
 	// nodeOf fell through the switch on xml.Comment until #529, so the
@@ -800,7 +810,14 @@ func (n *node) markup(indent string) string {
 	}
 	b.WriteString(indent + "<" + n.Elem)
 	for _, k := range n.attrKeys() {
-		fmt.Fprintf(&b, " %s=%s", k, attrValue(n.Attrs[k]))
+		sep := n.Seps[k]
+		switch {
+		case sep == "":
+			sep = " "
+		case sep[0] == '\n':
+			sep = "\n" + indent + sep[1:]
+		}
+		fmt.Fprintf(&b, "%s%s=%s", sep, k, attrValue(n.Attrs[k]))
 	}
 	// A body and children are mutually exclusive here: no element in the
 	// catalog takes both, and emitting both would make the body's meaning
@@ -1049,6 +1066,64 @@ func envelopeAttrs(env *node, moved map[string]bool) map[string]string {
 	}
 	return out
 }
+
+// attrSeps reads node.Seps out of the raw start tag at src[from:to]:
+// the whitespace before each attribute, where it was not one space.
+// encoding/xml reports neither, so the tag is scanned here — outside
+// quotes only, since a value may hold any of the characters looked for.
+// A wrap's indent is taken relative to the column of the tag's "<".
+func attrSeps(src string, from, to int) map[string]string {
+	lt := strings.IndexByte(src[from:to], '<')
+	if lt < 0 {
+		return nil
+	}
+	lt += from
+	col := lt - (strings.LastIndexByte(src[:lt], '\n') + 1)
+	var seps map[string]string
+	i := lt + 1
+	for i < to && !isXMLSpace(src[i]) && src[i] != '/' && src[i] != '>' {
+		i++
+	}
+	for i < to {
+		ws := i
+		for i < to && isXMLSpace(src[i]) {
+			i++
+		}
+		if i >= to || src[i] == '/' || src[i] == '>' {
+			break
+		}
+		sep := src[ws:i]
+		name := i
+		for i < to && src[i] != '=' && !isXMLSpace(src[i]) {
+			i++
+		}
+		key := src[name:i]
+		for i < to && src[i] != '"' && src[i] != '\'' {
+			i++
+		}
+		if i >= to {
+			break
+		}
+		q := src[i]
+		i++
+		for i < to && src[i] != q {
+			i++
+		}
+		i++
+		if nl := strings.LastIndexByte(sep, '\n'); nl >= 0 {
+			sep = "\n" + strings.Repeat(" ", max(len(sep)-nl-1-col, 0))
+		} else if sep == " " {
+			continue
+		}
+		if seps == nil {
+			seps = map[string]string{}
+		}
+		seps[key] = sep
+	}
+	return seps
+}
+
+func isXMLSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
 // attrKeys is the order node.markup writes Attrs in: Order's names that
 // are still set, then every other name sorted. See node.Order.
@@ -1855,6 +1930,7 @@ func nodeOf(src string) (*node, error) {
 	var pending []string
 	blank := false
 	for {
+		from := dec.InputOffset()
 		tok, err := dec.Token()
 		if err == io.EOF {
 			break
@@ -2107,6 +2183,7 @@ func nodeOf(src string) (*node, error) {
 				n.Attrs[a.Name.Local] = a.Value
 				n.Order = append(n.Order, a.Name.Local)
 			}
+			n.Seps = attrSeps(src, int(from), int(dec.InputOffset()))
 			stack = append(stack, n)
 		case xml.CharData:
 			if len(stack) > 0 {

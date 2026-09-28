@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -85,7 +86,7 @@ func (n *node) deepCopy() *node {
 		return nil
 	}
 	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body,
-		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order)}
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order), Seps: maps.Clone(n.Seps)}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {

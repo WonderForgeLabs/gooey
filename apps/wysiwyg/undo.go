@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"slices"
 	"strconv"
 )
@@ -720,7 +721,7 @@ func (n *node) clone() *node {
 		return nil
 	}
 	c := &node{Elem: n.Elem, Space: n.Space, Body: n.Body,
-		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order)}
+		Lead: slices.Clone(n.Lead), Tail: slices.Clone(n.Tail), Order: slices.Clone(n.Order), Seps: maps.Clone(n.Seps)}
 	if n.Attrs != nil {
 		c.Attrs = make(map[string]string, len(n.Attrs))
 		for k, v := range n.Attrs {
@@ -756,7 +757,7 @@ func (n *node) clone() *node {
 // mean the same document and clone is not the only thing that builds a
 // node.
 //
-// Order IS compared, because it reaches the file: node.markup writes the
+// Order and Seps ARE compared, because they reach the file: node.markup writes the
 // attributes in it. No edit changes it today, so this never separates
 // two states an author would call the same, and it keeps a future
 // reorder undoable rather than silent.
@@ -770,7 +771,7 @@ func (n *node) equal(o *node) bool {
 	if !slices.Equal(n.Lead, o.Lead) || !slices.Equal(n.Tail, o.Tail) {
 		return false
 	}
-	if !slices.Equal(n.Order, o.Order) {
+	if !slices.Equal(n.Order, o.Order) || !maps.Equal(n.Seps, o.Seps) {
 		return false
 	}
 	if len(n.Attrs) != len(o.Attrs) {
