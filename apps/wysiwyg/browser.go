@@ -634,6 +634,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		return
 	}
 	var env map[string]string
+	var layout *node
 	// nodeOf returns the OUTERMOST element, which for a saved document is
 	// the <Gooey> envelope. The editor's document is what is inside it —
 	// the surface Canvas holds one child and that child is the user's
@@ -759,6 +760,10 @@ func (ed *editor) openWorkspaceFile(rel string) {
 		// markup.parse skips a plain xmlns outright, so moving it bought
 		// nothing but a diff on the first save of every existing file.
 		env = envelopeAttrs(n, moved)
+		// Its layout only — a copy of the whole node would keep the
+		// content root it is about to unwrap alive under a field no
+		// edit ever updates.
+		layout = &node{Order: n.Order, Seps: n.Seps}
 		// AND ITS PROPERTY ELEMENTS STAY TOO. <Gooey.Resources> is the
 		// document's style scope; unwrapping to Kids[0] dropped it, so
 		// the open blamed the first Style= that used it and the save
@@ -772,6 +777,7 @@ func (ed *editor) openWorkspaceFile(rel string) {
 	}
 	ed.root.Kids = []*node{n}
 	ed.envAttrs = env
+	ed.envLayout = layout
 	ed.envDecls = decls
 	ed.envSlots = slots
 	ed.sel = n
@@ -809,7 +815,7 @@ func (ed *editor) saveOpenFile() error {
 	if ed.ws == nil || ed.ws.dir == "" || rel == "" {
 		return nil
 	}
-	src := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envLayout, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
 	full := filepath.Join(ed.ws.dir, filepath.FromSlash(rel))
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		ed.status.Set("✗ save " + rel + ": " + err.Error())

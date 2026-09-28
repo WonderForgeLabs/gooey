@@ -69,3 +69,39 @@ func TestAWrappedTagKeepsItsShapeAtANewDepth(t *testing.T) {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// TestASaveKeepsTheEnvelopesAttributeLayout: the <Gooey> envelope is
+// not a node, so the two fixes above passed it by — its attributes
+// still came back sorted and on one line, which rewrote the first
+// line of nearly every file in the repo that set Graphics.
+func TestASaveKeepsTheEnvelopesAttributeLayout(t *testing.T) {
+	const src = `<Gooey xmlns="wonderforge.io/gooey/2026"
+       Graphics="halfblock">
+  <VStack Name="Root">
+    <Text Name="A">one</Text>
+  </VStack>
+</Gooey>
+`
+	root := t.TempDir()
+	path := filepath.Join(root, "d.gooey")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ed, _ := buildPage(t)
+	ed.setDispatcher(gooey.NewDispatcher())
+	ed.setWorkspace(root)
+	ed.openWorkspaceFile("d.gooey")
+	if !strings.HasPrefix(ed.status.Get(), "✓") {
+		t.Fatalf("the fixture does not build: %q", ed.status.Get())
+	}
+	if err := ed.saveOpenFile(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != src {
+		t.Errorf("the save changed the file:\n--- wrote\n%s--- want\n%s", b, src)
+	}
+}

@@ -2464,7 +2464,7 @@ func TestAPasteCannotRebindAPrefixTHEDECLARATIONSHold(t *testing.T) {
 			}
 			// And the saved envelope must actually bind it, or there is
 			// nothing for the paste to conflict with.
-			if head := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots); !strings.Contains(
+			if head := envelopeHead(ed.envAttrs, ed.envLayout, ed.envDecls, ed.envSlots); !strings.Contains(
 				head, `xmlns:p="`+markup.XNamespace+`"`) {
 				t.Fatalf("the saved envelope binds p: nowhere:\n%s", head)
 			}

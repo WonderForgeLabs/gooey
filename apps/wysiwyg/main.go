@@ -809,16 +809,7 @@ func (n *node) markup(indent string) string {
 		b.WriteString(commentMarkup(indent, c))
 	}
 	b.WriteString(indent + "<" + n.Elem)
-	for _, k := range n.attrKeys() {
-		sep := n.Seps[k]
-		switch {
-		case sep == "":
-			sep = " "
-		case sep[0] == '\n':
-			sep = "\n" + indent + sep[1:]
-		}
-		fmt.Fprintf(&b, "%s%s=%s", sep, k, attrValue(n.Attrs[k]))
-	}
+	n.writeAttrs(&b, indent)
 	// A body and children are mutually exclusive here: no element in the
 	// catalog takes both, and emitting both would make the body's meaning
 	// depend on where the parser happened to put it.
@@ -1125,6 +1116,23 @@ func attrSeps(src string, from, to int) map[string]string {
 
 func isXMLSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
+// writeAttrs writes n's attributes the way the source laid them out:
+// in attrKeys order, each after its node.Seps separator or one space.
+// indent is the column the tag's "<" sits at, which a wrap's relative
+// indent is added to.
+func (n *node) writeAttrs(b *strings.Builder, indent string) {
+	for _, k := range n.attrKeys() {
+		sep := n.Seps[k]
+		switch {
+		case sep == "":
+			sep = " "
+		case sep[0] == '\n':
+			sep = "\n" + indent + sep[1:]
+		}
+		fmt.Fprintf(b, "%s%s=%s", sep, k, attrValue(n.Attrs[k]))
+	}
+}
+
 // attrKeys is the order node.markup writes Attrs in: Order's names that
 // are still set, then every other name sorted. See node.Order.
 func (n *node) attrKeys() []string {
@@ -1155,10 +1163,10 @@ func (n *node) attrKeys() []string {
 // editor's document is the content root, so a declaration has nowhere
 // in the tree to live and rides with envAttrs instead, written back
 // here. Added for #517.
-func envelopeHead(attrs map[string]string, decls []*node, slots map[string]*node) string {
+func envelopeHead(attrs map[string]string, layout *node, decls []*node, slots map[string]*node) string {
 	attrs, prefix := envelopeParts(attrs, decls)
 	var b strings.Builder
-	b.WriteString(gooeyOpen(attrs))
+	b.WriteString(gooeyOpen(attrs, layout))
 	for _, d := range decls {
 		q := *d
 		q.Elem = prefix + ":" + d.Elem
@@ -1630,12 +1638,19 @@ func mintDeclPrefix(attrs map[string]string, also []map[string]string) string {
 // envelopeHead was inserted directly below this block with no blank
 // line, which also made godoc read the whole of it as envelopeHead's
 // doc and left gooeyOpen with none. Raised in review of #522.
-func gooeyOpen(attrs map[string]string) string {
+//
+// layout is the opened file's own <Gooey>, read for its Order and Seps
+// only — attrs, not layout.Attrs, is what gets written, since the
+// envelope's set is decided by envelopeParts. nil writes them sorted,
+// one space apart, which is what a document with no envelope gets.
+func gooeyOpen(attrs map[string]string, layout *node) string {
+	env := node{Attrs: attrs}
+	if layout != nil {
+		env.Order, env.Seps = layout.Order, layout.Seps
+	}
 	var b strings.Builder
 	b.WriteString("<Gooey")
-	for _, k := range sortedKeys(attrs) {
-		fmt.Fprintf(&b, " %s=%s", k, attrValue(attrs[k]))
-	}
+	env.writeAttrs(&b, "")
 	b.WriteString(">\n")
 	return b.String()
 }
@@ -2648,6 +2663,11 @@ type editor struct {
 	// and written by envelopeHead into both the build and the save.
 	// #510.
 	envSlots map[string]*node
+	// envLayout is the opened file's <Gooey> node itself, kept for the
+	// attribute Order and Seps gooeyOpen writes the envelope back in;
+	// envAttrs, not its Attrs, is what the envelope holds. nil when the
+	// file had no envelope. Assigned beside envAttrs.
+	envLayout *node
 	// seededDecls are the declared names seedDeclared most recently put
 	// into ed.docCtx.Values, so the next rebuild can take exactly those
 	// back out and no others. See seedDeclared for why the map is shared and
@@ -3876,8 +3896,8 @@ func (ed *editor) rebuild() {
 	//   full — the same document INSIDE the surface, which is the only
 	//          thing built for the preview, because the surface is what
 	//          gives everything on it free geometry.
-	src := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
-	full := envelopeHead(ed.envAttrs, ed.envDecls, ed.envSlots) + ed.root.markup("  ") + "</Gooey>\n"
+	src := envelopeHead(ed.envAttrs, ed.envLayout, ed.envDecls, ed.envSlots) + ed.doc().markup("  ") + "</Gooey>\n"
+	full := envelopeHead(ed.envAttrs, ed.envLayout, ed.envDecls, ed.envSlots) + ed.root.markup("  ") + "</Gooey>\n"
 	ed.source.Set(src)
 	ed.treeText.Set(ed.outline())
 	// Dropped up front, on every path: from here until the swap below
