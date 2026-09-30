@@ -133,8 +133,13 @@ func (ed *editor) pushRemote(src string) {
 		// The target rejected it. This is the normal case while editing
 		// and must never disturb what is already on its screen.
 		ed.status.Set("✗ " + loadErr)
+		ed.sayBuildErr(loadErr)
 		return
 	}
+	// The target accepted the document, so it has no build problem to
+	// report whatever the patch below does: a patch that fails is a
+	// transport fault, said in the status bar and not about the file.
+	ed.sayBuildErr("")
 	named, err := t.r.Patch(ctx, t.island, frag)
 	if err != nil {
 		ed.status.Set("✗ patch: " + err.Error())

@@ -259,7 +259,11 @@ func companionDir(e Element, ctx *Context, name string) (string, error) {
 // Both checks are stats. Neither creates nor truncates anything, which is
 // what keeps the "a failed load never destroys a log" invariant intact.
 func companionLog(e Element, ctx *Context, name string) (string, error) {
-	raw := strings.TrimSpace(e.Attrs["Log"])
+	raw, err := litString(e, "Log")
+	if err != nil {
+		return "", err
+	}
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", nil // CompanionCmd's default: os.DevNull
 	}

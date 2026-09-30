@@ -820,6 +820,27 @@ func (p *valueEditor) Write(v string) {
 	if target == nil || p.name == "" {
 		return
 	}
+	// THE REVERT, the seventh copy of the shape insertSubtree, addSelected,
+	// duplicate, move and drag already share: a value the loader refuses
+	// leaves docRoot nil, which kills click-to-select for the whole
+	// document while the old preview stays on screen looking pressable —
+	// and the NEXT insert's backstop then named that insert as the
+	// failure. #531.
+	//
+	// ONLY WHEN THE DOCUMENT BUILT BEFORE THIS WRITE, which is the one way
+	// this seam differs from the other six. They insert into a document
+	// that builds; this pane is also how an author FIXES one that does
+	// not — a file opened with a bad value — and reverting every write
+	// against an already-broken build would refuse the very edit that
+	// repairs it.
+	built := p.ed.remote != nil || p.ed.docRoot != nil
+	var old string
+	var had bool
+	if p.body {
+		old, had = target.Body, true
+	} else {
+		old, had = target.Attrs[p.name]
+	}
 	switch {
 	case p.body:
 		target.Body = v
@@ -829,6 +850,30 @@ func (p *valueEditor) Write(v string) {
 		target.Attrs[p.name] = v
 	}
 	p.ed.rebuild()
+	if built && p.ed.remote == nil && p.ed.docRoot == nil {
+		refused := strings.TrimPrefix(p.ed.status.Get(), "✗ ")
+		// EXACTLY WHAT WAS THERE, which is not the forward write's rule:
+		// that one reads "" as "delete", and an attribute the file held
+		// as Content="" would come back deleted. Raised in review of #569.
+		switch {
+		case p.body:
+			target.Body = old
+		case had:
+			target.Attrs[p.name] = old
+		default:
+			delete(target.Attrs, p.name)
+		}
+		// BEFORE the rebuild, as at the other six: the refused write must
+		// not stay on the undo stack, or one ctrl+z re-enters the state
+		// this revert exists to prevent.
+		p.ed.abortHistory()
+		p.ed.rebuild()
+		name := p.name
+		if p.body {
+			name = "its body"
+		}
+		p.ed.status.Set("✗ " + name + " on <" + target.Elem + "> was not changed: " + refused)
+	}
 }
 
 func indexOf(list []string, v string) int {

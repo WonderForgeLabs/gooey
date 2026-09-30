@@ -94,26 +94,19 @@ func TestEveryBindableAttributeReallyBinds(t *testing.T) {
 // in prose is a sample, and the list is the thing that is true.
 // unseedable's own comment already reads this way.
 //
-// Measured, on an entry that is still in the list: <ButtonBar> renders
-// differently with Separator set than without it, and with
-// Separator="{{.S}}" it renders as NEITHER — the template text reaches
-// the consumer verbatim. Validate.Pattern is the same shape. That is
-// what "the binding is not honoured" means here, and
-// TestABoundValueActuallyArrives is where each entry's evidence lives,
-// derived from the same list rather than hardcoded beside it.
-//
-// That class is issue #488 and is NOT fixed here: refusing a binding at
-// load time is a behaviour change across every remaining entry and
-// belongs in its own commit. What this test does is stop the LIST
-// growing — every remaining offender is named in silentlyBindable below,
-// so a new one cannot arrive quietly, and closing #488 means deleting
-// entries rather than discovering them.
+// That class is issue #488, and its list is empty: see silentlyBindable
+// for how each entry went. What this test does now is stop a NEW one
+// arriving quietly — an attribute that declares BindsLiteral and loads a
+// `{{.S}}` is red here until it is either refused, honoured with its
+// spec corrected, or named in the list with its evidence, which
+// TestABoundValueActuallyArrives then measures.
 func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 	known := map[string]bool{}
 	for _, s := range silentlyBindable {
 		known[s] = true
 	}
 	seen := map[string]bool{}
+	refused := 0
 	var offHarness []string
 	for _, a := range literalAttrs(t) {
 		name := a.el + "." + a.attr.Name
@@ -134,6 +127,7 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 		src := bindsHarness(t, a, a.attr.Name, "{{.S}}")
 		_, err := Build([]byte("<Gooey>"+src+"</Gooey>"), bindsContext())
 		if err != nil {
+			refused++
 			if known[name] {
 				t.Errorf("%s is listed in silentlyBindable and now REFUSES a "+
 					"binding — the defect is fixed, so delete the entry "+
@@ -157,10 +151,13 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 	// a renamed element, a probe that stopped building, a harness that
 	// started erroring for an unrelated reason all look the same from
 	// here.
-	if len(seen) == 0 {
-		t.Fatal("no literal-only attribute accepted a binding, so either " +
-			"#488 is fixed — in which case empty silentlyBindable and delete " +
-			"this arm — or the probe stopped reaching the loader")
+	//
+	// With the list empty (#488 closed) "something accepted a binding"
+	// is no longer the signal; "the probe reached the loader at all" is,
+	// and a refusal is the loader answering.
+	if len(seen) == 0 && refused == 0 {
+		t.Fatal("no literal-only attribute either accepted or refused a " +
+			"binding, so the probe stopped reaching the loader")
 	}
 	for _, s := range silentlyBindable {
 		if !seen[s] {
@@ -184,86 +181,37 @@ func TestALiteralOnlyAttributeIsNotSilentlyBindable(t *testing.T) {
 }
 
 // silentlyBindable is the measured set of attributes that accept a
-// binding and drop it: issue #488. Not a suppression — the test above
-// fails BOTH ways, so an entry that gets fixed must be deleted and one
-// that appears must be added deliberately.
+// binding and do not honour it: issue #488. Not a suppression — the test
+// above fails BOTH ways, so an entry that gets fixed must be deleted and
+// one that appears must be added deliberately.
 //
-// NINE OF THE ELEVEN ARE GONE, and they went the other way than this
-// list expected. #470 swept `e.Attrs["X"] == "true"` and its integer
-// twin into litBool/litInt, which make an unreadable value a LOAD ERROR
-// — so ButtonBar.Gap, ButtonBar.Uniform, Gauge.BarWidth, HStack.Gap,
-// ProgressBar.BarWidth, ProgressBar.Thresholds, Sparkline.BarWidth,
-// Text.Bold and VStack.Gap now REFUSE `{{.S}}` rather than honouring
-// it. Refusing is the better half of #488's "decide which": a binding
-// the catalog says is not a binding should not load, and honouring it
-// would have made BindsLiteral a lie in the other direction. Deleting
-// the nine is what the test above demands, and it is why it demands
-// it: a note about a bug that is gone spends the attention that would
-// find the next one.
+// IT IS EMPTY, and kept as the mechanism rather than deleted: a new
+// BindsLiteral attribute that accepts a binding is red in
+// TestALiteralOnlyAttributeIsNotSilentlyBindable until it is named here.
+// #488's entries went three ways:
 //
-// TWO OF #488's ORIGINAL ELEVEN REMAIN — TypeAhead.Key, which reads a
-// rune, and ButtonBar.Separator, which reads a string. Neither litBool
-// nor litInt can refuse either, because every spelling of a rune or a
-// string is a readable value.
+//   - the ints and bools (Gap, BarWidth, Uniform, Thresholds, Text.Bold)
+//     went through litInt/litBool in #470, whose grammars refuse `{{.S}}`;
+//   - the strings had no grammar to fail — ButtonBar.Separator,
+//     Companion.Log, TypeAhead.Key, Validate.Message, Validate.Pattern —
+//     and now read through litString, which refuses `{{`;
+//   - Validate.Compare was never dropped: it NAMES a property and honours
+//     both spellings (comparePath), so its spec was the lie, and it is
+//     BindsEither now.
 //
-// Companion.Log is the third name in the list below and is NOT one of
-// the eleven. It arrived the same way the Validate entries did — the
-// harness reaching further, rather than anything changing in the loader
-// — and it is a string for the same reason the other two survive. It is
-// named here rather than left to arithmetic: the lead-in said "of
-// #488's original eleven, two remain plus one" and then gave three
-// names, leaving the reader to work out which was the extra and where
-// it came from, one paragraph above a block added to stop exactly
-// that.
-//
-// THOSE THREE ARE NOT THE LENGTH OF silentlyBindable, and the sentence
-// this replaced said "the ones that remain" against a list holding six.
-// The other three are the Validate entries, which did not survive
-// #488's eleven — they arrived afterwards, from the harness reaching
-// further rather than from anything changing in the loader, and carry
-// their own justification at the list. A count scoped to one history,
-// read as a count of the list, is the shape this file's own doc argues
-// a reader should not have to reconstruct. Raised in review of #490.
-//
-// "DROP IT" IS TOO NARROW A NAME FOR WHAT THEY DO. Measured on
-// ButtonBar.Separator, whose three states are visible on the row:
+// "NOT HONOURED" RATHER THAN "DROPPED", which is what the next entry
+// will need to know. Measured on ButtonBar.Separator before the fix:
 //
 //	<ButtonBar>                    "[ a ][ b ]"
 //	<ButtonBar Separator="x">      "[ a ] x [ b ]"
 //	<ButtonBar Separator="{{.S}}"> "[ a ] { [ b ]"
 //
-// The binding is not honoured and not dropped — the template text is
-// taken verbatim and then cut to the separator's one column, so the
-// page gets a stray brace. Whether an attribute drops the value or
-// paints a fragment of the template is a detail of the consumer; the
-// defect this list tracks is the one thing they share, that a document
-// the catalog says cannot bind is accepted as if it could.
-var silentlyBindable = []string{
-	"TypeAhead.Key",
-	"ButtonBar.Separator",
-	"Companion.Log",
-
-	// FOUND BY THE HARNESS REACHING FURTHER, not by anything changing in
-	// the loader. bindsHarness sent every attachment to an <ItemsView>
-	// host, which refuses <Validate> — so all seventeen of its
-	// attributes read as unreachable, and the literal-only sweep dropped
-	// unreachable names on the floor without saying so. Routing that
-	// sweep through offHarness (review of #490) made the gap loud, and
-	// dropping that host in favour of harnessFor's own put <Validate> on
-	// the input element it belongs to. These three were always in the
-	// #488 class; they were behind a harness gap, which is the failure
-	// mode the offHarness report exists to prevent.
-	//
-	// Pattern is the one with evidence on the cell plane, and getting it
-	// took fixing the instrument: see TestABoundValueActuallyArrives,
-	// which reported it as HONOURING its binding until the arm it
-	// compares against became the handle's own value. Compare and
-	// Message paint nothing either way here, so for those two the claim
-	// is the loader's acceptance and not a rendering.
-	"Validate.Compare",
-	"Validate.Message",
-	"Validate.Pattern",
-}
+// The template text was taken verbatim and cut to one column. Whether an
+// attribute drops the value or paints a fragment of the template is a
+// detail of the consumer; what an entry here shares with the rest is
+// that a document the catalog says cannot bind is accepted as if it
+// could.
+var silentlyBindable []string
 
 // unseedable is every element probeElement cannot construct, with the
 // reason: AttrSpec.Required does not match what the loader actually
@@ -622,7 +570,45 @@ func TestABoundValueActuallyArrives(t *testing.T) {
 		}
 	}
 
-	if observed == 0 {
+	// THE CONTROL ARM, which keeps the instrument honest while the list
+	// is empty. A known-BINDABLE attribute goes through the same harness
+	// and the same three shots, and must come out the way an honoured
+	// binding does: the bound arm paints like the literal holding the
+	// handle's value, and unlike absence. If the harness rots — the
+	// probe stops binding, the shots stop differing — this goes red
+	// instead of the next #488-class entry being measured by a broken
+	// ruler. Raised in review of #569.
+	var control *attrProbe
+	for _, a := range bindableAttrs(t) {
+		if a.el == "Button" && a.attr.Name == "Content" {
+			control = &a
+			break
+		}
+	}
+	if control == nil {
+		t.Fatal("the control attribute <Button Content> is no longer declared " +
+			"bindable; pick another painted BindsEither text attribute")
+	}
+	cAbsent, err1 := shot(t, bindsHarness(t, *control, "", ""))
+	cHeld, err2 := shot(t, bindsHarness(t, *control, "Content", held))
+	cBound, err3 := shot(t, bindsHarness(t, *control, "Content", "{{.S}}"))
+	if err1 != nil || err2 != nil || err3 != nil {
+		t.Fatalf("the control <Button Content> does not build: %v / %v / %v", err1, err2, err3)
+	}
+	if _, _, d := cellsDiffer(cHeld, cBound); d {
+		t.Error("the control <Button Content=\"{{.S}}\"> paints differently from " +
+			"the literal it holds: the harness no longer measures an honoured binding")
+	}
+	if _, _, d := cellsDiffer(cAbsent, cBound); !d {
+		t.Error("the control <Button Content=\"{{.S}}\"> paints like its absence: " +
+			"the harness cannot see a bound value arrive")
+	}
+
+	// NOTHING TO MEASURE is not the fixture failing: with the list empty
+	// there is no accepted binding whose arrival could be checked, and a
+	// new one reaches this test only after the sweep above makes it name
+	// itself.
+	if observed == 0 && len(silentlyBindable) > 0 {
 		// FATAL, NOT SKIPPED, and the message above always said why: a
 		// fixture that can measure nothing is not a case this build
 		// cannot run, it is this test having stopped working. A skip is

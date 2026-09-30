@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/WonderForgeLabs/gooey"
 	"github.com/WonderForgeLabs/gooey/components"
 	"github.com/WonderForgeLabs/gooey/render"
 )
@@ -156,9 +157,9 @@ func TestShortPathFitsTheColumnsItWasGiven(t *testing.T) {
 	// at or past its cut column, and when the trailing cluster was wider
 	// than w-1 there was no such cluster, so the walk ran off the end and
 	// kept the last one anyway. shortPath("a/世世", 2) answered "…世" —
-	// three columns for a two-column budget. Nothing in the shipped app
-	// passes a width this small (fileRow always passes browserNameCols),
-	// which is exactly why the loop has to: this is the one function in
+	// three columns for a two-column budget. The explorer arranges it at
+	// the pane's live width, which a narrowed pane makes small (#528),
+	// and the loop goes this far regardless: this is the one function in
 	// the package whose entire job is the bound. Found in review of #524.
 	for _, w := range []int{30, 26, 24, 4, 3, 2, 1} {
 		got := shortPath(p, w)
@@ -182,29 +183,36 @@ func TestShortPathFitsTheColumnsItWasGiven(t *testing.T) {
 	}
 }
 
-// TestAFileRowFitsTheBudgetTheBrowserGaveIt goes through the SHIPPED call
-// rather than the helper: fileRow is what the item template reads, and
-// the 30 it passes is the budget the explorer column was built around.
-// A file system supplies these names, so unlike every other caller in
+// TestAPathRowFitsTheWidthItWasArranged goes through the SHIPPED
+// component rather than the helper: <PathText> is what the explorer's
+// item template paints, and it shortens against its ARRANGED width. A
+// file system supplies these names, so unlike every other caller in
 // this file this one cannot choose its own characters.
-func TestAFileRowFitsTheBudgetTheBrowserGaveIt(t *testing.T) {
+func TestAPathRowFitsTheWidthItWasArranged(t *testing.T) {
+	const w = 30
 	p := "apps/" + strings.Repeat(wideWord, 3) + "/" + strings.Repeat(wideWord, 3) + ".gooey"
-	if len([]rune(p)) > browserNameCols {
-		t.Fatalf("the fixture is %d runes against a %d-cell budget, so a rune count would "+
-			"shorten it too and this measures nothing", len([]rune(p)), browserNameCols)
+	if len([]rune(p)) > w {
+		t.Fatalf("the fixture is %d runes against %d cells, so a rune count would "+
+			"shorten it too and this measures nothing", len([]rune(p)), w)
 	}
-	if render.StringWidth(p) <= browserNameCols {
-		t.Fatalf("the fixture is %d columns against a %d-cell budget: it fits, so there is "+
-			"no overrun to find", render.StringWidth(p), browserNameCols)
+	if render.StringWidth(p) <= w {
+		t.Fatalf("the fixture is %d columns against %d cells: it fits, so there is "+
+			"no overrun to find", render.StringWidth(p), w)
 	}
-	name, _ := fileRow(p)["Name"].(string)
-	if n := render.StringWidth(name); n > browserNameCols {
-		t.Errorf("the explorer row for %q reads %q, %d columns wide, against the %d the "+
-			"item template was budgeted. The path is %d runes and %d columns, so a rune "+
-			"count reports it as fitting a slot it overruns and the TAIL — the part "+
-			"shortPath exists to keep — is what the clip then takes.",
-			p, name, n, browserNameCols, len([]rune(p)), render.StringWidth(p))
+	got := paintPath(t, p, w)
+	if !strings.HasSuffix(strings.TrimRight(got, " "), ".gooey") {
+		t.Errorf("the row for %q painted %q at %d cells: the TAIL — the part shortPath "+
+			"exists to keep — is what went", p, got, w)
 	}
+}
+
+// paintPath paints <PathText> for p arranged w cells wide and reads the
+// row back.
+func paintPath(t *testing.T, p string, w int) string {
+	t.Helper()
+	c := gooey.NewComposer(&pathText{path: components.Str(p)}, w, 1)
+	f, _ := c.Frame()
+	return render.RowText(f.Cells, 0)
 }
 
 // TestTheContextMenuIsSizedForItsWidestItem. menuRect answers the popup's

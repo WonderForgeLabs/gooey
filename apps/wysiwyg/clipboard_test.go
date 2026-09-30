@@ -68,8 +68,9 @@ func names(ed *editor) []string {
 
 func TestDeepCopySharesNothing(t *testing.T) {
 	src := &node{Elem: "VStack", Attrs: map[string]string{"Name": "V1"},
-		Kids:  []*node{{Elem: "Text", Body: "hi", Attrs: map[string]string{"Name": "T1"}}},
-		Slots: map[string]*node{"ItemTemplate": {Elem: "Text", Attrs: map[string]string{"Name": "Tpl"}}}}
+		Kids: []*node{{Elem: "Text", Body: "hi", Attrs: map[string]string{"Name": "T1"}}},
+		Slots: map[string]*node{"ItemTemplate": {Elem: "VStack.ItemTemplate",
+			Kids: []*node{{Elem: "Text", Attrs: map[string]string{"Name": "Tpl"}}}}}}
 
 	c := src.deepCopy()
 	if c.Slots["ItemTemplate"] == nil {
@@ -80,7 +81,7 @@ func TestDeepCopySharesNothing(t *testing.T) {
 	}
 	c.Attrs["Name"] = "changed"
 	c.Kids[0].Body = "changed"
-	c.Slots["ItemTemplate"].Attrs["Name"] = "changed"
+	c.Slots["ItemTemplate"].Kids[0].Attrs["Name"] = "changed"
 
 	if src.Attrs["Name"] != "V1" {
 		t.Error("editing the copy's Attrs changed the original")
@@ -88,7 +89,7 @@ func TestDeepCopySharesNothing(t *testing.T) {
 	if src.Kids[0].Body != "hi" {
 		t.Error("editing the copy's child changed the original")
 	}
-	if src.Slots["ItemTemplate"].Attrs["Name"] != "Tpl" {
+	if src.Slots["ItemTemplate"].Kids[0].Attrs["Name"] != "Tpl" {
 		t.Error("editing the copy's SLOT changed the original")
 	}
 }
@@ -100,13 +101,14 @@ func TestDeepCopySharesNothing(t *testing.T) {
 // succeeds, the element builds, and its template is simply gone.
 func TestDeepCopyCarriesSlots(t *testing.T) {
 	src := &node{Elem: "ItemsView", Attrs: map[string]string{"Name": "I1"},
-		Slots: map[string]*node{"ItemTemplate": {Elem: "Text", Body: "{{.Label}}"}}}
+		Slots: map[string]*node{"ItemTemplate": {Elem: "ItemsView.ItemTemplate",
+			Kids: []*node{{Elem: "Text", Body: "{{.Label}}"}}}}}
 	c := src.deepCopy()
-	if c.Slots == nil || c.Slots["ItemTemplate"] == nil {
+	if c.Slots == nil || c.Slots["ItemTemplate"] == nil || len(c.Slots["ItemTemplate"].Kids) != 1 {
 		t.Fatal("the copy lost its ItemTemplate slot")
 	}
-	if c.Slots["ItemTemplate"].Body != "{{.Label}}" {
-		t.Errorf("slot body = %q, want the original's", c.Slots["ItemTemplate"].Body)
+	if got := c.Slots["ItemTemplate"].Kids[0].Body; got != "{{.Label}}" {
+		t.Errorf("slot body = %q, want the original's", got)
 	}
 	// And the serialization agrees, which is what a save and the system
 	// clipboard both go through.
