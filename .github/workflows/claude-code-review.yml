@@ -202,7 +202,7 @@ jobs:
         # put the previous review back over that placeholder too, and
         # merge-gate fails closed on "review did not complete".
         timeout-minutes: 30
-        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1 (Claude Code 2.1.314)
         env:
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
         with:
@@ -859,7 +859,7 @@ jobs:
         if: >-
           !cancelled() && steps.ctx.outputs.force_pass != 'true' && github.actor != 'dependabot[bot]' &&
           !(steps.ctx.outputs.mode == 'recheck' && github.event.action == 'labeled')
-        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1 (Claude Code 2.1.314)
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally
@@ -1008,7 +1008,7 @@ jobs:
         # a real verdict, a genuine evaluator failure, a skip — is left alone, so
         # this can never turn a fail-closed into a second chance at passing.
         if: ${{ !cancelled() && steps.gate_triage.outputs.retry == 'true' }}
-        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1 (Claude Code 2.1.314)
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally
