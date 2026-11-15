@@ -202,7 +202,7 @@ jobs:
         # put the previous review back over that placeholder too, and
         # merge-gate fails closed on "review did not complete".
         timeout-minutes: 30
-        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1 (Claude Code 2.1.314)
         env:
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
         with:
@@ -358,6 +358,76 @@ jobs:
             [pr-review-summary]: #
 
             Do NOT create GitHub issues — use the `claude-make-follow-up-issues` label on the PR to trigger follow-up issue creation separately.
+
+      # When the review dies, the log says only `result is_error:true`. The
+      # action relays the SDK's result record without its error text, this job
+      # uploads no artifact, and the runner is reclaimed — so the text is gone
+      # by the time anyone looks. forge#3505 was triaged for six weeks on the
+      # record's SHAPE (turns, cost, billed models) for exactly that reason,
+      # and the shape cannot tell a rejected model id from a quota refusal
+      # from an upstream fault. This prints the record the action already
+      # wrote, so the next death names its own cause.
+      #
+      # Diagnostic only, and `continue-on-error` deliberately: whether the PR
+      # is mergeable is decided by `merge-gate` from `pr-review`'s outcome,
+      # and a missing or unparseable execution file must never be the thing
+      # that changes that verdict. A *reporting* step that can fail a required
+      # check is a worse bug than the opacity it fixes.
+      #
+      # Runs only when the review FAILED. On a completed run `.result` is the
+      # agent's entire review text, which belongs in the sticky comment and
+      # not in every green log.
+      #
+      # Uses `jq` alone, no `scripts/ci/` helper: vendored consumers (gooey,
+      # claude-plugins) run this jobs: block against THEIR checkout, which has
+      # none of forge's scripts — the same constraint the restore step below
+      # handles by skipping (#3342). It therefore duplicates a little of
+      # `.github/actions/label-on-agent-failure/check.sh`, which cannot be
+      # reused here for two independent reasons: a consumer's checkout has no
+      # copy of it, and it exits 1 on `is_error`, which would red this job and
+      # pre-empt the gate.
+      - name: Explain a failed code review
+        if: always() && steps.review.outcome == 'failure'
+        continue-on-error: true
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${EXECUTION_FILE:-}" ] || [ ! -f "${EXECUTION_FILE}" ]; then
+            echo "::warning::The review failed and left no execution file (\"${EXECUTION_FILE:-}\"), so the SDK's error text cannot be recovered from this run. A step timeout, or any kill before the action writes the file, leaves this shape."
+            exit 0
+          fi
+
+          echo "Execution file: ${EXECUTION_FILE} ($(wc -c < "${EXECUTION_FILE}") bytes)"
+
+          # Both shapes the action has been seen to write: a JSON array of SDK
+          # messages, and newline-delimited records. `jq` consumes a stream of
+          # values, so expanding an array and passing a bare record through
+          # covers either without having to detect which one this is.
+          if ! records="$(jq -c 'if type == "array" then .[] else . end' "${EXECUTION_FILE}")"; then
+            echo "::warning::The execution file is not parseable as JSON; leaving it unread rather than guessing at its shape."
+            exit 0
+          fi
+
+          result="$(printf '%s\n' "${records}" | jq -c 'select(.type == "result")' | tail -n1)"
+          if [ -z "${result}" ]; then
+            echo "::warning::The execution file carries no type=result record, so this run's own status is unknown even from the file."
+            exit 0
+          fi
+
+          echo "--- SDK result record (diagnostic; forge#3505) ---"
+          printf '%s\n' "${result}" | jq -r '
+            "subtype=\(.subtype // "?") is_error=\(.is_error // "?") duration_ms=\(.duration_ms // "?") num_turns=\(.num_turns // "?") total_cost_usd=\(.total_cost_usd // "?")",
+            "modelUsage=\((.modelUsage // {}) | tostring)",
+            (([.result?, .error?] + ((.errors? // []) | if type == "array" then . else [.] end))
+             | map(select(. != null) | tostring)
+             | join("\n")
+             | if . == "" then
+                 "(no error text: the record carries nothing under .result, .error or .errors — that absence is itself the finding, see forge#3505)"
+               else .[0:4000] end)
+          ' || echo "(could not read error text out of the result record)"
+          echo "--- end SDK result record ---"
 
       # `cancelled()` is only defined in `if:`, so the restore step below cannot
       # read it inline; this records it as an output for that step's
@@ -789,7 +859,7 @@ jobs:
         if: >-
           !cancelled() && steps.ctx.outputs.force_pass != 'true' && github.actor != 'dependabot[bot]' &&
           !(steps.ctx.outputs.mode == 'recheck' && github.event.action == 'labeled')
-        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1 (Claude Code 2.1.314)
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally
@@ -938,7 +1008,7 @@ jobs:
         # a real verdict, a genuine evaluator failure, a skip — is left alone, so
         # this can never turn a fail-closed into a second chance at passing.
         if: ${{ !cancelled() && steps.gate_triage.outputs.retry == 'true' }}
-        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1 (Claude Code 2.1.314)
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # allowed_bots must match pr-review's list (dependabot[bot] intentionally
