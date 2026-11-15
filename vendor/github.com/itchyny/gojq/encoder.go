@@ -2,11 +2,12 @@ package gojq
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"math/big"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -15,12 +16,12 @@ import (
 // Marshal returns the jq-flavored JSON encoding of v.
 //
 // This method accepts only limited types (nil, bool, int, float64, *big.Int,
-// string, []any, and map[string]any) because these are the possible types a
-// gojq iterator can emit. This method marshals NaN to null, truncates
-// infinities to (+|-) math.MaxFloat64, uses \b and \f in strings, and does not
-// escape '<', '>', '&', '\u2028', and '\u2029'. These behaviors are based on
-// the marshaler of jq command, and different from json.Marshal in the Go
-// standard library. Note that the result is not safe to embed in HTML.
+// json.Number, string, []any, and map[string]any) because these are the
+// possible types a gojq iterator can emit. This method marshals NaN to null,
+// truncates infinities to (+|-) math.MaxFloat64, uses \b and \f in strings,
+// and does not escape '<', '>', '&', '\u2028', and '\u2029'. These behaviors
+// are based on the marshaler of jq command, and different from json.Marshal in
+// the Go standard library. Note that the result is not safe to embed in HTML.
 func Marshal(v any) ([]byte, error) {
 	var b bytes.Buffer
 	(&encoder{w: &b}).encode(v)
@@ -62,6 +63,8 @@ func (e *encoder) encode(v any) {
 		e.encodeFloat64(v)
 	case *big.Int:
 		e.w.Write(v.Append(e.buf[:0], 10))
+	case json.Number:
+		e.w.WriteString(v.String())
 	case string:
 		e.encodeString(v)
 	case []any:
@@ -174,8 +177,8 @@ func (e *encoder) encodeObject(vs map[string]any) {
 		kvs[i] = keyVal{k, v}
 		i++
 	}
-	sort.Slice(kvs, func(i, j int) bool {
-		return kvs[i].key < kvs[j].key
+	slices.SortFunc(kvs, func(x, y keyVal) int {
+		return strings.Compare(x.key, y.key)
 	})
 	for i, kv := range kvs {
 		if i > 0 {

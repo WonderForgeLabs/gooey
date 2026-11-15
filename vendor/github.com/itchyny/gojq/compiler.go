@@ -1,12 +1,14 @@
 package gojq
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type compiler struct {
@@ -15,11 +17,13 @@ type compiler struct {
 	variables     []string
 	customFuncs   map[string]function
 	inputIter     Iter
+	inputMu       sync.Mutex
 	codes         []*code
 	codeinfos     []codeinfo
 	builtinScope  *scopeinfo
 	scopes        []*scopeinfo
 	scopecnt      int
+	regexpCache   sync.Map
 }
 
 // Code is a compiled jq query.
@@ -34,7 +38,6 @@ type Code struct {
 // a result iterator.
 //
 // It is safe to call this method in goroutines, to reuse a compiled [*Code].
-// But for arguments, do not give values sharing same data between goroutines.
 func (c *Code) Run(v any, values ...any) Iter {
 	return c.RunWithContext(context.Background(), v, values...)
 }
@@ -46,10 +49,7 @@ func (c *Code) RunWithContext(ctx context.Context, v any, values ...any) Iter {
 	} else if len(values) < len(c.variables) {
 		return NewIter(&expectedVariableError{c.variables[len(values)]})
 	}
-	for i, v := range values {
-		values[i] = normalizeNumbers(v)
-	}
-	return newEnv(ctx).execute(c, normalizeNumbers(v), values...)
+	return newEnv(ctx).execute(c, v, values...)
 }
 
 type scopeinfo struct {
@@ -133,18 +133,13 @@ func (c *compiler) compile(q *Query) error {
 }
 
 func (c *compiler) compileImport(i *Import) error {
-	var path, alias string
-	var err error
-	if i.ImportPath != "" {
-		path, alias = i.ImportPath, i.ImportAlias
-	} else {
-		path = i.IncludePath
-	}
+	path, alias := cmp.Or(i.ImportPath, i.IncludePath), i.ImportAlias
 	if c.moduleLoader == nil {
 		return fmt.Errorf("cannot load module: %q", path)
 	}
 	if strings.HasPrefix(alias, "$") {
 		var vals any
+		var err error
 		if moduleLoader, ok := c.moduleLoader.(interface {
 			LoadJSONWithMeta(string, map[string]any) (any, error)
 		}); ok {
@@ -160,7 +155,6 @@ func (c *compiler) compileImport(i *Import) error {
 		} else {
 			return fmt.Errorf("module not found: %q", path)
 		}
-		vals = normalizeNumbers(vals)
 		c.append(&code{op: oppush, v: vals})
 		c.append(&code{op: opstore, v: c.pushVariable(alias)})
 		c.append(&code{op: oppush, v: vals})
@@ -168,6 +162,7 @@ func (c *compiler) compileImport(i *Import) error {
 		return nil
 	}
 	var q *Query
+	var err error
 	if moduleLoader, ok := c.moduleLoader.(interface {
 		LoadModuleWithMeta(string, map[string]any) (*Query, error)
 	}); ok {
@@ -379,28 +374,16 @@ func (c *compiler) compileQuery(e *Query) error {
 			return err
 		}
 	}
-	if e.Func != "" {
-		switch e.Func {
-		case ".":
-			return c.compileTerm(&Term{Type: TermTypeIdentity})
-		case "..":
-			return c.compileTerm(&Term{Type: TermTypeRecurse})
-		case "null":
-			return c.compileTerm(&Term{Type: TermTypeNull})
-		case "true":
-			return c.compileTerm(&Term{Type: TermTypeTrue})
-		case "false":
-			return c.compileTerm(&Term{Type: TermTypeFalse})
-		default:
-			return c.compileFunc(&Func{Name: e.Func})
-		}
-	} else if e.Term != nil {
+	if e.Term != nil {
 		return c.compileTerm(e.Term)
 	}
 	switch e.Op {
 	case Operator(0):
 		return errors.New(`missing query (try ".")`)
 	case OpPipe:
+		if len(e.Patterns) > 0 {
+			return c.compileBind(e.Left, e.Right, e.Patterns)
+		}
 		if err := c.compileQuery(e.Left); err != nil {
 			return err
 		}
@@ -529,7 +512,7 @@ func (c *compiler) compileQueryUpdate(l, r *Query, op Operator) error {
 							Name: op.getFunc(),
 							Args: []*Query{
 								{Term: &Term{Type: TermTypeIdentity}},
-								{Func: name},
+								{Term: &Term{Type: TermTypeFunc, Func: &Func{Name: name}}},
 							},
 						},
 					}},
@@ -539,48 +522,78 @@ func (c *compiler) compileQueryUpdate(l, r *Query, op Operator) error {
 	}
 }
 
-func (c *compiler) compileBind(e *Term, b *Bind) error {
+func (c *compiler) compileBind(l, r *Query, patterns []*Pattern) error {
 	defer c.newScopeDepth()()
 	c.append(&code{op: opdup})
 	c.append(&code{op: opexpbegin})
-	if err := c.compileTerm(e); err != nil {
+	if err := c.compileQuery(l); err != nil {
 		return err
 	}
+	return c.compilePatterns(patterns, func() error {
+		if len(patterns) == 1 && c.codes[len(c.codes)-2].op == opexpbegin {
+			c.codes[len(c.codes)-2].op = opnop
+		} else {
+			c.append(&code{op: opexpend})
+		}
+		return c.compileQuery(r)
+	})
+}
+
+func (c *compiler) compilePatterns(patterns []*Pattern, body func() error) error {
 	var pc int
 	var vs [][2]int
-	for i, p := range b.Patterns {
+	if len(patterns) > 1 {
+		for _, p := range patterns {
+			vs = c.pushPatternVariables(vs, p)
+		}
+	}
+	for i, p := range patterns {
 		var pcc int
-		var err error
-		if i < len(b.Patterns)-1 {
+		if i < len(patterns)-1 {
 			defer c.lazy(func() *code {
 				return &code{op: opforkalt, v: pcc}
 			})()
 		}
-		if 0 < i {
-			for _, v := range vs {
-				c.append(&code{op: oppush, v: nil})
-				c.append(&code{op: opstore, v: v})
-			}
+		for _, v := range vs {
+			c.append(&code{op: oppush, v: nil})
+			c.append(&code{op: opstore, v: v})
 		}
-		if vs, err = c.compilePattern(vs[:0], p); err != nil {
+		if _, err := c.compilePattern(nil, p); err != nil {
 			return err
 		}
-		if i < len(b.Patterns)-1 {
+		if i < len(patterns)-1 {
 			defer c.lazy(func() *code {
 				return &code{op: opjump, v: pc}
 			})()
 			pcc = len(c.codes)
 		}
 	}
-	if len(b.Patterns) > 1 {
+	if len(patterns) > 1 {
 		pc = len(c.codes)
 	}
-	if len(b.Patterns) == 1 && c.codes[len(c.codes)-2].op == opexpbegin {
-		c.codes[len(c.codes)-2].op = opnop
-	} else {
-		c.append(&code{op: opexpend})
+	return body()
+}
+
+func (c *compiler) pushPatternVariables(vs [][2]int, p *Pattern) [][2]int {
+	if p.Name != "" {
+		if v := c.pushVariable(p.Name); !slices.Contains(vs, v) {
+			vs = append(vs, v)
+		}
+	} else if len(p.Array) > 0 {
+		for _, p := range p.Array {
+			vs = c.pushPatternVariables(vs, p)
+		}
+	} else if len(p.Object) > 0 {
+		for _, kv := range p.Object {
+			if kv.Key != "" && kv.Key[0] == '$' {
+				vs = c.pushPatternVariables(vs, &Pattern{Name: kv.Key})
+			}
+			if kv.Val != nil {
+				vs = c.pushPatternVariables(vs, kv.Val)
+			}
+		}
 	}
-	return c.compileQuery(b.Body)
+	return vs
 }
 
 func (c *compiler) compilePattern(vs [][2]int, p *Pattern) ([][2]int, error) {
@@ -740,17 +753,19 @@ func (c *compiler) compileReduce(e *Reduce) error {
 	if err := c.compileQuery(e.Query); err != nil {
 		return err
 	}
-	if _, err := c.compilePattern(nil, e.Pattern); err != nil {
+	if err := c.compilePatterns(e.Patterns, func() error {
+		c.append(&code{op: opload, v: v})
+		f := c.newScopeDepth()
+		if err := c.compileQuery(e.Update); err != nil {
+			return err
+		}
+		f()
+		c.append(&code{op: opstore, v: v})
+		c.append(&code{op: opbacktrack})
+		return nil
+	}); err != nil {
 		return err
 	}
-	c.append(&code{op: opload, v: v})
-	f = c.newScopeDepth()
-	if err := c.compileQuery(e.Update); err != nil {
-		return err
-	}
-	f()
-	c.append(&code{op: opstore, v: v})
-	c.append(&code{op: opbacktrack})
 	setfork()
 	c.append(&code{op: oppop})
 	c.append(&code{op: opload, v: v})
@@ -771,22 +786,21 @@ func (c *compiler) compileForeach(e *Foreach) error {
 	if err := c.compileQuery(e.Query); err != nil {
 		return err
 	}
-	if _, err := c.compilePattern(nil, e.Pattern); err != nil {
-		return err
-	}
-	c.append(&code{op: opload, v: v})
-	f = c.newScopeDepth()
-	if err := c.compileQuery(e.Update); err != nil {
-		return err
-	}
-	f()
-	c.append(&code{op: opdup})
-	c.append(&code{op: opstore, v: v})
-	if e.Extract != nil {
-		defer c.newScopeDepth()()
-		return c.compileQuery(e.Extract)
-	}
-	return nil
+	return c.compilePatterns(e.Patterns, func() error {
+		c.append(&code{op: opload, v: v})
+		f := c.newScopeDepth()
+		if err := c.compileQuery(e.Update); err != nil {
+			return err
+		}
+		f()
+		c.append(&code{op: opdup})
+		c.append(&code{op: opstore, v: v})
+		if e.Extract != nil {
+			defer c.newScopeDepth()()
+			return c.compileQuery(e.Extract)
+		}
+		return nil
+	})
 }
 
 func (c *compiler) compileLabel(e *Label) error {
@@ -953,7 +967,7 @@ func (c *compiler) compileFunc(e *Func) error {
 				c.compileAssign()
 			case "_modify":
 				c.compileModify()
-			case "last":
+			case "_last":
 				c.compileLast()
 			}
 		}
@@ -1013,6 +1027,13 @@ func (c *compiler) compileFunc(e *Func) error {
 			c.append(&code{op: opbacktrack})
 			setfork()
 			return nil
+		case "_match":
+			return c.compileCallInternal(
+				[3]any{c.funcMatch, len(e.Args), e.Name},
+				e.Args,
+				true,
+				-1,
+			)
 		default:
 			return c.compileCall(e.Name, e.Args)
 		}
@@ -1104,7 +1125,7 @@ func (c *compiler) compileModify() {
 		&code{op: opcall, v: [3]any{funcAllocator, 0, "_allocator"}},
 		&code{op: opstore, v: a},
 		&code{op: opload, v: v},
-		&code{op: opfork, v: len(c.codes) + 39}, // reduce [L1]
+		&code{op: opfork, v: len(c.codes) + 40}, // reduce [L1]
 		&code{op: oppathbegin},                  // path(p)
 		&code{op: opload, v: p},
 		&code{op: opcallpc},
@@ -1113,12 +1134,13 @@ func (c *compiler) compileModify() {
 		&code{op: opstore, v: p},                // as $p (.;
 		&code{op: opforklabel, v: l},            // label $l |
 		&code{op: opload, v: v},                 //
-		&code{op: opfork, v: len(c.codes) + 36}, // [L2]
+		&code{op: opfork, v: len(c.codes) + 37}, // [L2]
 		&code{op: oppop},                        // (getpath($p) |
+		&code{op: opload, v: a},
 		&code{op: opload, v: a},
 		&code{op: opload, v: p},
 		&code{op: opload, v: v},
-		&code{op: opcall, v: [3]any{internalFuncs["getpath"].callback, 1, "getpath"}},
+		&code{op: opcall, v: [3]any{funcGetpathWithAllocator, 2, "getpath"}},
 		&code{op: opload, v: f}, //                 f)
 		&code{op: opcallpc},
 		&code{op: opload, v: p}, //                 setpath($p; ...)
@@ -1126,8 +1148,8 @@ func (c *compiler) compileModify() {
 		&code{op: opcall, v: [3]any{funcSetpathWithAllocator, 3, "_setpath"}},
 		&code{op: opstore, v: v},
 		&code{op: opload, v: v},                 // ., break $l
-		&code{op: opfork, v: len(c.codes) + 34}, // [L4]
-		&code{op: opjump, v: len(c.codes) + 38}, // [L3]
+		&code{op: opfork, v: len(c.codes) + 35}, // [L4]
+		&code{op: opjump, v: len(c.codes) + 39}, // [L3]
 		&code{op: opload, v: l},                 // [L4]
 		&code{op: opcall, v: [3]any{funcBreak(""), 0, "_break"}},
 		&code{op: opload, v: p},   //               append $p to $d [L2]
@@ -1145,7 +1167,7 @@ func (c *compiler) compileModify() {
 // Appends the compiled code for the `last/1` function to
 // maximize performance avoiding unnecessary boxing.
 func (c *compiler) compileLast() {
-	defer c.appendBuiltin("last", 1)()
+	defer c.appendBuiltin("_last", 1)()
 	scope := c.newScope()
 	v, g, x := [2]int{scope.id, 0}, [2]int{scope.id, 1}, [2]int{scope.id, 2}
 	c.appends(
@@ -1202,9 +1224,8 @@ func (c *compiler) funcBuiltins(any, []any) any {
 			}
 		}
 	}
-	sort.Slice(xs, func(i, j int) bool {
-		return xs[i].name < xs[j].name ||
-			xs[i].name == xs[j].name && xs[i].arity < xs[j].arity
+	slices.SortFunc(xs, func(x, y *funcNameArity) int {
+		return cmp.Or(cmp.Compare(x.name, y.name), cmp.Compare(x.arity, y.arity))
 	})
 	ys := make([]any, len(xs))
 	for i, x := range xs {
@@ -1214,11 +1235,13 @@ func (c *compiler) funcBuiltins(any, []any) any {
 }
 
 func (c *compiler) funcInput(any, []any) any {
+	c.inputMu.Lock()
+	defer c.inputMu.Unlock()
 	v, ok := c.inputIter.Next()
 	if !ok {
 		return errors.New("break")
 	}
-	return normalizeNumbers(v)
+	return v
 }
 
 func (c *compiler) funcModulemeta(v any, _ []any) any {
@@ -1264,9 +1287,8 @@ func listModuleDefs(q *Query) []any {
 			xs = append(xs, &funcNameArity{fd.Name, len(fd.Args)})
 		}
 	}
-	sort.Slice(xs, func(i, j int) bool {
-		return xs[i].name < xs[j].name ||
-			xs[i].name == xs[j].name && xs[i].arity < xs[j].arity
+	slices.SortFunc(xs, func(x, y *funcNameArity) int {
+		return cmp.Or(cmp.Compare(x.name, y.name), cmp.Compare(x.arity, y.arity))
 	})
 	defs := make([]any, len(xs))
 	for i, x := range xs {
@@ -1282,11 +1304,7 @@ func listModuleDeps(q *Query) []any {
 		if v == nil {
 			v = make(map[string]any)
 		}
-		relpath := i.ImportPath
-		if relpath == "" {
-			relpath = i.IncludePath
-		}
-		v["relpath"] = relpath
+		v["relpath"] = cmp.Or(i.ImportPath, i.IncludePath)
 		if i.ImportAlias != "" {
 			v["as"] = strings.TrimPrefix(i.ImportAlias, "$")
 		}
@@ -1294,6 +1312,10 @@ func listModuleDeps(q *Query) []any {
 		deps[j] = v
 	}
 	return deps
+}
+
+func (c *compiler) funcMatch(v any, args []any) any {
+	return funcMatch(v, args[0], args[1], args[2], &c.regexpCache)
 }
 
 func (c *compiler) compileObject(e *Object) error {
@@ -1317,7 +1339,7 @@ func (c *compiler) compileObject(e *Object) error {
 	if pc+l*3+1 != len(c.codes) {
 		return nil
 	}
-	for i := 0; i < l; i++ {
+	for i := range l {
 		if c.codes[pc+i*3].op != oppush ||
 			c.codes[pc+i*3+1].op != opload ||
 			c.codes[pc+i*3+2].op != opconst {
@@ -1325,7 +1347,7 @@ func (c *compiler) compileObject(e *Object) error {
 		}
 	}
 	w := make(map[string]any, l)
-	for i := 0; i < l; i++ {
+	for i := range l {
 		w[c.codes[pc+i*3].v.(string)] = c.codes[pc+i*3+2].v
 	}
 	c.codes[pc-1] = &code{op: opconst, v: w}
@@ -1417,7 +1439,7 @@ func (c *compiler) compileArray(e *Array) error {
 		return nil
 	}
 	l := (len(c.codes) - pc - 3) / 3
-	for i := 0; i < l; i++ {
+	for i := range l {
 		if c.codes[pc+i].op != opfork ||
 			c.codes[pc+i*2+l].op != opconst ||
 			(i < l-1 && c.codes[pc+i*2+l+1].op != opjump) {
@@ -1425,7 +1447,7 @@ func (c *compiler) compileArray(e *Array) error {
 		}
 	}
 	v := make([]any, l)
-	for i := 0; i < l; i++ {
+	for i := range l {
 		v[i] = c.codes[pc+i*2+l].v
 	}
 	c.codes[pc-2] = &code{op: opconst, v: v}
@@ -1536,8 +1558,6 @@ func (c *compiler) compileTermSuffix(e *Term, s *Suffix) error {
 			}
 		}
 		return c.compileTry(&Try{Body: &Query{Term: e}})
-	} else if s.Bind != nil {
-		return c.compileBind(e, s.Bind)
 	} else {
 		return fmt.Errorf("invalid suffix: %s", s)
 	}
@@ -1656,33 +1676,33 @@ func (c *compiler) optimizeTailRec() {
 	var pcs []int
 	scopes := map[int]bool{}
 L:
-	for i, l := 0, len(c.codes); i < l; i++ {
-		switch c.codes[i].op {
+	for i, code := range c.codes {
+		switch code.op {
 		case opscope:
 			pcs = append(pcs, i)
-			if v := c.codes[i].v.([3]int); v[2] == 0 {
+			if v := code.v.([3]int); v[2] == 0 {
 				scopes[i] = v[1] == 0
 			}
 		case opcall:
 			var canjump bool
-			if j, ok := c.codes[i].v.(int); !ok ||
+			if j, ok := code.v.(int); !ok ||
 				len(pcs) == 0 || pcs[len(pcs)-1] != j {
 				break
 			} else if canjump, ok = scopes[j]; !ok {
 				break
 			}
-			for j := i + 1; j < l; {
+			for j := i + 1; j < len(c.codes); {
 				switch c.codes[j].op {
 				case opjump:
 					j = c.codes[j].v.(int)
 				case opret:
 					if canjump {
-						c.codes[i].op = opjump
-						c.codes[i].v = pcs[len(pcs)-1] + 1
+						code.op = opjump
+						code.v = pcs[len(pcs)-1] + 1
 					} else {
-						c.codes[i].op = opcallrec
+						code.op = opcallrec
 					}
-					continue L
+					fallthrough
 				default:
 					continue L
 				}

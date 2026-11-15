@@ -4,7 +4,8 @@ import (
 	"context"
 	"math"
 	"reflect"
-	"sort"
+	"slices"
+	"strings"
 )
 
 func (env *env) execute(bc *Code, v any, vars ...any) Iter {
@@ -59,7 +60,7 @@ loop:
 			}
 			n := code.v.(int)
 			m := make(map[string]any, n)
-			for i := 0; i < n; i++ {
+			for range n {
 				v, k := env.pop(), env.pop()
 				s, ok := k.(string)
 				if !ok {
@@ -85,14 +86,11 @@ loop:
 			env.pushfork(pc)
 		case opforktrybegin:
 			if backtrack {
-				if err == nil {
-					break loop
-				}
 				switch e := err.(type) {
 				case *tryEndError:
 					err = e.err
 					break loop
-				case *breakError, *HaltError:
+				case nil, *breakError, *HaltError:
 					break loop
 				case ValueError:
 					env.pop()
@@ -107,7 +105,9 @@ loop:
 			env.pushfork(pc)
 		case opforktryend:
 			if backtrack {
-				if err != nil {
+				switch err.(type) {
+				case nil, *breakError, *HaltError:
+				default:
 					err = &tryEndError{err}
 				}
 				break loop
@@ -115,7 +115,8 @@ loop:
 			env.pushfork(pc)
 		case opforkalt:
 			if backtrack {
-				if err == nil {
+				switch err.(type) {
+				case nil, *breakError, *HaltError:
 					break loop
 				}
 				pc, backtrack, err = code.v.(int), false, nil
@@ -180,7 +181,7 @@ loop:
 			case [3]any:
 				argcnt := v[1].(int)
 				x, args := env.pop(), env.args[:argcnt]
-				for i := 0; i < argcnt; i++ {
+				for i := range argcnt {
 					args[i] = env.pop()
 				}
 				w := v[0].(func(any, []any) any)(x, args)
@@ -238,8 +239,7 @@ loop:
 					callpc, saveindex = env.popscope()
 				}
 			} else {
-				saveindex, _ = env.scopes.save()
-				env.scopes.index = index
+				saveindex = env.scopes.index
 			}
 			if outerindex = index; outerindex >= 0 {
 				if s := env.scopes.data[outerindex].value; s.id == xs[0] {
@@ -273,6 +273,7 @@ loop:
 			case []any:
 				if !env.paths.empty() && env.expdepth == 0 && !env.pathIntact(v) {
 					err = &invalidPathIterError{v}
+					env.push(emptyIter{})
 					break loop
 				}
 				if len(v) == 0 {
@@ -285,6 +286,7 @@ loop:
 			case map[string]any:
 				if !env.paths.empty() && env.expdepth == 0 && !env.pathIntact(v) {
 					err = &invalidPathIterError{v}
+					env.push(emptyIter{})
 					break loop
 				}
 				if len(v) == 0 {
@@ -296,8 +298,8 @@ loop:
 					xs[i] = pathValue{path: k, value: v}
 					i++
 				}
-				sort.Slice(xs, func(i, j int) bool {
-					return xs[i].path.(string) < xs[j].path.(string)
+				slices.SortFunc(xs, func(x, y pathValue) int {
+					return strings.Compare(x.path.(string), y.path.(string))
 				})
 			case Iter:
 				if w, ok := v.Next(); ok {
@@ -331,7 +333,7 @@ loop:
 		case opexpend:
 			env.expdepth--
 		case oppathbegin:
-			env.paths.push(env.expdepth)
+			env.paths.push(pathValue{value: env.expdepth})
 			env.paths.push(pathValue{value: env.stack.top()})
 			env.expdepth = 0
 		case oppathend:
@@ -344,7 +346,7 @@ loop:
 				break loop
 			}
 			env.push(env.poppaths())
-			env.expdepth = env.paths.pop().(int)
+			env.expdepth = env.paths.pop().value.(int)
 		default:
 			panic(code.op)
 		}
@@ -369,7 +371,10 @@ func (env *env) pop() any {
 
 func (env *env) popscope() (int, int) {
 	free := env.scopes.index > env.scopes.limit
-	s := env.scopes.pop()
+	// Refer to the scope by pointer; env.scopes.pop() copies the struct
+	// twice when inlined, which slows down function returns.
+	s := &env.scopes.data[env.scopes.index].value
+	env.scopes.pop()
 	if free {
 		env.offset = s.offset
 	}
@@ -377,7 +382,7 @@ func (env *env) popscope() (int, int) {
 }
 
 func (env *env) pushfork(pc int) {
-	f := fork{pc: pc, expdepth: env.expdepth}
+	f := fork{pc: pc, offset: env.offset, expdepth: env.expdepth}
 	f.stackindex, f.stacklimit = env.stack.save()
 	f.scopeindex, f.scopelimit = env.scopes.save()
 	f.pathindex, f.pathlimit = env.paths.save()
@@ -388,7 +393,8 @@ func (env *env) pushfork(pc int) {
 func (env *env) popfork() int {
 	f := env.forks[len(env.forks)-1]
 	env.debugForks(f.pc, "<<<")
-	env.forks, env.expdepth = env.forks[:len(env.forks)-1], f.expdepth
+	env.forks, env.offset, env.expdepth =
+		env.forks[:len(env.forks)-1], f.offset, f.expdepth
 	env.stack.restore(f.stackindex, f.stacklimit)
 	env.scopes.restore(f.scopeindex, f.scopelimit)
 	env.paths.restore(f.pathindex, f.pathlimit)
@@ -411,7 +417,7 @@ type pathValue struct {
 }
 
 func (env *env) pathIntact(v any) bool {
-	w := env.paths.top().(pathValue).value
+	w := env.paths.top().value
 	switch v := v.(type) {
 	case []any, map[string]any:
 		switch w.(type) {
@@ -430,14 +436,12 @@ func (env *env) pathIntact(v any) bool {
 func (env *env) poppaths() []any {
 	xs := []any{}
 	for {
-		p := env.paths.pop().(pathValue)
+		p := env.paths.pop()
 		if p.path == nil {
 			break
 		}
 		xs = append(xs, p.path)
 	}
-	for i, j := 0, len(xs)-1; i < j; i, j = i+1, j-1 {
-		xs[i], xs[j] = xs[j], xs[i]
-	}
+	slices.Reverse(xs)
 	return xs
 }

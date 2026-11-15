@@ -1,5 +1,5 @@
 BIN := gojq
-VERSION := $$(make -s show-version)
+VERSION := $$($(MAKE) -s show-version)
 VERSION_PATH := cli
 CURRENT_REVISION = $(shell git rev-parse --short HEAD)
 BUILD_LDFLAGS = "-s -w -X github.com/itchyny/$(BIN)/cli.revision=$(CURRENT_REVISION)"
@@ -26,7 +26,7 @@ builtin.go: builtin.jq parser.go.y parser.go query.go operator.go _tools/*
 
 .SUFFIXES:
 parser.go: parser.go.y $(GOBIN)/goyacc
-	goyacc -o $@ $<
+	goyacc -l -o $@ $<
 
 $(GOBIN)/goyacc:
 	@go install golang.org/x/tools/cmd/goyacc@latest
@@ -72,7 +72,7 @@ test: build
 .PHONY: lint
 lint: $(GOBIN)/staticcheck
 	go vet ./...
-	staticcheck -checks all -tags gojq_debug ./...
+	staticcheck -checks all,-ST1000 -tags gojq_debug ./...
 
 $(GOBIN)/staticcheck:
 	go install honnef.co/go/tools/cmd/staticcheck@latest
@@ -89,9 +89,8 @@ clean:
 .PHONY: update
 update: export GOPROXY=direct
 update:
-	go get -u ./... && go mod tidy
-	go mod edit -modfile=go.dev.mod -droprequire=github.com/itchyny/{astgen,timefmt}-go
-	go get -u -modfile=go.dev.mod github.com/itchyny/{astgen,timefmt}-go && go generate
+	go get -u ./... && go get github.com/itchyny/go-yaml@gojq && go mod tidy
+	rm go.dev.sum && go get -u -modfile=go.dev.mod github.com/itchyny/{astgen,timefmt}-go && go generate
 
 .PHONY: bump
 bump: $(GOBIN)/gobump
