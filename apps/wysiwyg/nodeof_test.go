@@ -42,14 +42,12 @@ func TestNodeOfRejectsMalformedSeeds(t *testing.T) {
 			want: "inside",
 		},
 		{
-			name: "slot with two children",
-			src:  `<ItemsView><ItemsView.ItemTemplate><Text>a</Text><Text>b</Text></ItemsView.ItemTemplate></ItemsView>`,
-			want: "needs exactly one child",
-		},
-		{
-			name: "slot with no children",
-			src:  `<ItemsView><ItemsView.ItemTemplate></ItemsView.ItemTemplate></ItemsView>`,
-			want: "needs exactly one child",
+			// The loader refuses this too ("markup: <X.Y> given twice", in attachProp),
+			// and letting the map keep the second would save a document
+			// without the first.
+			name: "one property element written twice",
+			src:  `<ItemsView><ItemsView.ItemTemplate><Text>a</Text></ItemsView.ItemTemplate><ItemsView.ItemTemplate><Text>b</Text></ItemsView.ItemTemplate></ItemsView>`,
+			want: "appears twice",
 		},
 		{
 			name: "no root element",

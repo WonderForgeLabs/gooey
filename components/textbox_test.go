@@ -1,6 +1,7 @@
 package components
 
 import (
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -2165,15 +2166,24 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 	// decide the result, and cheap: the whole test stays under a
 	// handful of seconds because `cost` is already batched.
 	const costRepeats = 5
-	best := func(t *testing.T, n, caret int) time.Duration {
+	// bestPair measures BOTH sides, INTERLEAVED, and keeps each side's
+	// minimum. It measured all five short samples and then all five
+	// long ones, which is two blocks of wall-clock separated in time: a
+	// neighbour's job starting between them lands on every long sample
+	// and no short one, and a minimum cannot remove noise that every
+	// sample of one side shares. That is how this arm went red at 8.1x
+	// on a PR touching neither this package nor anything it imports,
+	// with the min-of-5 from #563 already in place. Alternating puts
+	// both sides under the same load, so the ratio is the walk's and
+	// not the runner's. #571.
+	bestPair := func(t *testing.T, caret func(int) int) (short, long time.Duration) {
 		t.Helper()
-		lo := measure(t, n, caret)
-		for range costRepeats - 1 {
-			if d := measure(t, n, caret); d < lo {
-				lo = d
-			}
+		short, long = time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)
+		for range costRepeats {
+			short = min(short, measure(t, 1000, caret(1000)))
+			long = min(long, measure(t, 50000, caret(50000)))
 		}
-		return lo
+		return short, long
 	}
 	for _, tc := range []struct {
 		name  string
@@ -2205,8 +2215,7 @@ func TestARepaintDoesNotWalkAZeroWidthRun(t *testing.T) {
 		// measure ~1x for a fifty-fold value; the defect this catches
 		// is O(len(value)) and measures in the tens. Everything between
 		// 1 and 4 is headroom, not tolerance for a partial fix.
-		short := best(t, 1000, tc.caret(1000))
-		long := best(t, 50000, tc.caret(50000))
+		short, long := bestPair(t, tc.caret)
 		if long > 4*short {
 			t.Errorf("with the %s, a repaint costs %v over a 50,000-rune "+
 				"zero-width run against %v over a 1,000-rune one — %.1fx for "+

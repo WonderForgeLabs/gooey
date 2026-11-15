@@ -232,8 +232,8 @@ func (ed *editor) checkFit(cols, rows int, composed bool) {
 }
 
 // sayFitProblem puts a diagnostic where the user is already looking: the
-// status bar AND the PROBLEMS pane, which binds FitMsg twice and until
-// now could never say anything at all.
+// status bar AND the PROBLEMS pane, whose two tabs read FitMsg through
+// Problems and until #355 could never say anything at all.
 //
 // Both writes are guarded, for the same reason every other write on this
 // path is — this runs before every frame.

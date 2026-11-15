@@ -133,7 +133,9 @@ func TestUniqueNameSkipsWhatIsInUseRatherThanCounting(t *testing.T) {
 func TestNamesInUseSeesInsideSlots(t *testing.T) {
 	root := &node{Elem: "Canvas", Kids: []*node{
 		{Elem: "ItemsView", Attrs: map[string]string{"Name": "List"}, Slots: map[string]*node{
-			"ItemTemplate": {Elem: "Text", Attrs: map[string]string{"Name": "Text1"}},
+			"ItemTemplate": {Elem: "ItemsView.ItemTemplate", Kids: []*node{
+				{Elem: "Text", Attrs: map[string]string{"Name": "Text1"}},
+			}},
 		}},
 	}}
 	if !namesInUse(root)["Text1"] {
@@ -154,17 +156,20 @@ func TestNamesInUseSeesInsideSlots(t *testing.T) {
 func TestDuplicateCarriesSlotsRatherThanDroppingThem(t *testing.T) {
 	used := map[string]bool{"List": true, "Text1": true}
 	orig := &node{Elem: "ItemsView", Attrs: map[string]string{"Name": "List"}, Slots: map[string]*node{
-		"ItemTemplate": {Elem: "Text", Body: "row", Attrs: map[string]string{"Name": "Text1"}},
+		"ItemTemplate": {Elem: "ItemsView.ItemTemplate", Kids: []*node{
+			{Elem: "Text", Body: "row", Attrs: map[string]string{"Name": "Text1"}},
+		}},
 	}}
 
 	c := clone(orig, used)
 
-	sl, ok := c.Slots["ItemTemplate"]
-	if !ok {
+	tpl, ok := c.Slots["ItemTemplate"]
+	if !ok || len(tpl.Kids) != 1 {
 		t.Fatalf("the copy has no ItemTemplate slot: clone dropped it, so the copy "+
 			"serialises as <%s/> and no longer satisfies the element's required slot", c.Elem)
 	}
-	if sl == orig.Slots["ItemTemplate"] {
+	sl := tpl.Kids[0]
+	if sl == orig.Slots["ItemTemplate"].Kids[0] {
 		t.Error("the copy's slot is the SAME node as the original's: a shallow copy " +
 			"means editing one edits both")
 	}

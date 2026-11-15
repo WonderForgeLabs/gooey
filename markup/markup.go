@@ -2259,6 +2259,10 @@ func named(e Element, ctx *Context, w gooey.Component, err ...error) (gooey.Comp
 
 var bindRe = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.]+)\s*\}\}`)
 
+// wholeBindRe is bindRe anchored to the whole value: an attribute that
+// IS one {{.Path}} binding, not one that contains one.
+var wholeBindRe = regexp.MustCompile(`^\s*\{\{\s*\.[A-Za-z0-9_.]+\s*\}\}\s*$`)
+
 // textBindableTypes names, for the load error, every type a {{.Path}}
 // in text position can render. It is prose, so it can drift from the
 // switch in textSource — TestTextBindableTypesListMatchesTheSwitch
