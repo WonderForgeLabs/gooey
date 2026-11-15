@@ -368,6 +368,62 @@ jobs:
       # from an upstream fault. This prints the record the action already
       # wrote, so the next death names its own cause.
       #
+      # The record's text is NOT trusted, and this job runs on `pull_request`.
+      # `.result` on a run that failed after producing turns carries model
+      # output shaped by the PR diff, and `.error` comes from upstream — so a
+      # line beginning `::` would be read by the runner as a workflow command
+      # (`::add-mask::`, `::error::`, `::stop-commands::`) instead of being
+      # printed, from a string a PR author can influence. Every line is
+      # prefixed in the jq program below so none can start that sequence.
+      # Prefixing alone was not enough: the runner also ends a line on a bare
+      # CR, so `foo\r::add-mask::x` survived a `split("\n")` as one string
+      # and took one prefix at the front while the runner began a fresh line
+      # at the CR. CRs are folded into LFs before the split and the remaining
+      # C0 controls become spaces. The two forms are NOT equivalent, and an
+      # earlier revision of this comment claimed they were. Per actions/runner
+      # src/Runner.Common/ActionCommand.cs, `TryParseV2` trims and then does
+      # StartsWith("::") so `::` is anchored, but the legacy `TryParse` finds
+      # its prefix with IndexOf("##[") — not anchored — and
+      # ActionCommandManager.cs:70-71 falls back to it. A mid-line
+      # `##[add-mask]leak` therefore survives the prefix, so every `##[` is
+      # broken with a space (`## [`): still readable, no longer matched. The
+      # break is applied ONCE to the whole parenthesised output rather than per
+      # string — it was per string for one revision and the tojson header line
+      # was missed, since tojson escapes quotes and controls but leaves `##[`
+      # alone.
+      #
+      # A prefix rather than a `::stop-commands::<token>` fence: a fence that
+      # never emits its closing token leaves workflow commands disabled for
+      # the remainder of the job, and `merge-gate` consumes this job's
+      # outputs.
+      #
+      # This program is duplicated from .github/actions/label-on-agent-failure/
+      # check.sh, which vendored consumers cannot call (they have no scripts/).
+      # The WHOLE program -- from the group's opening paren through the `##[`
+      # break -- must stay BYTE-identical to that copy, modulo leading
+      # whitespace: the two sit at different indent depths. The range starts at
+      # the paren rather than at the sanitising tail on purpose, so that WHICH
+      # strings sit inside the group is compared too; a tail-only comparison
+      # stayed green while the header sat outside the break, which is the one
+      # regression this program has already had. check.test.sh extracts the
+      # program from both files and fails `lint` if they differ, so this is
+      # enforced rather than merely asked for. The sole deliberate difference,
+      # this copy also printing is_error, is normalised away before comparing.
+      # Change the two together or `lint` goes red.
+      #
+      # An ignorable character between the hashes is NOT a bypass.
+      # `IndexOf(Prefix)` is culture-sensitive (no StringComparison) and the
+      # runner does not use InvariantGlobalization, so under ICU a soft hyphen
+      # or ZWSP inside the needle still matches, and the literal gsub below
+      # does not see that shape. The parser's next line saves it:
+      # `cmdIndex = prefixIndex + Prefix.Length` is +3 whatever the match
+      # consumed, so any ignorable character inside the needle makes the match
+      # span 4+ while the slice advances 3 -- the command name picks up the
+      # `[` and fails registeredCommands. Consuming exactly 3 means the needle
+      # was literally `##[`, which the gsub catches. No `\p{Cf}` strip, for
+      # that reason and because it would delete format characters from error
+      # text. See the fuller note in check.sh.
+      #
       # Diagnostic only, and `continue-on-error` deliberately: whether the PR
       # is mergeable is decided by `merge-gate` from `pr-review`'s outcome,
       # and a missing or unparseable execution file must never be the thing
@@ -418,14 +474,20 @@ jobs:
 
           echo "--- SDK result record (diagnostic; forge#3505) ---"
           printf '%s\n' "${result}" | jq -r '
-            "subtype=\(.subtype // "?") is_error=\(.is_error // "?") duration_ms=\(.duration_ms // "?") num_turns=\(.num_turns // "?") total_cost_usd=\(.total_cost_usd // "?")",
-            "modelUsage=\((.modelUsage // {}) | tostring)",
-            (([.result?, .error?] + ((.errors? // []) | if type == "array" then . else [.] end))
-             | map(select(. != null) | tostring)
-             | join("\n")
-             | if . == "" then
-                 "(no error text: the record carries nothing under .result, .error or .errors — that absence is itself the finding, see forge#3505)"
-               else .[0:4000] end)
+            (
+              "subtype=\((.subtype // "?") | tojson) is_error=\((.is_error // "?") | tojson) duration_ms=\((.duration_ms // "?") | tojson) num_turns=\((.num_turns // "?") | tojson) total_cost_usd=\((.total_cost_usd // "?") | tojson)",
+              "modelUsage=\((.modelUsage // {}) | tostring)",
+              (([.result?, .error?] + ((.errors? // []) | if type == "array" then . else [.] end))
+               | map(select(. != null) | tostring)
+               | join("\n")
+               | if . == "" then
+                   "(no error text: the record carries nothing under .result, .error or .errors — that absence is itself the finding, see forge#3505)"
+                 else .[0:4000] end
+               | gsub("\r\n"; "\n") | gsub("\r"; "\n")
+               | gsub("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]"; " ")
+               | split("\n") | map("  | " + .) | join("\n"))
+            )
+            | gsub("##\\["; "## [")
           ' || echo "(could not read error text out of the result record)"
           echo "--- end SDK result record ---"
 
