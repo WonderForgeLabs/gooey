@@ -180,7 +180,7 @@ jobs:
           delim="WF_CLAUDE_ARGS_$(openssl rand -hex 16)"
           {
             echo "value<<${delim}"
-            echo "--max-turns ${MAX_TURNS} --allowedTools \"${ALLOWED_TOOLS}\" --model \"${MODEL}\""
+            echo "--permission-mode default --max-turns ${MAX_TURNS} --allowedTools \"${ALLOWED_TOOLS}\" --model \"${MODEL}\""
             if [ -n "$EXTRA_SYSTEM_PROMPT" ]; then
               printf -- "--append-system-prompt '%s'\n" "${EXTRA_SYSTEM_PROMPT//\'/\'\\\'\'}"
             fi
@@ -189,7 +189,7 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271 (Claude Code 2.1.322)
+        uses: anthropics/claude-code-action@8a29bc6f0ae11a363721054b6739feba6adabe57 # v1.0.273 (Claude Code 2.1.322)
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Deliberately NOT `|| github.token` (unlike the checkout step above):
